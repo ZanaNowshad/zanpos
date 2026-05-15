@@ -4,6 +4,7 @@ use crate::domain::cart::Cart;
 use crate::domain::sale::{PaymentInput, SaleResult, PaymentSummary, SaleItemSummary};
 use crate::errors::{AppError, AppResult};
 use crate::sync::outbox;
+use crate::inventory::movements;
 
 async fn next_receipt_number(pool: &SqlitePool, branch_code: &str, device_code: &str) -> AppResult<String> {
     let prefix = format!("{}-{}-%", branch_code, device_code);
@@ -225,6 +226,11 @@ pub async fn finalize_sale(
         }
     }
 
+    // Deduct inventory (after commit; failures don't roll back sale)
+    let low_stock_alerts = movements::deduct_sale(pool, &sale_id, &cart.cashier_user_id)
+        .await
+        .unwrap_or_default();
+
     Ok(SaleResult {
         sale_id,
         receipt_number,
@@ -239,5 +245,6 @@ pub async fn finalize_sale(
         sold_at: now,
         business_date,
         created_offline: false,
+        low_stock_alerts,
     })
 }

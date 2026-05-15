@@ -15,6 +15,8 @@ import type {
   SaleResult,
   SessionUser,
   Shift,
+  StockLevel,
+  StockMovementRow,
   SupabaseStatus,
   SyncStatus,
   TodaySummary,
@@ -189,3 +191,14 @@ export const aiUndoAction = (
   currencyExponent: number
 ): Promise<UndoActionResult> =>
   invoke("ai_undo_action", { undoId, userId, currencyExponent });
+
+// ─── Inventory commands ───────────────────────────────────────────────────────
+
+export const inventoryGetLevels = (): Promise<StockLevel[]> =>
+  invoke("inventory_get_levels");
+
+export const inventoryGetLowStock = (): Promise<StockLevel[]> =>
+  invoke("inventory_get_low_stock");
+
+export const inventoryGetMovements = (productId: string): Promise<StockMovementRow[]> =>
+  invoke("inventory_get_movements", { productId });

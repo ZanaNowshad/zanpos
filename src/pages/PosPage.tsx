@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { ProductWithPrice, SaleResult, SessionUser, Shift } from "../types";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { LowStockAlert, ProductWithPrice, SaleResult, SessionUser, Shift } from "../types";
 import { DEVICE } from "../types";
 import { productListAll } from "../tauri/commands";
 import { useCart } from "../hooks/useCart";
@@ -41,6 +41,8 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
   const [showHold, setShowHold] = useState(false);
   const [showRefund, setShowRefund] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  const [restockAlerts, setRestockAlerts] = useState<LowStockAlert[]>([]);
+  const restockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const syncStatus = useSyncStatus(15_000);
   const {
@@ -93,6 +95,11 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
       const result = await finalizeSale(payments);
       setShowPayment(false);
       setSaleResult(result);
+      if (result.low_stock_alerts.length > 0) {
+        if (restockTimerRef.current) clearTimeout(restockTimerRef.current);
+        setRestockAlerts(result.low_stock_alerts);
+        restockTimerRef.current = setTimeout(() => setRestockAlerts([]), 6000);
+      }
     } catch {
       // error is set in useCart
     }
@@ -242,6 +249,23 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
 
       {showReport && (
         <TodayReportModal onClose={() => setShowReport(false)} />
+      )}
+
+      {/* ── Restock alerts toast ── */}
+      {restockAlerts.length > 0 && (
+        <div
+          className="restock-toast-overlay"
+          onClick={() => { if (restockTimerRef.current) clearTimeout(restockTimerRef.current); setRestockAlerts([]); }}
+        >
+          {restockAlerts.map(alert => (
+            <div key={alert.product_id} className="restock-toast">
+              <span className="restock-toast-title">⚠ Low Stock</span>
+              <span className="restock-toast-body">
+                {alert.product_name}: {alert.quantity_on_hand} left (reorder at {alert.reorder_point})
+              </span>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

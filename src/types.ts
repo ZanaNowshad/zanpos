@@ -30,10 +30,44 @@ export interface ProductWithPrice {
   cost_minor: number | null;
   currency: string;
   version: number;
+  reorder_point: number;
   price_minor: number;
   tax_rate_basis_points: number;
   tax_inclusive: boolean;
   category_name: string;
+  quantity_on_hand: string | null;
+}
+
+// ── Inventory types ───────────────────────────────────────────────────────────
+
+export interface LowStockAlert {
+  product_id: string;
+  product_name: string;
+  quantity_on_hand: string;
+  reorder_point: number;
+}
+
+export interface StockLevel {
+  product_id: string;
+  product_name: string;
+  sku: string | null;
+  category_name: string;
+  quantity_on_hand: string;
+  reorder_point: number;
+  is_low_stock: boolean;
+  is_out_of_stock: boolean;
+  track_inventory: boolean;
+}
+
+export interface StockMovementRow {
+  movement_id: string;
+  movement_type: string;
+  quantity_delta: string;
+  quantity_after: string;
+  reference_type: string | null;
+  reference_id: string | null;
+  notes: string | null;
+  created_at: string;
 }
 
 export interface CartLine {
@@ -99,6 +133,7 @@ export interface SaleResult {
   sold_at: string;
   business_date: string;
   created_offline: boolean;
+  low_stock_alerts: LowStockAlert[];
 }
 
 export interface SyncStatus {

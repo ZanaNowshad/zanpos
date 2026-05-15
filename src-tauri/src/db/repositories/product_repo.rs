@@ -19,10 +19,12 @@ const PRODUCT_QUERY: &str = r#"
         p.version,
         p.created_at,
         p.updated_at,
+        p.reorder_point,
         c.name AS category_name,
         COALESCE(pp.price_minor, 0) AS price_minor,
         COALESCE(t.rate_basis_points, 0) AS tax_rate_basis_points,
-        COALESCE(t.inclusive, 0) AS tax_inclusive
+        COALESCE(t.inclusive, 0) AS tax_inclusive,
+        sl.quantity_on_hand AS quantity_on_hand
     FROM products p
     JOIN categories c ON c.category_id = p.category_id
     LEFT JOIN product_prices pp ON pp.product_id = p.product_id
@@ -31,6 +33,7 @@ const PRODUCT_QUERY: &str = r#"
         AND pp.effective_from <= datetime('now')
         AND (pp.effective_to IS NULL OR pp.effective_to > datetime('now'))
     LEFT JOIN tax_rules t ON t.tax_rule_id = p.tax_rule_id AND t.is_active = 1
+    LEFT JOIN stock_levels sl ON sl.product_id = p.product_id
     WHERE p.is_active = 1
 "#;
 
@@ -56,11 +59,13 @@ fn row_to_product(row: &sqlx::sqlite::SqliteRow) -> ProductWithPrice {
             version: row.get("version"),
             created_at: row.try_get("created_at").unwrap_or_default(),
             updated_at: row.try_get("updated_at").unwrap_or_default(),
+            reorder_point: row.try_get("reorder_point").unwrap_or(0),
         },
         price_minor: row.get("price_minor"),
         tax_rate_basis_points: row.get("tax_rate_basis_points"),
         tax_inclusive: inclusive != 0,
         category_name: row.get("category_name"),
+        quantity_on_hand: row.try_get("quantity_on_hand").unwrap_or(None),
     }
 }
 

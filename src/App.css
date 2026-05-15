@@ -1027,3 +1027,43 @@ textarea.field-input { resize: vertical; }
 }
 .settings-tab:hover { background: var(--surface2); color: var(--text); }
 .settings-tab-active { background: var(--surface2); color: var(--text); font-weight: 600; }
+
+/* ── Phase 4: Inventory styles ───────────────────────────────────────────────── */
+.stock-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 3px;
+  margin-top: 4px;
+  letter-spacing: 0.03em;
+  align-self: flex-start;
+}
+.stock-badge-low  { background: #f59e0b22; color: #f59e0b; border: 1px solid #f59e0b44; }
+.stock-badge-out  { background: #ef444422; color: #ef4444; border: 1px solid #ef444444; }
+
+/* Restock toast */
+.restock-toast-overlay {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 2000;
+  pointer-events: none;
+}
+.restock-toast {
+  background: var(--surface1);
+  border: 1px solid #f59e0b;
+  border-left: 4px solid #f59e0b;
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  min-width: 220px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  animation: toast-in 0.2s ease;
+  pointer-events: auto;
+}
+.restock-toast-title { font-size: 0.75rem; font-weight: 700; color: #f59e0b; margin-bottom: 2px; }
+.restock-toast-body  { font-size: 0.85rem; color: var(--text); }
+@keyframes toast-in { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: translateY(0); } }

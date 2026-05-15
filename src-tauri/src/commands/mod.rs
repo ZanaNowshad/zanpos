@@ -1,6 +1,7 @@
 pub mod ai_admin_commands;
 pub mod auth_commands;
 pub mod held_cart_commands;
+pub mod inventory_commands;
 pub mod pos_commands;
 pub mod product_commands;
 pub mod refund_commands;

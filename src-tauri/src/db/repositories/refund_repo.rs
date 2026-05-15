@@ -4,6 +4,7 @@ use crate::domain::refund::{SaleForRefund, SaleItemForRefund, RefundItemInput, R
 use crate::domain::sale::{SaleResult, SaleItemSummary, PaymentSummary};
 use crate::errors::{AppError, AppResult};
 use crate::sync::outbox;
+use crate::inventory::movements;
 
 pub async fn get_sale_by_receipt(pool: &SqlitePool, receipt_number: &str) -> AppResult<SaleForRefund> {
     let sale_row = sqlx::query(
@@ -200,6 +201,9 @@ pub async fn create_refund(
 
     tx.commit().await?;
     tracing::info!("Refund created: {} ({})", refund_id, refund_receipt_number);
+
+    // Return stock for refunded items (after commit; failures don't roll back refund)
+    let _ = movements::return_refund(pool, &refund_id, created_by_user_id).await;
 
     // Enqueue refund for sync
     // Need device_id and branch_id from the original sale's device/branch

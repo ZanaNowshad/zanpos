@@ -387,3 +387,58 @@ pub async fn enqueue_audit_log(
     enqueue_raw(pool, device_id, branch_id, "audit_log", audit_log_id, "append", payload, "v1").await?;
     Ok(())
 }
+
+// ── Inventory ─────────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_arguments)]
+pub async fn enqueue_stock_movement(
+    pool:              &SqlitePool,
+    device_id:         &str,
+    branch_id:         &str,
+    movement_id:       &str,
+    product_id:        &str,
+    movement_type:     &str,
+    quantity_delta:    &str,
+    quantity_after:    &str,
+    reference_type:    &str,
+    reference_id:      &str,
+    notes:             Option<&str>,
+    created_by_user_id: Option<&str>,
+    created_at:        &str,
+) -> AppResult<()> {
+    let payload = serde_json::json!({
+        "movement_id":          movement_id,
+        "product_id":           product_id,
+        "branch_id":            branch_id,
+        "device_id":            device_id,
+        "movement_type":        movement_type,
+        "quantity_delta":       quantity_delta,
+        "quantity_after":       quantity_after,
+        "reference_type":       reference_type,
+        "reference_id":         reference_id,
+        "notes":                notes,
+        "created_by_user_id":   created_by_user_id,
+        "created_at":           created_at,
+    });
+    enqueue_raw(pool, device_id, branch_id, "stock_movement", movement_id, "append", payload, "v1").await?;
+    Ok(())
+}
+
+pub async fn enqueue_stock_level(
+    pool:            &SqlitePool,
+    device_id:       &str,
+    branch_id:       &str,
+    product_id:      &str,
+    quantity_on_hand: &str,
+    updated_at:      &str,
+) -> AppResult<()> {
+    let payload = serde_json::json!({
+        "product_id":        product_id,
+        "branch_id":         branch_id,
+        "quantity_on_hand":  quantity_on_hand,
+        "updated_at":        updated_at,
+    });
+    // Use updated_at as idem_suffix so a newer update overrides an older one
+    enqueue_raw(pool, device_id, branch_id, "stock_level", product_id, "update", payload, updated_at).await?;
+    Ok(())
+}

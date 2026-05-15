@@ -6,6 +6,7 @@ use crate::errors::{AppError, AppResult};
 use crate::db::repositories::{product_repo, report_repo};
 use crate::domain::money;
 use crate::sync::outbox;
+use crate::inventory::{stock_repo, movements};
 
 // ── Tool catalogue ─────────────────────────────────────────────────────────────
 
@@ -80,11 +81,51 @@ pub fn all_tool_definitions() -> Vec<ToolDef> {
                 "required": ["product_id", "new_name"]
             }),
         },
+        // ── Inventory tools ───────────────────────────────────────────────────
+        ToolDef {
+            name: "get_stock_levels".into(),
+            description: "List all inventory-tracked products with their current stock quantity, reorder point, and low-stock status.".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
+        },
+        ToolDef {
+            name: "get_low_stock".into(),
+            description: "List only the products that are at or below their reorder point (low stock or out of stock).".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
+        },
+        ToolDef {
+            name: "adjust_stock".into(),
+            description: "Apply a positive or negative quantity adjustment to a product's stock. Use for corrections, write-offs, or manual receives. Requires admin confirmation.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "product_id": { "type": "string" },
+                    "quantity_delta": { "type": "number", "description": "Amount to add (positive) or remove (negative)" },
+                    "notes": { "type": "string", "description": "Reason for adjustment" }
+                },
+                "required": ["product_id", "quantity_delta"]
+            }),
+        },
+        ToolDef {
+            name: "stock_take".into(),
+            description: "Set a product's stock to an exact counted quantity (full stock take). Requires admin confirmation.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "product_id": { "type": "string" },
+                    "new_quantity": { "type": "number", "description": "The counted quantity on hand" },
+                    "notes": { "type": "string", "description": "Optional notes" }
+                },
+                "required": ["product_id", "new_quantity"]
+            }),
+        },
     ]
 }
 
 pub fn is_mutation_tool(name: &str) -> bool {
-    matches!(name, "update_product_price" | "set_product_active" | "update_product_name")
+    matches!(name,
+        "update_product_price" | "set_product_active" | "update_product_name"
+        | "adjust_stock" | "stock_take"
+    )
 }
 
 // ── Read-only tool executor ────────────────────────────────────────────────────
@@ -150,6 +191,32 @@ pub async fn execute_read_tool(
                 p.product.is_active,
                 p.product.track_inventory
             ))
+        }
+        "get_stock_levels" => {
+            let levels = stock_repo::get_all_levels(pool).await?;
+            if levels.is_empty() {
+                return Ok("No inventory-tracked products found.".into());
+            }
+            let lines: Vec<String> = levels.iter().map(|s| {
+                let status = if s.is_out_of_stock { "❌ OUT" }
+                    else if s.is_low_stock { "⚠ LOW" }
+                    else { "✓" };
+                format!("- {} (ID: {}) — qty: {} | reorder ≤{} {status}",
+                    s.product_name, s.product_id, s.quantity_on_hand, s.reorder_point)
+            }).collect();
+            Ok(format!("{} tracked products:\n{}", levels.len(), lines.join("\n")))
+        }
+        "get_low_stock" => {
+            let levels = stock_repo::get_low_stock(pool).await?;
+            if levels.is_empty() {
+                return Ok("All products are above their reorder points. 🎉".into());
+            }
+            let lines: Vec<String> = levels.iter().map(|s| {
+                let status = if s.is_out_of_stock { "OUT OF STOCK" } else { "LOW STOCK" };
+                format!("- {} — qty: {} | reorder ≤{} [{status}]",
+                    s.product_name, s.quantity_on_hand, s.reorder_point)
+            }).collect();
+            Ok(format!("{} product(s) need restocking:\n{}", levels.len(), lines.join("\n")))
         }
         _ => Err(AppError::Validation(format!("Unknown read tool: {}", tool_name))),
     }
@@ -223,6 +290,54 @@ pub async fn dry_run_mutation(
                 fields: vec![
                     ToolPreviewField { label: "Current Name".into(), value: p.product.name.clone() },
                     ToolPreviewField { label: "New Name".into(), value: new_name.into() },
+                ],
+            })
+        }
+        "adjust_stock" => {
+            let product_id = input.get("product_id").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing product_id".into()))?;
+            let delta = input.get("quantity_delta").and_then(|v| v.as_f64())
+                .ok_or_else(|| AppError::Validation("Missing quantity_delta".into()))?;
+            let notes = input.get("notes").and_then(|v| v.as_str()).unwrap_or("—");
+            let p = product_repo::get_product_by_id(pool, product_id).await?
+                .ok_or_else(|| AppError::NotFound("Product not found".into()))?;
+            let levels = stock_repo::get_all_levels(pool).await?;
+            let current = levels.iter()
+                .find(|s| s.product_id == product_id)
+                .map(|s| s.quantity_on_hand.clone())
+                .unwrap_or_else(|| "0".into());
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
+                description: format!("Adjust stock for '{}'", p.product.name),
+                fields: vec![
+                    ToolPreviewField { label: "Product".into(), value: p.product.name.clone() },
+                    ToolPreviewField { label: "Current Qty".into(), value: current },
+                    ToolPreviewField { label: "Adjustment".into(), value: format!("{:+}", delta) },
+                    ToolPreviewField { label: "Reason".into(), value: notes.into() },
+                ],
+            })
+        }
+        "stock_take" => {
+            let product_id = input.get("product_id").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing product_id".into()))?;
+            let new_qty = input.get("new_quantity").and_then(|v| v.as_f64())
+                .ok_or_else(|| AppError::Validation("Missing new_quantity".into()))?;
+            let notes = input.get("notes").and_then(|v| v.as_str()).unwrap_or("—");
+            let p = product_repo::get_product_by_id(pool, product_id).await?
+                .ok_or_else(|| AppError::NotFound("Product not found".into()))?;
+            let levels = stock_repo::get_all_levels(pool).await?;
+            let current = levels.iter()
+                .find(|s| s.product_id == product_id)
+                .map(|s| s.quantity_on_hand.clone())
+                .unwrap_or_else(|| "0".into());
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
+                description: format!("Stock take for '{}'", p.product.name),
+                fields: vec![
+                    ToolPreviewField { label: "Product".into(), value: p.product.name.clone() },
+                    ToolPreviewField { label: "Current Qty".into(), value: current },
+                    ToolPreviewField { label: "New Count".into(), value: format!("{}", new_qty) },
+                    ToolPreviewField { label: "Notes".into(), value: notes.into() },
                 ],
             })
         }
@@ -409,6 +524,70 @@ pub async fn execute_mutation(
                     "product_id": product_id, "new_name": &old_name
                 }).to_string(),
                 entity_type: "product".into(),
+                entity_id: product_id.into(),
+            })
+        }
+        "adjust_stock" => {
+            let product_id = input.get("product_id").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing product_id".into()))?;
+            let delta = input.get("quantity_delta").and_then(|v| v.as_f64())
+                .ok_or_else(|| AppError::Validation("Missing quantity_delta".into()))?;
+            let notes = input.get("notes").and_then(|v| v.as_str());
+            let p = product_repo::get_product_by_id(pool, product_id).await?
+                .ok_or_else(|| AppError::NotFound("Product not found".into()))?;
+
+            let result = movements::manual_adjust(pool, product_id, delta, notes, "AI_ADMIN", None).await?;
+            let new_qty = result.quantity_on_hand.clone();
+
+            write_audit(pool, "AI_ADMIN", "stock.adjustment", product_id,
+                &json!({ "delta": delta, "new_qty": &new_qty, "notes": notes })).await?;
+
+            Ok(MutationResult {
+                description: format!("Stock of '{}' adjusted by {:+} → now {}",
+                    p.product.name, delta, new_qty),
+                undo_snapshot_json: json!({ "quantity_delta": -delta }).to_string(),
+                rollback_tool: "adjust_stock".into(),
+                rollback_input_json: json!({
+                    "product_id": product_id,
+                    "quantity_delta": -delta,
+                    "notes": "Undo previous adjustment",
+                }).to_string(),
+                entity_type: "stock_level".into(),
+                entity_id: product_id.into(),
+            })
+        }
+        "stock_take" => {
+            let product_id = input.get("product_id").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing product_id".into()))?;
+            let new_quantity = input.get("new_quantity").and_then(|v| v.as_f64())
+                .ok_or_else(|| AppError::Validation("Missing new_quantity".into()))?;
+            let notes = input.get("notes").and_then(|v| v.as_str());
+            let p = product_repo::get_product_by_id(pool, product_id).await?
+                .ok_or_else(|| AppError::NotFound("Product not found".into()))?;
+
+            // Get old qty for undo
+            let levels = stock_repo::get_all_levels(pool).await?;
+            let old_qty: f64 = levels.iter()
+                .find(|s| s.product_id == product_id)
+                .and_then(|s| s.quantity_on_hand.parse().ok())
+                .unwrap_or(0.0);
+
+            movements::stock_take(pool, product_id, new_quantity, notes, "AI_ADMIN", None).await?;
+
+            write_audit(pool, "AI_ADMIN", "stock.stock_take", product_id,
+                &json!({ "old_qty": old_qty, "new_qty": new_quantity, "notes": notes })).await?;
+
+            Ok(MutationResult {
+                description: format!("Stock take for '{}': counted {} (was {})",
+                    p.product.name, new_quantity, old_qty),
+                undo_snapshot_json: json!({ "new_quantity": old_qty }).to_string(),
+                rollback_tool: "stock_take".into(),
+                rollback_input_json: json!({
+                    "product_id": product_id,
+                    "new_quantity": old_qty,
+                    "notes": "Undo stock take",
+                }).to_string(),
+                entity_type: "stock_level".into(),
                 entity_id: product_id.into(),
             })
         }

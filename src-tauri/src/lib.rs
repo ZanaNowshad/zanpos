@@ -3,6 +3,7 @@ mod commands;
 mod db;
 mod domain;
 mod errors;
+mod inventory;
 mod sync;
 
 use std::sync::Arc;
@@ -78,6 +79,10 @@ pub fn run() {
             // Reports
             commands::report_commands::report_today,
             commands::report_commands::db_integrity_check,
+            // Inventory
+            commands::inventory_commands::inventory_get_levels,
+            commands::inventory_commands::inventory_get_low_stock,
+            commands::inventory_commands::inventory_get_movements,
             // Sync
             commands::sync_commands::sync_status,
             commands::sync_commands::sync_trigger_now,

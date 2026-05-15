@@ -23,6 +23,7 @@ pub struct SaleResult {
     pub sold_at: String,
     pub business_date: String,
     pub created_offline: bool,
+    pub low_stock_alerts: Vec<crate::domain::product::LowStockAlert>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

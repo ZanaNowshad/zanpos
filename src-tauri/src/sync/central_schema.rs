@@ -194,6 +194,34 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     previous_hash TEXT
 );
 
+-- ── Inventory tables ─────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS stock_levels (
+    stock_level_id   TEXT PRIMARY KEY,
+    product_id       TEXT NOT NULL,
+    branch_id        TEXT NOT NULL,
+    quantity_on_hand TEXT NOT NULL DEFAULT '0',
+    last_movement_at TEXT,
+    updated_at       TEXT NOT NULL,
+    UNIQUE(product_id, branch_id)
+);
+
+CREATE TABLE IF NOT EXISTS stock_movements (
+    movement_id        TEXT PRIMARY KEY,
+    product_id         TEXT NOT NULL,
+    branch_id          TEXT NOT NULL,
+    device_id          TEXT NOT NULL,
+    movement_type      TEXT NOT NULL,
+    quantity_delta     TEXT NOT NULL,
+    quantity_after     TEXT NOT NULL,
+    reference_type     TEXT,
+    reference_id       TEXT,
+    notes              TEXT,
+    created_by_user_id TEXT,
+    created_at         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sm_product  ON stock_movements (product_id);
+CREATE INDEX IF NOT EXISTS idx_sm_created  ON stock_movements (created_at);
+
 -- ── apply_sync_event RPC ──────────────────────────────────────────────────────
 -- Called by every device push. Inserts into sync_events log (idempotent) and
 -- applies LWW upsert or append-only insert to the entity table.
@@ -427,6 +455,40 @@ BEGIN
                 p_payload->>'previous_hash'
             )
             ON CONFLICT (audit_log_id) DO NOTHING;
+
+        WHEN 'stock_level' THEN
+            INSERT INTO stock_levels (
+                stock_level_id, product_id, branch_id, quantity_on_hand, updated_at
+            )
+            VALUES (
+                'SL-' || (p_payload->>'product_id'),
+                p_payload->>'product_id',
+                COALESCE(p_payload->>'branch_id', 'unknown'),
+                COALESCE(p_payload->>'quantity_on_hand', '0'),
+                p_payload->>'updated_at'
+            )
+            ON CONFLICT (product_id, branch_id) DO UPDATE SET
+                quantity_on_hand = EXCLUDED.quantity_on_hand,
+                updated_at       = EXCLUDED.updated_at
+            WHERE stock_levels.updated_at < EXCLUDED.updated_at;
+
+        WHEN 'stock_movement' THEN
+            INSERT INTO stock_movements (
+                movement_id, product_id, branch_id, device_id, movement_type,
+                quantity_delta, quantity_after, reference_type, reference_id,
+                notes, created_by_user_id, created_at
+            )
+            VALUES (
+                p_payload->>'movement_id', p_payload->>'product_id',
+                COALESCE(p_payload->>'branch_id', 'unknown'),
+                COALESCE(p_payload->>'device_id', 'unknown'),
+                p_payload->>'movement_type',
+                p_payload->>'quantity_delta', p_payload->>'quantity_after',
+                p_payload->>'reference_type', p_payload->>'reference_id',
+                p_payload->>'notes', p_payload->>'created_by_user_id',
+                p_payload->>'created_at'
+            )
+            ON CONFLICT (movement_id) DO NOTHING;
 
         ELSE
             -- Unknown entity type: still logged in sync_events, just skip entity apply

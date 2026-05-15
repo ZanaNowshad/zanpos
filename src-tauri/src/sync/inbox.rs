@@ -170,6 +170,62 @@ pub async fn apply_event(pool: &SqlitePool, event: &SyncEventRow) -> AppResult<(
             .await?;
         }
 
+        // ── Stock levels from other devices: apply LWW ────────────────────────
+        "stock_level" => {
+            let product_id       = str_field(p, "product_id")?;
+            let branch_id_field  = str_field(p, "branch_id")?;
+            let quantity_on_hand = str_field(p, "quantity_on_hand")?;
+            let updated_at       = str_field(p, "updated_at")?;
+            let stock_level_id   = format!("SL-{}", product_id);
+
+            sqlx::query(
+                "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at)
+                 VALUES (?,?,?,?,?)
+                 ON CONFLICT(product_id, branch_id) DO UPDATE SET
+                   quantity_on_hand = excluded.quantity_on_hand,
+                   updated_at       = excluded.updated_at
+                 WHERE stock_levels.updated_at < excluded.updated_at"
+            )
+            .bind(&stock_level_id)
+            .bind(&product_id)
+            .bind(&branch_id_field)
+            .bind(&quantity_on_hand)
+            .bind(&updated_at)
+            .execute(pool)
+            .await?;
+        }
+
+        // ── Stock movements from other devices: append-only ────────────────────
+        "stock_movement" => {
+            let movement_id        = str_field(p, "movement_id")?;
+            let product_id         = str_field(p, "product_id")?;
+            let branch_id_field    = str_field(p, "branch_id")?;
+            let device_id          = str_field(p, "device_id")?;
+            let movement_type      = str_field(p, "movement_type")?;
+            let quantity_delta     = str_field(p, "quantity_delta")?;
+            let quantity_after     = str_field(p, "quantity_after")?;
+            let reference_type     = opt_str(p, "reference_type");
+            let reference_id       = opt_str(p, "reference_id");
+            let notes              = opt_str(p, "notes");
+            let created_by_user_id = opt_str(p, "created_by_user_id");
+            let created_at         = str_field(p, "created_at")?;
+
+            sqlx::query(
+                "INSERT OR IGNORE INTO stock_movements
+                 (movement_id, product_id, branch_id, device_id, movement_type,
+                  quantity_delta, quantity_after, reference_type, reference_id,
+                  notes, created_by_user_id, created_at, sync_status)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,'synced')"
+            )
+            .bind(&movement_id).bind(&product_id).bind(&branch_id_field)
+            .bind(&device_id).bind(&movement_type)
+            .bind(&quantity_delta).bind(&quantity_after)
+            .bind(reference_type).bind(reference_id)
+            .bind(notes).bind(created_by_user_id).bind(&created_at)
+            .execute(pool)
+            .await?;
+        }
+
         // Sales, payments, refunds, shifts, audit_logs from other devices:
         // We do NOT import these locally — each device owns its own transactional data.
         // The central DB is the archive. If cross-device reporting is needed, it queries

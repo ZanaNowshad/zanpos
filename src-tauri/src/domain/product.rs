@@ -17,6 +17,7 @@ pub struct Product {
     pub version: i64,
     pub created_at: String,
     pub updated_at: String,
+    pub reorder_point: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +28,15 @@ pub struct ProductWithPrice {
     pub tax_rate_basis_points: i64,
     pub tax_inclusive: bool,
     pub category_name: String,
+    pub quantity_on_hand: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LowStockAlert {
+    pub product_id: String,
+    pub product_name: String,
+    pub quantity_on_hand: String,
+    pub reorder_point: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

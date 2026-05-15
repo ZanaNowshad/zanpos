@@ -92,6 +92,9 @@ pub fn run() {
             commands::refund_commands::receipt_reprint,
             // Reports
             commands::report_commands::report_today,
+            commands::report_commands::report_date_range,
+            commands::report_commands::report_top_products,
+            commands::report_commands::report_sales_list,
             commands::report_commands::db_integrity_check,
             // Inventory
             commands::inventory_commands::inventory_get_levels,

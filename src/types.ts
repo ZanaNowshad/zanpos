@@ -306,6 +306,40 @@ export interface UndoActionResult {
   followup: string;
 }
 
+// ─── Phase 7: Enhanced report types ──────────────────────────────────────────
+
+export interface RangeSummary {
+  from_date: string;
+  to_date: string;
+  transaction_count: number;
+  gross_total_minor: number;
+  discount_total_minor: number;
+  tax_total_minor: number;
+  net_total_minor: number;
+  cash_total_minor: number;
+  card_total_minor: number;
+  refund_count: number;
+  refund_total_minor: number;
+}
+
+export interface TopProduct {
+  product_name: string;
+  total_quantity: string;
+  revenue_minor: number;
+  transaction_count: number;
+}
+
+export interface SaleListRow {
+  sale_id: string;
+  receipt_number: string;
+  sold_at: string;
+  cashier_name: string;
+  net_total_minor: number;
+  discount_total_minor: number;
+  status: string;
+  payment_methods: string;
+}
+
 // ─── Phase 6: Back-office admin types ────────────────────────────────────────
 
 export interface AdminProduct {

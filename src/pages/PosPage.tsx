@@ -58,6 +58,27 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
     netTotal, taxTotal, lineCount,
   } = useCart(session);
 
+  // ── Keyboard shortcuts (after lineCount is declared) ──────────────────────
+  useEffect(() => {
+    const noModalOpen = () =>
+      !showPayment && !saleResult && !showShiftClose &&
+      !showHold && !showRefund && !showReport &&
+      !showDiscount && !showBackOffice;
+
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "F6") {
+        e.preventDefault();
+        if (noModalOpen()) setShowHold(true);
+      } else if (e.key === "F9") {
+        e.preventDefault();
+        if (noModalOpen() && lineCount > 0) setShowPayment(true);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [showPayment, saleResult, showShiftClose, showHold, showRefund,
+      showReport, showDiscount, showBackOffice, lineCount]);
+
   useEffect(() => {
     setProductLoading(true);
     productListAll()

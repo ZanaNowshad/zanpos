@@ -12,10 +12,12 @@ import type {
   PaymentInput,
   ProductWithPrice,
   ProviderConfig,
+  RangeSummary,
   RefundItemInput,
   RefundResult,
   RoleRow,
   SaleForRefund,
+  SaleListRow,
   SaleResult,
   SessionUser,
   Shift,
@@ -25,6 +27,7 @@ import type {
   SyncStatus,
   TaxRuleRow,
   TodaySummary,
+  TopProduct,
   UndoActionResult,
   UserSummary,
   ValidateProviderResult,
@@ -141,6 +144,15 @@ export const receiptReprint = (receipt_number: string): Promise<SaleResult> =>
 
 export const reportToday = (branch_id: string, business_date: string): Promise<TodaySummary> =>
   invoke("report_today", { branchId: branch_id, businessDate: business_date });
+
+export const reportDateRange = (branch_id: string, from_date: string, to_date: string): Promise<RangeSummary> =>
+  invoke("report_date_range", { branchId: branch_id, fromDate: from_date, toDate: to_date });
+
+export const reportTopProducts = (branch_id: string, from_date: string, to_date: string): Promise<TopProduct[]> =>
+  invoke("report_top_products", { branchId: branch_id, fromDate: from_date, toDate: to_date });
+
+export const reportSalesList = (branch_id: string, from_date: string, to_date: string): Promise<SaleListRow[]> =>
+  invoke("report_sales_list", { branchId: branch_id, fromDate: from_date, toDate: to_date });
 
 export const dbIntegrityCheck = (): Promise<string> =>
   invoke("db_integrity_check");

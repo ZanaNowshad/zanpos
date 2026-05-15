@@ -1467,3 +1467,154 @@ textarea.field-input { resize: vertical; }
 
 .bo-change-pin-toggle { margin-top: 12px; }
 .bo-pin-toggle-btn { padding: 6px 12px; font-size: 0.82rem; }
+
+/* ── Phase 7: Reports tab ────────────────────────────────────────────────────── */
+
+.rpt-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.rpt-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.rpt-presets { display: flex; gap: 4px; }
+.rpt-preset-btn {
+  padding: 6px 14px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 0.82rem;
+  transition: all 0.12s;
+}
+.rpt-preset-btn:hover { color: var(--text); border-color: var(--text-dim); }
+.rpt-preset-active { background: var(--surface2); color: var(--text); border-color: var(--accent2); font-weight: 600; }
+
+.rpt-date-inputs { display: flex; align-items: center; gap: 8px; }
+.rpt-date-input {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 0.85rem;
+  padding: 6px 10px;
+  outline: none;
+}
+.rpt-date-input:focus { border-color: var(--accent2); }
+.rpt-date-sep { color: var(--text-dim); }
+.rpt-run-btn { padding: 6px 16px; font-size: 0.85rem; }
+
+.rpt-section-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  padding: 0 12px;
+}
+
+.rpt-section-tab {
+  padding: 8px 18px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: color 0.12s;
+}
+.rpt-section-tab:hover { color: var(--text); }
+.rpt-section-active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+
+.rpt-count {
+  background: var(--surface2);
+  border-radius: 10px;
+  padding: 1px 6px;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.rpt-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+/* Summary cards */
+.rpt-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.rpt-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.rpt-card-accent { border-color: var(--accent2); background: rgba(83,52,131,0.15); }
+.rpt-card-dim    { opacity: 0.75; }
+.rpt-card-label  { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin-bottom: 6px; }
+.rpt-card-value  { font-size: 1.15rem; font-weight: 700; color: var(--text); }
+
+/* Tables */
+.rpt-table-wrap { overflow-x: auto; }
+.rpt-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.rpt-table th {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 2px solid var(--border);
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+.rpt-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.rpt-table tr:last-child td { border-bottom: none; }
+.rpt-table tr:hover td { background: rgba(255,255,255,0.03); }
+.rpt-row-dim td { opacity: 0.6; }
+
+.rpt-num     { text-align: right; }
+.rpt-money   { font-weight: 600; }
+.rpt-dim     { color: var(--text-dim); }
+.rpt-rank    { color: var(--text-dim); font-size: 0.8rem; width: 32px; }
+.rpt-receipt { font-family: monospace; font-size: 0.8rem; color: var(--text-dim); }
+.rpt-method  { text-transform: capitalize; color: var(--text-dim); font-size: 0.8rem; }
+.rpt-date    { white-space: nowrap; color: var(--text-dim); font-size: 0.8rem; }
+
+.rpt-status {
+  display: inline-block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.rpt-status-completed         { background: rgba(76,175,80,0.15);  color: var(--success); }
+.rpt-status-refunded,
+.rpt-status-partially_refunded { background: rgba(255,152,0,0.15); color: var(--warning); }
+.rpt-status-voided             { background: rgba(244,67,54,0.12); color: var(--error); }

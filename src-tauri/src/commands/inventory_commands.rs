@@ -5,6 +5,7 @@ use crate::inventory::stock_repo::{self, StockLevel, StockMovementRow};
 use crate::AppState;
 
 const BRANCH_ID: &str = "01JBRANCH0000000000000001";
+const DEVICE_ID: &str = "01JDEVICE0000000000000001";
 
 // ── inventory_get_levels ──────────────────────────────────────────────────────
 
@@ -85,13 +86,14 @@ pub async fn inventory_receive_stock(
     // Record movement
     sqlx::query(
         "INSERT INTO stock_movements
-           (movement_id, product_id, branch_id, movement_type, quantity_delta,
+           (movement_id, product_id, branch_id, device_id, movement_type, quantity_delta,
             quantity_after, reference_type, notes, created_by_user_id, created_at)
-         VALUES (?, ?, ?, 'receive', ?, ?, 'manual_receive', ?, ?, ?)"
+         VALUES (?, ?, ?, ?, 'receive', ?, ?, 'manual_receive', ?, ?, ?)"
     )
     .bind(Ulid::new().to_string())
     .bind(&input.product_id)
     .bind(BRANCH_ID)
+    .bind(DEVICE_ID)
     .bind(&input.quantity)
     .bind(&new_qty)
     .bind(&input.notes)
@@ -161,13 +163,14 @@ pub async fn inventory_adjust_stock(
     // Record movement
     sqlx::query(
         "INSERT INTO stock_movements
-           (movement_id, product_id, branch_id, movement_type, quantity_delta,
+           (movement_id, product_id, branch_id, device_id, movement_type, quantity_delta,
             quantity_after, reference_type, notes, created_by_user_id, created_at)
-         VALUES (?, ?, ?, 'adjustment', ?, ?, 'count_correction', ?, ?, ?)"
+         VALUES (?, ?, ?, ?, 'adjustment', ?, ?, 'count_correction', ?, ?, ?)"
     )
     .bind(Ulid::new().to_string())
     .bind(&input.product_id)
     .bind(BRANCH_ID)
+    .bind(DEVICE_ID)
     .bind(&delta_str)
     .bind(&input.new_quantity)
     .bind(&input.notes)

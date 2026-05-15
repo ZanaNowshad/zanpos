@@ -1,0 +1,397 @@
+/* ── App splash / loading screen ─────────────────────────────────────────────── */
+
+.app-splash {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  gap: 20px;
+}
+
+.app-splash-logo {
+  font-size: 2.8rem;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  color: var(--text);
+}
+.app-splash-logo span { color: var(--accent2); }
+
+.app-splash-spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent2);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.app-splash-error {
+  color: var(--error);
+  text-align: center;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+/* ── Error boundary ───────────────────────────────────────────────────────────── */
+
+.error-boundary {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+}
+
+.error-boundary-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 40px 36px;
+  max-width: 440px;
+  width: 100%;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+}
+
+.error-boundary-icon { font-size: 3rem; }
+
+.error-boundary-title {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+}
+
+.error-boundary-msg {
+  font-size: 0.9rem;
+  color: var(--error);
+  font-family: monospace;
+  background: rgba(244,67,54,0.08);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  width: 100%;
+  word-break: break-word;
+}
+
+.error-boundary-hint {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+/* ── Setup wizard ─────────────────────────────────────────────────────────────── */
+
+.setup-screen {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 32px 16px;
+  overflow-y: auto;
+}
+
+.setup-progress {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+  margin-bottom: 40px;
+  position: relative;
+  width: 100%;
+  max-width: 560px;
+  justify-content: space-between;
+}
+
+.setup-progress-line {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  height: 2px;
+  background: var(--accent2);
+  transition: width 0.4s ease;
+  z-index: 0;
+}
+
+.setup-step-dot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  z-index: 1;
+}
+
+.setup-dot-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  transition: all 0.25s;
+}
+
+.setup-step-done .setup-dot-circle {
+  background: var(--accent2);
+  border-color: var(--accent2);
+  color: #fff;
+}
+
+.setup-step-active .setup-dot-circle {
+  border-color: var(--accent2);
+  color: var(--accent2);
+}
+
+.setup-dot-label {
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.setup-step-active .setup-dot-label { color: var(--accent2); font-weight: 600; }
+
+.setup-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 560px;
+  padding: 36px 40px;
+}
+
+.setup-content { display: flex; flex-direction: column; gap: 14px; }
+
+.setup-logo {
+  font-size: 2.4rem;
+  font-weight: 900;
+  color: var(--text);
+  letter-spacing: -0.03em;
+}
+.setup-logo span { color: var(--accent2); }
+
+.setup-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+}
+
+.setup-body {
+  font-size: 0.92rem;
+  color: var(--text-dim);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.setup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.setup-btn-primary {
+  background: var(--accent2);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  padding: 10px 24px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.setup-btn-primary:hover:not(:disabled) { opacity: 0.88; }
+.setup-btn-primary:disabled { opacity: 0.5; cursor: default; }
+
+.setup-btn-secondary {
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 20px;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+.setup-btn-secondary:hover { background: var(--surface3); }
+
+.setup-btn-finish { padding: 12px 32px; font-size: 1rem; }
+
+.setup-pin-input { letter-spacing: 0.2em; font-size: 1.1rem; }
+
+.setup-done { align-items: center; text-align: center; }
+.setup-done-icon { font-size: 3.5rem; }
+
+.setup-review {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  width: 100%;
+}
+
+.setup-review-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.88rem;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  gap: 12px;
+}
+.setup-review-row:last-child { border-bottom: none; }
+.setup-review-row span { color: var(--text-dim); }
+.setup-review-row strong { color: var(--text); word-break: break-word; text-align: right; }
+
+/* ── Settings tab ─────────────────────────────────────────────────────────────── */
+
+.settings-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.settings-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 4px;
+}
+
+.settings-meta {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+.settings-meta code {
+  background: var(--surface2);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 0.75rem;
+}
+
+.settings-form {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.settings-section {
+  margin-bottom: 24px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-section:last-of-type { border-bottom: none; }
+
+.settings-section-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin: 0 0 14px;
+}
+
+.settings-hint {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+
+.settings-receipt-preview { margin-top: 14px; }
+
+.settings-preview-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.receipt-mini {
+  background: #fff;
+  color: #111;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 12px 16px;
+  font-family: "Courier New", monospace;
+  font-size: 0.78rem;
+  line-height: 1.7;
+  max-width: 280px;
+}
+
+.receipt-mini-biz    { font-weight: 700; font-size: 0.9rem; text-align: center; }
+.receipt-mini-addr   { text-align: center; color: #555; font-size: 0.72rem; }
+.receipt-mini-header { text-align: center; font-style: italic; color: #555; margin-top: 4px; }
+.receipt-mini-divider { color: #aaa; text-align: center; margin: 4px 0; }
+.receipt-mini-item   { color: #333; }
+.receipt-mini-total  { font-weight: 700; }
+.receipt-mini-footer { text-align: center; font-style: italic; color: #555; margin-top: 4px; }
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  padding-top: 12px;
+}
+
+.settings-saved { color: var(--success); font-size: 0.88rem; font-weight: 600; }
+.settings-save-btn { padding: 10px 28px; }
+
+/* ── Receipt improvements ─────────────────────────────────────────────────────── */
+
+.receipt-addr {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.receipt-custom-header {
+  font-size: 0.82rem;
+  font-style: italic;
+  color: var(--text-dim);
+  text-align: center;
+  margin-top: 4px;
+}
+
+.receipt-footer-text {
+  font-size: 0.82rem;
+  font-style: italic;
+  color: var(--text-dim);
+  text-align: center;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  margin-top: 10px;
+}
+
+.receipt-divider {
+  border-top: 1px dashed var(--border);
+  margin: 8px 0;
+}

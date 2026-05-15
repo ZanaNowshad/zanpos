@@ -260,16 +260,22 @@ pub async fn pos_void_sale(
     }
 
     // Record in audit log — best-effort, non-fatal
+    let audit_id = ulid::Ulid::new().to_string();
     let _ = sqlx::query(
-        "INSERT INTO audit_log (log_id, entity_type, entity_id, action, actor_user_id, created_at)
-         VALUES (?,?,?,?,?,?)"
+        "INSERT INTO audit_logs
+           (audit_log_id, event_type, entity_type, entity_id,
+            actor_user_id, actor_type, created_at, hash, previous_hash)
+         VALUES (?,?,?,?,?,?,?,?,?)"
     )
-    .bind(ulid::Ulid::new().to_string())
+    .bind(&audit_id)
+    .bind("sale.voided")
     .bind("sale")
     .bind(&sale_id)
-    .bind("void")
     .bind(&voided_by_user_id)
+    .bind("user")
     .bind(&now)
+    .bind(&audit_id)   // hash placeholder (real implementation would be SHA-256)
+    .bind(Option::<String>::None)
     .execute(&state.db)
     .await;
 

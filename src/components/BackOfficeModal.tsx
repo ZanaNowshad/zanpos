@@ -5,8 +5,9 @@ import CategoriesTab from "./CategoriesTab";
 import UsersTab from "./UsersTab";
 import ReportsTab from "./ReportsTab";
 import InventoryTab from "./InventoryTab";
+import SettingsTab from "./SettingsTab";
 
-type Tab = "products" | "categories" | "users" | "reports" | "inventory";
+type Tab = "products" | "categories" | "users" | "reports" | "inventory" | "settings";
 
 interface Props {
   sessionUser: SessionUser;
@@ -23,7 +24,7 @@ export default function BackOfficeModal({ sessionUser, onClose }: Props) {
         <div className="bo-header">
           <span className="bo-header-title">⚙ Back Office</span>
           <div className="bo-tabs">
-            {(["products", "categories", "users", "reports", "inventory"] as Tab[]).map(t => (
+            {(["products", "categories", "users", "reports", "inventory", "settings"] as Tab[]).map(t => (
               <button
                 key={t}
                 className={`bo-tab ${tab === t ? "bo-tab-active" : ""}`}
@@ -43,6 +44,7 @@ export default function BackOfficeModal({ sessionUser, onClose }: Props) {
           {tab === "users"      && <UsersTab />}
           {tab === "reports"    && <ReportsTab sessionUserId={sessionUser.user_id} />}
           {tab === "inventory"  && <InventoryTab sessionUserId={sessionUser.user_id} />}
+          {tab === "settings"   && <SettingsTab />}
         </div>
       </div>
     </div>

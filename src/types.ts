@@ -393,12 +393,53 @@ export interface SupabaseStatus {
   configured: boolean;
 }
 
-// ─── Device constants (device-specific, not user-specific) ───────────────────
+// ─── App configuration (loaded from DB at startup) ────────────────────────────
+
+export interface AppConfig {
+  setup_complete: boolean;
+  branch_id: string;
+  device_id: string;
+  branch_name: string;
+  branch_code: string;
+  currency: string;
+  currency_exponent: number;
+  address: string | null;
+  phone: string | null;
+  receipt_header: string | null;
+  receipt_footer: string | null;
+  tax_number: string | null;
+}
+
+export interface BranchSettings {
+  branch_id: string;
+  name: string;
+  branch_code: string;
+  currency: string;
+  timezone: string;
+  address: string | null;
+  phone: string | null;
+  receipt_header: string | null;
+  receipt_footer: string | null;
+  tax_number: string | null;
+}
+
+// ─── Device constants — mutable, populated from DB at startup ─────────────────
+// These defaults are used only as fallback; app_config_load() overwrites them.
 export const DEVICE = {
-  device_id: "01JDEVICE0000000000000001",
-  branch_id: "01JBRANCH0000000000000001",
-  branch_name: "Main Branch",
-  branch_code: "MAIN",
-  currency: "BHD",
+  device_id:         "01JDEVICE0000000000000001",
+  branch_id:         "01JBRANCH0000000000000001",
+  branch_name:       "Main Branch",
+  branch_code:       "MAIN",
+  currency:          "BHD",
   currency_exponent: 3,
-} as const;
+
+  /** Called once by App.tsx after loading config from DB. */
+  init(cfg: AppConfig) {
+    this.device_id         = cfg.device_id;
+    this.branch_id         = cfg.branch_id;
+    this.branch_name       = cfg.branch_name;
+    this.branch_code       = cfg.branch_code;
+    this.currency          = cfg.currency;
+    this.currency_exponent = cfg.currency_exponent;
+  },
+};

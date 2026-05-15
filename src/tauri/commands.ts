@@ -4,6 +4,8 @@ import type {
   AdminUserRow,
   AiChatInput,
   AiChatResponse,
+  AppConfig,
+  BranchSettings,
   Cart,
   CategoryRow,
   ExecuteActionInput,
@@ -32,6 +34,40 @@ import type {
   UserSummary,
   ValidateProviderResult,
 } from "../types";
+
+// ─── Setup & Settings commands ────────────────────────────────────────────────
+
+export const appConfigLoad = (): Promise<AppConfig> =>
+  invoke("app_config_load");
+
+export const setupWizardComplete = (input: {
+  store_name: string;
+  store_address?: string;
+  store_phone?: string;
+  receipt_header?: string;
+  receipt_footer?: string;
+  tax_number?: string;
+  currency: string;
+  timezone: string;
+  owner_display_name: string;
+  owner_username: string;
+  owner_pin: string;
+}): Promise<AppConfig> =>
+  invoke("setup_wizard_complete", { input });
+
+export const settingsGetBranch = (): Promise<BranchSettings> =>
+  invoke("settings_get_branch");
+
+export const settingsUpdateBranch = (input: {
+  name: string;
+  address?: string;
+  phone?: string;
+  receipt_header?: string;
+  receipt_footer?: string;
+  tax_number?: string;
+  timezone: string;
+}): Promise<BranchSettings> =>
+  invoke("settings_update_branch", { input });
 
 // ─── Auth commands ────────────────────────────────────────────────────────────
 

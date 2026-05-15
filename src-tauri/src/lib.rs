@@ -104,6 +104,11 @@ pub fn run() {
             commands::inventory_commands::inventory_get_movements,
             commands::inventory_commands::inventory_receive_stock,
             commands::inventory_commands::inventory_adjust_stock,
+            // Setup & Settings
+            commands::setup_commands::app_config_load,
+            commands::setup_commands::setup_wizard_complete,
+            commands::setup_commands::settings_get_branch,
+            commands::setup_commands::settings_update_branch,
             // Sync
             commands::sync_commands::sync_status,
             commands::sync_commands::sync_trigger_now,

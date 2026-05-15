@@ -1,8 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AdminProduct,
+  AdminUserRow,
   AiChatInput,
   AiChatResponse,
   Cart,
+  CategoryRow,
   ExecuteActionInput,
   ExecuteActionResult,
   HeldCartSummary,
@@ -11,6 +14,7 @@ import type {
   ProviderConfig,
   RefundItemInput,
   RefundResult,
+  RoleRow,
   SaleForRefund,
   SaleResult,
   SessionUser,
@@ -19,6 +23,7 @@ import type {
   StockMovementRow,
   SupabaseStatus,
   SyncStatus,
+  TaxRuleRow,
   TodaySummary,
   UndoActionResult,
   UserSummary,
@@ -200,6 +205,54 @@ export const aiUndoAction = (
   currencyExponent: number
 ): Promise<UndoActionResult> =>
   invoke("ai_undo_action", { undoId, userId, currencyExponent });
+
+// ─── Back-office admin commands ───────────────────────────────────────────────
+
+export const adminListProducts = (): Promise<AdminProduct[]> =>
+  invoke("admin_list_products");
+
+export const adminCreateProduct = (input: {
+  category_id: string; name: string; sku?: string; barcode?: string;
+  tax_rule_id?: string; price_minor: number;
+  track_inventory: boolean; allow_decimal_quantity: boolean;
+  reorder_point: number; created_by_user_id: string;
+}): Promise<AdminProduct> =>
+  invoke("admin_create_product", { input });
+
+export const adminUpdateProduct = (input: {
+  product_id: string; category_id: string; name: string; sku?: string; barcode?: string;
+  tax_rule_id?: string; price_minor: number;
+  track_inventory: boolean; allow_decimal_quantity: boolean;
+  reorder_point: number; is_active: boolean; updated_by_user_id: string;
+}): Promise<AdminProduct> =>
+  invoke("admin_update_product", { input });
+
+export const adminListCategories = (): Promise<CategoryRow[]> =>
+  invoke("admin_list_categories");
+
+export const adminListTaxRules = (): Promise<TaxRuleRow[]> =>
+  invoke("admin_list_tax_rules");
+
+export const adminSaveCategory = (input: {
+  category_id?: string; name: string; sort_order: number; is_active: boolean;
+}): Promise<CategoryRow> =>
+  invoke("admin_save_category", { input });
+
+export const adminListUsersAll = (): Promise<AdminUserRow[]> =>
+  invoke("admin_list_users_all");
+
+export const adminListRoles = (): Promise<RoleRow[]> =>
+  invoke("admin_list_roles");
+
+export const adminCreateUser = (input: {
+  display_name: string; username: string; pin: string; role_id: string;
+}): Promise<AdminUserRow> =>
+  invoke("admin_create_user", { input });
+
+export const adminUpdateUser = (input: {
+  user_id: string; display_name: string; pin?: string; role_id: string; is_active: boolean;
+}): Promise<AdminUserRow> =>
+  invoke("admin_update_user", { input });
 
 // ─── Inventory commands ───────────────────────────────────────────────────────
 

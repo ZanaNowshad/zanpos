@@ -66,6 +66,17 @@ pub fn run() {
             commands::pos_commands::pos_apply_bill_discount,
             commands::pos_commands::pos_apply_line_discount,
             commands::pos_commands::pos_set_line_note,
+            // Back-office admin
+            commands::admin_commands::admin_list_products,
+            commands::admin_commands::admin_create_product,
+            commands::admin_commands::admin_update_product,
+            commands::admin_commands::admin_list_categories,
+            commands::admin_commands::admin_list_tax_rules,
+            commands::admin_commands::admin_save_category,
+            commands::admin_commands::admin_list_users_all,
+            commands::admin_commands::admin_list_roles,
+            commands::admin_commands::admin_create_user,
+            commands::admin_commands::admin_update_user,
             // Products
             commands::product_commands::product_search,
             commands::product_commands::product_get_by_barcode,

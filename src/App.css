@@ -1223,3 +1223,247 @@ textarea.field-input { resize: vertical; }
   font-size: 0.9rem;
 }
 .btn-danger:hover { background: rgba(244,67,54,0.25); }
+
+/* ── Phase 6: Back-office panel ─────────────────────────────────────────────── */
+
+.bo-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+}
+
+.bo-modal {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.bo-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.bo-header-title {
+  font-weight: 700;
+  font-size: 1rem;
+  white-space: nowrap;
+}
+
+.bo-tabs {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.bo-tab {
+  padding: 6px 16px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: color 0.15s, background 0.15s;
+}
+.bo-tab:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+.bo-tab-active { background: var(--surface2); color: var(--text); border-color: var(--border); font-weight: 600; }
+
+.bo-close-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+.bo-close-btn:hover { color: var(--text); border-color: var(--text-dim); }
+
+.bo-content {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Tab layout: list on left, form on right */
+.bo-tab-layout {
+  display: flex;
+  gap: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.bo-list-pane {
+  width: 380px;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.bo-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.bo-list-title { font-weight: 600; font-size: 0.9rem; color: var(--text-dim); }
+
+.bo-search {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 0.85rem;
+  padding: 6px 10px;
+  outline: none;
+}
+.bo-search:focus { border-color: var(--accent2); }
+
+.bo-add-btn { padding: 6px 14px; font-size: 0.85rem; white-space: nowrap; }
+
+.bo-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.bo-list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: var(--radius);
+  color: var(--text);
+  cursor: pointer;
+  padding: 10px 10px;
+  text-align: left;
+  gap: 8px;
+  transition: background 0.12s;
+}
+.bo-list-row:hover { background: rgba(255,255,255,0.05); }
+.bo-list-row-active { background: rgba(83,52,131,0.35) !important; }
+.bo-list-row-inactive { opacity: 0.5; }
+.bo-list-row-main { flex: 1; min-width: 0; }
+.bo-list-row-name { display: block; font-weight: 500; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bo-list-row-sub  { display: block; font-size: 0.78rem; color: var(--text-dim); margin-top: 1px; }
+.bo-list-row-right { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.bo-list-row-price { font-size: 0.85rem; font-weight: 600; }
+.bo-badge-inactive { font-size: 0.7rem; background: rgba(244,67,54,0.15); color: var(--error); border-radius: 4px; padding: 1px 5px; }
+
+.bo-empty {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+/* Form pane */
+.bo-form-pane {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+
+.bo-form-title {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 16px;
+  color: var(--text);
+}
+
+.bo-form-error {
+  background: rgba(244,67,54,0.12);
+  border: 1px solid var(--error);
+  border-radius: var(--radius);
+  color: var(--error);
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  margin-bottom: 12px;
+}
+
+.bo-label {
+  display: block;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  margin: 12px 0 5px;
+}
+
+.bo-input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 0.9rem;
+  padding: 8px 12px;
+  outline: none;
+}
+.bo-input:focus { border-color: var(--accent2); }
+
+.bo-select {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 0.9rem;
+  padding: 8px 12px;
+  outline: none;
+  cursor: pointer;
+}
+.bo-select:focus { border-color: var(--accent2); }
+
+.bo-row-two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.bo-checkboxes {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.bo-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  color: var(--text);
+}
+.bo-checkbox-label input { accent-color: var(--accent2); width: 15px; height: 15px; }
+
+.bo-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.bo-change-pin-toggle { margin-top: 12px; }
+.bo-pin-toggle-btn { padding: 6px 12px; font-size: 0.82rem; }

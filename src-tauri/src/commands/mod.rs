@@ -1,3 +1,4 @@
+pub mod admin_commands;
 pub mod ai_admin_commands;
 pub mod auth_commands;
 pub mod held_cart_commands;

@@ -7,6 +7,7 @@ import { useSyncStatus } from "../hooks/useSyncStatus";
 import BarcodeInput from "../components/BarcodeInput";
 import ProductGrid from "../components/ProductGrid";
 import CartPanel from "../components/CartPanel";
+import BackOfficeModal from "../components/BackOfficeModal";
 import DiscountModal from "../components/DiscountModal";
 import PaymentModal from "../components/PaymentModal";
 import ReceiptPreview from "../components/ReceiptPreview";
@@ -43,6 +44,8 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
   const [showRefund, setShowRefund] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [showDiscount, setShowDiscount] = useState(false);
+  const [showBackOffice, setShowBackOffice] = useState(false);
+  const canOpenBackOffice = ["owner", "manager"].includes(sessionUser.role_name);
   const [restockAlerts, setRestockAlerts] = useState<LowStockAlert[]>([]);
   const restockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -127,6 +130,11 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
         <button className="top-bar-btn" onClick={() => setShowReport(true)} title="Today's Report">
           📊
         </button>
+        {canOpenBackOffice && (
+          <button className="top-bar-btn" onClick={() => setShowBackOffice(true)} title="Back Office">
+            ⚙
+          </button>
+        )}
         {onOpenAdminChat && (
           <button className="top-bar-btn top-bar-admin" onClick={onOpenAdminChat} title="Admin Chat">
             AI
@@ -274,6 +282,10 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
 
       {showReport && (
         <TodayReportModal onClose={() => setShowReport(false)} />
+      )}
+
+      {showBackOffice && (
+        <BackOfficeModal sessionUser={sessionUser} onClose={() => setShowBackOffice(false)} />
       )}
 
       {/* ── Restock alerts toast ── */}

@@ -306,6 +306,53 @@ export interface UndoActionResult {
   followup: string;
 }
 
+// ─── Phase 6: Back-office admin types ────────────────────────────────────────
+
+export interface AdminProduct {
+  product_id: string;
+  category_id: string;
+  category_name: string;
+  name: string;
+  sku: string | null;
+  barcode: string | null;
+  track_inventory: boolean;
+  allow_decimal_quantity: boolean;
+  is_active: boolean;
+  tax_rule_id: string | null;
+  tax_rule_name: string | null;
+  price_minor: number;
+  reorder_point: number;
+}
+
+export interface CategoryRow {
+  category_id: string;
+  name: string;
+  sort_order: number;
+  is_active: boolean;
+}
+
+export interface TaxRuleRow {
+  tax_rule_id: string;
+  name: string;
+  rate_basis_points: number;
+  inclusive: boolean;
+}
+
+export interface AdminUserRow {
+  user_id: string;
+  display_name: string;
+  username: string;
+  role_id: string;
+  role_name: string;
+  is_active: boolean;
+  last_login_at: string | null;
+}
+
+export interface RoleRow {
+  role_id: string;
+  name: string;
+}
+
 // ─── Phase 3: Supabase Sync ───────────────────────────────────────────────────
 
 export interface SupabaseStatus {

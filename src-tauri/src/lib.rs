@@ -63,6 +63,9 @@ pub fn run() {
             commands::pos_commands::pos_remove_line,
             commands::pos_commands::pos_finalize_sale,
             commands::pos_commands::pos_cart_summary,
+            commands::pos_commands::pos_apply_bill_discount,
+            commands::pos_commands::pos_apply_line_discount,
+            commands::pos_commands::pos_set_line_note,
             // Products
             commands::product_commands::product_search,
             commands::product_commands::product_get_by_barcode,

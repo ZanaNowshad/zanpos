@@ -1,6 +1,8 @@
+import { useState } from "react";
 import type { Cart, CartLine } from "../types";
 import { formatMoney } from "../money";
 import { DEVICE } from "../types";
+import LineEditModal from "./LineEditModal";
 
 interface Props {
   cart: Cart;
@@ -8,12 +10,21 @@ interface Props {
   taxTotal: number;
   onUpdateQty: (line_id: string, qty: string) => void;
   onRemove: (line_id: string) => void;
+  onApplyLineDiscount: (line_id: string, discount_minor: number) => void;
+  onSetLineNote: (line_id: string, note: string | null) => void;
   onPay: () => void;
 }
 
-export default function CartPanel({ cart, netTotal, taxTotal, onUpdateQty, onRemove, onPay }: Props) {
+export default function CartPanel({
+  cart, netTotal, taxTotal,
+  onUpdateQty, onRemove, onApplyLineDiscount, onSetLineNote, onPay,
+}: Props) {
+  const [editingLine, setEditingLine] = useState<CartLine | null>(null);
   const activeLines = cart.lines.filter(l => !l.voided);
   const fmt = (n: number) => `${DEVICE.currency} ${formatMoney(n, DEVICE.currency_exponent)}`;
+  const grossTotal = activeLines.reduce((s, l) => s + l.line_total_minor, 0);
+  const hasDiscount = cart.bill_discount_minor > 0 || activeLines.some(l => l.line_discount_minor > 0);
+  const totalDiscount = cart.bill_discount_minor + activeLines.reduce((s, l) => s + l.line_discount_minor, 0);
 
   return (
     <div className="cart-panel">
@@ -25,8 +36,7 @@ export default function CartPanel({ cart, netTotal, taxTotal, onUpdateQty, onRem
           <CartLineRow
             key={line.cart_line_id}
             line={line}
-            onUpdateQty={onUpdateQty}
-            onRemove={onRemove}
+            onEdit={() => setEditingLine(line)}
           />
         ))}
       </div>
@@ -37,6 +47,18 @@ export default function CartPanel({ cart, netTotal, taxTotal, onUpdateQty, onRem
             <span>Tax</span>
             <span>{fmt(taxTotal)}</span>
           </div>
+        )}
+        {hasDiscount && (
+          <>
+            <div className="cart-total-row cart-subtotal-row">
+              <span>Subtotal</span>
+              <span>{fmt(grossTotal)}</span>
+            </div>
+            <div className="cart-total-row cart-discount-row">
+              <span>Discount</span>
+              <span>− {fmt(totalDiscount)}</span>
+            </div>
+          </>
         )}
         <div className="cart-total-row cart-net-total">
           <span>Total</span>
@@ -51,44 +73,49 @@ export default function CartPanel({ cart, netTotal, taxTotal, onUpdateQty, onRem
       >
         Pay — {fmt(netTotal)}
       </button>
+
+      {editingLine && (
+        <LineEditModal
+          line={editingLine}
+          onUpdateQty={onUpdateQty}
+          onApplyLineDiscount={onApplyLineDiscount}
+          onSetLineNote={onSetLineNote}
+          onRemove={onRemove}
+          onClose={() => setEditingLine(null)}
+        />
+      )}
     </div>
   );
 }
 
 function CartLineRow({
   line,
-  onUpdateQty,
-  onRemove,
+  onEdit,
 }: {
   line: CartLine;
-  onUpdateQty: (id: string, qty: string) => void;
-  onRemove: (id: string) => void;
+  onEdit: () => void;
 }) {
   const fmt = (n: number) => formatMoney(n, DEVICE.currency_exponent);
+  const hasDiscount = line.line_discount_minor > 0;
 
   return (
-    <div className="cart-line">
-      <div className="cart-line-name">{line.product_name}</div>
-      <div className="cart-line-controls">
-        <button
-          className="qty-btn"
-          onClick={() => {
-            const q = Math.max(1, parseFloat(line.quantity) - 1);
-            onUpdateQty(line.cart_line_id, String(q));
-          }}
-        >−</button>
-        <span className="qty-value">{line.quantity}</span>
-        <button
-          className="qty-btn"
-          onClick={() => {
-            const q = parseFloat(line.quantity) + 1;
-            onUpdateQty(line.cart_line_id, String(q));
-          }}
-        >+</button>
+    <button className="cart-line cart-line-btn" onClick={onEdit}>
+      <div className="cart-line-main">
+        <div className="cart-line-name">
+          {line.product_name}
+          {line.note && <span className="cart-line-note">· {line.note}</span>}
+        </div>
+        <div className="cart-line-meta">
+          <span className="cart-line-qty">×{line.quantity}</span>
+          <span className="cart-line-unit">{fmt(line.unit_price_minor)}</span>
+        </div>
       </div>
-      <div className="cart-line-price">{fmt(line.unit_price_minor)}</div>
-      <div className="cart-line-total">{fmt(line.line_total_minor)}</div>
-      <button className="remove-btn" onClick={() => onRemove(line.cart_line_id)}>✕</button>
-    </div>
+      <div className="cart-line-right">
+        {hasDiscount && (
+          <div className="cart-line-discount">−{fmt(line.line_discount_minor)}</div>
+        )}
+        <div className="cart-line-total">{fmt(line.line_total_minor)}</div>
+      </div>
+    </button>
   );
 }

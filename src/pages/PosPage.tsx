@@ -7,6 +7,7 @@ import { useSyncStatus } from "../hooks/useSyncStatus";
 import BarcodeInput from "../components/BarcodeInput";
 import ProductGrid from "../components/ProductGrid";
 import CartPanel from "../components/CartPanel";
+import DiscountModal from "../components/DiscountModal";
 import PaymentModal from "../components/PaymentModal";
 import ReceiptPreview from "../components/ReceiptPreview";
 import SyncChip from "../components/SyncChip";
@@ -41,6 +42,7 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
   const [showHold, setShowHold] = useState(false);
   const [showRefund, setShowRefund] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  const [showDiscount, setShowDiscount] = useState(false);
   const [restockAlerts, setRestockAlerts] = useState<LowStockAlert[]>([]);
   const restockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -48,6 +50,7 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
   const {
     cart, loading, error, clearError,
     addByBarcode, addProduct, updateQuantity, removeLine,
+    applyBillDiscount, applyLineDiscount, setLineNote,
     finalizeSale, clearCart, replaceCart,
     netTotal, taxTotal, lineCount,
   } = useCart(session);
@@ -180,6 +183,8 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
           taxTotal={taxTotal}
           onUpdateQty={updateQuantity}
           onRemove={removeLine}
+          onApplyLineDiscount={applyLineDiscount}
+          onSetLineNote={setLineNote}
           onPay={() => lineCount > 0 && setShowPayment(true)}
         />
       </div>
@@ -191,6 +196,14 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
         </button>
         <button className="action-btn" onClick={() => setShowHold(true)}>
           Hold (F6)
+        </button>
+        <button
+          className="action-btn"
+          onClick={() => setShowDiscount(true)}
+          disabled={lineCount === 0}
+          title="Bill Discount"
+        >
+          % Discount
         </button>
         <button className="action-btn" onClick={() => setShowRefund(true)}>
           Refund
@@ -205,6 +218,18 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
       </div>
 
       {/* ── Modals ── */}
+      {showDiscount && (
+        <DiscountModal
+          grossMinor={cart.lines.filter(l => !l.voided).reduce((s, l) => s + l.line_total_minor, 0)}
+          currentDiscountMinor={cart.bill_discount_minor}
+          onApply={async (discount_minor) => {
+            await applyBillDiscount(discount_minor);
+            setShowDiscount(false);
+          }}
+          onCancel={() => setShowDiscount(false)}
+        />
+      )}
+
       {showPayment && (
         <PaymentModal
           netTotal={netTotal}

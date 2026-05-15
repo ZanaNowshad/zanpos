@@ -72,6 +72,33 @@ export function useCart(session: CartSession) {
     }
   }, [cart]);
 
+  const applyBillDiscount = useCallback(async (discount_minor: number) => {
+    try {
+      const updated = await cmd.posApplyBillDiscount(cart, discount_minor);
+      setCart(updated);
+    } catch (e: unknown) {
+      setError(typeof e === "string" ? e : "Failed to apply discount");
+    }
+  }, [cart]);
+
+  const applyLineDiscount = useCallback(async (cart_line_id: string, discount_minor: number) => {
+    try {
+      const updated = await cmd.posApplyLineDiscount(cart, cart_line_id, discount_minor);
+      setCart(updated);
+    } catch (e: unknown) {
+      setError(typeof e === "string" ? e : "Failed to apply line discount");
+    }
+  }, [cart]);
+
+  const setLineNote = useCallback(async (cart_line_id: string, note: string | null) => {
+    try {
+      const updated = await cmd.posSetLineNote(cart, cart_line_id, note);
+      setCart(updated);
+    } catch (e: unknown) {
+      setError(typeof e === "string" ? e : "Failed to set note");
+    }
+  }, [cart]);
+
   const finalizeSale = useCallback(async (payments: PaymentInput[]): Promise<SaleResult> => {
     setLoading(true);
     setError(null);
@@ -108,6 +135,9 @@ export function useCart(session: CartSession) {
     addProduct,
     updateQuantity,
     removeLine,
+    applyBillDiscount,
+    applyLineDiscount,
+    setLineNote,
     finalizeSale,
     clearCart,
     replaceCart,

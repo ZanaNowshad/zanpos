@@ -147,6 +147,56 @@ pub async fn pos_finalize_sale(
     sale_repo::finalize_sale(&state.db, &input.cart, input.payments, &key).await
 }
 
+// ─── Discount commands ────────────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+pub struct ApplyBillDiscountInput {
+    pub cart: Cart,
+    pub discount_minor: i64,
+}
+
+#[tauri::command]
+pub async fn pos_apply_bill_discount(input: ApplyBillDiscountInput) -> Result<Cart, AppError> {
+    let mut cart = input.cart;
+    cart.bill_discount_minor = input.discount_minor.max(0);
+    Ok(cart)
+}
+
+#[derive(serde::Deserialize)]
+pub struct ApplyLineDiscountInput {
+    pub cart: Cart,
+    pub cart_line_id: String,
+    pub discount_minor: i64,
+}
+
+#[tauri::command]
+pub async fn pos_apply_line_discount(input: ApplyLineDiscountInput) -> Result<Cart, AppError> {
+    let mut cart = input.cart;
+    if let Some(line) = cart.lines.iter_mut().find(|l| l.cart_line_id == input.cart_line_id) {
+        line.line_discount_minor = input.discount_minor.max(0);
+        line.recalculate();
+    }
+    Ok(cart)
+}
+
+#[derive(serde::Deserialize)]
+pub struct SetLineNoteInput {
+    pub cart: Cart,
+    pub cart_line_id: String,
+    pub note: Option<String>,
+}
+
+#[tauri::command]
+pub async fn pos_set_line_note(input: SetLineNoteInput) -> Result<Cart, AppError> {
+    let mut cart = input.cart;
+    if let Some(line) = cart.lines.iter_mut().find(|l| l.cart_line_id == input.cart_line_id) {
+        line.note = input.note.filter(|n| !n.is_empty());
+    }
+    Ok(cart)
+}
+
+// ─── Cart summary ─────────────────────────────────────────────────────────────
+
 #[derive(serde::Serialize)]
 pub struct CartSummary {
     pub gross_total_minor: i64,

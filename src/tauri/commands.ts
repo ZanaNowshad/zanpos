@@ -93,6 +93,15 @@ export const posFinalizeSale = (
 ): Promise<SaleResult> =>
   invoke("pos_finalize_sale", { input: { cart, payments, idempotency_key } });
 
+export const posApplyBillDiscount = (cart: Cart, discount_minor: number): Promise<Cart> =>
+  invoke("pos_apply_bill_discount", { input: { cart, discount_minor } });
+
+export const posApplyLineDiscount = (cart: Cart, cart_line_id: string, discount_minor: number): Promise<Cart> =>
+  invoke("pos_apply_line_discount", { input: { cart, cart_line_id, discount_minor } });
+
+export const posSetLineNote = (cart: Cart, cart_line_id: string, note: string | null): Promise<Cart> =>
+  invoke("pos_set_line_note", { input: { cart, cart_line_id, note } });
+
 // ─── Held cart commands ───────────────────────────────────────────────────────
 
 export const heldCartSave = (cart: Cart, note?: string): Promise<HeldCartSummary> =>

@@ -1067,3 +1067,159 @@ textarea.field-input { resize: vertical; }
 .restock-toast-title { font-size: 0.75rem; font-weight: 700; color: #f59e0b; margin-bottom: 2px; }
 .restock-toast-body  { font-size: 0.85rem; color: var(--text); }
 @keyframes toast-in { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: translateY(0); } }
+
+/* ── Phase 5: Discounts ─────────────────────────────────────────────────────── */
+
+/* Redesigned cart line (now a button) */
+.cart-line-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+  padding: 8px 4px;
+  text-align: left;
+  font-size: 0.85rem;
+  gap: 8px;
+}
+.cart-line-btn:hover { background: rgba(255,255,255,0.04); border-radius: var(--radius); }
+.cart-line-main { flex: 1; min-width: 0; }
+.cart-line-meta { display: flex; gap: 10px; color: var(--text-dim); font-size: 0.8rem; margin-top: 2px; }
+.cart-line-note { color: var(--text-dim); font-size: 0.78rem; margin-left: 4px; }
+.cart-line-qty { color: var(--text-dim); }
+.cart-line-unit { color: var(--text-dim); }
+.cart-line-right { display: flex; flex-direction: column; align-items: flex-end; }
+.cart-line-discount { font-size: 0.75rem; color: #4ade80; }
+.cart-line-total { font-weight: 600; }
+
+/* Cart totals additions */
+.cart-discount-row { color: #4ade80; }
+.cart-subtotal-row { font-size: 0.85rem; }
+
+/* Discount modal */
+.discount-modal { max-width: 360px; }
+
+.discount-mode-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 12px 0 8px;
+  background: var(--bg);
+  border-radius: var(--radius);
+  padding: 3px;
+}
+.discount-mode-tab {
+  flex: 1;
+  padding: 7px;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  border-radius: calc(var(--radius) - 2px);
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: background 0.15s, color 0.15s;
+}
+.discount-mode-tab:hover { color: var(--text); }
+.discount-mode-tab-active { background: var(--surface2); color: var(--text); font-weight: 600; }
+
+.discount-input-row {
+  display: flex;
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 12px;
+  margin-bottom: 12px;
+}
+.discount-input {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 1.4rem;
+  padding: 10px 6px;
+  outline: none;
+}
+.discount-input-prefix { color: var(--text-dim); font-size: 0.9rem; }
+.discount-input-suffix { color: var(--text-dim); font-size: 1.2rem; margin-left: 4px; }
+
+.discount-preview {
+  background: rgba(74,222,128,0.08);
+  border: 1px solid rgba(74,222,128,0.25);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin-bottom: 10px;
+}
+.discount-preview-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  padding: 2px 0;
+}
+.discount-preview-net {
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--text);
+  border-top: 1px solid rgba(74,222,128,0.2);
+  margin-top: 4px;
+  padding-top: 6px;
+}
+
+.discount-current-note {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+/* Line edit modal */
+.line-edit-modal { max-width: 400px; }
+.line-edit-unit-price { color: var(--text-dim); font-size: 0.85rem; margin-bottom: 16px; }
+.line-edit-label { display: block; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin: 12px 0 6px; }
+
+.line-edit-qty-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.line-edit-qty-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 1.1rem;
+  padding: 8px 12px;
+  text-align: center;
+  outline: none;
+}
+.line-edit-qty-input:focus { border-color: var(--accent2); }
+
+.line-edit-note-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 0.9rem;
+  padding: 8px 12px;
+  outline: none;
+  margin-bottom: 4px;
+}
+.line-edit-note-input:focus { border-color: var(--accent2); }
+
+.line-edit-actions { justify-content: space-between; }
+.btn-danger {
+  padding: 10px 18px;
+  background: rgba(244,67,54,0.15);
+  border: 1px solid var(--error);
+  border-radius: var(--radius);
+  color: var(--error);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.btn-danger:hover { background: rgba(244,67,54,0.25); }

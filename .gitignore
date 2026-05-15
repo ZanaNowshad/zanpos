@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# npm cache (placed in-project by some tools)
+.npm-cache/
+
+# Tauri build output
+src-tauri/target/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

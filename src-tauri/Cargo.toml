@@ -1,0 +1,40 @@
+[package]
+name = "zanpos"
+version = "0.1.0"
+description = "ZANPOS - Local-first Windows POS"
+authors = ["you"]
+edition = "2021"
+
+[lib]
+name = "zanpos_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Database
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "macros", "migrate"] }
+tokio = { version = "1", features = ["full"] }
+
+# IDs
+ulid = { version = "1", features = ["serde"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# HTTP client for AI API
+reqwest = { version = "0.12", features = ["json"] }
+
+# Error handling
+thiserror = "1"
+anyhow = "1"

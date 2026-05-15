@@ -195,6 +195,87 @@ pub async fn pos_set_line_note(input: SetLineNoteInput) -> Result<Cart, AppError
     Ok(cart)
 }
 
+// ─── Custom open-price item ───────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+pub struct AddCustomItemInput {
+    pub cart: Cart,
+    pub name: String,
+    pub price_minor: i64,
+    pub quantity: Option<String>,
+}
+
+#[tauri::command]
+pub async fn pos_add_custom_item(input: AddCustomItemInput) -> Result<Cart, AppError> {
+    if input.name.trim().is_empty() {
+        return Err(AppError::Validation("Item name is required".into()));
+    }
+    if input.price_minor <= 0 {
+        return Err(AppError::Validation("Price must be positive".into()));
+    }
+    let qty = input.quantity.as_deref().unwrap_or("1");
+    let qty_f: f64 = qty.parse().map_err(|_| AppError::Validation("Invalid quantity".into()))?;
+    if qty_f <= 0.0 {
+        return Err(AppError::Validation("Quantity must be positive".into()));
+    }
+    let mut cart = input.cart;
+    let line = CartLine::new(
+        None,               // no product_id — open item
+        input.name,
+        None,               // no sku
+        None,               // no barcode
+        qty,
+        input.price_minor,
+        String::new(),      // no tax rule
+        0,                  // 0 basis points = tax-exempt
+        false,
+    );
+    cart.lines.push(line);
+    Ok(cart)
+}
+
+// ─── Void completed sale ──────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn pos_void_sale(
+    sale_id: String,
+    voided_by_user_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let affected = sqlx::query(
+        "UPDATE sales SET status = 'voided', updated_at = ?
+         WHERE sale_id = ? AND status = 'completed'"
+    )
+    .bind(&now)
+    .bind(&sale_id)
+    .execute(&state.db)
+    .await?
+    .rows_affected();
+
+    if affected == 0 {
+        return Err(AppError::NotFound(
+            "Sale not found or already voided".into()
+        ));
+    }
+
+    // Record in audit log — best-effort, non-fatal
+    let _ = sqlx::query(
+        "INSERT INTO audit_log (log_id, entity_type, entity_id, action, actor_user_id, created_at)
+         VALUES (?,?,?,?,?,?)"
+    )
+    .bind(ulid::Ulid::new().to_string())
+    .bind("sale")
+    .bind(&sale_id)
+    .bind("void")
+    .bind(&voided_by_user_id)
+    .bind(&now)
+    .execute(&state.db)
+    .await;
+
+    Ok(())
+}
+
 // ─── Cart summary ─────────────────────────────────────────────────────────────
 
 #[derive(serde::Serialize)]

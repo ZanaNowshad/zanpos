@@ -66,6 +66,8 @@ pub fn run() {
             commands::pos_commands::pos_apply_bill_discount,
             commands::pos_commands::pos_apply_line_discount,
             commands::pos_commands::pos_set_line_note,
+            commands::pos_commands::pos_add_custom_item,
+            commands::pos_commands::pos_void_sale,
             // Back-office admin
             commands::admin_commands::admin_list_products,
             commands::admin_commands::admin_create_product,
@@ -100,6 +102,8 @@ pub fn run() {
             commands::inventory_commands::inventory_get_levels,
             commands::inventory_commands::inventory_get_low_stock,
             commands::inventory_commands::inventory_get_movements,
+            commands::inventory_commands::inventory_receive_stock,
+            commands::inventory_commands::inventory_adjust_stock,
             // Sync
             commands::sync_commands::sync_status,
             commands::sync_commands::sync_trigger_now,

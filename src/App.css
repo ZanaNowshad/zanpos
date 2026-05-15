@@ -1618,3 +1618,281 @@ textarea.field-input { resize: vertical; }
 .rpt-status-refunded,
 .rpt-status-partially_refunded { background: rgba(255,152,0,0.15); color: var(--warning); }
 .rpt-status-voided             { background: rgba(244,67,54,0.12); color: var(--error); }
+
+/* ── Lock screen ─────────────────────────────────────────────────────────────── */
+
+.lock-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.88);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.lock-panel {
+  background: var(--surface);
+  border-radius: 16px;
+  padding: 40px 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 320px;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+}
+
+.lock-icon { font-size: 2.8rem; }
+
+.lock-title {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+}
+
+.lock-subtitle {
+  font-size: 0.88rem;
+  color: var(--text-dim);
+  text-align: center;
+  margin: 0;
+}
+
+.lock-logout-btn {
+  margin-top: 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 20px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.lock-logout-btn:hover {
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+
+/* ── Custom item modal ────────────────────────────────────────────────────────── */
+
+.custom-item-modal {
+  width: 380px;
+}
+
+.custom-item-row {
+  display: flex;
+  gap: 12px;
+}
+
+.custom-item-col {
+  flex: 1;
+}
+
+.custom-item-preview {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--accent2);
+  text-align: center;
+}
+
+/* ── Shift Z-report ───────────────────────────────────────────────────────────── */
+
+.zreport {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin: 12px 0;
+}
+
+.zreport-title {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  color: var(--text-dim);
+  padding: 10px 14px 6px;
+}
+
+.zreport-grid {
+  padding: 0 14px 12px;
+}
+
+.zreport-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.88rem;
+  padding: 4px 0;
+  color: var(--text-dim);
+}
+
+.zreport-row-total {
+  font-weight: 700;
+  font-size: 0.96rem;
+  color: var(--text);
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 8px;
+}
+
+.zreport-row-refund span:last-child { color: var(--error); }
+
+.zreport-row-cash {
+  font-weight: 600;
+  color: var(--text);
+  border-top: 1px dashed var(--border);
+  margin-top: 4px;
+  padding-top: 6px;
+}
+
+/* Cash variance chip */
+.cash-variance {
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: var(--radius);
+  margin-bottom: 10px;
+}
+
+.cash-variance-exact  { background: rgba(76,175,80,0.15); color: var(--success); }
+.cash-variance-over   { background: rgba(33,150,243,0.12); color: #64b5f6; }
+.cash-variance-under  { background: rgba(244,67,54,0.12);  color: var(--error); }
+
+/* ── Void button in reports ───────────────────────────────────────────────────── */
+
+.rpt-void-btn {
+  background: transparent;
+  border: 1px solid var(--error);
+  border-radius: 4px;
+  color: var(--error);
+  font-size: 0.75rem;
+  padding: 3px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.rpt-void-btn:hover:not(:disabled) {
+  background: rgba(244,67,54,0.12);
+}
+.rpt-void-btn:disabled { opacity: 0.4; cursor: default; }
+
+/* ── Inventory tab ────────────────────────────────────────────────────────────── */
+
+.inv-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.inv-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.inv-search { flex: 1; }
+
+.inv-table { width: 100%; }
+
+.inv-name { font-weight: 600; color: var(--text); }
+
+.inv-qty { font-weight: 700; font-size: 1rem; }
+
+.inv-row-low  { background: rgba(255,152,0,0.06); }
+.inv-row-oos  { background: rgba(244,67,54,0.06); }
+
+.inv-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+}
+.inv-badge-ok  { background: rgba(76,175,80,0.15);  color: var(--success); }
+.inv-badge-low { background: rgba(255,152,0,0.18);  color: var(--warning); }
+.inv-badge-oos { background: rgba(244,67,54,0.18);  color: var(--error); }
+
+.inv-actions {
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.inv-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  color: var(--text);
+  transition: all 0.15s;
+}
+.inv-btn:hover { background: var(--surface3); }
+.inv-btn-adj  { color: var(--warning); border-color: var(--warning); }
+.inv-btn-hist { color: var(--text-dim); }
+
+.inv-form-pane {
+  padding: 20px 24px;
+  overflow-y: auto;
+}
+
+.inv-form-title {
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 8px 0 14px;
+  color: var(--text);
+}
+
+.inv-current {
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  margin-bottom: 14px;
+}
+
+.inv-badge-low { margin-left: 6px; }
+
+.inv-delta {
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: var(--radius);
+  margin-bottom: 10px;
+}
+.inv-delta-pos { background: rgba(76,175,80,0.12); color: var(--success); }
+.inv-delta-neg { background: rgba(244,67,54,0.12); color: var(--error); }
+
+.inv-move-type {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+}
+.inv-move-receive   { background: rgba(76,175,80,0.15);  color: var(--success); }
+.inv-move-sale      { background: rgba(244,67,54,0.12);  color: var(--error); }
+.inv-move-adjustment { background: rgba(33,150,243,0.12); color: #64b5f6; }
+.inv-move-refund    { background: rgba(255,152,0,0.15);  color: var(--warning); }
+
+.inv-pos { color: var(--success); font-weight: 700; }
+.inv-neg { color: var(--error);   font-weight: 700; }
+
+.bo-back-btn {
+  background: transparent;
+  border: none;
+  color: var(--accent2);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: 4px;
+}
+.bo-back-btn:hover { text-decoration: underline; }

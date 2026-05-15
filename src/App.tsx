@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import type { SessionUser, Shift } from "./types";
 import { DEVICE } from "./types";
 import { shiftGetActive } from "./tauri/commands";
@@ -6,16 +6,30 @@ import LoginScreen from "./pages/LoginScreen";
 import PosPage from "./pages/PosPage";
 import AdminChatPage from "./pages/AdminChatPage";
 import ShiftModal from "./components/ShiftModal";
+import LockScreen from "./components/LockScreen";
+import { useIdleTimer } from "./hooks/useIdleTimer";
 import "./App.css";
 
 type View = "login" | "shift_check" | "shift_open" | "pos" | "admin_chat";
+
+/** Auto-lock after 5 minutes of inactivity when a session is active */
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 
 export default function App() {
   const [view, setView] = useState<View>("login");
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
   const [shift, setShift] = useState<Shift | null>(null);
+  const [locked, setLocked] = useState(false);
+
+  // Only run idle timer when a session is active (not on login screen)
+  const isSessionActive = sessionUser !== null && view !== "login";
+  const handleIdle = useCallback(() => {
+    if (isSessionActive) setLocked(true);
+  }, [isSessionActive]);
+  useIdleTimer(isSessionActive ? IDLE_TIMEOUT_MS : 0, handleIdle);
 
   const handleLogin = async (user: SessionUser) => {
+    setLocked(false);
     setSessionUser(user);
     setView("shift_check");
     try {
@@ -40,6 +54,7 @@ export default function App() {
     setSessionUser(null);
     setShift(null);
     setView("login");
+    setLocked(false);
   };
 
   const handleShiftClosed = () => {
@@ -47,6 +62,17 @@ export default function App() {
     setSessionUser(null);
     setView("login");
   };
+
+  // Lock screen — overlays whatever view is active
+  if (locked && sessionUser) {
+    return (
+      <LockScreen
+        user={sessionUser}
+        onUnlock={() => setLocked(false)}
+        onLogout={handleLogout}
+      />
+    );
+  }
 
   if (view === "login" || view === "shift_check") {
     return (

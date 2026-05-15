@@ -110,6 +110,17 @@ export const posApplyLineDiscount = (cart: Cart, cart_line_id: string, discount_
 export const posSetLineNote = (cart: Cart, cart_line_id: string, note: string | null): Promise<Cart> =>
   invoke("pos_set_line_note", { input: { cart, cart_line_id, note } });
 
+export const posAddCustomItem = (
+  cart: Cart,
+  name: string,
+  price_minor: number,
+  quantity: string,
+): Promise<Cart> =>
+  invoke("pos_add_custom_item", { input: { cart, name, price_minor, quantity } });
+
+export const posVoidSale = (sale_id: string, voided_by_user_id: string): Promise<void> =>
+  invoke("pos_void_sale", { saleId: sale_id, voidedByUserId: voided_by_user_id });
+
 // ─── Held cart commands ───────────────────────────────────────────────────────
 
 export const heldCartSave = (cart: Cart, note?: string): Promise<HeldCartSummary> =>
@@ -276,3 +287,23 @@ export const inventoryGetLowStock = (): Promise<StockLevel[]> =>
 
 export const inventoryGetMovements = (productId: string): Promise<StockMovementRow[]> =>
   invoke("inventory_get_movements", { productId });
+
+export const inventoryReceiveStock = (
+  product_id: string,
+  quantity: string,
+  notes: string | undefined,
+  received_by_user_id: string,
+): Promise<StockLevel> =>
+  invoke("inventory_receive_stock", {
+    input: { product_id, quantity, notes, received_by_user_id },
+  });
+
+export const inventoryAdjustStock = (
+  product_id: string,
+  new_quantity: string,
+  notes: string | undefined,
+  adjusted_by_user_id: string,
+): Promise<StockLevel> =>
+  invoke("inventory_adjust_stock", {
+    input: { product_id, new_quantity, notes, adjusted_by_user_id },
+  });

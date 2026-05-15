@@ -90,6 +90,20 @@ export function useCart(session: CartSession) {
     }
   }, [cart]);
 
+  const addCustomItem = useCallback(async (name: string, priceMajor: string, quantity: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const priceMinor = Math.round(parseFloat(priceMajor) * 1000); // BHD has 3 decimal places
+      const updated = await cmd.posAddCustomItem(cart, name, priceMinor, quantity);
+      setCart(updated);
+    } catch (e: unknown) {
+      setError(typeof e === "string" ? e : "Failed to add custom item");
+    } finally {
+      setLoading(false);
+    }
+  }, [cart]);
+
   const setLineNote = useCallback(async (cart_line_id: string, note: string | null) => {
     try {
       const updated = await cmd.posSetLineNote(cart, cart_line_id, note);
@@ -133,6 +147,7 @@ export function useCart(session: CartSession) {
     clearError,
     addByBarcode,
     addProduct,
+    addCustomItem,
     updateQuantity,
     removeLine,
     applyBillDiscount,

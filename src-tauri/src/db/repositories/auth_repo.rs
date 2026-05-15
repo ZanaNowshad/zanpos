@@ -1,12 +1,32 @@
 use sqlx::{SqlitePool, Row};
+use argon2::{
+    Argon2,
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
+};
 use crate::domain::auth::{UserSummary, SessionUser};
 use crate::errors::{AppError, AppResult};
 
+/// Hash a PIN for storage using Argon2id.
+pub fn hash_pin(pin: &str) -> AppResult<String> {
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default()
+        .hash_password(pin.as_bytes(), &salt)
+        .map(|h| h.to_string())
+        .map_err(|e| AppError::Internal(format!("Hashing failed: {e}")))
+}
+
+/// Verify a PIN against a stored hash.
+/// Supports legacy PLAIN:<pin> prefix so existing dev seeds still work.
 fn verify_pin(stored_hash: &str, input_pin: &str) -> bool {
+    // Legacy plain-text PINs (dev seeds only)
     if let Some(plain) = stored_hash.strip_prefix("PLAIN:") {
         return plain == input_pin;
     }
-    false
+    // Argon2id verification
+    PasswordHash::new(stored_hash)
+        .ok()
+        .map(|parsed| Argon2::default().verify_password(input_pin.as_bytes(), &parsed).is_ok())
+        .unwrap_or(false)
 }
 
 pub async fn list_active_users(pool: &SqlitePool) -> AppResult<Vec<UserSummary>> {

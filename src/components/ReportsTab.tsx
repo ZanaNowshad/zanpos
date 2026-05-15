@@ -21,7 +21,11 @@ function defaultRange() {
 
 type Preset = "today" | "week" | "month" | "custom";
 
-export default function ReportsTab() {
+interface Props {
+  sessionUserId: string;
+}
+
+export default function ReportsTab({ sessionUserId }: Props) {
   const [preset, setPreset]         = useState<Preset>("month");
   const [from, setFrom]             = useState(defaultRange().from);
   const [to, setTo]                 = useState(defaultRange().to);
@@ -30,6 +34,7 @@ export default function ReportsTab() {
   const [sales, setSales]           = useState<SaleListRow[]>([]);
   const [loading, setLoading]       = useState(false);
   const [activeSection, setActiveSection] = useState<"summary" | "products" | "sales">("summary");
+  const [voidingId, setVoidingId]   = useState<string | null>(null);
 
   const applyPreset = useCallback((p: Preset) => {
     const today = new Date();
@@ -65,6 +70,19 @@ export default function ReportsTab() {
   useEffect(() => { load(); }, [load]);
 
   const handlePreset = (p: Preset) => { applyPreset(p); };
+
+  const handleVoid = async (sale: SaleListRow) => {
+    if (!confirm(`Void sale #${sale.receipt_number} (${fmt(sale.net_total_minor)})? This cannot be undone.`)) return;
+    setVoidingId(sale.sale_id);
+    try {
+      await cmd.posVoidSale(sale.sale_id, sessionUserId);
+      setSales(prev => prev.map(s => s.sale_id === sale.sale_id ? { ...s, status: "voided" } : s));
+    } catch (e: unknown) {
+      alert(typeof e === "string" ? e : "Failed to void sale");
+    } finally {
+      setVoidingId(null);
+    }
+  };
 
   return (
     <div className="rpt-layout">
@@ -170,6 +188,7 @@ export default function ReportsTab() {
                     <th className="rpt-num">Discount</th>
                     <th className="rpt-num">Total</th>
                     <th>Status</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -188,6 +207,18 @@ export default function ReportsTab() {
                       <td className="rpt-num rpt-money">{fmt(s.net_total_minor)}</td>
                       <td>
                         <span className={`rpt-status rpt-status-${s.status}`}>{s.status}</span>
+                      </td>
+                      <td>
+                        {s.status === "completed" && (
+                          <button
+                            className="rpt-void-btn"
+                            onClick={() => handleVoid(s)}
+                            disabled={voidingId === s.sale_id}
+                            title="Void this sale"
+                          >
+                            {voidingId === s.sale_id ? "…" : "Void"}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}

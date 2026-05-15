@@ -35,6 +35,9 @@ chrono = { version = "0.4", features = ["serde"] }
 # HTTP client for AI API
 reqwest = { version = "0.12", features = ["json"] }
 
+# Password hashing
+argon2 = "0.5"
+
 # Error handling
 thiserror = "1"
 anyhow = "1"

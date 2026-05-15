@@ -1,7 +1,7 @@
-import { useState } from "react";
-import type { SessionUser, Shift } from "../types";
+import { useEffect, useState } from "react";
+import type { SessionUser, Shift, TodaySummary } from "../types";
 import { DEVICE } from "../types";
-import { shiftOpen, shiftClose } from "../tauri/commands";
+import { shiftOpen, shiftClose, reportToday } from "../tauri/commands";
 import { formatMoney } from "../money";
 
 interface Props {
@@ -19,6 +19,16 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [todaySummary, setTodaySummary] = useState<TodaySummary | null>(null);
+
+  // Fetch today's Z-report when closing a shift
+  useEffect(() => {
+    if (mode !== "close") return;
+    const today = new Date().toISOString().slice(0, 10);
+    reportToday(DEVICE.branch_id, today)
+      .then(setTodaySummary)
+      .catch(() => {}); // non-fatal
+  }, [mode]);
 
   const handleOpen = async () => {
     setLoading(true);
@@ -82,7 +92,7 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
           </>
         ) : (
           <>
-            <h2 className="modal-title">Close Shift</h2>
+            <h2 className="modal-title">Close Shift — Z-Report</h2>
             {shift && (
               <div className="shift-summary">
                 <div className="shift-summary-row">
@@ -92,6 +102,56 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
                 <div className="shift-summary-row">
                   <span>Opening cash</span>
                   <span>{DEVICE.currency} {formatMoney(shift.opening_cash_minor, DEVICE.currency_exponent)}</span>
+                </div>
+              </div>
+            )}
+
+            {todaySummary && (
+              <div className="zreport">
+                <div className="zreport-title">Today's Totals ({todaySummary.business_date})</div>
+                <div className="zreport-grid">
+                  <div className="zreport-row">
+                    <span>Transactions</span>
+                    <span>{todaySummary.transaction_count}</span>
+                  </div>
+                  <div className="zreport-row">
+                    <span>Gross sales</span>
+                    <span>{DEVICE.currency} {formatMoney(todaySummary.gross_total_minor, DEVICE.currency_exponent)}</span>
+                  </div>
+                  <div className="zreport-row">
+                    <span>Discounts</span>
+                    <span>- {DEVICE.currency} {formatMoney(todaySummary.discount_total_minor, DEVICE.currency_exponent)}</span>
+                  </div>
+                  <div className="zreport-row">
+                    <span>Tax collected</span>
+                    <span>{DEVICE.currency} {formatMoney(todaySummary.tax_total_minor, DEVICE.currency_exponent)}</span>
+                  </div>
+                  <div className="zreport-row zreport-row-total">
+                    <span>Net total</span>
+                    <span>{DEVICE.currency} {formatMoney(todaySummary.net_total_minor, DEVICE.currency_exponent)}</span>
+                  </div>
+                  <div className="zreport-row">
+                    <span>Cash sales</span>
+                    <span>{DEVICE.currency} {formatMoney(todaySummary.cash_total_minor, DEVICE.currency_exponent)}</span>
+                  </div>
+                  <div className="zreport-row">
+                    <span>Card/other sales</span>
+                    <span>{DEVICE.currency} {formatMoney(todaySummary.card_total_minor, DEVICE.currency_exponent)}</span>
+                  </div>
+                  {todaySummary.refund_count > 0 && (
+                    <div className="zreport-row zreport-row-refund">
+                      <span>Refunds ({todaySummary.refund_count})</span>
+                      <span>- {DEVICE.currency} {formatMoney(todaySummary.refund_total_minor, DEVICE.currency_exponent)}</span>
+                    </div>
+                  )}
+                  {/* Expected cash in drawer */}
+                  <div className="zreport-row zreport-row-cash">
+                    <span>Expected in drawer</span>
+                    <span>{DEVICE.currency} {formatMoney(
+                      shift ? shift.opening_cash_minor + todaySummary.cash_total_minor - todaySummary.refund_total_minor : 0,
+                      DEVICE.currency_exponent
+                    )}</span>
+                  </div>
                 </div>
               </div>
             )}
@@ -105,6 +165,16 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
               value={countedCash}
               onChange={e => setCountedCash(e.target.value)}
             />
+            {countedCash && todaySummary && shift && (() => {
+              const countedMinor = Math.round(parseFloat(countedCash) * 1000);
+              const expectedMinor = shift.opening_cash_minor + todaySummary.cash_total_minor - todaySummary.refund_total_minor;
+              const variance = countedMinor - expectedMinor;
+              return (
+                <div className={`cash-variance ${variance < 0 ? "cash-variance-under" : variance > 0 ? "cash-variance-over" : "cash-variance-exact"}`}>
+                  {variance === 0 ? "✓ Cash balanced" : `Variance: ${variance > 0 ? "+" : ""}${DEVICE.currency} ${formatMoney(Math.abs(variance), DEVICE.currency_exponent)} ${variance > 0 ? "(over)" : "(short)"}`}
+                </div>
+              );
+            })()}
             <label className="field-label">Notes (optional)</label>
             <textarea
               className="field-input"

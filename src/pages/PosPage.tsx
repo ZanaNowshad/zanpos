@@ -16,6 +16,7 @@ import ShiftModal from "../components/ShiftModal";
 import HoldModal from "../components/HoldModal";
 import RefundModal from "../components/RefundModal";
 import TodayReportModal from "../components/TodayReportModal";
+import CustomItemModal from "../components/CustomItemModal";
 
 interface Props {
   sessionUser: SessionUser;
@@ -45,6 +46,7 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
   const [showReport, setShowReport] = useState(false);
   const [showDiscount, setShowDiscount] = useState(false);
   const [showBackOffice, setShowBackOffice] = useState(false);
+  const [showCustomItem, setShowCustomItem] = useState(false);
   const canOpenBackOffice = ["owner", "manager"].includes(sessionUser.role_name);
   const [restockAlerts, setRestockAlerts] = useState<LowStockAlert[]>([]);
   const restockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -52,7 +54,7 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
   const syncStatus = useSyncStatus(15_000);
   const {
     cart, loading, error, clearError,
-    addByBarcode, addProduct, updateQuantity, removeLine,
+    addByBarcode, addProduct, addCustomItem, updateQuantity, removeLine,
     applyBillDiscount, applyLineDiscount, setLineNote,
     finalizeSale, clearCart, replaceCart,
     netTotal, taxTotal, lineCount,
@@ -63,7 +65,7 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
     const noModalOpen = () =>
       !showPayment && !saleResult && !showShiftClose &&
       !showHold && !showRefund && !showReport &&
-      !showDiscount && !showBackOffice;
+      !showDiscount && !showBackOffice && !showCustomItem;
 
     const handler = (e: KeyboardEvent) => {
       if (e.key === "F6") {
@@ -77,7 +79,7 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [showPayment, saleResult, showShiftClose, showHold, showRefund,
-      showReport, showDiscount, showBackOffice, lineCount]);
+      showReport, showDiscount, showBackOffice, showCustomItem, lineCount]);
 
   useEffect(() => {
     setProductLoading(true);
@@ -226,6 +228,9 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
         <button className="action-btn" onClick={() => setShowHold(true)}>
           Hold (F6)
         </button>
+        <button className="action-btn" onClick={() => setShowCustomItem(true)} title="Add custom open-price item">
+          + Custom
+        </button>
         <button
           className="action-btn"
           onClick={() => setShowDiscount(true)}
@@ -247,6 +252,16 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
       </div>
 
       {/* ── Modals ── */}
+      {showCustomItem && (
+        <CustomItemModal
+          onAdd={async (name, price, qty) => {
+            await addCustomItem(name, price, qty);
+            setShowCustomItem(false);
+          }}
+          onCancel={() => setShowCustomItem(false)}
+        />
+      )}
+
       {showDiscount && (
         <DiscountModal
           grossMinor={cart.lines.filter(l => !l.voided).reduce((s, l) => s + l.line_total_minor, 0)}

@@ -5,6 +5,7 @@ use sqlx::Row;
 use ulid::Ulid;
 use serde::{Deserialize, Serialize};
 use crate::errors::{AppError, AppResult};
+use crate::db::repositories::auth_repo;
 use crate::AppState;
 
 const BRANCH_ID: &str = "01JBRANCH0000000000000001";
@@ -426,8 +427,6 @@ pub async fn admin_list_roles(state: State<'_, AppState>) -> Result<Vec<RoleRow>
     }).collect())
 }
 
-fn hash_pin(pin: &str) -> String { format!("PLAIN:{}", pin) }
-
 #[derive(Deserialize)]
 pub struct CreateUserInput {
     pub display_name: String,
@@ -446,7 +445,7 @@ pub async fn admin_create_user(
     }
     let user_id  = Ulid::new().to_string();
     let now      = chrono::Utc::now().to_rfc3339();
-    let pin_hash = hash_pin(&input.pin);
+    let pin_hash = auth_repo::hash_pin(&input.pin)?;
 
     sqlx::query(
         "INSERT INTO users
@@ -509,12 +508,13 @@ pub async fn admin_update_user(
     let now = chrono::Utc::now().to_rfc3339();
 
     if let Some(pin) = &input.pin {
+        let pin_hash = auth_repo::hash_pin(pin)?;
         sqlx::query(
             "UPDATE users SET display_name=?, pin_hash=?, role_id=?, is_active=?, updated_at=?
              WHERE user_id=?"
         )
         .bind(&input.display_name)
-        .bind(hash_pin(pin))
+        .bind(&pin_hash)
         .bind(&input.role_id)
         .bind(input.is_active as i64)
         .bind(&now)

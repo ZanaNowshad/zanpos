@@ -8,6 +8,7 @@ use crate::errors::AppResult;
 
 // ── Low-level enqueue ──────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 pub async fn enqueue_raw(
     pool:        &SqlitePool,
     device_id:   &str,
@@ -68,7 +69,11 @@ fn crc32_hash(s: &str) -> u32 {
 }
 
 // ── High-level enqueue helpers ─────────────────────────────────────────────────
+// These helpers have many arguments by design (they map 1:1 to DB columns for
+// sync payloads). Clippy's too_many_arguments lint is suppressed intentionally.
+// enqueue_audit_log is prepared for Phase 3 audit-trail sync; unused until then.
 
+#[allow(clippy::too_many_arguments)]
 pub async fn enqueue_sale(
     pool:          &SqlitePool,
     device_id:     &str,
@@ -110,6 +115,7 @@ pub async fn enqueue_sale(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn enqueue_sale_item(
     pool:          &SqlitePool,
     device_id:     &str,
@@ -151,6 +157,7 @@ pub async fn enqueue_sale_item(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn enqueue_payment(
     pool:                &SqlitePool,
     device_id:           &str,
@@ -186,6 +193,7 @@ pub async fn enqueue_payment(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn enqueue_shift(
     pool:               &SqlitePool,
     device_id:          &str,
@@ -218,6 +226,7 @@ pub async fn enqueue_shift(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn enqueue_refund(
     pool:                 &SqlitePool,
     device_id:            &str,
@@ -249,6 +258,7 @@ pub async fn enqueue_refund(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn enqueue_refund_item(
     pool:                 &SqlitePool,
     device_id:            &str,
@@ -276,6 +286,7 @@ pub async fn enqueue_refund_item(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn enqueue_product(
     pool:                   &SqlitePool,
     device_id:              &str,
@@ -319,6 +330,7 @@ pub async fn enqueue_product(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn enqueue_product_price(
     pool:                   &SqlitePool,
     device_id:              &str,
@@ -349,6 +361,9 @@ pub async fn enqueue_product_price(
     Ok(())
 }
 
+/// Phase 3: enqueue audit log entries for central sync. Not yet called; kept for
+/// forward-compatibility with the planned audit-trail sync in Phase 3.
+#[allow(dead_code, clippy::too_many_arguments)]
 pub async fn enqueue_audit_log(
     pool:          &SqlitePool,
     device_id:     &str,

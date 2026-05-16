@@ -112,7 +112,7 @@ impl OpenAIClient {
 
     pub async fn list_models(&self) -> AppResult<Vec<String>> {
         let resp = self.http
-            .get(&self.models_url())
+            .get(self.models_url())
             .bearer_auth(&self.api_key)
             .send()
             .await
@@ -157,7 +157,7 @@ impl OpenAIClient {
         };
 
         let resp = self.http
-            .post(&self.chat_url())
+            .post(self.chat_url())
             .bearer_auth(&self.api_key)
             .json(&req)
             .send()
@@ -206,6 +206,8 @@ impl OpenAIClient {
 pub struct OpenAIChatResult {
     pub text: String,
     pub tool_call: Option<OpenAIToolCallResult>,
+    /// Deserialized from API response; retained for future logging/retry logic.
+    #[allow(dead_code)]
     pub finish_reason: String,
 }
 

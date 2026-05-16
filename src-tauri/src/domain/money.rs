@@ -12,6 +12,8 @@ pub fn format_minor(minor: i64, exponent: u32) -> String {
 
 /// Apply a percentage discount given in basis points (100 bp = 1%).
 /// Rounds down (floor) to avoid giving more discount than intended.
+/// Used by `CartLine::apply_discount_percent`; not called from command layer directly.
+#[allow(dead_code)]
 pub fn apply_discount_bp(amount_minor: i64, discount_basis_points: i64) -> i64 {
     amount_minor * discount_basis_points / 10_000
 }

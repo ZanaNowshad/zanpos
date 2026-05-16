@@ -42,6 +42,9 @@ pub struct SaleItemSummary {
     pub tax_amount_minor: i64,
 }
 
+/// SaleRow — used for cross-device reporting queries in Phase 3 (Supabase direct query).
+/// Not yet fetched at the command layer; kept for forward-compatibility.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct SaleRow {
     pub sale_id: String,

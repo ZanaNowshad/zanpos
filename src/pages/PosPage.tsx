@@ -24,9 +24,11 @@ interface Props {
   onLogout: () => void;
   onShiftClose: (closed: boolean) => void;
   onOpenAdminChat?: () => void;
+  theme?: "dark" | "light";
+  onToggleTheme?: () => void;
 }
 
-export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, onOpenAdminChat }: Props) {
+export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, onOpenAdminChat, theme, onToggleTheme }: Props) {
   const session = {
     branch_id: DEVICE.branch_id,
     device_id: DEVICE.device_id,
@@ -161,6 +163,15 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
         {onOpenAdminChat && (
           <button className="top-bar-btn top-bar-admin" onClick={onOpenAdminChat} title="Admin Chat">
             AI
+          </button>
+        )}
+        {onToggleTheme && (
+          <button
+            className="top-bar-btn top-bar-theme"
+            onClick={onToggleTheme}
+            title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
+          >
+            {theme === "dark" ? "☀" : "🌙"}
           </button>
         )}
         <button className="top-bar-btn" onClick={() => setShowShiftClose(true)} title="Close Shift">

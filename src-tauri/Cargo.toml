@@ -36,7 +36,8 @@ chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.12", features = ["json"] }
 
 # Password hashing
-argon2 = "0.5"
+argon2 = { version = "0.5", features = ["rand"] }
+rand = { version = "0.8", features = ["getrandom"] }
 
 # Error handling
 thiserror = "1"

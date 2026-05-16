@@ -5,17 +5,26 @@ use crate::errors::{AppError, AppResult};
 
 // ── Row types returned by pull ─────────────────────────────────────────────────
 
+// Fields marked allow(dead_code) are deserialized from Supabase pull responses
+// and will be used in Phase 3 conflict-resolution logic.
 #[derive(Debug, Deserialize, Clone)]
 pub struct SyncEventRow {
     pub global_sequence: i64,
+    #[allow(dead_code)]
     pub device_id:       String,
+    #[allow(dead_code)]
     pub branch_id:       String,
     pub entity_type:     String,
+    #[allow(dead_code)]
     pub entity_id:       String,
+    #[allow(dead_code)]
     pub operation:       String,
     pub payload_json:    Value,
+    #[allow(dead_code)]
     pub idempotency_key: String,
+    #[allow(dead_code)]
     pub local_sequence:  i64,
+    #[allow(dead_code)]
     pub created_at:      String,
 }
 
@@ -154,11 +163,20 @@ impl SupabaseClient {
 
 // ── Extract project ref from Supabase URL ─────────────────────────────────────
 
-/// Extracts "xyz" from "https://xyz.supabase.co"
+/// Extracts the project ref from a Supabase URL or returns the input as-is when
+/// it is already a bare project ref (e.g. "abcdefgh").
+///
+/// Examples:
+/// * `"https://xyz.supabase.co"` → `Some("xyz")`
+/// * `"xyz"` (bare ref) → `Some("xyz")`
 pub fn extract_project_ref(url: &str) -> Option<String> {
     let url = url.trim_end_matches('/');
-    // Strip scheme
-    let after_scheme = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
+    if url.is_empty() { return None; }
+    // Strip scheme; if there's no scheme treat the whole string as the project ref.
+    let after_scheme = match url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")) {
+        Some(s) => s,
+        None => return Some(url.to_string()),
+    };
     // First component before '.'
     let ref_part = after_scheme.split('.').next()?;
     if ref_part.is_empty() { None } else { Some(ref_part.to_string()) }

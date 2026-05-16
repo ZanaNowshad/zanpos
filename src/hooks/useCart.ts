@@ -123,7 +123,7 @@ export function useCart(session: CartSession) {
     } catch (e: unknown) {
       const msg = typeof e === "string" ? e : "Sale failed";
       setError(msg);
-      throw new Error(msg);
+      throw new Error(msg, { cause: e });
     } finally {
       setLoading(false);
     }

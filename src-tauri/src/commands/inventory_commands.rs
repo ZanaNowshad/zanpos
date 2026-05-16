@@ -1,11 +1,32 @@
 use tauri::State;
 use ulid::Ulid;
-use crate::errors::AppError;
+use sqlx::Row;
+use crate::errors::{AppError, AppResult};
 use crate::inventory::stock_repo::{self, StockLevel, StockMovementRow};
 use crate::AppState;
 
-const BRANCH_ID: &str = "01JBRANCH0000000000000001";
-const DEVICE_ID: &str = "01JDEVICE0000000000000001";
+/// Resolve the active branch_id from the database at runtime.
+/// Replaces the old compile-time constant so multi-branch or post-wizard IDs work.
+async fn active_branch_id(state: &AppState) -> AppResult<String> {
+    let row = sqlx::query(
+        "SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1"
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("No active branch configured".into()))?;
+    Ok(row.get("branch_id"))
+}
+
+/// Resolve the active device_id from the database at runtime.
+async fn active_device_id(state: &AppState) -> AppResult<String> {
+    let row = sqlx::query(
+        "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1"
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("No active device configured".into()))?;
+    Ok(row.get("device_id"))
+}
 
 // ── inventory_get_levels ──────────────────────────────────────────────────────
 
@@ -56,6 +77,8 @@ pub async fn inventory_receive_stock(
         return Err(AppError::Validation("Quantity must be positive".into()));
     }
 
+    let branch_id = active_branch_id(&state).await?;
+    let device_id = active_device_id(&state).await?;
     let now = chrono::Utc::now().to_rfc3339();
 
     // Upsert stock_levels
@@ -67,7 +90,7 @@ pub async fn inventory_receive_stock(
            updated_at = excluded.updated_at"
     )
     .bind(&input.product_id)
-    .bind(BRANCH_ID)
+    .bind(&branch_id)
     .bind(&input.quantity)
     .bind(&now)
     .bind(&input.quantity)
@@ -79,7 +102,7 @@ pub async fn inventory_receive_stock(
         "SELECT quantity_on_hand FROM stock_levels WHERE product_id = ? AND branch_id = ?"
     )
     .bind(&input.product_id)
-    .bind(BRANCH_ID)
+    .bind(&branch_id)
     .fetch_one(&state.db)
     .await?;
 
@@ -92,8 +115,8 @@ pub async fn inventory_receive_stock(
     )
     .bind(Ulid::new().to_string())
     .bind(&input.product_id)
-    .bind(BRANCH_ID)
-    .bind(DEVICE_ID)
+    .bind(&branch_id)
+    .bind(&device_id)
     .bind(&input.quantity)
     .bind(&new_qty)
     .bind(&input.notes)
@@ -130,6 +153,8 @@ pub async fn inventory_adjust_stock(
         return Err(AppError::Validation("Quantity cannot be negative".into()));
     }
 
+    let branch_id = active_branch_id(&state).await?;
+    let device_id = active_device_id(&state).await?;
     let now = chrono::Utc::now().to_rfc3339();
 
     // Get old quantity for delta calculation
@@ -137,13 +162,13 @@ pub async fn inventory_adjust_stock(
         "SELECT quantity_on_hand FROM stock_levels WHERE product_id = ? AND branch_id = ?"
     )
     .bind(&input.product_id)
-    .bind(BRANCH_ID)
+    .bind(&branch_id)
     .fetch_optional(&state.db)
     .await?;
 
     let old_qty: f64 = old_qty_str.as_deref().unwrap_or("0").parse().unwrap_or(0.0);
     let delta = new_qty - old_qty;
-    let delta_str = format!("{}", delta);
+    let delta_str = delta.to_string();
 
     // Upsert stock_levels
     sqlx::query(
@@ -154,7 +179,7 @@ pub async fn inventory_adjust_stock(
            updated_at = excluded.updated_at"
     )
     .bind(&input.product_id)
-    .bind(BRANCH_ID)
+    .bind(&branch_id)
     .bind(&input.new_quantity)
     .bind(&now)
     .execute(&state.db)
@@ -169,8 +194,8 @@ pub async fn inventory_adjust_stock(
     )
     .bind(Ulid::new().to_string())
     .bind(&input.product_id)
-    .bind(BRANCH_ID)
-    .bind(DEVICE_ID)
+    .bind(&branch_id)
+    .bind(&device_id)
     .bind(&delta_str)
     .bind(&input.new_quantity)
     .bind(&input.notes)

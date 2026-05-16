@@ -110,6 +110,7 @@ pub async fn get_sale_result_by_receipt(pool: &SqlitePool, receipt_number: &str)
         sold_at: sale_row.get("sold_at"),
         business_date: sale_row.get("business_date"),
         created_offline: created_offline != 0,
+        low_stock_alerts: vec![],
     })
 }
 

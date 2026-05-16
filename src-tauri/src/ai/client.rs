@@ -59,6 +59,8 @@ pub struct ToolDef {
 #[derive(Debug, Deserialize)]
 pub struct AnthropicResponse {
     pub content: Vec<ContentBlock>,
+    /// Deserialized from API but used only for logging; not needed by call sites.
+    #[allow(dead_code)]
     pub stop_reason: String,
 }
 

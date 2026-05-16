@@ -3,14 +3,24 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{interval, Duration};
 use crate::db::repositories::ai_admin_repo;
-use crate::errors::AppResult;
+use crate::errors::{AppError, AppResult};
 use crate::sync::inbox;
 use crate::sync::supabase_client::{PushEvent, SupabaseClient};
 
-const DEVICE_ID: &str = "01JDEVICE0000000000000001";
 const BATCH_SIZE: i64 = 50;
 const INTERVAL_SECS: u64 = 30;
 const MAX_ATTEMPTS: i64 = 10;
+
+/// Resolve the active device_id from the DB at runtime.
+async fn active_device_id(pool: &SqlitePool) -> AppResult<String> {
+    let row = sqlx::query(
+        "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1"
+    )
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("No active device configured".into()))?;
+    Ok(row.get("device_id"))
+}
 
 // ── Shared online state ────────────────────────────────────────────────────────
 
@@ -35,7 +45,7 @@ impl SyncWorker {
 
     /// Spawn background loop. Takes a clone of the Arc so it runs independently.
     pub fn spawn(worker: Arc<Self>) {
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             let mut ticker = interval(Duration::from_secs(INTERVAL_SECS));
             loop {
                 ticker.tick().await;
@@ -46,14 +56,23 @@ impl SyncWorker {
 
     /// Run one push + pull cycle. Called by background loop and by sync_trigger_now.
     pub async fn run_once(&self) {
+        // Resolve device_id from DB each cycle (handles post-setup transitions)
+        let device_id = match active_device_id(&self.pool).await {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!("Sync skipped — could not resolve device_id: {e}");
+                return;
+            }
+        };
+
         // Load Supabase config fresh each cycle
         let client = match self.load_client().await {
             Some(c) => c,
             None => return,  // Not configured yet — skip silently
         };
 
-        let push_result = self.push_pending(&client).await;
-        let pull_result = self.pull_new(&client).await;
+        let push_result = self.push_pending(&client, &device_id).await;
+        let pull_result = self.pull_new(&client, &device_id).await;
 
         let mut state = self.state.lock().await;
         match (push_result, pull_result) {
@@ -66,7 +85,7 @@ impl SyncWorker {
                     "UPDATE sync_state SET last_successful_sync_at = ? WHERE device_id = ?"
                 )
                 .bind(&now)
-                .bind(DEVICE_ID)
+                .bind(&device_id)
                 .execute(&self.pool)
                 .await;
             }
@@ -91,7 +110,7 @@ impl SyncWorker {
 
     // ── Push pending outbox events ─────────────────────────────────────────────
 
-    async fn push_pending(&self, client: &SupabaseClient) -> AppResult<u32> {
+    async fn push_pending(&self, client: &SupabaseClient, device_id: &str) -> AppResult<u32> {
         let rows = sqlx::query(
             "SELECT sync_event_id, entity_type, operation, payload_json, idempotency_key, attempt_count
              FROM sync_queue
@@ -99,7 +118,7 @@ impl SyncWorker {
              ORDER BY local_sequence ASC
              LIMIT ?"
         )
-        .bind(DEVICE_ID)
+        .bind(device_id)
         .bind(MAX_ATTEMPTS)
         .bind(BATCH_SIZE)
         .fetch_all(&self.pool)
@@ -152,7 +171,7 @@ impl SyncWorker {
                     )
                     .bind(attempts + 1)
                     .bind(&now)
-                    .bind(&e.to_string())
+                    .bind(e.to_string())
                     .bind(&sync_event_id)
                     .execute(&self.pool)
                     .await?;
@@ -202,16 +221,16 @@ impl SyncWorker {
 
     // ── Pull new events from central ───────────────────────────────────────────
 
-    async fn pull_new(&self, client: &SupabaseClient) -> AppResult<u32> {
+    async fn pull_new(&self, client: &SupabaseClient, device_id: &str) -> AppResult<u32> {
         let watermark: i64 = sqlx::query_scalar(
             "SELECT last_pulled_central_sequence FROM sync_state WHERE device_id = ?"
         )
-        .bind(DEVICE_ID)
+        .bind(device_id)
         .fetch_one(&self.pool)
         .await
         .unwrap_or(0);
 
-        let events = client.pull_events(watermark, DEVICE_ID).await?;
+        let events = client.pull_events(watermark, device_id).await?;
         let count = events.len() as u32;
 
         if events.is_empty() {
@@ -235,7 +254,7 @@ impl SyncWorker {
             "UPDATE sync_state SET last_pulled_central_sequence = ? WHERE device_id = ?"
         )
         .bind(last_seq)
-        .bind(DEVICE_ID)
+        .bind(device_id)
         .execute(&self.pool)
         .await?;
 

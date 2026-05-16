@@ -39,6 +39,9 @@ pub struct LowStockAlert {
     pub reorder_point: i64,
 }
 
+/// TaxRule domain struct — used for typed deserialization in Phase 3 sync inbox.
+/// Not yet constructed at the command layer; the admin commands use `TaxRuleRow` instead.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaxRule {
     pub tax_rule_id: String,

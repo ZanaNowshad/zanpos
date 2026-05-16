@@ -1,12 +1,22 @@
 use tauri::State;
 use serde::Serialize;
+use sqlx::Row;
 use crate::db::repositories::{ai_admin_repo, sync_repo};
-use crate::errors::AppError;
+use crate::errors::{AppError, AppResult};
 use crate::sync::central_schema::CENTRAL_SCHEMA_SQL;
 use crate::sync::supabase_client::{SupabaseClient, extract_project_ref};
 use crate::AppState;
 
-const DEVICE_ID: &str = "01JDEVICE0000000000000001";
+/// Resolve the active device_id from the database at runtime.
+async fn active_device_id(state: &AppState) -> AppResult<String> {
+    let row = sqlx::query(
+        "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1"
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("No active device configured".into()))?;
+    Ok(row.get("device_id"))
+}
 
 // ── sync_status ───────────────────────────────────────────────────────────────
 
@@ -17,7 +27,8 @@ pub async fn sync_status(state: State<'_, AppState>) -> Result<sync_repo::SyncSt
     let last_error = worker_state.last_error.clone();
     drop(worker_state);
 
-    let mut status = sync_repo::get_sync_status(&state.db, DEVICE_ID).await?;
+    let device_id = active_device_id(&state).await?;
+    let mut status = sync_repo::get_sync_status(&state.db, &device_id).await?;
     status.online = online;
     // If worker has a more specific error, surface it
     if last_error.is_some() {

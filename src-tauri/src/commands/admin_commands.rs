@@ -8,7 +8,16 @@ use crate::errors::{AppError, AppResult};
 use crate::db::repositories::auth_repo;
 use crate::AppState;
 
-const BRANCH_ID: &str = "01JBRANCH0000000000000001";
+/// Resolve the active branch_id from the database at runtime.
+async fn active_branch_id(state: &AppState) -> AppResult<String> {
+    let row = sqlx::query(
+        "SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1"
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("No active branch configured".into()))?;
+    Ok(row.get("branch_id"))
+}
 
 // ─── Response types ───────────────────────────────────────────────────────────
 
@@ -173,13 +182,14 @@ pub async fn admin_create_product(
     .await?;
 
     if input.track_inventory {
+        let branch_id = active_branch_id(&state).await?;
         let sl_id = format!("SL-{}", product_id);
         sqlx::query(
             "INSERT OR IGNORE INTO stock_levels
                (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at)
              VALUES (?,?,?,'0',?)"
         )
-        .bind(&sl_id).bind(&product_id).bind(BRANCH_ID).bind(&now)
+        .bind(&sl_id).bind(&product_id).bind(&branch_id).bind(&now)
         .execute(&state.db).await?;
     }
 
@@ -278,13 +288,14 @@ pub async fn admin_update_product(
     }
 
     if input.track_inventory {
+        let branch_id = active_branch_id(&state).await?;
         let sl_id = format!("SL-{}", input.product_id);
         sqlx::query(
             "INSERT OR IGNORE INTO stock_levels
                (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at)
              VALUES (?,?,?,'0',?)"
         )
-        .bind(&sl_id).bind(&input.product_id).bind(BRANCH_ID).bind(&now)
+        .bind(&sl_id).bind(&input.product_id).bind(&branch_id).bind(&now)
         .execute(&state.db).await?;
     }
 

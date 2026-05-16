@@ -10,6 +10,7 @@ import ShiftModal from "./components/ShiftModal";
 import LockScreen from "./components/LockScreen";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { useIdleTimer } from "./hooks/useIdleTimer";
+import { useTheme } from "./hooks/useTheme";
 import "./App.css";
 import "./setup-styles.css";
 
@@ -19,6 +20,9 @@ type View = "login" | "shift_check" | "shift_open" | "pos" | "admin_chat";
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 
 export default function App() {
+  // ── Theme (initialised early so there's no flash on load) ─────────────────
+  const { theme, toggle: toggleTheme } = useTheme();
+
   // ── App config (loaded from DB before showing any UI) ──────────────────────
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   const [configLoading, setConfigLoading] = useState(true);
@@ -174,6 +178,8 @@ export default function App() {
               ? () => setView("admin_chat")
               : undefined
           }
+          theme={theme}
+          onToggleTheme={toggleTheme}
         />
       )}
 

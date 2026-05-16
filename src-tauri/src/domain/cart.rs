@@ -23,6 +23,7 @@ pub struct CartLine {
 }
 
 impl CartLine {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         product_id: Option<String>,
         product_name: String,
@@ -76,6 +77,9 @@ impl CartLine {
         self.line_total_minor = discounted + if self.tax_inclusive { 0 } else { tax_amount };
     }
 
+    /// Apply a percentage discount (in basis points) to this line.
+    /// Used by the batch-discount AI tool; not called from the UI command layer directly.
+    #[allow(dead_code)]
     pub fn apply_discount_percent(&mut self, discount_basis_points: i64) {
         let qty: f64 = self.quantity.parse().unwrap_or(1.0);
         let subtotal = (self.unit_price_minor as f64 * qty) as i64;

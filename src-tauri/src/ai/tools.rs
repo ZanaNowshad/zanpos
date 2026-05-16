@@ -286,7 +286,7 @@ pub async fn dry_run_mutation(
 
             Ok(ToolPreview {
                 tool_name: tool_name.into(),
-                description: format!("Rename product"),
+                description: "Rename product".to_string(),
                 fields: vec![
                     ToolPreviewField { label: "Current Name".into(), value: p.product.name.clone() },
                     ToolPreviewField { label: "New Name".into(), value: new_name.into() },

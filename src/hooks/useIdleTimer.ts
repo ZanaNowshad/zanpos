@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 
 /**
  * Fires `onIdle` after `timeoutMs` of no user activity.
@@ -7,7 +7,8 @@ import { useCallback, useEffect, useRef } from "react";
 export function useIdleTimer(timeoutMs: number, onIdle: () => void) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onIdleRef = useRef(onIdle);
-  onIdleRef.current = onIdle;
+  // Sync the ref before effects fire so the latest callback is always used
+  useLayoutEffect(() => { onIdleRef.current = onIdle; });
 
   const reset = useCallback(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -15,7 +16,7 @@ export function useIdleTimer(timeoutMs: number, onIdle: () => void) {
   }, [timeoutMs]);
 
   useEffect(() => {
-    const events: (keyof WindowEventMap)[] = [
+    const events: string[] = [
       "mousedown", "keydown", "touchstart", "scroll", "pointermove",
     ];
     events.forEach(e => window.addEventListener(e, reset, { passive: true }));

@@ -2,10 +2,12 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ── Dark theme (default) ── */
 :root {
   --bg: #1a1a2e;
   --surface: #16213e;
   --surface2: #0f3460;
+  --surface3: #1a2a50;
   --accent: #e94560;
   --accent2: #533483;
   --text: #eaeaea;
@@ -17,6 +19,22 @@
   --radius: 8px;
   --font: system-ui, -apple-system, sans-serif;
   font-size: 15px;
+}
+
+/* ── Light theme ── */
+[data-theme="light"] {
+  --bg: #f0f2f5;
+  --surface: #ffffff;
+  --surface2: #e4e8ef;
+  --surface3: #d8dde6;
+  --accent: #d63251;
+  --accent2: #533483;
+  --text: #1a1a2e;
+  --text-dim: #5a607a;
+  --success: #2e7d32;
+  --warning: #e65100;
+  --error: #c62828;
+  --border: #c8cedd;
 }
 
 body {
@@ -459,6 +477,8 @@ body {
 .top-bar-btn:hover { background: var(--surface2); color: var(--text); }
 .top-bar-logout { border-color: var(--error); color: var(--error); }
 .top-bar-logout:hover { background: var(--error); color: white; }
+.top-bar-theme { font-size: 0.95rem; }
+.top-bar-theme:hover { background: var(--surface2); border-color: var(--accent2); color: var(--text); }
 
 /* ── Category tabs ─────────────────────────────────────────────────────────── */
 .category-tabs {
@@ -1086,7 +1106,7 @@ textarea.field-input { resize: vertical; }
   font-size: 0.85rem;
   gap: 8px;
 }
-.cart-line-btn:hover { background: rgba(255,255,255,0.04); border-radius: var(--radius); }
+.cart-line-btn:hover { background: var(--surface2); border-radius: var(--radius); }
 .cart-line-main { flex: 1; min-width: 0; }
 .cart-line-meta { display: flex; gap: 10px; color: var(--text-dim); font-size: 0.8rem; margin-top: 2px; }
 .cart-line-note { color: var(--text-dim); font-size: 0.78rem; margin-left: 4px; }
@@ -1360,7 +1380,7 @@ textarea.field-input { resize: vertical; }
   gap: 8px;
   transition: background 0.12s;
 }
-.bo-list-row:hover { background: rgba(255,255,255,0.05); }
+.bo-list-row:hover { background: var(--surface2); }
 .bo-list-row-active { background: rgba(83,52,131,0.35) !important; }
 .bo-list-row-inactive { opacity: 0.5; }
 .bo-list-row-main { flex: 1; min-width: 0; }
@@ -1595,7 +1615,7 @@ textarea.field-input { resize: vertical; }
   color: var(--text);
 }
 .rpt-table tr:last-child td { border-bottom: none; }
-.rpt-table tr:hover td { background: rgba(255,255,255,0.03); }
+.rpt-table tr:hover td { background: var(--surface2); }
 .rpt-row-dim td { opacity: 0.6; }
 
 .rpt-num     { text-align: right; }

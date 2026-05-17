@@ -28,9 +28,24 @@ export default function CartPanel({
 
   return (
     <div className="cart-panel">
+      {/* Header */}
+      <div className="cart-panel-header">
+        <span className="cart-panel-title">Cart</span>
+        {activeLines.length > 0 && (
+          <span className="cart-item-count">
+            {activeLines.length} {activeLines.length === 1 ? "item" : "items"}
+          </span>
+        )}
+      </div>
+
+      {/* Lines */}
       <div className="cart-lines">
         {activeLines.length === 0 && (
-          <div className="cart-empty">Cart is empty. Scan or select a product.</div>
+          <div className="cart-empty">
+            <div className="cart-empty-icon">🛒</div>
+            <div className="cart-empty-label">Cart is empty</div>
+            <div className="cart-empty-hint">Scan a barcode or tap a product to add it</div>
+          </div>
         )}
         {activeLines.map(line => (
           <CartLineRow
@@ -41,6 +56,7 @@ export default function CartPanel({
         ))}
       </div>
 
+      {/* Totals */}
       <div className="cart-totals">
         {taxTotal > 0 && (
           <div className="cart-total-row">
@@ -66,12 +82,15 @@ export default function CartPanel({
         </div>
       </div>
 
+      {/* Pay button */}
       <button
         className="pay-button"
         disabled={activeLines.length === 0}
         onClick={onPay}
+        title={activeLines.length === 0 ? "Add items to cart to pay" : `Collect ${fmt(netTotal)}`}
       >
-        Pay — {fmt(netTotal)}
+        <span>PAY</span>
+        <span>{fmt(netTotal)}</span>
       </button>
 
       {editingLine && (
@@ -99,15 +118,13 @@ function CartLineRow({
   const hasDiscount = line.line_discount_minor > 0;
 
   return (
-    <button className="cart-line cart-line-btn" onClick={onEdit}>
+    <button className="cart-line-btn" onClick={onEdit} title="Tap to edit quantity, discount, or note">
       <div className="cart-line-main">
-        <div className="cart-line-name">
-          {line.product_name}
-          {line.note && <span className="cart-line-note">· {line.note}</span>}
-        </div>
+        <div className="cart-line-name">{line.product_name}</div>
+        {line.note && <span className="cart-line-note">{line.note}</span>}
         <div className="cart-line-meta">
           <span className="cart-line-qty">×{line.quantity}</span>
-          <span className="cart-line-unit">{fmt(line.unit_price_minor)}</span>
+          <span className="cart-line-unit">@ {fmt(line.unit_price_minor)}</span>
         </div>
       </div>
       <div className="cart-line-right">

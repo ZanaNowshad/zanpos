@@ -86,10 +86,42 @@ export default function PaymentModal({ netTotal, onConfirm, onCancel, loading }:
     onConfirm(payments, selectedCust?.customer_id);
   };
 
+  // Quick-amount suggestions for cash (exact + round-up tiers)
+  const quickAmounts: number[] = (() => {
+    const unit = Math.pow(10, EXP); // minor units per major unit
+    const totalMajor = netTotal / unit;
+    const seen = new Set<number>();
+    const result: number[] = [];
+    // Exact
+    seen.add(netTotal);
+    result.push(netTotal);
+    // Round up tiers: 5, 10, 20, 50, 100, 200, 500 in major units
+    for (const step of [5, 10, 20, 50, 100, 200, 500]) {
+      const rounded = Math.ceil(totalMajor / step) * step;
+      const roundedMinor = Math.round(rounded * unit);
+      if (!seen.has(roundedMinor) && roundedMinor > netTotal) {
+        seen.add(roundedMinor);
+        result.push(roundedMinor);
+        if (result.length >= 5) break;
+      }
+    }
+    return result;
+  })();
+
+  const applyQuickAmount = (minor: number) => {
+    // Apply to the first cash line (or all lines if single)
+    const cashLine = lines.find(l => l.method === "cash");
+    if (!cashLine) return;
+    const majorStr = formatMoney(minor, EXP);
+    updateLine(cashLine.id, { amountStr: majorStr, tenderedStr: majorStr });
+  };
+
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onCancel()}>
       <div className="modal payment-modal">
-        <h2>Payment</h2>
+        <div className="modal-header">
+          <span className="modal-title">Payment</span>
+        </div>
 
         {/* ── Customer picker ── */}
         <div className="cust-picker-section">
@@ -127,12 +159,29 @@ export default function PaymentModal({ netTotal, onConfirm, onCancel, loading }:
           )}
         </div>
 
+        {/* ── Giant total — impossible to miss ── */}
         <div className="payment-total">
-          <span>Total due</span>
+          <span className="payment-total-label">Total Due</span>
           <span className="payment-total-amount">{fmt(netTotal)}</span>
         </div>
 
-        {/* Payment lines */}
+        {/* ── Quick cash amounts ── */}
+        {lines.length === 1 && lines[0].method === "cash" && (
+          <div className="quick-amounts">
+            {quickAmounts.map(minor => (
+              <button
+                key={minor}
+                className={`quick-amt-btn ${minor === netTotal ? "quick-amt-btn-exact" : ""}`}
+                onClick={() => applyQuickAmount(minor)}
+                title={minor === netTotal ? "Exact amount" : `Round up to ${fmt(minor)}`}
+              >
+                {minor === netTotal ? "Exact" : fmt(minor)}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* ── Payment lines ── */}
         <div className="split-lines">
           {lines.map((line, idx) => {
             const amt = parseMoney(line.amountStr, EXP);
@@ -197,13 +246,16 @@ export default function PaymentModal({ netTotal, onConfirm, onCancel, loading }:
           })}
         </div>
 
-        {/* Remaining / overage */}
-        <div className={`split-remaining ${remainingMinor <= 0 ? "split-remaining-ok" : ""}`}>
+        {/* ── Remaining / change — prominent feedback ── */}
+        <div className={`split-remaining ${
+          remainingMinor < 0 ? "split-remaining-change" :
+          remainingMinor === 0 ? "split-remaining-ok" : ""
+        }`}>
           {remainingMinor > 0
-            ? `Remaining: ${fmt(remainingMinor)}`
+            ? `Still owed: ${fmt(remainingMinor)}`
             : remainingMinor < 0
-              ? `Overpaid by: ${fmt(-remainingMinor)}`
-              : "Fully paid"}
+              ? `Change due: ${fmt(-remainingMinor)}`
+              : "✓ Fully paid"}
         </div>
 
         <button className="split-add-btn" onClick={addLine}>+ Add payment method</button>

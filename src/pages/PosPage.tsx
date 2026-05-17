@@ -158,38 +158,48 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
     }
   };
 
-  const now = new Date();
-  const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const [clockTime, setClockTime] = useState(() =>
+    new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  );
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      setClockTime(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+    }, 10_000);
+    return () => clearInterval(t);
+  }, []);
 
   return (
     <div className="pos-layout">
       {/* ── Top bar ── */}
       <div className="top-bar">
         <span className="top-bar-branch">{DEVICE.branch_name}</span>
-        <span className="top-bar-cashier">👤 {sessionUser.display_name}</span>
+        <span className="top-bar-cashier">{sessionUser.display_name}</span>
         <SyncChip status={syncStatus} />
-        <span className="top-bar-time">{timeStr}</span>
-        <button className="top-bar-btn" onClick={() => setShowReport(true)} title="Today's Report">
-          📊
+        <span className="top-bar-spacer" />
+        <span className="top-bar-time">{clockTime}</span>
+
+        <button className="top-bar-btn" onClick={() => setShowReport(true)}>
+          Report
         </button>
         {canViewXReport && (
-          <button className="top-bar-btn" onClick={() => setShowXReport(true)} title="X-Report (Drawer Check)">
-            Χ
+          <button className="top-bar-btn" onClick={() => setShowXReport(true)} title="X-Report — mid-shift drawer check">
+            X-Report
           </button>
         )}
         {lastReceiptNumber && (
           <button className="top-bar-btn" onClick={handleReprintLast} title={`Reprint ${lastReceiptNumber}`}>
-            🖨
+            Reprint
           </button>
         )}
         {canOpenBackOffice && (
-          <button className="top-bar-btn" onClick={() => setShowBackOffice(true)} title="Back Office">
-            ⚙
+          <button className="top-bar-btn" onClick={() => setShowBackOffice(true)}>
+            Back Office
           </button>
         )}
         {onOpenAdminChat && (
-          <button className="top-bar-btn top-bar-admin" onClick={onOpenAdminChat} title="Admin Chat">
-            AI
+          <button className="top-bar-btn top-bar-admin" onClick={onOpenAdminChat}>
+            AI Admin
           </button>
         )}
         {onToggleTheme && (
@@ -201,11 +211,11 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
             {theme === "dark" ? "☀" : "🌙"}
           </button>
         )}
-        <button className="top-bar-btn" onClick={() => setShowShiftClose(true)} title="Close Shift">
-          🔒
+        <button className="top-bar-btn top-bar-btn-danger" onClick={() => setShowShiftClose(true)}>
+          Close Shift
         </button>
-        <button className="top-bar-btn top-bar-logout" onClick={onLogout} title="Logout">
-          ⏻
+        <button className="top-bar-btn top-bar-logout" onClick={onLogout}>
+          Logout
         </button>
       </div>
 
@@ -260,25 +270,30 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
 
       {/* ── Action bar ── */}
       <div className="action-bar">
-        <button className="action-btn" onClick={clearCart} disabled={lineCount === 0}>
+        <button
+          className="action-btn action-btn-danger"
+          onClick={clearCart}
+          disabled={lineCount === 0}
+          title="Clear all items from cart"
+        >
           Clear
         </button>
-        <button className="action-btn" onClick={() => setShowHold(true)}>
-          Hold (F6)
+        <button className="action-btn" onClick={() => setShowHold(true)} title="Hold cart and resume later (F6)">
+          Hold
         </button>
-        <button className="action-btn" onClick={() => setShowCustomItem(true)} title="Add custom open-price item">
+        <button className="action-btn" onClick={() => setShowCustomItem(true)} title="Add a custom item with any price">
           + Custom
         </button>
         <button
           className="action-btn"
           onClick={() => setShowDiscount(true)}
           disabled={lineCount === 0}
-          title="Bill Discount"
+          title="Apply a bill-level discount"
         >
           % Discount
         </button>
-        <button className="action-btn" onClick={() => setShowCashEvent(true)}>
-          💵 Cash
+        <button className="action-btn" onClick={() => setShowCashEvent(true)} title="Paid In / Paid Out / Safe Drop">
+          Cash Event
         </button>
         <button
           className="action-btn"
@@ -286,19 +301,20 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
             try { await cashNoSale(shift.shift_id, sessionUser.user_id); }
             catch (e) { console.error("No-sale audit failed:", e); }
           }}
-          title="Open drawer without a sale (audited)"
+          title="Open drawer without a sale — audited in the system"
         >
-          🔓 No Sale
+          No Sale
         </button>
-        <button className="action-btn" onClick={() => setShowRefund(true)}>
+        <button className="action-btn" onClick={() => setShowRefund(true)} title="Process a return or refund">
           Refund
         </button>
         <button
           className="action-btn action-btn-pay"
           onClick={() => lineCount > 0 && setShowPayment(true)}
           disabled={lineCount === 0}
+          title="Collect payment (F9)"
         >
-          Pay (F9)
+          Pay  F9
         </button>
       </div>
 

@@ -6,12 +6,15 @@ import type {
   AiChatResponse,
   AppConfig,
   BranchSettings,
+  BulkStockTakeResult,
   Cart,
   CashDrawerSummary,
   CashEventRow,
+  CashierSummaryRow,
   CategoryRow,
   CustomerRow,
   DeviceRow,
+  EodCashupReport,
   ExecuteActionInput,
   ExecuteActionResult,
   HeldCartSummary,
@@ -31,6 +34,7 @@ import type {
   StockLevel,
   StockMovementRow,
   SupabaseStatus,
+  SyncQueueItem,
   SyncStatus,
   TaxRuleRow,
   ThermalConfig,
@@ -505,3 +509,33 @@ export const productBarcodeRemove = (barcode_id: string): Promise<void> =>
 
 export const productBarcodesList = (product_id: string): Promise<ProductBarcodeRow[]> =>
   invoke("product_barcodes_list", { productId: product_id });
+
+// ─── New pilot-hardening commands ─────────────────────────────────────────────
+
+export const reportByCashier = (
+  branch_id: string,
+  from_date: string,
+  to_date: string,
+): Promise<CashierSummaryRow[]> =>
+  invoke("report_by_cashier", { branchId: branch_id, fromDate: from_date, toDate: to_date });
+
+export const reportEodCashup = (
+  branch_id: string,
+  business_date: string,
+): Promise<EodCashupReport> =>
+  invoke("report_eod_cashup", { branchId: branch_id, businessDate: business_date });
+
+export const inventoryBulkStockTake = (
+  entries: Array<{ product_id: string; new_quantity: number; notes?: string }>,
+  actor_user_id: string,
+): Promise<BulkStockTakeResult> =>
+  invoke("inventory_bulk_stock_take", { entries, actorUserId: actor_user_id });
+
+export const syncQueueList = (): Promise<SyncQueueItem[]> =>
+  invoke("sync_queue_list");
+
+export const syncQueueRetry = (syncEventId: string): Promise<void> =>
+  invoke("sync_queue_retry", { syncEventId });
+
+export const syncQueueDismiss = (syncEventId: string): Promise<void> =>
+  invoke("sync_queue_dismiss", { syncEventId });

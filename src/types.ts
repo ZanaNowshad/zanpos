@@ -31,6 +31,7 @@ export interface ProductWithPrice {
   currency: string;
   version: number;
   reorder_point: number;
+  image_path: string | null;
   price_minor: number;
   tax_rate_basis_points: number;
   tax_inclusive: boolean;
@@ -504,6 +505,68 @@ export interface BranchSettings {
   receipt_header: string | null;
   receipt_footer: string | null;
   tax_number: string | null;
+}
+
+// ─── Cashier report ───────────────────────────────────────────────────────────
+
+export interface CashierSummaryRow {
+  cashier_user_id: string;
+  cashier_name: string;
+  transaction_count: number;
+  net_total_minor: number;
+  cash_total_minor: number;
+  card_total_minor: number;
+  discount_total_minor: number;
+  refund_count: number;
+  refund_total_minor: number;
+}
+
+// ─── EOD cash-up report ───────────────────────────────────────────────────────
+
+export interface EodShiftRow {
+  shift_id: string;
+  cashier_name: string;
+  opened_at: string;
+  closed_at: string | null;
+  opening_minor: number;
+  cash_sales_minor: number;
+  safe_drop_minor: number;
+  paid_in_minor: number;
+  paid_out_minor: number;
+  expected_minor: number;
+  counted_minor: number | null;
+  variance_minor: number | null;
+  net_sales_minor: number;
+}
+
+export interface EodCashupReport {
+  date: string;
+  shifts: EodShiftRow[];
+  total_net_minor: number;
+  total_cash_minor: number;
+  total_counted_minor: number | null;
+  total_variance_minor: number | null;
+}
+
+// ─── Bulk stock-take ──────────────────────────────────────────────────────────
+
+export interface BulkStockTakeResult {
+  updated: number;
+  errors: string[];
+}
+
+// ─── Sync queue ───────────────────────────────────────────────────────────────
+
+export interface SyncQueueItem {
+  sync_event_id: string;
+  entity_type: string;
+  entity_id: string;
+  operation: string;
+  status: string;
+  attempt_count: number;
+  last_attempt_at: string | null;
+  last_error: string | null;
+  created_at: string;
 }
 
 // ─── Device constants — mutable, populated from DB at startup ─────────────────

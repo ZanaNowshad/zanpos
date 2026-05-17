@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CashDrawerSummary, SessionUser, Shift, TodaySummary } from "../types";
 import { DEVICE } from "../types";
-import { shiftOpen, shiftClose, reportToday, cashDrawerSummary } from "../tauri/commands";
+import { shiftOpen, shiftClose, reportToday, cashDrawerSummary, printReceiptRaw } from "../tauri/commands";
 import { formatMoney } from "../money";
 
 // ─── Denomination sets (minor units) per currency ─────────────────────────────
@@ -111,6 +111,66 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
       setError(typeof e === "string" ? e : "Failed to open shift");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePrintZReport = async () => {
+    if (!todaySummary || !shift) return;
+    const exp = DEVICE.currency_exponent;
+    const cur = DEVICE.currency;
+    const fm = (v: number) => `${cur} ${formatMoney(v, exp)}`;
+
+    const lines: string[] = [
+      "================================",
+      "          Z-REPORT",
+      "================================",
+      `Date: ${todaySummary.business_date}`,
+      `Cashier: ${shift.cashier_name}`,
+      `Opened: ${new Date(shift.opened_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`,
+      "--------------------------------",
+      `Transactions:   ${todaySummary.transaction_count}`,
+      `Gross Sales:    ${fm(todaySummary.gross_total_minor)}`,
+      `Discounts:    - ${fm(todaySummary.discount_total_minor)}`,
+      `Tax Collected:  ${fm(todaySummary.tax_total_minor)}`,
+      `Net Total:      ${fm(todaySummary.net_total_minor)}`,
+      "--------------------------------",
+      `Cash:           ${fm(todaySummary.cash_total_minor)}`,
+      `Card/Other:     ${fm(todaySummary.card_total_minor)}`,
+      ...(todaySummary.refund_count > 0
+        ? [`Refunds(${todaySummary.refund_count}):  - ${fm(todaySummary.refund_total_minor)}`]
+        : []),
+    ];
+
+    if (drawerSummary) {
+      lines.push("================================");
+      lines.push("     CASH RECONCILIATION");
+      lines.push("================================");
+      lines.push(`Opening Float:  ${fm(drawerSummary.opening_minor)}`);
+      lines.push(`Cash Sales:   + ${fm(drawerSummary.cash_sales_minor)}`);
+      if (drawerSummary.cash_refunds_minor > 0)
+        lines.push(`Cash Refunds: - ${fm(drawerSummary.cash_refunds_minor)}`);
+      if (drawerSummary.paid_in_minor > 0)
+        lines.push(`Paid In:      + ${fm(drawerSummary.paid_in_minor)}`);
+      if (drawerSummary.paid_out_minor > 0)
+        lines.push(`Paid Out:     - ${fm(drawerSummary.paid_out_minor)}`);
+      if (drawerSummary.safe_drop_minor > 0)
+        lines.push(`Safe Drops:   - ${fm(drawerSummary.safe_drop_minor)}`);
+      lines.push("--------------------------------");
+      lines.push(`Expected:       ${fm(drawerSummary.expected_minor)}`);
+      if (countedCash) {
+        const countedMinor = Math.round(parseFloat(countedCash) * 1000);
+        const variance = countedMinor - drawerSummary.expected_minor;
+        lines.push(`Counted:        ${fm(countedMinor)}`);
+        lines.push(`Variance:       ${variance >= 0 ? "+" : ""}${fm(variance)}`);
+      }
+    }
+    lines.push("================================");
+    lines.push(" ");
+
+    try {
+      await printReceiptRaw(DEVICE.branch_name, lines);
+    } catch {
+      // Non-fatal — thermal printer may not be configured
     }
   };
 
@@ -362,11 +422,11 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
               {todaySummary && (
                 <button
                   className="modal-btn-secondary"
-                  onClick={() => window.print()}
+                  onClick={handlePrintZReport}
                   disabled={loading}
-                  title="Print Z-Report"
+                  title="Print Z-Report to thermal printer"
                 >
-                  Print Report
+                  🖨 Print Z-Report
                 </button>
               )}
               <button className="modal-btn-danger" onClick={handleClose} disabled={loading}>

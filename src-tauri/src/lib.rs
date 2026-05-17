@@ -105,6 +105,8 @@ pub fn run() {
             commands::report_commands::report_date_range,
             commands::report_commands::report_top_products,
             commands::report_commands::report_sales_list,
+            commands::report_commands::report_by_cashier,
+            commands::report_commands::report_eod_cashup,
             commands::report_commands::db_integrity_check,
             // Inventory
             commands::inventory_commands::inventory_get_levels,
@@ -112,6 +114,7 @@ pub fn run() {
             commands::inventory_commands::inventory_get_movements,
             commands::inventory_commands::inventory_receive_stock,
             commands::inventory_commands::inventory_adjust_stock,
+            commands::inventory_commands::inventory_bulk_stock_take,
             // Setup & Settings
             commands::setup_commands::app_config_load,
             commands::setup_commands::setup_wizard_complete,
@@ -128,6 +131,9 @@ pub fn run() {
             // Sync
             commands::sync_commands::sync_status,
             commands::sync_commands::sync_trigger_now,
+            commands::sync_commands::sync_queue_list,
+            commands::sync_commands::sync_queue_retry,
+            commands::sync_commands::sync_queue_dismiss,
             commands::sync_commands::admin_setup_supabase,
             commands::sync_commands::admin_setup_supabase_creds_only,
             commands::sync_commands::admin_get_supabase_status,

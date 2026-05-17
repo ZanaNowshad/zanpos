@@ -1,0 +1,153 @@
+import { useEffect, useState } from "react";
+import type { SyncQueueItem } from "../types";
+import { syncQueueList, syncQueueRetry, syncQueueDismiss } from "../tauri/commands";
+
+interface Props {
+  onClose: () => void;
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  pending:  "Pending",
+  failed:   "Failed",
+  conflict: "Conflict",
+};
+
+const STATUS_CLASS: Record<string, string> = {
+  pending:  "sq-badge-pending",
+  failed:   "sq-badge-failed",
+  conflict: "sq-badge-conflict",
+};
+
+export default function SyncQueueModal({ onClose }: Props) {
+  const [items, setItems] = useState<SyncQueueItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = () => {
+    setLoading(true);
+    syncQueueList()
+      .then(setItems)
+      .catch(() => setError("Failed to load sync queue"))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(load, []);
+
+  const handleRetry = async (id: string) => {
+    setBusyId(id);
+    setError(null);
+    try {
+      await syncQueueRetry(id);
+      load();
+    } catch (e: unknown) {
+      setError(typeof e === "string" ? e : "Retry failed");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleDismiss = async (id: string) => {
+    setBusyId(id);
+    setError(null);
+    try {
+      await syncQueueDismiss(id);
+      setItems(prev => prev.filter(i => i.sync_event_id !== id));
+    } catch (e: unknown) {
+      setError(typeof e === "string" ? e : "Dismiss failed");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const retryAll = async () => {
+    const retryable = items.filter(i => i.status === "failed" || i.status === "conflict");
+    for (const item of retryable) {
+      try { await syncQueueRetry(item.sync_event_id); } catch { /* continue */ }
+    }
+    load();
+  };
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal sync-queue-modal">
+        <h2 className="modal-title">Sync Queue</h2>
+        <p className="modal-subtitle">
+          Events waiting to sync with the central server.
+        </p>
+
+        {loading ? (
+          <div className="sq-loading">Loading…</div>
+        ) : items.length === 0 ? (
+          <div className="sq-empty">
+            <div className="sq-empty-icon">✓</div>
+            <div className="sq-empty-msg">All events synced — nothing pending.</div>
+          </div>
+        ) : (
+          <>
+            <div className="sq-toolbar">
+              <span className="sq-count">{items.length} item{items.length !== 1 ? "s" : ""}</span>
+              {items.some(i => i.status === "failed" || i.status === "conflict") && (
+                <button className="sq-retry-all-btn" onClick={retryAll}>
+                  Retry All Failed
+                </button>
+              )}
+            </div>
+            <div className="sq-list">
+              {items.map(item => (
+                <div key={item.sync_event_id} className="sq-item">
+                  <div className="sq-item-header">
+                    <span className={`sq-badge ${STATUS_CLASS[item.status] ?? "sq-badge-pending"}`}>
+                      {STATUS_LABEL[item.status] ?? item.status}
+                    </span>
+                    <span className="sq-entity">{item.entity_type} / {item.operation}</span>
+                    <span className="sq-attempts">Attempts: {item.attempt_count}</span>
+                  </div>
+                  <div className="sq-item-id">{item.entity_id}</div>
+                  {item.last_error && (
+                    <div className="sq-error-msg">{item.last_error}</div>
+                  )}
+                  <div className="sq-item-footer">
+                    <span className="sq-date">
+                      {new Date(item.created_at).toLocaleString([], {
+                        month: "short", day: "numeric",
+                        hour: "2-digit", minute: "2-digit",
+                      })}
+                    </span>
+                    <div className="sq-item-actions">
+                      {(item.status === "failed" || item.status === "conflict") && (
+                        <button
+                          className="sq-btn sq-btn-retry"
+                          onClick={() => handleRetry(item.sync_event_id)}
+                          disabled={busyId === item.sync_event_id}
+                        >
+                          Retry
+                        </button>
+                      )}
+                      <button
+                        className="sq-btn sq-btn-dismiss"
+                        onClick={() => handleDismiss(item.sync_event_id)}
+                        disabled={busyId === item.sync_event_id}
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {error && <div className="modal-error">{error}</div>}
+
+        <div className="modal-actions">
+          <button className="modal-btn-secondary" onClick={onClose}>Close</button>
+          <button className="modal-btn-secondary" onClick={load} disabled={loading}>
+            ↻ Refresh
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

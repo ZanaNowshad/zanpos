@@ -18,6 +18,7 @@ pub struct Product {
     pub created_at: String,
     pub updated_at: String,
     pub reorder_point: i64,
+    pub image_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -129,6 +129,96 @@ pub async fn admin_setup_supabase_creds_only(
     Ok(())
 }
 
+// ── sync_queue_list ───────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct SyncQueueItem {
+    pub sync_event_id:   String,
+    pub entity_type:     String,
+    pub entity_id:       String,
+    pub operation:       String,
+    pub status:          String,
+    pub attempt_count:   i64,
+    pub last_attempt_at: Option<String>,
+    pub last_error:      Option<String>,
+    pub created_at:      String,
+}
+
+#[tauri::command]
+pub async fn sync_queue_list(
+    state: State<'_, AppState>,
+) -> Result<Vec<SyncQueueItem>, AppError> {
+    let rows = sqlx::query(
+        "SELECT sync_event_id, entity_type, entity_id, operation, status,
+                attempt_count, last_attempt_at, last_error, created_at
+         FROM sync_queue
+         WHERE status IN ('pending', 'failed', 'conflict')
+         ORDER BY created_at DESC
+         LIMIT 200"
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(rows.iter().map(|r| SyncQueueItem {
+        sync_event_id:   r.get("sync_event_id"),
+        entity_type:     r.get("entity_type"),
+        entity_id:       r.get("entity_id"),
+        operation:       r.get("operation"),
+        status:          r.get("status"),
+        attempt_count:   r.get("attempt_count"),
+        last_attempt_at: r.try_get("last_attempt_at").unwrap_or(None),
+        last_error:      r.try_get("last_error").unwrap_or(None),
+        created_at:      r.get("created_at"),
+    }).collect())
+}
+
+// ── sync_queue_retry ──────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn sync_queue_retry(
+    sync_event_id: String,
+    state:         State<'_, AppState>,
+) -> Result<(), AppError> {
+    let rows_affected = sqlx::query(
+        "UPDATE sync_queue SET status = 'pending', last_error = NULL
+         WHERE sync_event_id = ? AND status IN ('failed', 'conflict')"
+    )
+    .bind(&sync_event_id)
+    .execute(&state.db)
+    .await?
+    .rows_affected();
+
+    if rows_affected == 0 {
+        return Err(AppError::NotFound(format!(
+            "Sync event {sync_event_id} not found or not in a retryable state"
+        )));
+    }
+    Ok(())
+}
+
+// ── sync_queue_dismiss ────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn sync_queue_dismiss(
+    sync_event_id: String,
+    state:         State<'_, AppState>,
+) -> Result<(), AppError> {
+    let rows_affected = sqlx::query(
+        "DELETE FROM sync_queue WHERE sync_event_id = ?"
+    )
+    .bind(&sync_event_id)
+    .execute(&state.db)
+    .await?
+    .rows_affected();
+
+    if rows_affected == 0 {
+        return Err(AppError::NotFound(format!(
+            "Sync event {sync_event_id} not found"
+        )));
+    }
+    Ok(())
+}
+
 // ── admin_get_supabase_status ─────────────────────────────────────────────────
 
 #[derive(Serialize)]

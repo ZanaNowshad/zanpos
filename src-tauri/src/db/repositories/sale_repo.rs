@@ -1,5 +1,6 @@
 use sqlx::{SqlitePool, Row};
 use ulid::Ulid;
+use crate::db::repositories::audit_hash;
 use crate::domain::cart::Cart;
 use crate::domain::sale::{PaymentInput, SaleResult, PaymentSummary, SaleItemSummary};
 use crate::errors::{AppError, AppResult};
@@ -148,18 +149,24 @@ pub async fn finalize_sale(
         });
     }
 
-    // Audit log
-    let audit_id = Ulid::new().to_string();
+    // Audit log with SHA-256 hash chain
+    let audit_id   = Ulid::new().to_string();
     let after_json = serde_json::json!({ "sale_id": &sale_id, "net_total_minor": net }).to_string();
-    let hash = format!("{:016x}", sale_id.len() as u64 + net as u64);
+    let prev_hash  = audit_hash::fetch_last_hash(pool, &cart.device_id).await.unwrap_or_default();
+    let hash = audit_hash::compute_audit_hash(&audit_hash::AuditHashInput {
+        audit_log_id: &audit_id, event_type: "sale.created", entity_type: "sale",
+        entity_id: &sale_id, actor_user_id: &cart.cashier_user_id,
+        created_at: &now, after_json: Some(&after_json), previous_hash: &prev_hash,
+    });
     sqlx::query(
         "INSERT INTO audit_logs
          (audit_log_id, event_type, entity_type, entity_id, actor_user_id, actor_type,
-          device_id, branch_id, after_json, created_at, hash)
-         VALUES (?,'sale.created','sale',?,?,'user',?,?,?,?,?)"
+          device_id, branch_id, after_json, created_at, hash, previous_hash)
+         VALUES (?,'sale.created','sale',?,?,'user',?,?,?,?,?,?)"
     )
     .bind(&audit_id).bind(&sale_id).bind(&cart.cashier_user_id)
-    .bind(&cart.device_id).bind(&cart.branch_id).bind(&after_json).bind(&now).bind(&hash)
+    .bind(&cart.device_id).bind(&cart.branch_id).bind(&after_json).bind(&now)
+    .bind(&hash).bind(if prev_hash.is_empty() { None } else { Some(prev_hash.clone()) })
     .execute(&mut *tx)
     .await?;
 

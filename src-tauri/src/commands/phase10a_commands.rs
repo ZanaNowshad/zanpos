@@ -3,6 +3,7 @@ use tauri::State;
 use tauri::Manager;
 use sqlx::Row;
 use serde::Serialize;
+use crate::db::repositories::audit_hash;
 use crate::errors::{AppError, AppResult};
 use crate::commands::rbac;
 use crate::AppState;
@@ -179,6 +180,30 @@ pub async fn audit_log_list(
         actor_user_id: r.get("actor_user_id"),
         created_at:    r.get("created_at"),
     }).collect())
+}
+
+// ─── Audit hash-chain verification ───────────────────────────────────────────
+
+/// Verify the SHA-256 hash chain for audit_logs written by this device.
+/// Returns a summary: total rows, legacy rows (pre-chain), verified count,
+/// and counts of broken-hash or broken-link anomalies.
+/// Requires manager or owner role.
+#[tauri::command]
+pub async fn audit_verify_chain(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<audit_hash::ChainVerifyResult> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+
+    let device_id: Option<String> = sqlx::query_scalar(
+        "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1"
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .flatten();
+
+    let device_id = device_id.unwrap_or_default();
+    audit_hash::verify_chain(&state.db, &device_id).await
 }
 
 // ─── AppResult alias re-export for convenience ────────────────────────────────

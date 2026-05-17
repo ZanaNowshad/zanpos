@@ -140,7 +140,7 @@ export function useCart(session: CartSession) {
       const total = Math.max(0,
         activeLines.reduce((s, l) => s + l.line_total_minor, 0) - cart.bill_discount_minor
       );
-      posRecordVoid(cart.cart_id, session.cashier_user_id, activeLines.length, total)
+      posRecordVoid(cart.cart_id, session.device_id, session.cashier_user_id, activeLines.length, total)
         .catch(() => { /* non-blocking — don't prevent cart clear */ });
     }
     setCart(makeEmptyCart(session));

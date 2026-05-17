@@ -1,5 +1,6 @@
 use sqlx::{SqlitePool, Row};
 use ulid::Ulid;
+use crate::db::repositories::audit_hash;
 use crate::domain::refund::{SaleForRefund, SaleItemForRefund, RefundItemInput, RefundResult};
 use crate::domain::sale::{SaleResult, SaleItemSummary, PaymentSummary};
 use crate::errors::{AppError, AppResult};
@@ -136,7 +137,7 @@ pub async fn create_refund(
     }
 
     let sale_row = sqlx::query(
-        "SELECT s.currency, b.branch_code, d.device_code
+        "SELECT s.currency, s.device_id, b.branch_code, d.device_code
          FROM sales s
          JOIN branches b ON b.branch_id = s.branch_id
          JOIN devices d ON d.device_id = s.device_id
@@ -147,7 +148,8 @@ pub async fn create_refund(
     .await?
     .ok_or_else(|| AppError::NotFound("Original sale not found".into()))?;
 
-    let currency: String = sale_row.get("currency");
+    let currency: String    = sale_row.get("currency");
+    let device_id: String   = sale_row.get("device_id");
     let branch_code: String = sale_row.get("branch_code");
     let device_code: String = sale_row.get("device_code");
 
@@ -195,16 +197,22 @@ pub async fn create_refund(
         .execute(&mut *tx)
         .await?;
 
-    let audit_id = Ulid::new().to_string();
+    let audit_id   = Ulid::new().to_string();
     let after_json = serde_json::json!({ "refund_id": &refund_id, "total_minor": refund_total }).to_string();
-    let hash = format!("{:016x}", refund_id.len() as u64 + refund_total as u64);
+    let prev_hash  = audit_hash::fetch_last_hash(pool, &device_id).await.unwrap_or_default();
+    let hash = audit_hash::compute_audit_hash(&audit_hash::AuditHashInput {
+        audit_log_id: &audit_id, event_type: "refund.created", entity_type: "refund",
+        entity_id: &refund_id, actor_user_id: created_by_user_id,
+        created_at: &now, after_json: Some(&after_json), previous_hash: &prev_hash,
+    });
     sqlx::query(
         "INSERT INTO audit_logs (audit_log_id, event_type, entity_type, entity_id,
-         actor_user_id, actor_type, after_json, created_at, hash)
-         VALUES (?, 'refund.created', 'refund', ?, ?, 'user', ?, ?, ?)"
+         actor_user_id, actor_type, after_json, created_at, hash, previous_hash)
+         VALUES (?, 'refund.created', 'refund', ?, ?, 'user', ?, ?, ?, ?)"
     )
     .bind(&audit_id).bind(&refund_id).bind(created_by_user_id)
     .bind(&after_json).bind(&now).bind(&hash)
+    .bind(if prev_hash.is_empty() { None } else { Some(prev_hash.clone()) })
     .execute(&mut *tx)
     .await?;
 

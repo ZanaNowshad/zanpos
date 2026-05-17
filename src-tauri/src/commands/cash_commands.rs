@@ -4,6 +4,7 @@ use tauri::State;
 use ulid::Ulid;
 use serde::Serialize;
 use sqlx::Row;
+use crate::db::repositories::audit_hash;
 use crate::errors::{AppError, AppResult};
 use crate::AppState;
 use crate::commands::rbac;
@@ -260,18 +261,27 @@ pub async fn cash_no_sale(
     .execute(&state.db)
     .await?;
 
-    // Audit trail
-    let log_id = Ulid::new().to_string();
+    // Audit trail with hash chain
+    let log_id   = Ulid::new().to_string();
+    let prev_hash = audit_hash::fetch_last_hash(&state.db, &device_id).await.unwrap_or_default();
+    let hash = audit_hash::compute_audit_hash(&audit_hash::AuditHashInput {
+        audit_log_id: &log_id, event_type: "NO_SALE", entity_type: "shift",
+        entity_id: &shift_id, actor_user_id: &actor_user_id,
+        created_at: &now, after_json: None, previous_hash: &prev_hash,
+    });
     sqlx::query(
         "INSERT INTO audit_logs
            (audit_log_id, event_type, entity_type, entity_id,
-            actor_user_id, actor_type, created_at)
-         VALUES (?, 'NO_SALE', 'shift', ?, ?, 'user', ?)"
+            actor_user_id, actor_type, device_id, created_at, hash, previous_hash)
+         VALUES (?, 'NO_SALE', 'shift', ?, ?, 'user', ?, ?, ?, ?)"
     )
     .bind(&log_id)
     .bind(&shift_id)
     .bind(&actor_user_id)
+    .bind(&device_id)
     .bind(&now)
+    .bind(&hash)
+    .bind(if prev_hash.is_empty() { None } else { Some(prev_hash.clone()) })
     .execute(&state.db)
     .await?;
 
@@ -297,19 +307,29 @@ pub async fn cash_x_report(
 
     let summary = drawer_summary_inner(&state.db, &shift_id).await?;
 
-    // Audit trail for X-Report generation
+    // Audit trail for X-Report generation with hash chain
     let log_id = Ulid::new().to_string();
     let now    = chrono::Utc::now().to_rfc3339();
+    let (_, device_id) = resolve_branch_device(&state).await.unwrap_or_default();
+    let prev_hash = audit_hash::fetch_last_hash(&state.db, &device_id).await.unwrap_or_default();
+    let hash = audit_hash::compute_audit_hash(&audit_hash::AuditHashInput {
+        audit_log_id: &log_id, event_type: "X_REPORT", entity_type: "shift",
+        entity_id: &shift_id, actor_user_id: &actor_user_id,
+        created_at: &now, after_json: None, previous_hash: &prev_hash,
+    });
     sqlx::query(
         "INSERT INTO audit_logs
            (audit_log_id, event_type, entity_type, entity_id,
-            actor_user_id, actor_type, created_at)
-         VALUES (?, 'X_REPORT', 'shift', ?, ?, 'user', ?)"
+            actor_user_id, actor_type, device_id, created_at, hash, previous_hash)
+         VALUES (?, 'X_REPORT', 'shift', ?, ?, 'user', ?, ?, ?, ?)"
     )
     .bind(&log_id)
     .bind(&shift_id)
     .bind(&actor_user_id)
+    .bind(&device_id)
     .bind(&now)
+    .bind(&hash)
+    .bind(if prev_hash.is_empty() { None } else { Some(prev_hash.clone()) })
     .execute(&state.db)
     .await?;
 

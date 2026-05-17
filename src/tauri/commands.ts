@@ -176,11 +176,12 @@ export const posVoidSale = (sale_id: string, voided_by_user_id: string): Promise
 
 export const posRecordVoid = (
   cart_id: string,
+  device_id: string,
   cashier_user_id: string,
   line_count: number,
   net_total_minor: number,
 ): Promise<void> =>
-  invoke("pos_record_void", { cartId: cart_id, cashierUserId: cashier_user_id, lineCount: line_count, netTotalMinor: net_total_minor });
+  invoke("pos_record_void", { cartId: cart_id, deviceId: device_id, cashierUserId: cashier_user_id, lineCount: line_count, netTotalMinor: net_total_minor });
 
 // ─── Held cart commands ───────────────────────────────────────────────────────
 
@@ -393,6 +394,11 @@ export const auditLogList = (
   actorUserId: string,
 ): Promise<Array<{ audit_log_id: string; event_type: string; entity_type: string; entity_id: string | null; actor_user_id: string | null; created_at: string }>> =>
   invoke("audit_log_list", { from, to, page, actorUserId });
+
+export const auditVerifyChain = (actorUserId: string): Promise<{
+  total_rows: number; legacy_rows: number; verified: number;
+  broken_hash: number; broken_link: number; ok: boolean;
+}> => invoke("audit_verify_chain", { actorUserId });
 
 export const inventoryAdjustStock = (
   product_id: string,

@@ -124,6 +124,7 @@ pub fn run() {
             commands::phase10a_commands::db_backup,
             commands::phase10a_commands::report_tax_by_day,
             commands::phase10a_commands::audit_log_list,
+            commands::phase10a_commands::audit_verify_chain,
             // Sync
             commands::sync_commands::sync_status,
             commands::sync_commands::sync_trigger_now,

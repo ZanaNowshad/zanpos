@@ -1,8 +1,8 @@
 use tauri::State;
 use ulid::Ulid;
+use crate::db::repositories::{audit_hash, product_repo, sale_repo};
 use crate::domain::cart::{Cart, CartLine};
 use crate::domain::sale::{PaymentInput, SaleResult};
-use crate::db::repositories::{product_repo, sale_repo};
 use crate::errors::AppError;
 use crate::AppState;
 
@@ -266,8 +266,24 @@ pub async fn pos_void_sale(
         ));
     }
 
+    // Fetch device_id for the hash chain (best-effort; fall back to empty string)
+    let device_id: String = sqlx::query_scalar("SELECT device_id FROM sales WHERE sale_id = ?")
+        .bind(&sale_id)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .flatten()
+        .unwrap_or_default();
+
     // Record in audit log — best-effort, non-fatal
-    let audit_id = ulid::Ulid::new().to_string();
+    let audit_id  = ulid::Ulid::new().to_string();
+    let prev_hash = audit_hash::fetch_last_hash(&state.db, &device_id).await.unwrap_or_default();
+    let hash = audit_hash::compute_audit_hash(&audit_hash::AuditHashInput {
+        audit_log_id: &audit_id, event_type: "sale.voided", entity_type: "sale",
+        entity_id: &sale_id, actor_user_id: &voided_by_user_id,
+        created_at: &now, after_json: None, previous_hash: &prev_hash,
+    });
     let _ = sqlx::query(
         "INSERT INTO audit_logs
            (audit_log_id, event_type, entity_type, entity_id,
@@ -281,8 +297,8 @@ pub async fn pos_void_sale(
     .bind(&voided_by_user_id)
     .bind("user")
     .bind(&now)
-    .bind(&audit_id)   // hash placeholder (real implementation would be SHA-256)
-    .bind(Option::<String>::None)
+    .bind(&hash)
+    .bind(if prev_hash.is_empty() { None } else { Some(prev_hash.clone()) })
     .execute(&state.db)
     .await;
 
@@ -316,9 +332,10 @@ pub async fn pos_cart_summary(cart: Cart) -> Result<CartSummary, AppError> {
 /// Safe to call even if the cart is empty — no-ops without writing.
 #[tauri::command]
 pub async fn pos_record_void(
-    cart_id:       String,
+    cart_id:         String,
+    device_id:       String,
     cashier_user_id: String,
-    line_count:    usize,
+    line_count:      usize,
     net_total_minor: i64,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
@@ -333,17 +350,26 @@ pub async fn pos_record_void(
     })
     .to_string();
 
+    let prev_hash = audit_hash::fetch_last_hash(&state.db, &device_id).await.unwrap_or_default();
+    let hash = audit_hash::compute_audit_hash(&audit_hash::AuditHashInput {
+        audit_log_id: &log_id, event_type: "CART_VOID", entity_type: "cart",
+        entity_id: &cart_id, actor_user_id: &cashier_user_id,
+        created_at: &now, after_json: Some(&detail), previous_hash: &prev_hash,
+    });
+
     sqlx::query(
         "INSERT INTO audit_logs
            (audit_log_id, event_type, entity_type, entity_id,
-            actor_user_id, actor_type, after_json, created_at)
-         VALUES (?, 'CART_VOID', 'cart', ?, ?, 'user', ?, ?)"
+            actor_user_id, actor_type, after_json, created_at, hash, previous_hash)
+         VALUES (?, 'CART_VOID', 'cart', ?, ?, 'user', ?, ?, ?, ?)"
     )
     .bind(&log_id)
     .bind(&cart_id)
     .bind(&cashier_user_id)
     .bind(&detail)
     .bind(&now)
+    .bind(&hash)
+    .bind(if prev_hash.is_empty() { None } else { Some(prev_hash.clone()) })
     .execute(&state.db)
     .await?;
 

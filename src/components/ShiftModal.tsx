@@ -190,6 +190,16 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
                   Cancel
                 </button>
               )}
+              {todaySummary && (
+                <button
+                  className="modal-btn-secondary"
+                  onClick={() => window.print()}
+                  disabled={loading}
+                  title="Print Z-Report"
+                >
+                  Print Report
+                </button>
+              )}
               <button className="modal-btn-danger" onClick={handleClose} disabled={loading}>
                 {loading ? "Closing…" : "Close Shift"}
               </button>

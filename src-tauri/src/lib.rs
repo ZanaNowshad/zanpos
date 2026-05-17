@@ -109,6 +109,12 @@ pub fn run() {
             commands::setup_commands::setup_wizard_complete,
             commands::setup_commands::settings_get_branch,
             commands::setup_commands::settings_update_branch,
+            // Phase 10a — timeout, backup, tax report, audit log
+            commands::phase10a_commands::app_config_get_timeout,
+            commands::phase10a_commands::app_config_set_timeout,
+            commands::phase10a_commands::db_backup,
+            commands::phase10a_commands::report_tax_by_day,
+            commands::phase10a_commands::audit_log_list,
             // Sync
             commands::sync_commands::sync_status,
             commands::sync_commands::sync_trigger_now,

@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import type { BranchSettings } from "../types";
-import { settingsGetBranch, settingsUpdateBranch } from "../tauri/commands";
+import {
+  settingsGetBranch,
+  settingsUpdateBranch,
+  appConfigGetTimeout,
+  appConfigSetTimeout,
+  dbBackup,
+} from "../tauri/commands";
 
 const TIMEZONES = [
   "Asia/Bahrain",
@@ -15,6 +21,8 @@ const TIMEZONES = [
   "America/Los_Angeles",
   "Asia/Singapore",
 ];
+
+const TIMEOUT_OPTIONS = [1, 2, 5, 10, 15, 30, 60];
 
 export default function SettingsTab() {
   const [settings, setSettings] = useState<BranchSettings | null>(null);
@@ -32,9 +40,18 @@ export default function SettingsTab() {
   const [receiptHeader, setReceiptHeader] = useState("");
   const [receiptFooter, setReceiptFooter] = useState("");
 
+  // Session timeout
+  const [timeoutMinutes, setTimeoutMinutes] = useState(5);
+  const [savingTimeout, setSavingTimeout]   = useState(false);
+  const [savedTimeout, setSavedTimeout]     = useState(false);
+
+  // Backup
+  const [backingUp, setBackingUp] = useState(false);
+  const [backupMsg, setBackupMsg] = useState<string | null>(null);
+
   useEffect(() => {
-    settingsGetBranch()
-      .then(s => {
+    Promise.all([settingsGetBranch(), appConfigGetTimeout().catch(() => 5)])
+      .then(([s, minutes]) => {
         setSettings(s);
         setName(s.name);
         setTimezone(s.timezone);
@@ -43,6 +60,7 @@ export default function SettingsTab() {
         setTaxNumber(s.tax_number ?? "");
         setReceiptHeader(s.receipt_header ?? "");
         setReceiptFooter(s.receipt_footer ?? "");
+        setTimeoutMinutes(minutes as number);
       })
       .catch(() => setError("Failed to load settings"))
       .finally(() => setLoading(false));
@@ -70,6 +88,33 @@ export default function SettingsTab() {
       setError(typeof e === "string" ? e : "Failed to save settings");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveTimeout = async () => {
+    setSavingTimeout(true);
+    try {
+      await appConfigSetTimeout(timeoutMinutes);
+      setSavedTimeout(true);
+      setTimeout(() => setSavedTimeout(false), 3000);
+    } catch (e: unknown) {
+      setError(typeof e === "string" ? e : "Failed to save timeout");
+    } finally {
+      setSavingTimeout(false);
+    }
+  };
+
+  const handleBackup = async () => {
+    setBackupMsg(null);
+    setBackingUp(true);
+    try {
+      // Pass empty string — Rust will auto-generate a timestamped path in Documents
+      const savedTo = await dbBackup("");
+      setBackupMsg(`Backup saved to: ${savedTo}`);
+    } catch (e: unknown) {
+      setBackupMsg(typeof e === "string" ? e : "Backup failed");
+    } finally {
+      setBackingUp(false);
     }
   };
 
@@ -108,6 +153,22 @@ export default function SettingsTab() {
 
           <label className="bo-label">Tax / VAT Registration Number</label>
           <input className="bo-input" type="text" value={taxNumber} onChange={e => setTaxNumber(e.target.value)} placeholder="e.g. VAT-1234567890" />
+
+          {/* DB Backup */}
+          <div className="settings-backup-row">
+            <div>
+              <div className="settings-backup-label">Database Backup</div>
+              <div className="settings-backup-hint">Copy the database to a safe location.</div>
+            </div>
+            <button className="btn-secondary settings-backup-btn" onClick={handleBackup} disabled={backingUp}>
+              {backingUp ? "Backing up…" : "Backup Database"}
+            </button>
+          </div>
+          {backupMsg && (
+            <div className={`settings-backup-msg ${backupMsg.startsWith("Backup saved") ? "settings-backup-ok" : "modal-error"}`}>
+              {backupMsg}
+            </div>
+          )}
         </section>
 
         <section className="settings-section">
@@ -154,6 +215,31 @@ export default function SettingsTab() {
               </div>
             </div>
           )}
+        </section>
+
+        <section className="settings-section">
+          <h3 className="settings-section-title">Security</h3>
+
+          <label className="bo-label">Session Timeout</label>
+          <div className="settings-timeout-row">
+            <select
+              className="bo-select settings-timeout-select"
+              value={timeoutMinutes}
+              onChange={e => setTimeoutMinutes(Number(e.target.value))}
+            >
+              {TIMEOUT_OPTIONS.map(m => (
+                <option key={m} value={m}>{m} minute{m !== 1 ? "s" : ""}</option>
+              ))}
+            </select>
+            <button
+              className="btn-secondary settings-timeout-btn"
+              onClick={handleSaveTimeout}
+              disabled={savingTimeout}
+            >
+              {savingTimeout ? "Saving…" : savedTimeout ? "Saved ✓" : "Save Timeout"}
+            </button>
+          </div>
+          <p className="settings-hint">Lock the screen after this many minutes of inactivity.</p>
         </section>
 
         {error && <div className="modal-error">{error}</div>}

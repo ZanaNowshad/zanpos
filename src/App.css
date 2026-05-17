@@ -1916,3 +1916,273 @@ textarea.field-input { resize: vertical; }
   margin-bottom: 4px;
 }
 .bo-back-btn:hover { text-decoration: underline; }
+
+/* ── Phase 10a: Split payment ────────────────────────────────────────────────── */
+
+.split-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.split-line {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+
+.split-line-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.split-method-select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 0.9rem;
+  padding: 7px 10px;
+  outline: none;
+  cursor: pointer;
+}
+.split-method-select:focus { border-color: var(--accent); }
+
+.split-amount-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 1.05rem;
+  padding: 8px 10px;
+  outline: none;
+  text-align: right;
+}
+.split-amount-input:focus { border-color: var(--accent); }
+
+.split-remove-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 1.2rem;
+  padding: 4px 6px;
+  line-height: 1;
+  border-radius: 4px;
+}
+.split-remove-btn:hover { color: var(--error); }
+
+.split-cash-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.split-tendered-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 0.95rem;
+  padding: 6px 10px;
+  outline: none;
+  text-align: right;
+}
+.split-tendered-input:focus { border-color: var(--accent); }
+
+.split-change { color: var(--success); font-weight: 600; white-space: nowrap; }
+
+.split-remaining {
+  font-size: 0.9rem;
+  color: var(--warning);
+  font-weight: 600;
+  text-align: center;
+  padding: 6px 0 4px;
+}
+.split-remaining-ok { color: var(--success); }
+
+.split-add-btn {
+  width: 100%;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 8px;
+  margin-bottom: 12px;
+  transition: border-color 0.15s, color 0.15s;
+}
+.split-add-btn:hover { border-color: var(--accent2); color: var(--text); }
+
+/* ── Phase 10a: Settings extras ──────────────────────────────────────────────── */
+
+.settings-backup-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 12px 14px;
+  background: var(--surface2);
+  border-radius: var(--radius);
+}
+.settings-backup-label { font-weight: 600; font-size: 0.9rem; }
+.settings-backup-hint  { font-size: 0.78rem; color: var(--text-dim); margin-top: 2px; }
+.settings-backup-btn   { white-space: nowrap; }
+.settings-backup-msg   { font-size: 0.82rem; margin-top: 6px; color: var(--text-dim); }
+.settings-backup-ok    { color: var(--success); }
+
+.settings-timeout-row   { display: flex; gap: 10px; align-items: center; margin-top: 6px; }
+.settings-timeout-select { flex: 0 0 auto; width: 180px; }
+.settings-timeout-btn   { white-space: nowrap; }
+
+/* ── Phase 10a: Reports extras ────────────────────────────────────────────────── */
+
+.rpt-export-btn { padding: 6px 14px; font-size: 0.82rem; }
+
+.rpt-tax-total-row td {
+  border-top: 2px solid var(--border);
+  background: var(--surface2);
+}
+
+/* ── Phase 10a: Audit log tab ─────────────────────────────────────────────────── */
+
+.audit-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.audit-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.audit-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+  margin-right: 6px;
+}
+
+.audit-table-wrap {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+
+.audit-event-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(83,52,131,0.25);
+  color: var(--accent2);
+}
+
+.audit-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.audit-page-info { font-size: 0.85rem; color: var(--text-dim); }
+
+/* ── Phase 10a: Z-report print styles ────────────────────────────────────────── */
+
+@media print {
+  .modal-overlay > *:not(.modal),
+  .modal-actions,
+  .bo-overlay,
+  .pos-layout,
+  .top-bar,
+  .action-bar {
+    display: none !important;
+  }
+  .modal-overlay {
+    position: static;
+    background: none;
+  }
+  .modal {
+    border: none;
+    box-shadow: none;
+    max-width: 100%;
+    padding: 0;
+  }
+  .zreport {
+    width: 100%;
+    border: none;
+  }
+}
+
+/* ── Settings layout helpers (were missing) ──────────────────────────────────── */
+
+.settings-layout {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  height: 100%;
+  padding: 20px 24px;
+  gap: 0;
+}
+.settings-header {
+  margin-bottom: 16px;
+}
+.settings-title { font-size: 1.1rem; font-weight: 700; margin-bottom: 4px; }
+.settings-meta  { font-size: 0.78rem; color: var(--text-dim); }
+.settings-meta code { background: var(--surface2); padding: 1px 5px; border-radius: 4px; font-size: 0.85em; }
+.settings-form  { display: flex; flex-direction: column; gap: 0; }
+.settings-section { margin-bottom: 24px; }
+.settings-section-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.settings-hint  { font-size: 0.78rem; color: var(--text-dim); margin: 4px 0 8px; }
+.settings-receipt-preview { margin-top: 16px; }
+.settings-preview-label { font-size: 0.72rem; text-transform: uppercase; color: var(--text-dim); letter-spacing: 0.06em; margin-bottom: 8px; }
+.receipt-mini {
+  background: #fff;
+  color: #111;
+  font-family: 'Courier New', monospace;
+  font-size: 0.78rem;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  max-width: 260px;
+}
+.receipt-mini-biz    { font-weight: 700; font-size: 0.9rem; text-align: center; }
+.receipt-mini-addr   { text-align: center; color: #555; font-size: 0.72rem; }
+.receipt-mini-header { text-align: center; margin: 4px 0; font-style: italic; }
+.receipt-mini-divider { text-align: center; color: #aaa; margin: 4px 0; }
+.receipt-mini-item   { color: #333; }
+.receipt-mini-total  { font-weight: 700; text-align: right; }
+.receipt-mini-footer { text-align: center; margin-top: 4px; font-style: italic; }
+.settings-actions    { display: flex; align-items: center; gap: 12px; justify-content: flex-end; padding-top: 12px; }
+.settings-saved      { color: var(--success); font-size: 0.88rem; font-weight: 600; }
+.settings-save-btn   { padding: 10px 24px; }

@@ -21,6 +21,13 @@ function defaultRange() {
 
 type Preset = "today" | "week" | "month" | "custom";
 
+interface TaxRow {
+  day: string;
+  transaction_count: number;
+  tax_minor: number;
+  cumulative_minor: number;
+}
+
 interface Props {
   sessionUserId: string;
 }
@@ -32,8 +39,9 @@ export default function ReportsTab({ sessionUserId }: Props) {
   const [summary, setSummary]       = useState<RangeSummary | null>(null);
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
   const [sales, setSales]           = useState<SaleListRow[]>([]);
+  const [taxRows, setTaxRows]       = useState<TaxRow[]>([]);
   const [loading, setLoading]       = useState(false);
-  const [activeSection, setActiveSection] = useState<"summary" | "products" | "sales">("summary");
+  const [activeSection, setActiveSection] = useState<"summary" | "products" | "sales" | "tax">("summary");
   const [voidingId, setVoidingId]   = useState<string | null>(null);
 
   const applyPreset = useCallback((p: Preset) => {
@@ -56,12 +64,13 @@ export default function ReportsTab({ sessionUserId }: Props) {
     if (!from || !to || from > to) return;
     setLoading(true);
     try {
-      const [s, tp, sl] = await Promise.all([
+      const [s, tp, sl, tx] = await Promise.all([
         cmd.reportDateRange(BRANCH_ID, from, to),
         cmd.reportTopProducts(BRANCH_ID, from, to),
         cmd.reportSalesList(BRANCH_ID, from, to),
+        cmd.reportTaxByDay(BRANCH_ID, from, to),
       ]);
-      setSummary(s); setTopProducts(tp); setSales(sl);
+      setSummary(s); setTopProducts(tp); setSales(sl); setTaxRows(tx as TaxRow[]);
     } finally {
       setLoading(false);
     }
@@ -83,6 +92,33 @@ export default function ReportsTab({ sessionUserId }: Props) {
       setVoidingId(null);
     }
   };
+
+  const handleExportCSV = () => {
+    const header = ["Receipt#","Date","Cashier","Method","Discount","Tax","Total","Status"];
+    const rows = sales.map(s => [
+      `#${s.receipt_number}`,
+      new Date(s.sold_at).toLocaleString(),
+      s.cashier_name,
+      s.payment_methods,
+      formatMoney(s.discount_total_minor, EXP),
+      "", // no tax in SaleListRow — placeholder
+      formatMoney(s.net_total_minor, EXP),
+      s.status,
+    ]);
+    const csv = [header, ...rows]
+      .map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `zanpos-sales-${from}-${to}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const taxTotal = taxRows.reduce((s, r) => s + r.tax_minor, 0);
+  const taxTxCount = taxRows.reduce((s, r) => s + r.transaction_count, 0);
 
   return (
     <div className="rpt-layout">
@@ -108,18 +144,23 @@ export default function ReportsTab({ sessionUserId }: Props) {
           <button className="btn-primary rpt-run-btn" onClick={load} disabled={loading}>
             {loading ? "…" : "Run"}
           </button>
+          {activeSection === "sales" && sales.length > 0 && (
+            <button className="btn-secondary rpt-export-btn" onClick={handleExportCSV} title="Export CSV">
+              ⬇ Export CSV
+            </button>
+          )}
         </div>
       </div>
 
       {/* ── Section tabs ── */}
       <div className="rpt-section-tabs">
-        {(["summary", "products", "sales"] as const).map(s => (
+        {(["summary", "products", "sales", "tax"] as const).map(s => (
           <button
             key={s}
             className={`rpt-section-tab ${activeSection === s ? "rpt-section-active" : ""}`}
             onClick={() => setActiveSection(s)}
           >
-            {s === "summary" ? "Summary" : s === "products" ? "Top Products" : "Sales List"}
+            {s === "summary" ? "Summary" : s === "products" ? "Top Products" : s === "sales" ? "Sales List" : "Tax"}
             {s === "sales" && sales.length > 0 && <span className="rpt-count">{sales.length}</span>}
           </button>
         ))}
@@ -222,6 +263,42 @@ export default function ReportsTab({ sessionUserId }: Props) {
                       </td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+
+        {/* ── Tax report ── */}
+        {activeSection === "tax" && (
+          <div className="rpt-table-wrap">
+            {taxRows.length === 0 ? (
+              <div className="bo-empty">No taxable sales in this period.</div>
+            ) : (
+              <table className="rpt-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th className="rpt-num">Transactions</th>
+                    <th className="rpt-num">VAT Collected</th>
+                    <th className="rpt-num">Cumulative VAT</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {taxRows.map(r => (
+                    <tr key={r.day}>
+                      <td>{r.day}</td>
+                      <td className="rpt-num">{r.transaction_count}</td>
+                      <td className="rpt-num rpt-money">{fmt(r.tax_minor)}</td>
+                      <td className="rpt-num rpt-dim">{fmt(r.cumulative_minor)}</td>
+                    </tr>
+                  ))}
+                  <tr className="rpt-tax-total-row">
+                    <td><strong>Total</strong></td>
+                    <td className="rpt-num"><strong>{taxTxCount}</strong></td>
+                    <td className="rpt-num rpt-money"><strong>{fmt(taxTotal)}</strong></td>
+                    <td></td>
+                  </tr>
                 </tbody>
               </table>
             )}

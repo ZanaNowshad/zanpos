@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AppConfig, SessionUser, Shift } from "./types";
 import { DEVICE } from "./types";
-import { appConfigLoad, shiftGetActive } from "./tauri/commands";
+import { appConfigLoad, appConfigGetTimeout, shiftGetActive } from "./tauri/commands";
 import LoginScreen from "./pages/LoginScreen";
 import PosPage from "./pages/PosPage";
 import AdminChatPage from "./pages/AdminChatPage";
@@ -16,9 +16,6 @@ import "./setup-styles.css";
 
 type View = "login" | "shift_check" | "shift_open" | "pos" | "admin_chat";
 
-/** Auto-lock after 5 minutes of inactivity when a session is active */
-const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
-
 export default function App() {
   // ── Theme (initialised early so there's no flash on load) ─────────────────
   const { theme, toggle: toggleTheme } = useTheme();
@@ -26,12 +23,14 @@ export default function App() {
   // ── App config (loaded from DB before showing any UI) ──────────────────────
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   const [configLoading, setConfigLoading] = useState(true);
+  const [idleTimeoutMs, setIdleTimeoutMs] = useState(5 * 60 * 1000);
 
   useEffect(() => {
-    appConfigLoad()
-      .then(cfg => {
+    Promise.all([appConfigLoad(), appConfigGetTimeout().catch(() => 5)])
+      .then(([cfg, minutes]) => {
         DEVICE.init(cfg);       // sync module-level DEVICE object with real DB values
         setAppConfig(cfg);
+        setIdleTimeoutMs((minutes as number) * 60 * 1000);
       })
       .catch(() => {
         // Cannot load DB at all — show error; app is in broken state
@@ -51,7 +50,7 @@ export default function App() {
   const handleIdle = useCallback(() => {
     if (isSessionActive) setLocked(true);
   }, [isSessionActive]);
-  useIdleTimer(isSessionActive ? IDLE_TIMEOUT_MS : 0, handleIdle);
+  useIdleTimer(isSessionActive ? idleTimeoutMs : 0, handleIdle);
 
   const handleLogin = async (user: SessionUser) => {
     setLocked(false);

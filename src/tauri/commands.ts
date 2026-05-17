@@ -334,6 +334,31 @@ export const inventoryReceiveStock = (
     input: { product_id, quantity, notes, received_by_user_id },
   });
 
+// ─── Phase 10a commands ───────────────────────────────────────────────────────
+
+export const appConfigGetTimeout = (): Promise<number> =>
+  invoke("app_config_get_timeout");
+
+export const appConfigSetTimeout = (minutes: number): Promise<void> =>
+  invoke("app_config_set_timeout", { minutes });
+
+export const dbBackup = (destPath: string): Promise<string> =>
+  invoke("db_backup", { destPath: destPath });
+
+export const reportTaxByDay = (
+  branch_id: string,
+  from_date: string,
+  to_date: string
+): Promise<Array<{ day: string; transaction_count: number; tax_minor: number; cumulative_minor: number }>> =>
+  invoke("report_tax_by_day", { branchId: branch_id, fromDate: from_date, toDate: to_date });
+
+export const auditLogList = (
+  from: string,
+  to: string,
+  page: number
+): Promise<Array<{ audit_log_id: string; event_type: string; entity_type: string; entity_id: string | null; actor_user_id: string | null; created_at: string }>> =>
+  invoke("audit_log_list", { from, to, page });
+
 export const inventoryAdjustStock = (
   product_id: string,
   new_quantity: string,

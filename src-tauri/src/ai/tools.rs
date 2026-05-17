@@ -1,9 +1,9 @@
 use serde_json::{json, Value};
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 use crate::ai::client::ToolDef;
 use crate::domain::ai_admin::{ToolPreview, ToolPreviewField};
 use crate::errors::{AppError, AppResult};
-use crate::db::repositories::{product_repo, report_repo};
+use crate::db::repositories::{product_repo, report_repo, sync_repo};
 use crate::domain::money;
 use crate::sync::outbox;
 use crate::inventory::{stock_repo, movements};
@@ -118,6 +118,26 @@ pub fn all_tool_definitions() -> Vec<ToolDef> {
                 "required": ["product_id", "new_quantity"]
             }),
         },
+        ToolDef {
+            name: "get_cash_summary".into(),
+            description: "Get the current cash drawer reconciliation for the active shift: opening float, cash sales, refunds, paid-in/out, safe drops, expected total, and counted total if entered.".into(),
+            input_schema: json!({ "type": "object", "properties": { "shift_id": { "type": "string" } }, "required": ["shift_id"] }),
+        },
+        ToolDef {
+            name: "get_recent_refunds".into(),
+            description: "List the most recent refunds (up to 20). Shows refund ID, original sale, amount, reason, and date.".into(),
+            input_schema: json!({ "type": "object", "properties": { "limit": { "type": "integer", "description": "Max refunds to return (default 10, max 20)" } }, "required": [] }),
+        },
+        ToolDef {
+            name: "get_audit_log".into(),
+            description: "Retrieve recent audit log entries for today. Useful for reviewing cashier actions, voids, and refunds.".into(),
+            input_schema: json!({ "type": "object", "properties": { "event_type": { "type": "string", "description": "Optional filter by event type, e.g. sale.created, sale.voided, CART_VOID, NO_SALE, X_REPORT, refund.created" } }, "required": [] }),
+        },
+        ToolDef {
+            name: "get_sync_status".into(),
+            description: "Check the cloud sync status: whether Supabase is configured, last sync time, pending queue count, and any failed or conflicted events.".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
+        },
     ]
 }
 
@@ -217,6 +237,180 @@ pub async fn execute_read_tool(
                     s.product_name, s.quantity_on_hand, s.reorder_point)
             }).collect();
             Ok(format!("{} product(s) need restocking:\n{}", levels.len(), lines.join("\n")))
+        }
+        "get_cash_summary" => {
+            let shift_id = input.get("shift_id").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing shift_id".into()))?;
+            let fmt = |n: i64| money::format_minor(n, currency_exp);
+
+            let shift = sqlx::query(
+                "SELECT opening_cash_minor, counted_cash_minor FROM shifts WHERE shift_id = ?"
+            )
+            .bind(shift_id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Shift not found".into()))?;
+
+            let opening: i64          = shift.get("opening_cash_minor");
+            let counted: Option<i64>  = shift.get("counted_cash_minor");
+
+            let cash_sales: i64 = sqlx::query_scalar(
+                "SELECT COALESCE(SUM(p.amount_minor),0) FROM payments p
+                 JOIN sales s ON s.sale_id=p.sale_id
+                 WHERE s.shift_id=? AND p.payment_method='cash' AND s.status!='voided'"
+            ).bind(shift_id).fetch_one(pool).await?;
+
+            let cash_refunds: i64 = sqlx::query_scalar(
+                "SELECT COALESCE(SUM(r.refund_total_minor),0) FROM refunds r
+                 JOIN sales s ON s.sale_id=r.original_sale_id WHERE s.shift_id=?"
+            ).bind(shift_id).fetch_one(pool).await?;
+
+            let paid_in: i64  = sqlx::query_scalar(
+                "SELECT COALESCE(SUM(amount_minor),0) FROM cash_events WHERE shift_id=? AND event_type='paid_in'"
+            ).bind(shift_id).fetch_one(pool).await?;
+            let paid_out: i64 = sqlx::query_scalar(
+                "SELECT COALESCE(SUM(amount_minor),0) FROM cash_events WHERE shift_id=? AND event_type='paid_out'"
+            ).bind(shift_id).fetch_one(pool).await?;
+            let safe_drop: i64 = sqlx::query_scalar(
+                "SELECT COALESCE(SUM(amount_minor),0) FROM cash_events WHERE shift_id=? AND event_type='safe_drop'"
+            ).bind(shift_id).fetch_one(pool).await?;
+
+            let expected = opening + cash_sales - cash_refunds + paid_in - paid_out - safe_drop;
+            let variance = counted.map(|c| c - expected);
+
+            let mut lines = vec![
+                format!("Cash Drawer — Shift {shift_id}"),
+                format!("  Opening float:  {}", fmt(opening)),
+                format!("  Cash sales:     +{}", fmt(cash_sales)),
+                format!("  Cash refunds:   -{}", fmt(cash_refunds)),
+                format!("  Paid in:        +{}", fmt(paid_in)),
+                format!("  Paid out:       -{}", fmt(paid_out)),
+                format!("  Safe drops:     -{}", fmt(safe_drop)),
+                format!("  Expected:       {}", fmt(expected)),
+            ];
+            if let Some(c) = counted {
+                let v = variance.unwrap_or(0);
+                lines.push(format!("  Counted:        {}", fmt(c)));
+                lines.push(format!("  Variance:       {} {}", if v >= 0 { "+" } else { "" }, fmt(v)));
+            } else {
+                lines.push("  Counted:        (not yet entered)".into());
+            }
+            Ok(lines.join("\n"))
+        }
+        "get_recent_refunds" => {
+            let limit = input.get("limit").and_then(|v| v.as_i64()).unwrap_or(10).min(20);
+            let fmt = |n: i64| money::format_minor(n, currency_exp);
+            let rows = sqlx::query(
+                "SELECT r.refund_id, r.original_sale_id, r.refund_total_minor,
+                        r.reason, r.return_reason_code, r.created_at
+                 FROM refunds r ORDER BY r.created_at DESC LIMIT ?"
+            )
+            .bind(limit)
+            .fetch_all(pool)
+            .await?;
+
+            if rows.is_empty() { return Ok("No refunds found.".into()); }
+            let lines: Vec<String> = rows.iter().map(|r| {
+                let total: i64         = r.get("refund_total_minor");
+                let id: String         = r.get("refund_id");
+                let sale: String       = r.get("original_sale_id");
+                let reason: Option<String> = r.get("reason");
+                let code: Option<String>   = r.get("return_reason_code");
+                let at: String         = r.get("created_at");
+                format!("- {} | sale {} | {} | {} [{}] | {}",
+                    &id[..8.min(id.len())], &sale[..8.min(sale.len())],
+                    fmt(total),
+                    reason.as_deref().unwrap_or("—"),
+                    code.as_deref().unwrap_or("other"),
+                    &at[..10])
+            }).collect();
+            Ok(format!("{} recent refund(s):\n{}", rows.len(), lines.join("\n")))
+        }
+        "get_audit_log" => {
+            let event_filter = input.get("event_type").and_then(|v| v.as_str());
+            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+            let rows = if let Some(et) = event_filter {
+                sqlx::query(
+                    "SELECT audit_log_id, event_type, entity_type, entity_id,
+                            actor_user_id, created_at
+                     FROM audit_logs
+                     WHERE event_type = ? AND created_at >= ?
+                     ORDER BY created_at DESC LIMIT 30"
+                )
+                .bind(et).bind(&today).fetch_all(pool).await?
+            } else {
+                sqlx::query(
+                    "SELECT audit_log_id, event_type, entity_type, entity_id,
+                            actor_user_id, created_at
+                     FROM audit_logs
+                     WHERE created_at >= ?
+                     ORDER BY created_at DESC LIMIT 30"
+                )
+                .bind(&today).fetch_all(pool).await?
+            };
+
+            if rows.is_empty() { return Ok("No audit log entries found for today.".into()); }
+            let lines: Vec<String> = rows.iter().map(|r| {
+                let id: String          = r.get("audit_log_id");
+                let et: String          = r.get("event_type");
+                let eid: Option<String> = r.get("entity_id");
+                let actor: Option<String> = r.get("actor_user_id");
+                let at: String          = r.get("created_at");
+                format!("- {} | {} | entity: {} | actor: {} | {}",
+                    &id[..8.min(id.len())], et,
+                    &eid.as_deref().unwrap_or("—")[..8.min(eid.as_deref().unwrap_or("—").len())],
+                    actor.as_deref().unwrap_or("system"),
+                    &at[11..19.min(at.len())])
+            }).collect();
+            Ok(format!("{} audit entries today:\n{}", rows.len(), lines.join("\n")))
+        }
+        "get_sync_status" => {
+            // Fetch device_id from the active device
+            let device_id: String = sqlx::query_scalar(
+                "SELECT device_id FROM devices WHERE is_active=1 ORDER BY device_code LIMIT 1"
+            ).fetch_optional(pool).await?.flatten().unwrap_or_default();
+
+            let status = sync_repo::get_sync_status(pool, &device_id).await?;
+            let pending: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sync_queue WHERE status='pending'"
+            ).fetch_one(pool).await?;
+            let failed: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sync_queue WHERE status='failed'"
+            ).fetch_one(pool).await?;
+            let conflict: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sync_queue WHERE status='conflict'"
+            ).fetch_one(pool).await?;
+
+            let cloud = if status.supabase_configured { "✓ configured" } else { "✗ not configured" };
+            let last = status.last_successful_sync_at.as_deref().unwrap_or("never");
+            let mut lines = vec![
+                format!("Sync Status:"),
+                format!("  Cloud (Supabase): {cloud}"),
+                format!("  Last sync:        {last}"),
+                format!("  Pending events:   {pending}"),
+                format!("  Failed events:    {failed}"),
+                format!("  Conflicts:        {conflict}"),
+            ];
+            if conflict > 0 {
+                // Show the conflicted events
+                let conflicts = sqlx::query(
+                    "SELECT sync_event_id, entity_type, entity_id, operation, last_error
+                     FROM sync_queue WHERE status='conflict' LIMIT 10"
+                ).fetch_all(pool).await?;
+                lines.push(String::new());
+                lines.push("Conflicted events:".into());
+                for r in &conflicts {
+                    let eid: String = r.get("sync_event_id");
+                    let et: String  = r.get("entity_type");
+                    let id: String  = r.get("entity_id");
+                    let op: String  = r.get("operation");
+                    let err: Option<String> = r.get("last_error");
+                    lines.push(format!("  - {} {} {} [{}]: {}",
+                        &eid[..8.min(eid.len())], et, &id[..8.min(id.len())], op,
+                        err.as_deref().unwrap_or("unknown error")));
+                }
+            }
+            Ok(lines.join("\n"))
         }
         _ => Err(AppError::Validation(format!("Unknown read tool: {}", tool_name))),
     }

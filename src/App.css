@@ -1810,6 +1810,25 @@ textarea.field-input { resize: vertical; }
 .cash-variance-over   { background: rgba(33,150,243,0.12); color: #64b5f6; }
 .cash-variance-under  { background: rgba(244,67,54,0.12);  color: var(--error); }
 
+/* ── Denomination count grid ─────────────────────────────────────────────────── */
+.denom-section { background: var(--surface-2, rgba(255,255,255,0.04)); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; }
+.denom-title { font-size: 0.78rem; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+.denom-grid { display: flex; flex-direction: column; gap: 4px; }
+.denom-row { display: grid; grid-template-columns: 80px 64px 1fr; align-items: center; gap: 8px; }
+.denom-label { font-size: 0.82rem; color: var(--text); font-variant-numeric: tabular-nums; }
+.denom-count-input { padding: 4px 6px; border: 1px solid var(--border); border-radius: 5px;
+  background: var(--bg); color: var(--text); font-size: 0.82rem;
+  width: 100%; text-align: right; }
+.denom-count-input:focus { border-color: var(--accent); outline: none; }
+.denom-subtotal { font-size: 0.78rem; color: var(--text-muted); font-variant-numeric: tabular-nums;
+  text-align: right; }
+.denom-total { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);
+  font-size: 0.9rem; font-weight: 700; color: var(--text); text-align: right; }
+
+.cash-event-drop-hint { font-size: 0.72rem; color: var(--text-muted); }
+
 /* ── Void button in reports ───────────────────────────────────────────────────── */
 
 .rpt-void-btn {

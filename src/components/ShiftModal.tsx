@@ -1,8 +1,52 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { CashDrawerSummary, SessionUser, Shift, TodaySummary } from "../types";
 import { DEVICE } from "../types";
 import { shiftOpen, shiftClose, reportToday, cashDrawerSummary } from "../tauri/commands";
 import { formatMoney } from "../money";
+
+// ─── Denomination sets (minor units) per currency ─────────────────────────────
+const DENOM_SETS: Record<string, { label: string; minor: number }[]> = {
+  BHD: [
+    { label: "BD 20",      minor: 20000 }, { label: "BD 10",      minor: 10000 },
+    { label: "BD 5",       minor:  5000 }, { label: "BD 1",       minor:  1000 },
+    { label: "500 fils",   minor:   500 }, { label: "100 fils",   minor:   100 },
+    { label: "50 fils",    minor:    50 }, { label: "25 fils",    minor:    25 },
+    { label: "10 fils",    minor:    10 }, { label: "5 fils",     minor:     5 },
+  ],
+  USD: [
+    { label: "$100",  minor: 10000 }, { label: "$50",   minor:  5000 },
+    { label: "$20",   minor:  2000 }, { label: "$10",   minor:  1000 },
+    { label: "$5",    minor:   500 }, { label: "$1",    minor:   100 },
+    { label: "50¢",   minor:    50 }, { label: "25¢",   minor:    25 },
+    { label: "10¢",   minor:    10 }, { label: "5¢",    minor:     5 },
+    { label: "1¢",    minor:     1 },
+  ],
+  EUR: [
+    { label: "€200", minor: 20000 }, { label: "€100", minor: 10000 },
+    { label: "€50",  minor:  5000 }, { label: "€20",  minor:  2000 },
+    { label: "€10",  minor:  1000 }, { label: "€5",   minor:   500 },
+    { label: "€2",   minor:   200 }, { label: "€1",   minor:   100 },
+    { label: "50c",  minor:    50 }, { label: "20c",  minor:    20 },
+    { label: "10c",  minor:    10 }, { label: "5c",   minor:     5 },
+  ],
+  GBP: [
+    { label: "£50",  minor:  5000 }, { label: "£20",  minor:  2000 },
+    { label: "£10",  minor:  1000 }, { label: "£5",   minor:   500 },
+    { label: "£2",   minor:   200 }, { label: "£1",   minor:   100 },
+    { label: "50p",  minor:    50 }, { label: "20p",  minor:    20 },
+    { label: "10p",  minor:    10 }, { label: "5p",   minor:     5 },
+  ],
+  SAR: [
+    { label: "SR 500", minor: 50000 }, { label: "SR 100", minor: 10000 },
+    { label: "SR 50",  minor:  5000 }, { label: "SR 10",  minor:  1000 },
+    { label: "SR 5",   minor:   500 }, { label: "SR 1",   minor:   100 },
+    { label: "50 hal", minor:    50 }, { label: "25 hal", minor:    25 },
+  ],
+};
+
+function denomsForCurrency(currency: string) {
+  return DENOM_SETS[currency] ?? null;
+}
 
 interface Props {
   mode: "open" | "close";
@@ -21,6 +65,26 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
   const [error, setError] = useState<string | null>(null);
   const [todaySummary, setTodaySummary] = useState<TodaySummary | null>(null);
   const [drawerSummary, setDrawerSummary] = useState<CashDrawerSummary | null>(null);
+
+  // Denomination count state: maps denomination minor-value → count string
+  const [denomCounts, setDenomCounts] = useState<Record<number, string>>({});
+  const denomSet = useMemo(() => denomsForCurrency(DEVICE.currency), []);
+  const denomTotalMinor = useMemo(() => {
+    if (!denomSet) return 0;
+    return denomSet.reduce((sum, d) => {
+      const cnt = parseInt(denomCounts[d.minor] || "0", 10);
+      return sum + (isNaN(cnt) ? 0 : cnt) * d.minor;
+    }, 0);
+  }, [denomSet, denomCounts]);
+
+  // When denom grid produces a non-zero total, sync it to countedCash
+  useEffect(() => {
+    if (!denomSet) return;
+    const allEmpty = Object.values(denomCounts).every(v => !v || v === "0");
+    if (!allEmpty) {
+      setCountedCash((denomTotalMinor / Math.pow(10, DEVICE.currency_exponent)).toFixed(DEVICE.currency_exponent));
+    }
+  }, [denomTotalMinor, denomSet, denomCounts]);
 
   // Fetch today's Z-report and cash drawer summary when closing a shift
   useEffect(() => {
@@ -185,6 +249,12 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
                       <span>- {DEVICE.currency} {formatMoney(drawerSummary.paid_out_minor, DEVICE.currency_exponent)}</span>
                     </div>
                   )}
+                  {drawerSummary.safe_drop_minor > 0 && (
+                    <div className="zreport-row zreport-row-refund">
+                      <span>Safe Drops</span>
+                      <span>- {DEVICE.currency} {formatMoney(drawerSummary.safe_drop_minor, DEVICE.currency_exponent)}</span>
+                    </div>
+                  )}
                   <div className="zreport-divider" />
                   <div className="zreport-row zreport-row-cash">
                     <span>Expected in Drawer</span>
@@ -199,15 +269,52 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
                     {drawerSummary.events.map(ev => (
                       <div key={ev.cash_event_id} className="cash-event-item">
                         <span className={`cash-event-badge ${ev.event_type === "paid_in" ? "cash-event-badge-in" : "cash-event-badge-out"}`}>
-                          {ev.event_type === "paid_in" ? "Paid In" : "Paid Out"}
+                          {ev.event_type === "paid_in" ? "Paid In" : ev.event_type === "safe_drop" ? "Safe Drop" : "Paid Out"}
                         </span>
                         <span className="cash-event-amount">
-                          {ev.event_type === "paid_out" ? "-" : "+"} {DEVICE.currency} {formatMoney(ev.amount_minor, DEVICE.currency_exponent)}
+                          {ev.event_type === "paid_in" ? "+" : "-"} {DEVICE.currency} {formatMoney(ev.amount_minor, DEVICE.currency_exponent)}
                         </span>
                         {ev.note && <span className="cash-event-note">{ev.note}</span>}
                         <span className="cash-event-time">{new Date(ev.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
                       </div>
                     ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Denomination count grid ── */}
+            {denomSet && (
+              <div className="denom-section">
+                <div className="denom-title">Count Cash by Denomination</div>
+                <div className="denom-grid">
+                  {denomSet.map(d => (
+                    <div key={d.minor} className="denom-row">
+                      <span className="denom-label">{d.label}</span>
+                      <input
+                        className="denom-count-input"
+                        type="number"
+                        min="0"
+                        step="1"
+                        placeholder="0"
+                        value={denomCounts[d.minor] ?? ""}
+                        onChange={e => setDenomCounts(prev => ({ ...prev, [d.minor]: e.target.value }))}
+                      />
+                      {(() => {
+                        const cnt = parseInt(denomCounts[d.minor] || "0", 10);
+                        const sub = isNaN(cnt) ? 0 : cnt * d.minor;
+                        return sub > 0 ? (
+                          <span className="denom-subtotal">
+                            {DEVICE.currency} {formatMoney(sub, DEVICE.currency_exponent)}
+                          </span>
+                        ) : null;
+                      })()}
+                    </div>
+                  ))}
+                </div>
+                {denomTotalMinor > 0 && (
+                  <div className="denom-total">
+                    Total: {DEVICE.currency} {formatMoney(denomTotalMinor, DEVICE.currency_exponent)}
                   </div>
                 )}
               </div>

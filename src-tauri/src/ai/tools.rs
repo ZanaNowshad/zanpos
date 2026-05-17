@@ -138,13 +138,108 @@ pub fn all_tool_definitions() -> Vec<ToolDef> {
             description: "Check the cloud sync status: whether Supabase is configured, last sync time, pending queue count, and any failed or conflicted events.".into(),
             input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
         },
+        // ── Extended analytics & audit tools ──────────────────────────────────
+        ToolDef {
+            name: "get_daily_report".into(),
+            description: "Get sales summary for a specific date (YYYY-MM-DD). Use for historical reports or comparing days.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "date": { "type": "string", "description": "Date in YYYY-MM-DD format" }
+                },
+                "required": ["date"]
+            }),
+        },
+        ToolDef {
+            name: "get_date_range_report".into(),
+            description: "Get aggregated sales summary for a date range. Both dates inclusive. Max 90 days.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "from": { "type": "string", "description": "Start date YYYY-MM-DD (inclusive)" },
+                    "to":   { "type": "string", "description": "End date YYYY-MM-DD (inclusive)" }
+                },
+                "required": ["from", "to"]
+            }),
+        },
+        ToolDef {
+            name: "get_top_products".into(),
+            description: "List top-selling products by revenue for the last N days. Use to see bestsellers.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "limit":       { "type": "integer", "description": "How many products to return (default 10, max 25)" },
+                    "period_days": { "type": "integer", "description": "Lookback window in days (default 30)" }
+                },
+                "required": []
+            }),
+        },
+        ToolDef {
+            name: "get_shift_history".into(),
+            description: "List recent cashier shifts with open/close times, opening float, cashier name, and total sales.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "limit": { "type": "integer", "description": "Number of shifts to return (default 10, max 30)" }
+                },
+                "required": []
+            }),
+        },
+        ToolDef {
+            name: "list_categories".into(),
+            description: "List all product categories with their IDs, names, and colors.".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
+        },
+        ToolDef {
+            name: "list_safe_drops".into(),
+            description: "List safe drop events for a shift (cash physically removed from drawer for security).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "shift_id": { "type": "string", "description": "The shift ID to query" }
+                },
+                "required": ["shift_id"]
+            }),
+        },
+        ToolDef {
+            name: "list_no_sale_events".into(),
+            description: "List no-sale (drawer opened without a transaction) events for a shift. Key audit signal.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "shift_id": { "type": "string", "description": "The shift ID to query" }
+                },
+                "required": ["shift_id"]
+            }),
+        },
+        ToolDef {
+            name: "get_audit_chain_status".into(),
+            description: "Verify the SHA-256 hash chain integrity for audit logs on this device. Detects tampering or data loss.".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
+        },
+        // ── Mutation: create product ──────────────────────────────────────────
+        ToolDef {
+            name: "create_product".into(),
+            description: "Create a new product in the catalog with a name, price, and category. Requires admin confirmation.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name":        { "type": "string",  "description": "Product display name" },
+                    "price_minor": { "type": "integer", "description": "Selling price in minor currency units (e.g. 1500 = BHD 1.500)" },
+                    "category_id": { "type": "string",  "description": "Category ID — use list_categories to get valid IDs" },
+                    "sku":         { "type": "string",  "description": "Optional SKU / product code" },
+                    "barcode":     { "type": "string",  "description": "Optional barcode (EAN/UPC)" }
+                },
+                "required": ["name", "price_minor", "category_id"]
+            }),
+        },
     ]
 }
 
 pub fn is_mutation_tool(name: &str) -> bool {
     matches!(name,
         "update_product_price" | "set_product_active" | "update_product_name"
-        | "adjust_stock" | "stock_take"
+        | "adjust_stock" | "stock_take" | "create_product"
     )
 }
 
@@ -412,6 +507,228 @@ pub async fn execute_read_tool(
             }
             Ok(lines.join("\n"))
         }
+        "get_daily_report" => {
+            let date = input.get("date").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing date".into()))?;
+            let s = report_repo::today_summary(pool, branch_id, date).await?;
+            let fmt = |n: i64| money::format_minor(n, currency_exp);
+            Ok(format!(
+                "Sales Report — {date}:\n- Transactions: {}\n- Net Total: {}\n- Tax: {}\n- Discounts: {}\n- Cash: {}\n- Card: {}\n- Refunds: {} ({})",
+                s.transaction_count,
+                fmt(s.net_total_minor), fmt(s.tax_total_minor), fmt(s.discount_total_minor),
+                fmt(s.cash_total_minor), fmt(s.card_total_minor),
+                s.refund_count, fmt(s.refund_total_minor)
+            ))
+        }
+        "get_date_range_report" => {
+            let from = input.get("from").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing from".into()))?;
+            let to = input.get("to").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing to".into()))?;
+            let fmt = |n: i64| money::format_minor(n, currency_exp);
+
+            let row = sqlx::query(
+                "SELECT COUNT(*) AS cnt,
+                        COALESCE(SUM(net_total_minor),      0) AS net,
+                        COALESCE(SUM(tax_total_minor),      0) AS tax,
+                        COALESCE(SUM(discount_total_minor), 0) AS discount
+                 FROM sales
+                 WHERE branch_id = ? AND business_date BETWEEN ? AND ? AND status != 'voided'"
+            )
+            .bind(branch_id).bind(from).bind(to)
+            .fetch_one(pool).await?;
+
+            let cnt: i64  = row.get("cnt");
+            let net: i64  = row.get("net");
+            let tax: i64  = row.get("tax");
+            let disc: i64 = row.get("discount");
+
+            let cash: i64 = sqlx::query_scalar(
+                "SELECT COALESCE(SUM(p.amount_minor),0) FROM payments p
+                 JOIN sales s ON s.sale_id=p.sale_id
+                 WHERE s.branch_id=? AND s.business_date BETWEEN ? AND ?
+                   AND p.payment_method='cash' AND s.status!='voided'"
+            ).bind(branch_id).bind(from).bind(to).fetch_one(pool).await?;
+
+            let card: i64 = sqlx::query_scalar(
+                "SELECT COALESCE(SUM(p.amount_minor),0) FROM payments p
+                 JOIN sales s ON s.sale_id=p.sale_id
+                 WHERE s.branch_id=? AND s.business_date BETWEEN ? AND ?
+                   AND p.payment_method='card' AND s.status!='voided'"
+            ).bind(branch_id).bind(from).bind(to).fetch_one(pool).await?;
+
+            let refund_cnt: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM refunds r
+                 JOIN sales s ON s.sale_id=r.original_sale_id
+                 WHERE s.branch_id=? AND s.business_date BETWEEN ? AND ?"
+            ).bind(branch_id).bind(from).bind(to).fetch_one(pool).await?;
+
+            let refund_total: i64 = sqlx::query_scalar(
+                "SELECT COALESCE(SUM(r.refund_total_minor),0) FROM refunds r
+                 JOIN sales s ON s.sale_id=r.original_sale_id
+                 WHERE s.branch_id=? AND s.business_date BETWEEN ? AND ?"
+            ).bind(branch_id).bind(from).bind(to).fetch_one(pool).await?;
+
+            Ok(format!(
+                "Sales Report {from} → {to}:\n- Transactions: {cnt}\n- Net Total: {}\n- Tax: {}\n- Discounts: {}\n- Cash: {}\n- Card: {}\n- Refunds: {refund_cnt} ({})",
+                fmt(net), fmt(tax), fmt(disc), fmt(cash), fmt(card), fmt(refund_total)
+            ))
+        }
+        "get_top_products" => {
+            let limit       = input.get("limit").and_then(|v| v.as_i64()).unwrap_or(10).min(25);
+            let period_days = input.get("period_days").and_then(|v| v.as_i64()).unwrap_or(30).min(365);
+            let fmt = |n: i64| money::format_minor(n, currency_exp);
+
+            let rows = sqlx::query(
+                "SELECT p.name,
+                        SUM(si.unit_price_minor * CAST(si.quantity AS REAL)) AS revenue,
+                        COUNT(DISTINCT s.sale_id) AS txn_count
+                 FROM sale_items si
+                 JOIN sales s    ON s.sale_id    = si.sale_id
+                 JOIN products p ON p.product_id = si.product_id
+                 WHERE s.business_date >= date('now', ? || ' days') AND s.status != 'voided'
+                 GROUP BY si.product_id, p.name
+                 ORDER BY revenue DESC
+                 LIMIT ?"
+            )
+            .bind(format!("-{}", period_days))
+            .bind(limit)
+            .fetch_all(pool).await?;
+
+            if rows.is_empty() {
+                return Ok(format!("No sales data in the last {period_days} days."));
+            }
+            let lines: Vec<String> = rows.iter().enumerate().map(|(i, r)| {
+                let name: String = r.get("name");
+                let rev: i64     = r.get("revenue");
+                let txn: i64     = r.get("txn_count");
+                format!("{}. {} — {} ({} transactions)", i + 1, name, fmt(rev), txn)
+            }).collect();
+            Ok(format!("Top {} products (last {period_days} days):\n{}", rows.len(), lines.join("\n")))
+        }
+        "get_shift_history" => {
+            let limit = input.get("limit").and_then(|v| v.as_i64()).unwrap_or(10).min(30);
+            let fmt = |n: i64| money::format_minor(n, currency_exp);
+
+            let rows = sqlx::query(
+                "SELECT s.shift_id, u.display_name AS cashier,
+                        s.opened_at, s.closed_at, s.opening_cash_minor,
+                        COALESCE((
+                            SELECT SUM(net_total_minor) FROM sales
+                            WHERE shift_id = s.shift_id AND status != 'voided'
+                        ), 0) AS sales_total
+                 FROM shifts s
+                 LEFT JOIN users u ON u.user_id = s.opened_by_user_id
+                 ORDER BY s.opened_at DESC
+                 LIMIT ?"
+            )
+            .bind(limit)
+            .fetch_all(pool).await?;
+
+            if rows.is_empty() { return Ok("No shifts found.".into()); }
+
+            let lines: Vec<String> = rows.iter().map(|r| {
+                let cashier: String        = r.get::<Option<String>, _>("cashier").unwrap_or_else(|| "Unknown".into());
+                let opened: String         = r.get("opened_at");
+                let closed: Option<String> = r.get("closed_at");
+                let opening: i64           = r.get("opening_cash_minor");
+                let sales: i64             = r.get("sales_total");
+                let status = if closed.is_some() { "Closed" } else { "OPEN" };
+                format!("- {} [{status}] | Opened: {} | Float: {} | Sales: {}",
+                    cashier, &opened[..16.min(opened.len())], fmt(opening), fmt(sales))
+            }).collect();
+            Ok(format!("{} recent shift(s):\n{}", rows.len(), lines.join("\n")))
+        }
+        "list_categories" => {
+            let rows = sqlx::query(
+                "SELECT category_id, name, color FROM categories ORDER BY name"
+            )
+            .fetch_all(pool).await?;
+
+            if rows.is_empty() { return Ok("No categories found.".into()); }
+            let lines: Vec<String> = rows.iter().map(|r| {
+                let id: String            = r.get("category_id");
+                let name: String          = r.get("name");
+                let color: Option<String> = r.get("color");
+                format!("- {} (ID: {}){}",
+                    name, id,
+                    color.as_deref().map(|c| format!(" [{}]", c)).unwrap_or_default())
+            }).collect();
+            Ok(format!("{} categories:\n{}", rows.len(), lines.join("\n")))
+        }
+        "list_safe_drops" => {
+            let shift_id = input.get("shift_id").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing shift_id".into()))?;
+            let fmt = |n: i64| money::format_minor(n, currency_exp);
+
+            let rows = sqlx::query(
+                "SELECT amount_minor, note, created_by_user_id, created_at
+                 FROM cash_events
+                 WHERE shift_id = ? AND event_type = 'safe_drop'
+                 ORDER BY created_at"
+            )
+            .bind(shift_id)
+            .fetch_all(pool).await?;
+
+            if rows.is_empty() {
+                return Ok(format!("No safe drops recorded for shift {}.", &shift_id[..8.min(shift_id.len())]));
+            }
+            let total: i64 = rows.iter().map(|r| r.get::<i64, _>("amount_minor")).sum();
+            let lines: Vec<String> = rows.iter().map(|r| {
+                let amt: i64             = r.get("amount_minor");
+                let note: Option<String> = r.get("note");
+                let at: String           = r.get("created_at");
+                format!("- {} | {} | {}",
+                    fmt(amt), note.as_deref().unwrap_or("—"),
+                    &at[..16.min(at.len())])
+            }).collect();
+            Ok(format!("{} safe drop(s) | Total: {}\n{}", rows.len(), fmt(total), lines.join("\n")))
+        }
+        "list_no_sale_events" => {
+            let shift_id = input.get("shift_id").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing shift_id".into()))?;
+
+            let rows = sqlx::query(
+                "SELECT actor_user_id, note, created_at
+                 FROM no_sale_events
+                 WHERE shift_id = ?
+                 ORDER BY created_at"
+            )
+            .bind(shift_id)
+            .fetch_all(pool).await?;
+
+            if rows.is_empty() {
+                return Ok(format!("No no-sale events recorded for shift {}.", &shift_id[..8.min(shift_id.len())]));
+            }
+            let lines: Vec<String> = rows.iter().map(|r| {
+                let actor: String        = r.get("actor_user_id");
+                let note: Option<String> = r.get("note");
+                let at: String           = r.get("created_at");
+                format!("- Actor: {} | {} | {}",
+                    &actor[..8.min(actor.len())],
+                    note.as_deref().unwrap_or("no note"),
+                    &at[11..16.min(at.len())])
+            }).collect();
+            Ok(format!("{} no-sale event(s):\n{}", rows.len(), lines.join("\n")))
+        }
+        "get_audit_chain_status" => {
+            let device_id: String = sqlx::query_scalar(
+                "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1"
+            )
+            .fetch_optional(pool).await?.flatten().unwrap_or_default();
+
+            let r = crate::db::repositories::audit_hash::verify_chain(pool, &device_id).await?;
+            let status = if r.ok { "✓ INTACT" } else { "⚠ ANOMALIES DETECTED" };
+            Ok(format!(
+                "Audit Chain [{status}]:\n- Total rows:   {}\n- Legacy rows:  {} (pre-chain, not verified)\n- Verified:     {}\n- Broken hash:  {}\n- Broken links: {}\n\n{}",
+                r.total_rows, r.legacy_rows, r.verified, r.broken_hash, r.broken_link,
+                if r.ok {
+                    "Chain integrity confirmed — no tampering detected."
+                } else {
+                    "⚠ WARNING: Chain anomalies found. Contact your system administrator immediately."
+                }
+            ))
+        }
         _ => Err(AppError::Validation(format!("Unknown read tool: {}", tool_name))),
     }
 }
@@ -532,6 +849,34 @@ pub async fn dry_run_mutation(
                     ToolPreviewField { label: "Current Qty".into(), value: current },
                     ToolPreviewField { label: "New Count".into(), value: format!("{}", new_qty) },
                     ToolPreviewField { label: "Notes".into(), value: notes.into() },
+                ],
+            })
+        }
+        "create_product" => {
+            let name = input.get("name").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing name".into()))?;
+            let price = input.get("price_minor").and_then(|v| v.as_i64())
+                .ok_or_else(|| AppError::Validation("Missing price_minor".into()))?;
+            let category_id = input.get("category_id").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing category_id".into()))?;
+            let sku     = input.get("sku").and_then(|v| v.as_str()).unwrap_or("—");
+            let barcode = input.get("barcode").and_then(|v| v.as_str()).unwrap_or("—");
+
+            let cat_name: Option<String> = sqlx::query_scalar(
+                "SELECT name FROM categories WHERE category_id = ?"
+            )
+            .bind(category_id)
+            .fetch_optional(pool).await?;
+
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
+                description: format!("Create new product '{}'", name),
+                fields: vec![
+                    ToolPreviewField { label: "Name".into(),     value: name.into() },
+                    ToolPreviewField { label: "Price".into(),    value: format!("BHD {}", fmt(price)) },
+                    ToolPreviewField { label: "Category".into(), value: cat_name.unwrap_or_else(|| category_id.into()) },
+                    ToolPreviewField { label: "SKU".into(),      value: sku.into() },
+                    ToolPreviewField { label: "Barcode".into(),  value: barcode.into() },
                 ],
             })
         }
@@ -783,6 +1128,62 @@ pub async fn execute_mutation(
                 }).to_string(),
                 entity_type: "stock_level".into(),
                 entity_id: product_id.into(),
+            })
+        }
+        "create_product" => {
+            let name = input.get("name").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing name".into()))?;
+            let price_minor = input.get("price_minor").and_then(|v| v.as_i64())
+                .ok_or_else(|| AppError::Validation("Missing price_minor".into()))?;
+            let category_id = input.get("category_id").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing category_id".into()))?;
+            let sku     = input.get("sku").and_then(|v| v.as_str());
+            let barcode = input.get("barcode").and_then(|v| v.as_str());
+
+            let now        = chrono::Utc::now().to_rfc3339();
+            let product_id = ulid::Ulid::new().to_string();
+            let price_id   = ulid::Ulid::new().to_string();
+
+            sqlx::query(
+                "INSERT INTO products
+                   (product_id, category_id, name, sku, barcode,
+                    track_inventory, allow_decimal_quantity, is_active,
+                    currency, version, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, 0, 0, 1, 'BHD', 1, ?, ?)"
+            )
+            .bind(&product_id)
+            .bind(category_id)
+            .bind(name)
+            .bind(sku)
+            .bind(barcode)
+            .bind(&now)
+            .bind(&now)
+            .execute(pool).await?;
+
+            sqlx::query(
+                "INSERT INTO product_prices
+                   (price_id, product_id, branch_id, price_type, price_minor,
+                    currency, effective_from, effective_to, created_by_user_id)
+                 VALUES (?, ?, NULL, 'selling', ?, 'BHD', ?, NULL, 'AI_ADMIN')"
+            )
+            .bind(&price_id)
+            .bind(&product_id)
+            .bind(price_minor)
+            .bind(&now)
+            .execute(pool).await?;
+
+            write_audit(pool, "AI_ADMIN", "product.created", &product_id,
+                &json!({ "name": name, "price_minor": price_minor, "category_id": category_id })).await?;
+
+            Ok(MutationResult {
+                description: format!("Created product '{}' at BHD {}", name, fmt(price_minor)),
+                undo_snapshot_json: json!({ "product_id": &product_id }).to_string(),
+                rollback_tool: "set_product_active".into(),
+                rollback_input_json: json!({
+                    "product_id": &product_id, "is_active": false
+                }).to_string(),
+                entity_type: "product".into(),
+                entity_id: product_id,
             })
         }
         _ => Err(AppError::Validation(format!("Unknown mutation tool: {}", tool_name))),

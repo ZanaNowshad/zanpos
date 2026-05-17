@@ -30,7 +30,7 @@ export default function CartPanel({
     <div className="cart-panel">
       {/* Header */}
       <div className="cart-panel-header">
-        <span className="cart-panel-title">Cart</span>
+        <span className="cart-panel-title">🛒 Cart</span>
         {activeLines.length > 0 && (
           <span className="cart-item-count">
             {activeLines.length} {activeLines.length === 1 ? "item" : "items"}
@@ -89,7 +89,7 @@ export default function CartPanel({
         onClick={onPay}
         title={activeLines.length === 0 ? "Add items to cart to pay" : `Collect ${fmt(netTotal)}`}
       >
-        <span>PAY</span>
+        <span>🛒 PAY</span>
         <span>{fmt(netTotal)}</span>
       </button>
 

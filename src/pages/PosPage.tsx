@@ -173,6 +173,8 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
     <div className="pos-layout">
       {/* ── Top bar ── */}
       <div className="top-bar">
+        <span className="top-bar-logo">ZAN<span>POS</span></span>
+        <span className="top-bar-sep">·</span>
         <span className="top-bar-branch">{DEVICE.branch_name}</span>
         <span className="top-bar-cashier">{sessionUser.display_name}</span>
         <SyncChip status={syncStatus} />
@@ -228,6 +230,40 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
 
       {/* ── Main area ── */}
       <div className="pos-main">
+        {/* Icon sidebar */}
+        <div className="pos-sidebar">
+          <button className="pos-sidebar-item active" title="Quick Sale">
+            <span className="pos-sidebar-icon">⚡</span>
+            <span>Sale</span>
+          </button>
+          <button className="pos-sidebar-item" title="Products" onClick={() => setShowBackOffice(true)}>
+            <span className="pos-sidebar-icon">📦</span>
+            <span>Products</span>
+          </button>
+          <button className="pos-sidebar-item" title="Customers">
+            <span className="pos-sidebar-icon">👤</span>
+            <span>Customers</span>
+          </button>
+          <div className="pos-sidebar-divider" />
+          <button className="pos-sidebar-item" title="Today's Report" onClick={() => setShowReport(true)}>
+            <span className="pos-sidebar-icon">📊</span>
+            <span>Reports</span>
+          </button>
+          {canOpenBackOffice && (
+            <button className="pos-sidebar-item" title="Back Office" onClick={() => setShowBackOffice(true)}>
+              <span className="pos-sidebar-icon">⚙</span>
+              <span>Settings</span>
+            </button>
+          )}
+          <div className="pos-sidebar-spacer" />
+          {onOpenAdminChat && (
+            <button className="pos-sidebar-item" title="AI Admin" onClick={onOpenAdminChat}>
+              <span className="pos-sidebar-icon">✦</span>
+              <span>AI</span>
+            </button>
+          )}
+        </div>
+
         {/* Product area */}
         <div className="product-area">
           <BarcodeInput onBarcode={handleBarcode} onSearch={handleSearch} disabled={loading} />

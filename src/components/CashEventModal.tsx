@@ -11,7 +11,7 @@ interface Props {
 }
 
 export default function CashEventModal({ shiftId, userId, onDone, onCancel }: Props) {
-  const [eventType, setEventType] = useState<"paid_in" | "paid_out">("paid_in");
+  const [eventType, setEventType] = useState<"paid_in" | "paid_out" | "safe_drop">("paid_in");
   const [amount, setAmount]       = useState("");
   const [note, setNote]           = useState("");
   const [loading, setLoading]     = useState(false);
@@ -25,8 +25,8 @@ export default function CashEventModal({ shiftId, userId, onDone, onCancel }: Pr
     if (!amount || isNaN(amountFloat) || amountFloat <= 0) {
       setError("Enter a valid positive amount."); return;
     }
-    if (eventType === "paid_out" && !note.trim()) {
-      setError("A reason is required for Paid Out."); return;
+    if ((eventType === "paid_out" || eventType === "safe_drop") && !note.trim()) {
+      setError("A reason is required for Paid Out / Safe Drop."); return;
     }
     const amountMinor = Math.round(amountFloat * Math.pow(10, exp));
     if (amountMinor <= 0) { setError("Amount must be greater than zero."); return; }
@@ -72,12 +72,20 @@ export default function CashEventModal({ shiftId, userId, onDone, onCancel }: Pr
           >
             Paid Out
           </button>
+          <button
+            className={`cash-event-tab cash-event-tab-drop ${eventType === "safe_drop" ? "cash-event-tab-active" : ""}`}
+            onClick={() => { setEventType("safe_drop"); setError(null); }}
+          >
+            Safe Drop
+          </button>
         </div>
 
         <p className="cash-event-desc">
           {eventType === "paid_in"
             ? "Record cash added to the drawer (e.g. change fund, petty cash)."
-            : "Record cash removed from the drawer (e.g. expense, deposit)."}
+            : eventType === "paid_out"
+            ? "Record cash removed from the drawer (e.g. expense, deposit)."
+            : "Transfer cash from drawer to safe. Reduces expected drawer total."}
         </p>
 
         <label className="field-label">Amount ({cur})</label>
@@ -94,16 +102,23 @@ export default function CashEventModal({ shiftId, userId, onDone, onCancel }: Pr
         {preview && (
           <div className="cash-event-preview">
             {eventType === "paid_in" ? "+" : "-"} {cur} {preview}
+            {eventType === "safe_drop" && <span className="cash-event-drop-hint"> → safe</span>}
           </div>
         )}
 
         <label className="field-label">
-          {eventType === "paid_out" ? "Reason *" : "Note (optional)"}
+          {eventType === "paid_in" ? "Note (optional)" : "Reason *"}
         </label>
         <input
           className="field-input"
           type="text"
-          placeholder={eventType === "paid_out" ? "Reason for removal…" : "Optional note…"}
+          placeholder={
+            eventType === "paid_in"
+              ? "Optional note…"
+              : eventType === "safe_drop"
+              ? "Drop location / bag number…"
+              : "Reason for removal…"
+          }
           value={note}
           onChange={e => setNote(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter") handleConfirm(); }}
@@ -116,11 +131,17 @@ export default function CashEventModal({ shiftId, userId, onDone, onCancel }: Pr
             Cancel
           </button>
           <button
-            className={`modal-btn-primary ${eventType === "paid_out" ? "modal-btn-danger" : ""}`}
+            className={`modal-btn-primary ${eventType !== "paid_in" ? "modal-btn-danger" : ""}`}
             onClick={handleConfirm}
             disabled={loading}
           >
-            {loading ? "Recording…" : eventType === "paid_in" ? "Record Paid In" : "Record Paid Out"}
+            {loading
+              ? "Recording…"
+              : eventType === "paid_in"
+              ? "Record Paid In"
+              : eventType === "safe_drop"
+              ? "Record Safe Drop"
+              : "Record Paid Out"}
           </button>
         </div>
       </div>

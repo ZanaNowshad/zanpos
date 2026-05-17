@@ -23,15 +23,25 @@ pub struct CashEventRow {
 
 #[derive(Debug, Serialize)]
 pub struct CashDrawerSummary {
-    pub opening_minor:    i64,
-    pub cash_sales_minor: i64,
+    pub opening_minor:     i64,
+    pub cash_sales_minor:  i64,
     pub cash_refunds_minor: i64,
-    pub paid_in_minor:    i64,
-    pub paid_out_minor:   i64,
-    pub expected_minor:   i64,
-    pub counted_minor:    Option<i64>,
-    pub variance_minor:   Option<i64>,
-    pub events:           Vec<CashEventRow>,
+    pub paid_in_minor:     i64,
+    pub paid_out_minor:    i64,
+    pub safe_drop_minor:   i64,
+    pub expected_minor:    i64,
+    pub counted_minor:     Option<i64>,
+    pub variance_minor:    Option<i64>,
+    pub events:            Vec<CashEventRow>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NoSaleRow {
+    pub no_sale_id:     String,
+    pub shift_id:       String,
+    pub actor_user_id:  String,
+    pub note:           Option<String>,
+    pub created_at:     String,
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -80,9 +90,9 @@ pub async fn cash_event_create(
     state: State<'_, AppState>,
 ) -> AppResult<CashEventRow> {
     // Validate event_type
-    if event_type != "paid_in" && event_type != "paid_out" {
+    if event_type != "paid_in" && event_type != "paid_out" && event_type != "safe_drop" {
         return Err(AppError::Validation(
-            "event_type must be 'paid_in' or 'paid_out'".into()
+            "event_type must be 'paid_in', 'paid_out', or 'safe_drop'".into()
         ));
     }
     if amount_minor <= 0 {
@@ -181,7 +191,14 @@ async fn drawer_summary_inner(pool: &sqlx::SqlitePool, shift_id: &str) -> AppRes
     )
     .bind(shift_id).fetch_one(pool).await?;
 
-    let expected_minor = opening_minor + cash_sales_minor - cash_refunds_minor + paid_in_minor - paid_out_minor;
+    let safe_drop_minor: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(amount_minor), 0)
+         FROM cash_events WHERE shift_id = ? AND event_type = 'safe_drop'"
+    )
+    .bind(shift_id).fetch_one(pool).await?;
+
+    let expected_minor = opening_minor + cash_sales_minor - cash_refunds_minor
+        + paid_in_minor - paid_out_minor - safe_drop_minor;
     let variance_minor = counted_minor.map(|c| c - expected_minor);
 
     let event_rows = sqlx::query(
@@ -199,6 +216,7 @@ async fn drawer_summary_inner(pool: &sqlx::SqlitePool, shift_id: &str) -> AppRes
         cash_refunds_minor,
         paid_in_minor,
         paid_out_minor,
+        safe_drop_minor,
         expected_minor,
         counted_minor,
         variance_minor,
@@ -212,6 +230,58 @@ pub async fn cash_drawer_summary(
     state: State<'_, AppState>,
 ) -> AppResult<CashDrawerSummary> {
     drawer_summary_inner(&state.db, &shift_id).await
+}
+
+/// Record a no-sale drawer-open event (audit trail only — no monetary effect).
+/// Inserts into `no_sale_events` and writes a NO_SALE audit_log entry.
+#[tauri::command]
+pub async fn cash_no_sale(
+    shift_id:      String,
+    actor_user_id: String,
+    note:          Option<String>,
+    state: State<'_, AppState>,
+) -> AppResult<NoSaleRow> {
+    let (branch_id, device_id) = resolve_branch_device(&state).await?;
+    let no_sale_id = Ulid::new().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    sqlx::query(
+        "INSERT INTO no_sale_events
+           (no_sale_id, shift_id, branch_id, device_id, actor_user_id, note, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)"
+    )
+    .bind(&no_sale_id)
+    .bind(&shift_id)
+    .bind(&branch_id)
+    .bind(&device_id)
+    .bind(&actor_user_id)
+    .bind(note.as_deref())
+    .bind(&now)
+    .execute(&state.db)
+    .await?;
+
+    // Audit trail
+    let log_id = Ulid::new().to_string();
+    sqlx::query(
+        "INSERT INTO audit_logs
+           (audit_log_id, event_type, entity_type, entity_id,
+            actor_user_id, actor_type, created_at)
+         VALUES (?, 'NO_SALE', 'shift', ?, ?, 'user', ?)"
+    )
+    .bind(&log_id)
+    .bind(&shift_id)
+    .bind(&actor_user_id)
+    .bind(&now)
+    .execute(&state.db)
+    .await?;
+
+    Ok(NoSaleRow {
+        no_sale_id,
+        shift_id,
+        actor_user_id,
+        note,
+        created_at: now,
+    })
 }
 
 /// X-Report: mid-shift drawer snapshot without closing the shift.

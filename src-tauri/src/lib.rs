@@ -167,6 +167,7 @@ pub fn run() {
             commands::cash_commands::cash_events_list,
             commands::cash_commands::cash_drawer_summary,
             commands::cash_commands::cash_x_report,
+            commands::cash_commands::cash_no_sale,
             // Product barcodes
             commands::admin_commands::product_barcode_add,
             commands::admin_commands::product_barcode_remove,

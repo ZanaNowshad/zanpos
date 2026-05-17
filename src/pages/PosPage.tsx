@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LowStockAlert, ProductWithPrice, SaleResult, SessionUser, Shift } from "../types";
 import { DEVICE } from "../types";
-import { productListAll, receiptReprint } from "../tauri/commands";
+import { cashNoSale, productListAll, receiptReprint } from "../tauri/commands";
 import { useCart } from "../hooks/useCart";
 import { useSyncStatus } from "../hooks/useSyncStatus";
 import BarcodeInput from "../components/BarcodeInput";
@@ -279,6 +279,16 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
         </button>
         <button className="action-btn" onClick={() => setShowCashEvent(true)}>
           💵 Cash
+        </button>
+        <button
+          className="action-btn"
+          onClick={async () => {
+            try { await cashNoSale(shift.shift_id, sessionUser.user_id); }
+            catch (e) { console.error("No-sale audit failed:", e); }
+          }}
+          title="Open drawer without a sale (audited)"
+        >
+          🔓 No Sale
         </button>
         <button className="action-btn" onClick={() => setShowRefund(true)}>
           Refund

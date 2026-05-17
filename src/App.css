@@ -2026,6 +2026,12 @@ textarea.field-input { resize: vertical; }
 
 .split-change { color: var(--success); font-weight: 600; white-space: nowrap; }
 
+.split-ref-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.split-ref-row label { font-size: 0.78rem; color: var(--text-muted); white-space: nowrap; min-width: 72px; }
+.split-ref-input { flex: 1; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface); color: var(--text); font-size: 0.85rem; }
+.split-ref-input:focus { border-color: var(--accent); outline: none; }
+
 .split-remaining {
   font-size: 0.9rem;
   color: var(--warning);

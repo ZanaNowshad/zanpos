@@ -39,6 +39,7 @@ import type {
   UndoActionResult,
   UserSummary,
   ValidateProviderResult,
+  NoSaleRow,
 } from "../types";
 
 // ─── Setup & Settings commands ────────────────────────────────────────────────
@@ -465,7 +466,7 @@ export const printReceiptRaw = (storeName: string, lines: string[]): Promise<str
 
 export const cashEventCreate = (
   shift_id: string,
-  event_type: "paid_in" | "paid_out",
+  event_type: "paid_in" | "paid_out" | "safe_drop",
   amount_minor: number,
   note: string | undefined,
   created_by_user_id: string,
@@ -480,6 +481,13 @@ export const cashDrawerSummary = (shift_id: string): Promise<CashDrawerSummary> 
 
 export const cashXReport = (shift_id: string, actor_user_id: string): Promise<CashDrawerSummary> =>
   invoke("cash_x_report", { shiftId: shift_id, actorUserId: actor_user_id });
+
+export const cashNoSale = (
+  shift_id:      string,
+  actor_user_id: string,
+  note?:         string,
+): Promise<NoSaleRow> =>
+  invoke("cash_no_sale", { shiftId: shift_id, actorUserId: actor_user_id, note: note ?? null });
 
 // ─── Product barcodes ─────────────────────────────────────────────────────────
 

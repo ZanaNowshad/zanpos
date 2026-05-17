@@ -369,11 +369,19 @@ export interface AdminProduct {
 export interface CashEventRow {
   cash_event_id:      string;
   shift_id:           string;
-  event_type:         "paid_in" | "paid_out";
+  event_type:         "paid_in" | "paid_out" | "safe_drop";
   amount_minor:       number;
   note:               string | null;
   created_by_user_id: string;
   created_at:         string;
+}
+
+export interface NoSaleRow {
+  no_sale_id:     string;
+  shift_id:       string;
+  actor_user_id:  string;
+  note:           string | null;
+  created_at:     string;
 }
 
 export interface CashDrawerSummary {
@@ -382,6 +390,7 @@ export interface CashDrawerSummary {
   cash_refunds_minor: number;
   paid_in_minor:     number;
   paid_out_minor:    number;
+  safe_drop_minor:   number;
   expected_minor:    number;
   counted_minor:     number | null;
   variance_minor:    number | null;

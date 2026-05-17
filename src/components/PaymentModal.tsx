@@ -16,12 +16,13 @@ interface PaymentLine {
   method: PaymentInput["method"];
   amountStr: string;
   tenderedStr: string;
+  referenceStr: string;
 }
 
 let lineIdCounter = 1;
 
 function mkLine(method: PaymentInput["method"] = "cash"): PaymentLine {
-  return { id: lineIdCounter++, method, amountStr: "", tenderedStr: "" };
+  return { id: lineIdCounter++, method, amountStr: "", tenderedStr: "", referenceStr: "" };
 }
 
 export default function PaymentModal({ netTotal, onConfirm, onCancel, loading }: Props) {
@@ -79,7 +80,8 @@ export default function PaymentModal({ netTotal, onConfirm, onCancel, loading }:
         const tendered = parseMoney(l.tenderedStr || l.amountStr, EXP);
         return { method: l.method, amount_minor: amount, tendered_minor: Math.max(tendered, amount) };
       }
-      return { method: l.method, amount_minor: amount };
+      const ref = l.referenceStr.trim();
+      return { method: l.method, amount_minor: amount, ...(ref ? { external_reference: ref } : {}) };
     });
     onConfirm(payments, selectedCust?.customer_id);
   };
@@ -176,6 +178,18 @@ export default function PaymentModal({ netTotal, onConfirm, onCancel, loading }:
                       onChange={e => updateLine(line.id, { tenderedStr: e.target.value })}
                     />
                     {change > 0 && <span className="split-change">Change: {fmt(change)}</span>}
+                  </div>
+                )}
+                {line.method !== "cash" && (
+                  <div className="split-ref-row">
+                    <label>Ref / Auth #</label>
+                    <input
+                      className="split-ref-input"
+                      type="text"
+                      placeholder="Card last 4 / approval code…"
+                      value={line.referenceStr}
+                      onChange={e => updateLine(line.id, { referenceStr: e.target.value })}
+                    />
                   </div>
                 )}
               </div>

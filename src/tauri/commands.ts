@@ -72,6 +72,7 @@ export const settingsUpdateBranch = (input: {
   receipt_footer?: string;
   tax_number?: string;
   timezone: string;
+  actor_user_id: string;
 }): Promise<BranchSettings> =>
   invoke("settings_update_branch", { input });
 
@@ -164,6 +165,14 @@ export const posAddCustomItem = (
 export const posVoidSale = (sale_id: string, voided_by_user_id: string): Promise<void> =>
   invoke("pos_void_sale", { saleId: sale_id, voidedByUserId: voided_by_user_id });
 
+export const posRecordVoid = (
+  cart_id: string,
+  cashier_user_id: string,
+  line_count: number,
+  net_total_minor: number,
+): Promise<void> =>
+  invoke("pos_record_void", { cartId: cart_id, cashierUserId: cashier_user_id, lineCount: line_count, netTotalMinor: net_total_minor });
+
 // ─── Held cart commands ───────────────────────────────────────────────────────
 
 export const heldCartSave = (cart: Cart, note?: string): Promise<HeldCartSummary> =>
@@ -187,9 +196,10 @@ export const refundCreate = (
   original_sale_id: string,
   items: RefundItemInput[],
   reason: string,
-  created_by_user_id: string
+  created_by_user_id: string,
+  return_reason_code: string = "other",
 ): Promise<RefundResult> =>
-  invoke("refund_create", { input: { original_sale_id, items, reason, created_by_user_id } });
+  invoke("refund_create", { input: { original_sale_id, items, reason, return_reason_code, created_by_user_id } });
 
 export const receiptReprint = (receipt_number: string): Promise<SaleResult> =>
   invoke("receipt_reprint", { receiptNumber: receipt_number });
@@ -302,7 +312,7 @@ export const adminListTaxRules = (): Promise<TaxRuleRow[]> =>
   invoke("admin_list_tax_rules");
 
 export const adminSaveCategory = (input: {
-  category_id?: string; name: string; sort_order: number; is_active: boolean;
+  category_id?: string; name: string; sort_order: number; is_active: boolean; actor_user_id: string;
 }): Promise<CategoryRow> =>
   invoke("admin_save_category", { input });
 
@@ -313,12 +323,12 @@ export const adminListRoles = (): Promise<RoleRow[]> =>
   invoke("admin_list_roles");
 
 export const adminCreateUser = (input: {
-  display_name: string; username: string; pin: string; role_id: string;
+  display_name: string; username: string; pin: string; role_id: string; actor_user_id: string;
 }): Promise<AdminUserRow> =>
   invoke("admin_create_user", { input });
 
 export const adminUpdateUser = (input: {
-  user_id: string; display_name: string; pin?: string; role_id: string; is_active: boolean;
+  user_id: string; display_name: string; pin?: string; role_id: string; is_active: boolean; actor_user_id: string;
 }): Promise<AdminUserRow> =>
   invoke("admin_update_user", { input });
 
@@ -348,11 +358,11 @@ export const inventoryReceiveStock = (
 export const appConfigGetTimeout = (): Promise<number> =>
   invoke("app_config_get_timeout");
 
-export const appConfigSetTimeout = (minutes: number): Promise<void> =>
-  invoke("app_config_set_timeout", { minutes });
+export const appConfigSetTimeout = (minutes: number, actorUserId: string): Promise<void> =>
+  invoke("app_config_set_timeout", { minutes, actorUserId });
 
-export const dbBackup = (destPath: string): Promise<string> =>
-  invoke("db_backup", { destPath: destPath });
+export const dbBackup = (destPath: string, actorUserId: string): Promise<string> =>
+  invoke("db_backup", { destPath, actorUserId });
 
 export const reportTaxByDay = (
   branch_id: string,
@@ -364,9 +374,10 @@ export const reportTaxByDay = (
 export const auditLogList = (
   from: string,
   to: string,
-  page: number
+  page: number,
+  actorUserId: string,
 ): Promise<Array<{ audit_log_id: string; event_type: string; entity_type: string; entity_id: string | null; actor_user_id: string | null; created_at: string }>> =>
-  invoke("audit_log_list", { from, to, page });
+  invoke("audit_log_list", { from, to, page, actorUserId });
 
 export const inventoryAdjustStock = (
   product_id: string,
@@ -433,6 +444,9 @@ export const thermalSetConfig = (input: ThermalConfig): Promise<void> =>
 export const thermalPrintTest = (): Promise<string> =>
   invoke("thermal_print_test");
 
+export const printReceiptRaw = (storeName: string, lines: string[]): Promise<string> =>
+  invoke("print_receipt_raw", { storeName, lines });
+
 // ─── Cash events ──────────────────────────────────────────────────────────────
 
 export const cashEventCreate = (
@@ -449,6 +463,9 @@ export const cashEventsList = (shift_id: string): Promise<CashEventRow[]> =>
 
 export const cashDrawerSummary = (shift_id: string): Promise<CashDrawerSummary> =>
   invoke("cash_drawer_summary", { shiftId: shift_id });
+
+export const cashXReport = (shift_id: string, actor_user_id: string): Promise<CashDrawerSummary> =>
+  invoke("cash_x_report", { shiftId: shift_id, actorUserId: actor_user_id });
 
 // ─── Product barcodes ─────────────────────────────────────────────────────────
 

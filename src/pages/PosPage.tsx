@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LowStockAlert, ProductWithPrice, SaleResult, SessionUser, Shift } from "../types";
 import { DEVICE } from "../types";
-import { productListAll } from "../tauri/commands";
+import { productListAll, receiptReprint } from "../tauri/commands";
 import { useCart } from "../hooks/useCart";
 import { useSyncStatus } from "../hooks/useSyncStatus";
 import BarcodeInput from "../components/BarcodeInput";
@@ -18,6 +18,7 @@ import RefundModal from "../components/RefundModal";
 import TodayReportModal from "../components/TodayReportModal";
 import CustomItemModal from "../components/CustomItemModal";
 import CashEventModal from "../components/CashEventModal";
+import XReportModal from "../components/XReportModal";
 
 interface Props {
   sessionUser: SessionUser;
@@ -42,7 +43,8 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [showPayment, setShowPayment] = useState(false);
-  const [saleResult, setSaleResult] = useState<SaleResult | null>(null);
+  const [saleResult, setSaleResult]           = useState<SaleResult | null>(null);
+  const [lastReceiptNumber, setLastReceiptNumber] = useState<string | null>(null);
   const [showShiftClose, setShowShiftClose] = useState(false);
   const [showHold, setShowHold] = useState(false);
   const [showRefund, setShowRefund] = useState(false);
@@ -51,7 +53,9 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
   const [showBackOffice, setShowBackOffice] = useState(false);
   const [showCustomItem, setShowCustomItem] = useState(false);
   const [showCashEvent, setShowCashEvent] = useState(false);
+  const [showXReport, setShowXReport]     = useState(false);
   const canOpenBackOffice = ["owner", "manager"].includes(sessionUser.role_name);
+  const canViewXReport    = canOpenBackOffice;
   const [restockAlerts, setRestockAlerts] = useState<LowStockAlert[]>([]);
   const restockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -69,7 +73,7 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
     const noModalOpen = () =>
       !showPayment && !saleResult && !showShiftClose &&
       !showHold && !showRefund && !showReport &&
-      !showDiscount && !showBackOffice && !showCustomItem && !showCashEvent;
+      !showDiscount && !showBackOffice && !showCustomItem && !showCashEvent && !showXReport;
 
     const handler = (e: KeyboardEvent) => {
       if (e.key === "F6") {
@@ -83,7 +87,7 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [showPayment, saleResult, showShiftClose, showHold, showRefund,
-      showReport, showDiscount, showBackOffice, showCustomItem, showCashEvent, lineCount]);
+      showReport, showDiscount, showBackOffice, showCustomItem, showCashEvent, showXReport, lineCount]);
 
   useEffect(() => {
     setProductLoading(true);
@@ -128,6 +132,7 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
       const result = await finalizeSale(payments, customerId);
       setShowPayment(false);
       setSaleResult(result);
+      setLastReceiptNumber(result.receipt_number);
       if (result.low_stock_alerts.length > 0) {
         if (restockTimerRef.current) clearTimeout(restockTimerRef.current);
         setRestockAlerts(result.low_stock_alerts);
@@ -141,6 +146,16 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
   const handleNewSale = () => {
     setSaleResult(null);
     clearCart();
+  };
+
+  const handleReprintLast = async () => {
+    if (!lastReceiptNumber) return;
+    try {
+      const reprinted = await receiptReprint(lastReceiptNumber);
+      setSaleResult(reprinted);
+    } catch (e: unknown) {
+      console.error("Reprint failed", e);
+    }
   };
 
   const now = new Date();
@@ -157,6 +172,16 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
         <button className="top-bar-btn" onClick={() => setShowReport(true)} title="Today's Report">
           📊
         </button>
+        {canViewXReport && (
+          <button className="top-bar-btn" onClick={() => setShowXReport(true)} title="X-Report (Drawer Check)">
+            Χ
+          </button>
+        )}
+        {lastReceiptNumber && (
+          <button className="top-bar-btn" onClick={handleReprintLast} title={`Reprint ${lastReceiptNumber}`}>
+            🖨
+          </button>
+        )}
         {canOpenBackOffice && (
           <button className="top-bar-btn" onClick={() => setShowBackOffice(true)} title="Back Office">
             ⚙
@@ -347,6 +372,14 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
 
       {showBackOffice && (
         <BackOfficeModal sessionUser={sessionUser} onClose={() => setShowBackOffice(false)} />
+      )}
+
+      {showXReport && (
+        <XReportModal
+          shiftId={shift.shift_id}
+          actorUserId={sessionUser.user_id}
+          onClose={() => setShowXReport(false)}
+        />
       )}
 
       {/* ── Restock alerts toast ── */}

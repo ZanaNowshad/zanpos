@@ -19,7 +19,9 @@ function defaultDates() {
   return { today, weekAgo };
 }
 
-export default function AuditLogTab() {
+interface Props { sessionUserId: string; }
+
+export default function AuditLogTab({ sessionUserId }: Props) {
   const { today, weekAgo } = defaultDates();
 
   const [from, setFrom]     = useState(weekAgo);
@@ -33,7 +35,7 @@ export default function AuditLogTab() {
     if (!from || !to) return;
     setLoading(true);
     try {
-      const result = await auditLogList(from, to, p);
+      const result = await auditLogList(from, to, p, sessionUserId);
       setRows(result as AuditRow[]);
       setPage(p);
       setLoaded(true);

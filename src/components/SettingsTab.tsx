@@ -28,7 +28,9 @@ const TIMEZONES = [
 
 const TIMEOUT_OPTIONS = [1, 2, 5, 10, 15, 30, 60];
 
-export default function SettingsTab() {
+interface Props { sessionUserId: string; }
+
+export default function SettingsTab({ sessionUserId }: Props) {
   const [settings, setSettings] = useState<BranchSettings | null>(null);
   const [loading, setLoading]   = useState(true);
   const [saving, setSaving]     = useState(false);
@@ -100,6 +102,7 @@ export default function SettingsTab() {
         tax_number:     taxNumber.trim() || undefined,
         receipt_header: receiptHeader.trim() || undefined,
         receipt_footer: receiptFooter.trim() || undefined,
+        actor_user_id:  sessionUserId,
       });
       setSettings(updated);
       setSaved(true);
@@ -114,7 +117,7 @@ export default function SettingsTab() {
   const handleSaveTimeout = async () => {
     setSavingTimeout(true);
     try {
-      await appConfigSetTimeout(timeoutMinutes);
+      await appConfigSetTimeout(timeoutMinutes, sessionUserId);
       setSavedTimeout(true);
       setTimeout(() => setSavedTimeout(false), 3000);
     } catch (e: unknown) {
@@ -173,7 +176,7 @@ export default function SettingsTab() {
     setBackingUp(true);
     try {
       // Pass empty string — Rust will auto-generate a timestamped path in Documents
-      const savedTo = await dbBackup("");
+      const savedTo = await dbBackup("", sessionUserId);
       setBackupMsg(`Backup saved to: ${savedTo}`);
     } catch (e: unknown) {
       setBackupMsg(typeof e === "string" ? e : "Backup failed");

@@ -4,6 +4,7 @@ use tauri::Manager;
 use sqlx::Row;
 use serde::Serialize;
 use crate::errors::{AppError, AppResult};
+use crate::commands::rbac;
 use crate::AppState;
 
 // ─── Session timeout ──────────────────────────────────────────────────────────
@@ -21,12 +22,14 @@ pub async fn app_config_get_timeout(state: State<'_, AppState>) -> Result<i64, A
     Ok(val.and_then(|v| v.parse::<i64>().ok()).unwrap_or(5))
 }
 
-/// Sets the idle timeout in minutes (1–60).
+/// Sets the idle timeout in minutes (1–60). Requires owner or manager role.
 #[tauri::command]
 pub async fn app_config_set_timeout(
-    minutes: i64,
+    minutes:       i64,
+    actor_user_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     if !(1..=60).contains(&minutes) {
         return Err(AppError::Validation("Timeout must be between 1 and 60 minutes".into()));
     }
@@ -44,14 +47,17 @@ pub async fn app_config_set_timeout(
 
 // ─── DB Backup ────────────────────────────────────────────────────────────────
 
-/// Copy the SQLite database file.
+/// Copy the SQLite database file. Owner-only operation.
 /// If dest_path is empty, saves to the user's Documents folder with a timestamp.
 /// Returns the final destination path.
 #[tauri::command]
 pub async fn db_backup(
-    dest_path: String,
-    app: tauri::AppHandle,
+    dest_path:     String,
+    actor_user_id: String,
+    app:           tauri::AppHandle,
+    state:         State<'_, AppState>,
 ) -> Result<String, AppError> {
+    rbac::owner_only(&state.db, &actor_user_id).await?;
     let app_data = app.path().app_data_dir()
         .map_err(|e| AppError::Internal(format!("Could not resolve app data dir: {e}")))?;
     let src = app_data.join("zanpos.db");
@@ -134,14 +140,16 @@ pub struct AuditLogRow {
 }
 
 /// List audit log entries with date-range filter and offset-based pagination.
-/// Returns up to 50 rows per page (page is 0-based).
+/// Returns up to 50 rows per page (page is 0-based). Requires manager or owner.
 #[tauri::command]
 pub async fn audit_log_list(
-    from: String,
-    to:   String,
-    page: i64,
+    from:          String,
+    to:            String,
+    page:          i64,
+    actor_user_id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<AuditLogRow>, AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let limit: i64 = 50;
     let offset = page * limit;
 

@@ -6,6 +6,7 @@ use ulid::Ulid;
 use serde::{Deserialize, Serialize};
 use crate::errors::{AppError, AppResult};
 use crate::db::repositories::auth_repo;
+use crate::commands::rbac;
 use crate::AppState;
 
 // ─── Product barcode row ──────────────────────────────────────────────────────
@@ -151,6 +152,7 @@ pub async fn admin_create_product(
     input: CreateProductInput,
     state: State<'_, AppState>,
 ) -> Result<AdminProduct, AppError> {
+    rbac::manager_or_owner(&state.db, &input.created_by_user_id).await?;
     let product_id = Ulid::new().to_string();
     let price_id   = Ulid::new().to_string();
     let now        = chrono::Utc::now().to_rfc3339();
@@ -238,6 +240,7 @@ pub async fn admin_update_product(
     input: UpdateProductInput,
     state: State<'_, AppState>,
 ) -> Result<AdminProduct, AppError> {
+    rbac::manager_or_owner(&state.db, &input.updated_by_user_id).await?;
     let now = chrono::Utc::now().to_rfc3339();
 
     // Check if price changed
@@ -365,10 +368,11 @@ pub async fn admin_list_tax_rules(state: State<'_, AppState>) -> Result<Vec<TaxR
 
 #[derive(Deserialize)]
 pub struct SaveCategoryInput {
-    pub category_id: Option<String>,  // None = create
-    pub name:        String,
-    pub sort_order:  i64,
-    pub is_active:   bool,
+    pub category_id:   Option<String>,  // None = create
+    pub name:          String,
+    pub sort_order:    i64,
+    pub is_active:     bool,
+    pub actor_user_id: String,
 }
 
 #[tauri::command]
@@ -376,6 +380,7 @@ pub async fn admin_save_category(
     input: SaveCategoryInput,
     state: State<'_, AppState>,
 ) -> Result<CategoryRow, AppError> {
+    rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
     let now = chrono::Utc::now().to_rfc3339();
 
     let category_id = if let Some(id) = input.category_id {
@@ -456,10 +461,11 @@ pub async fn admin_list_roles(state: State<'_, AppState>) -> Result<Vec<RoleRow>
 
 #[derive(Deserialize)]
 pub struct CreateUserInput {
-    pub display_name: String,
-    pub username:     String,
-    pub pin:          String,
-    pub role_id:      String,
+    pub display_name:  String,
+    pub username:      String,
+    pub pin:           String,
+    pub role_id:       String,
+    pub actor_user_id: String,
 }
 
 #[tauri::command]
@@ -467,6 +473,7 @@ pub async fn admin_create_user(
     input: CreateUserInput,
     state: State<'_, AppState>,
 ) -> Result<AdminUserRow, AppError> {
+    rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
     if input.pin.len() < 4 {
         return Err(AppError::Validation("PIN must be at least 4 digits".into()));
     }
@@ -581,11 +588,12 @@ pub async fn product_barcodes_list(
 
 #[derive(Deserialize)]
 pub struct UpdateUserInput {
-    pub user_id:      String,
-    pub display_name: String,
-    pub pin:          Option<String>,  // None = unchanged
-    pub role_id:      String,
-    pub is_active:    bool,
+    pub user_id:       String,
+    pub display_name:  String,
+    pub pin:           Option<String>,  // None = unchanged
+    pub role_id:       String,
+    pub is_active:     bool,
+    pub actor_user_id: String,
 }
 
 #[tauri::command]
@@ -593,6 +601,7 @@ pub async fn admin_update_user(
     input: UpdateUserInput,
     state: State<'_, AppState>,
 ) -> Result<AdminUserRow, AppError> {
+    rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
     if let Some(pin) = &input.pin {
         if pin.len() < 4 {
             return Err(AppError::Validation("PIN must be at least 4 digits".into()));

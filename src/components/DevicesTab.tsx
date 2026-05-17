@@ -3,7 +3,9 @@ import type { DeviceRow } from "../types";
 import { DEVICE } from "../types";
 import * as cmd from "../tauri/commands";
 
-export default function DevicesTab() {
+interface Props { sessionUserId: string; }
+
+export default function DevicesTab({ sessionUserId: _sessionUserId }: Props) {
   const [devices, setDevices]   = useState<DeviceRow[]>([]);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);

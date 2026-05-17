@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import type { Cart, PaymentInput, ProductWithPrice, SaleResult } from "../types";
 import * as cmd from "../tauri/commands";
+import { posRecordVoid } from "../tauri/commands";
 
 export interface CartSession {
   branch_id: string;
@@ -132,7 +133,18 @@ export function useCart(session: CartSession) {
     }
   }, [cart, session]);
 
-  const clearCart = useCallback(() => setCart(makeEmptyCart(session)), [session]);
+  const clearCart = useCallback(() => {
+    // Record audit trail for pre-tender voids (non-empty carts only)
+    const activeLines = cart.lines.filter(l => !l.voided);
+    if (activeLines.length > 0) {
+      const total = Math.max(0,
+        activeLines.reduce((s, l) => s + l.line_total_minor, 0) - cart.bill_discount_minor
+      );
+      posRecordVoid(cart.cart_id, session.cashier_user_id, activeLines.length, total)
+        .catch(() => { /* non-blocking — don't prevent cart clear */ });
+    }
+    setCart(makeEmptyCart(session));
+  }, [cart, session]);
 
   const replaceCart = useCallback((newCart: Cart) => setCart(newCart), []);
 

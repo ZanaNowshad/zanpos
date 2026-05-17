@@ -128,6 +128,7 @@ pub async fn create_refund(
     original_sale_id: &str,
     items: Vec<RefundItemInput>,
     reason: &str,
+    reason_code: &str,
     created_by_user_id: &str,
 ) -> AppResult<RefundResult> {
     if items.is_empty() {
@@ -158,13 +159,20 @@ pub async fn create_refund(
 
     let mut tx = pool.begin().await?;
 
+    // Validate reason_code is one of the accepted values; fall back to 'other'
+    let safe_reason_code = match reason_code {
+        "customer_return" | "defective" | "wrong_item" | "exchange" | "other" => reason_code,
+        _ => "other",
+    };
+
     sqlx::query(
         "INSERT INTO refunds (refund_id, original_sale_id, refund_receipt_number, reason,
-         refund_total_minor, currency, created_by_user_id, created_at, sync_status, idempotency_key)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)"
+         return_reason_code, refund_total_minor, currency, created_by_user_id, created_at,
+         sync_status, idempotency_key)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)"
     )
     .bind(&refund_id).bind(original_sale_id).bind(&refund_receipt_number)
-    .bind(reason).bind(refund_total).bind(&currency)
+    .bind(reason).bind(safe_reason_code).bind(refund_total).bind(&currency)
     .bind(created_by_user_id).bind(&now).bind(&idempotency_key)
     .execute(&mut *tx)
     .await?;

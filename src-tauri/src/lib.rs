@@ -39,7 +39,12 @@ pub fn run() {
             tracing::info!("Database path: {}", db_path_str);
 
             let db = tauri::async_runtime::block_on(async {
-                db::init_db(&db_path_str).await.expect("Failed to initialize database")
+                let pool = db::init_db(&db_path_str).await.expect("Failed to initialize database");
+                // Migrate any legacy PLAIN: PINs to argon2id on first launch
+                if let Err(e) = db::repositories::auth_repo::rehash_plain_pins(&pool).await {
+                    tracing::warn!("PIN rehash step failed: {:?}", e);
+                }
+                pool
             });
 
             // Spawn background sync worker
@@ -65,6 +70,7 @@ pub fn run() {
             commands::pos_commands::pos_remove_line,
             commands::pos_commands::pos_finalize_sale,
             commands::pos_commands::pos_cart_summary,
+            commands::pos_commands::pos_record_void,
             commands::pos_commands::pos_apply_bill_discount,
             commands::pos_commands::pos_apply_line_discount,
             commands::pos_commands::pos_set_line_note,
@@ -158,6 +164,7 @@ pub fn run() {
             commands::cash_commands::cash_event_create,
             commands::cash_commands::cash_events_list,
             commands::cash_commands::cash_drawer_summary,
+            commands::cash_commands::cash_x_report,
             // Product barcodes
             commands::admin_commands::product_barcode_add,
             commands::admin_commands::product_barcode_remove,

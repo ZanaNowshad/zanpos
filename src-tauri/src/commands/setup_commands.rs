@@ -4,6 +4,7 @@ use sqlx::Row;
 use serde::{Deserialize, Serialize};
 use crate::errors::AppError;
 use crate::db::repositories::auth_repo;
+use crate::commands::rbac;
 use crate::AppState;
 
 // ─── AppConfig — returned on every startup ────────────────────────────────────
@@ -252,6 +253,7 @@ pub struct UpdateBranchInput {
     pub receipt_footer: Option<String>,
     pub tax_number:     Option<String>,
     pub timezone:       String,
+    pub actor_user_id:  String,
 }
 
 #[tauri::command]
@@ -259,6 +261,7 @@ pub async fn settings_update_branch(
     input: UpdateBranchInput,
     state: State<'_, AppState>,
 ) -> Result<BranchSettings, AppError> {
+    rbac::owner_only(&state.db, &input.actor_user_id).await?;
     if input.name.trim().is_empty() {
         return Err(AppError::Validation("Store name is required".into()));
     }

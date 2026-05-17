@@ -54,14 +54,14 @@ export default function BackOfficeModal({ sessionUser, onClose }: Props) {
         {/* ── Tab content ── */}
         <div className="bo-content">
           {tab === "products"   && <ProductsTab   sessionUserId={sessionUser.user_id} />}
-          {tab === "categories" && <CategoriesTab />}
-          {tab === "users"      && <UsersTab />}
+          {tab === "categories" && <CategoriesTab sessionUserId={sessionUser.user_id} />}
+          {tab === "users"      && <UsersTab sessionUserId={sessionUser.user_id} />}
           {tab === "reports"    && <ReportsTab sessionUserId={sessionUser.user_id} />}
           {tab === "inventory"  && <InventoryTab sessionUserId={sessionUser.user_id} />}
-          {tab === "customers"  && <CustomersTab />}
-          {tab === "settings"   && <SettingsTab />}
-          {tab === "audit"      && isOwner && <AuditLogTab />}
-          {tab === "devices"    && isOwner && <DevicesTab />}
+          {tab === "customers"  && <CustomersTab sessionUserId={sessionUser.user_id} />}
+          {tab === "settings"   && <SettingsTab sessionUserId={sessionUser.user_id} />}
+          {tab === "audit"      && isOwner && <AuditLogTab sessionUserId={sessionUser.user_id} />}
+          {tab === "devices"    && isOwner && <DevicesTab sessionUserId={sessionUser.user_id} />}
         </div>
       </div>
     </div>

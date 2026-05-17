@@ -1,3 +1,4 @@
+pub mod rbac;
 pub mod admin_commands;
 pub mod cash_commands;
 pub mod ai_admin_commands;

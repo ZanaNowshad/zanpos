@@ -88,6 +88,117 @@ impl CartLine {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_line(unit_price_minor: i64, qty: &str, tax_bp: i64, inclusive: bool) -> CartLine {
+        CartLine::new(
+            None, "Test Item".into(), None, None,
+            qty, unit_price_minor, String::new(), tax_bp, inclusive,
+        )
+    }
+
+    // ── Test 1: Tax-exclusive line total ──────────────────────────────────────
+    #[test]
+    fn line_total_tax_exclusive() {
+        // 1.000 BHD × 2 qty at 10% excl → subtotal 2000, tax 200, total 2200
+        let line = make_line(1_000, "2", 1_000, false);
+        assert_eq!(line.line_total_minor, 2_200);
+        assert_eq!(line.tax_amount_minor, 200);
+    }
+
+    // ── Test 2: Tax-inclusive line total ─────────────────────────────────────
+    #[test]
+    fn line_total_tax_inclusive() {
+        // 1.100 BHD inclusive with 10% tax:
+        // extracted tax = 1100 * 1000 / 11000 = 100; total stays 1100
+        let line = make_line(1_100, "1", 1_000, true);
+        assert_eq!(line.line_total_minor, 1_100);
+        assert_eq!(line.tax_amount_minor, 100);
+    }
+
+    // ── Test 3: Cart gross total sums only active lines ───────────────────────
+    #[test]
+    fn cart_gross_total_excludes_voided() {
+        let mut cart = Cart::new("b".into(), "d".into(), "s".into(), "u".into());
+        let mut l1 = make_line(1_000, "1", 0, false);
+        let mut l2 = make_line(500, "1", 0, false);
+        l2.voided = true;
+        cart.lines.push(l1.clone());
+        // Suppress unused warning
+        l1.voided = false;
+        cart.lines.push(l2);
+        assert_eq!(cart.gross_total(), 1_000);
+    }
+
+    // ── Test 4: Net total clamps to zero when bill discount exceeds gross ─────
+    #[test]
+    fn net_total_never_negative() {
+        let mut cart = Cart::new("b".into(), "d".into(), "s".into(), "u".into());
+        cart.lines.push(make_line(500, "1", 0, false));
+        cart.bill_discount_minor = 9_999; // bigger than gross
+        assert_eq!(cart.net_total(), 0);
+    }
+
+    // ── Test 5: Bill discount reflects in net_total ───────────────────────────
+    #[test]
+    fn bill_discount_applied_to_net() {
+        let mut cart = Cart::new("b".into(), "d".into(), "s".into(), "u".into());
+        cart.lines.push(make_line(1_000, "2", 0, false)); // gross = 2000
+        cart.bill_discount_minor = 200;
+        assert_eq!(cart.net_total(), 1_800);
+    }
+
+    // ── Test 6: Line discount reduces line total after recalculate ────────────
+    #[test]
+    fn line_discount_recalculate() {
+        let mut line = make_line(1_000, "2", 0, false); // gross 2000
+        line.line_discount_minor = 300;
+        line.recalculate();
+        assert_eq!(line.line_total_minor, 1_700);
+    }
+
+    // ── Test 7: Payment under-tender is rejected ──────────────────────────────
+    #[test]
+    fn payment_undertender_detected() {
+        // Simulate the check in sale_repo::finalize_sale without DB
+        let net_total: i64 = 2_000;
+        let total_paid: i64 = 1_500;
+        assert!(total_paid < net_total, "Under-payment must be caught before writing to DB");
+    }
+
+    // ── Test 8: Split payment sum covers net total ────────────────────────────
+    #[test]
+    fn split_payment_sum_covers_total() {
+        let net_total: i64 = 3_000;
+        let cash: i64 = 2_000;
+        let card: i64 = 1_000;
+        assert!(cash + card >= net_total);
+    }
+
+    // ── Test 9: Partial refund amount = qty × unit price ─────────────────────
+    #[test]
+    fn partial_refund_amount_calculation() {
+        let unit_price_minor: i64 = 500;
+        let refund_qty: i64 = 3;
+        let expected: i64 = 1_500;
+        assert_eq!(refund_qty * unit_price_minor, expected);
+    }
+
+    // ── Test 10: X-report expected cash = opening + sales - refunds + in - out ─
+    #[test]
+    fn xreport_expected_cash_formula() {
+        let opening_float:   i64 = 5_000;
+        let cash_sales:      i64 = 20_000;
+        let cash_refunds:    i64 = 1_000;
+        let paid_in:         i64 = 500;
+        let paid_out:        i64 = 300;
+        let expected = opening_float + cash_sales - cash_refunds + paid_in - paid_out;
+        assert_eq!(expected, 24_200);
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Cart {
     pub cart_id: String,

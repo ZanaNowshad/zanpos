@@ -6,6 +6,7 @@ use serde::Serialize;
 use sqlx::Row;
 use crate::errors::{AppError, AppResult};
 use crate::AppState;
+use crate::commands::rbac;
 
 // ─── Response types ───────────────────────────────────────────────────────────
 
@@ -139,77 +140,58 @@ pub async fn cash_events_list(
     Ok(rows.iter().map(row_to_event).collect())
 }
 
-#[tauri::command]
-pub async fn cash_drawer_summary(
-    shift_id: String,
-    state: State<'_, AppState>,
-) -> AppResult<CashDrawerSummary> {
-    // Opening cash + closing cash from shift
+/// Inner function — callable from both `cash_drawer_summary` and `cash_x_report`.
+async fn drawer_summary_inner(pool: &sqlx::SqlitePool, shift_id: &str) -> AppResult<CashDrawerSummary> {
     let shift_row = sqlx::query(
         "SELECT opening_cash_minor, counted_cash_minor FROM shifts WHERE shift_id = ?"
     )
-    .bind(&shift_id)
-    .fetch_optional(&state.db)
+    .bind(shift_id)
+    .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::NotFound(format!("Shift {} not found", shift_id)))?;
 
-    let opening_minor: i64 = shift_row.get("opening_cash_minor");
+    let opening_minor: i64         = shift_row.get("opening_cash_minor");
     let counted_minor: Option<i64> = shift_row.get("counted_cash_minor");
 
-    // Cash sales for this shift
     let cash_sales_minor: i64 = sqlx::query_scalar(
         "SELECT COALESCE(SUM(p.amount_minor), 0)
          FROM payments p
          JOIN sales s ON s.sale_id = p.sale_id
          WHERE s.shift_id = ? AND p.payment_method = 'cash' AND s.status != 'voided'"
     )
-    .bind(&shift_id)
-    .fetch_one(&state.db)
-    .await?;
+    .bind(shift_id).fetch_one(pool).await?;
 
-    // Cash refunds for this shift (refunds on sales belonging to this shift)
     let cash_refunds_minor: i64 = sqlx::query_scalar(
         "SELECT COALESCE(SUM(r.refund_total_minor), 0)
          FROM refunds r
          JOIN sales s ON s.sale_id = r.original_sale_id
          WHERE s.shift_id = ?"
     )
-    .bind(&shift_id)
-    .fetch_one(&state.db)
-    .await?;
+    .bind(shift_id).fetch_one(pool).await?;
 
-    // Paid-in total
     let paid_in_minor: i64 = sqlx::query_scalar(
         "SELECT COALESCE(SUM(amount_minor), 0)
          FROM cash_events WHERE shift_id = ? AND event_type = 'paid_in'"
     )
-    .bind(&shift_id)
-    .fetch_one(&state.db)
-    .await?;
+    .bind(shift_id).fetch_one(pool).await?;
 
-    // Paid-out total
     let paid_out_minor: i64 = sqlx::query_scalar(
         "SELECT COALESCE(SUM(amount_minor), 0)
          FROM cash_events WHERE shift_id = ? AND event_type = 'paid_out'"
     )
-    .bind(&shift_id)
-    .fetch_one(&state.db)
-    .await?;
+    .bind(shift_id).fetch_one(pool).await?;
 
     let expected_minor = opening_minor + cash_sales_minor - cash_refunds_minor + paid_in_minor - paid_out_minor;
     let variance_minor = counted_minor.map(|c| c - expected_minor);
 
-    // All events for this shift
     let event_rows = sqlx::query(
         "SELECT cash_event_id, shift_id, event_type, amount_minor, note,
                 created_by_user_id, created_at
          FROM cash_events WHERE shift_id = ? ORDER BY created_at"
     )
-    .bind(&shift_id)
-    .fetch_all(&state.db)
+    .bind(shift_id)
+    .fetch_all(pool)
     .await?;
-
-    let events = event_rows.iter().map(row_to_event).collect();
 
     Ok(CashDrawerSummary {
         opening_minor,
@@ -220,6 +202,46 @@ pub async fn cash_drawer_summary(
         expected_minor,
         counted_minor,
         variance_minor,
-        events,
+        events: event_rows.iter().map(row_to_event).collect(),
     })
+}
+
+#[tauri::command]
+pub async fn cash_drawer_summary(
+    shift_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<CashDrawerSummary> {
+    drawer_summary_inner(&state.db, &shift_id).await
+}
+
+/// X-Report: mid-shift drawer snapshot without closing the shift.
+/// Logs an audit event and returns the current reconciliation totals.
+/// Requires manager or owner role.
+#[tauri::command]
+pub async fn cash_x_report(
+    shift_id:      String,
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<CashDrawerSummary> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+
+    let summary = drawer_summary_inner(&state.db, &shift_id).await?;
+
+    // Audit trail for X-Report generation
+    let log_id = Ulid::new().to_string();
+    let now    = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO audit_logs
+           (audit_log_id, event_type, entity_type, entity_id,
+            actor_user_id, actor_type, created_at)
+         VALUES (?, 'X_REPORT', 'shift', ?, ?, 'user', ?)"
+    )
+    .bind(&log_id)
+    .bind(&shift_id)
+    .bind(&actor_user_id)
+    .bind(&now)
+    .execute(&state.db)
+    .await?;
+
+    Ok(summary)
 }

@@ -3,6 +3,7 @@ use ulid::Ulid;
 use sqlx::Row;
 use crate::errors::{AppError, AppResult};
 use crate::inventory::stock_repo::{self, StockLevel, StockMovementRow};
+use crate::commands::rbac;
 use crate::AppState;
 
 /// Resolve the active branch_id from the database at runtime.
@@ -71,6 +72,7 @@ pub async fn inventory_receive_stock(
     input: ReceiveStockInput,
     state: State<'_, AppState>,
 ) -> Result<StockLevel, AppError> {
+    rbac::manager_or_owner(&state.db, &input.received_by_user_id).await?;
     let qty: f64 = input.quantity.parse()
         .map_err(|_| AppError::Validation("Invalid quantity".into()))?;
     if qty <= 0.0 {
@@ -147,6 +149,7 @@ pub async fn inventory_adjust_stock(
     input: AdjustStockInput,
     state: State<'_, AppState>,
 ) -> Result<StockLevel, AppError> {
+    rbac::manager_or_owner(&state.db, &input.adjusted_by_user_id).await?;
     let new_qty: f64 = input.new_quantity.parse()
         .map_err(|_| AppError::Validation("Invalid quantity".into()))?;
     if new_qty < 0.0 {

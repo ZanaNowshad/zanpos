@@ -310,3 +310,42 @@ pub async fn pos_cart_summary(cart: Cart) -> Result<CartSummary, AppError> {
         line_count: cart.lines.iter().filter(|l| !l.voided).count(),
     })
 }
+
+/// Record an audit event when a cashier clears a non-empty cart before tendering.
+/// This provides an immutable trail of pre-tender voids (basket abandonments).
+/// Safe to call even if the cart is empty — no-ops without writing.
+#[tauri::command]
+pub async fn pos_record_void(
+    cart_id:       String,
+    cashier_user_id: String,
+    line_count:    usize,
+    net_total_minor: i64,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    if line_count == 0 { return Ok(()); }   // nothing to record for empty carts
+
+    let log_id = Ulid::new().to_string();
+    let now    = chrono::Utc::now().to_rfc3339();
+    let detail = serde_json::json!({
+        "cart_id": cart_id,
+        "line_count": line_count,
+        "net_total_minor": net_total_minor,
+    })
+    .to_string();
+
+    sqlx::query(
+        "INSERT INTO audit_logs
+           (audit_log_id, event_type, entity_type, entity_id,
+            actor_user_id, actor_type, after_json, created_at)
+         VALUES (?, 'CART_VOID', 'cart', ?, ?, 'user', ?, ?)"
+    )
+    .bind(&log_id)
+    .bind(&cart_id)
+    .bind(&cashier_user_id)
+    .bind(&detail)
+    .bind(&now)
+    .execute(&state.db)
+    .await?;
+
+    Ok(())
+}

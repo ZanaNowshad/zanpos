@@ -4,7 +4,9 @@ import * as cmd from "../tauri/commands";
 
 const EMPTY_FORM = { display_name: "", username: "", pin: "", confirm_pin: "", role_id: "", is_active: true };
 
-export default function UsersTab() {
+interface Props { sessionUserId: string; }
+
+export default function UsersTab({ sessionUserId }: Props) {
   const [users, setUsers]       = useState<AdminUserRow[]>([]);
   const [roles, setRoles]       = useState<RoleRow[]>([]);
   const [selected, setSelected] = useState<AdminUserRow | null>(null);
@@ -54,6 +56,7 @@ export default function UsersTab() {
           username: form.username.trim(),
           pin: form.pin,
           role_id: form.role_id,
+          actor_user_id: sessionUserId,
         });
         setUsers(prev => [created, ...prev]);
       } else if (selected) {
@@ -63,6 +66,7 @@ export default function UsersTab() {
           pin: form.pin || undefined,
           role_id: form.role_id,
           is_active: form.is_active,
+          actor_user_id: sessionUserId,
         });
         setUsers(prev => prev.map(u => u.user_id === updated.user_id ? updated : u));
       }

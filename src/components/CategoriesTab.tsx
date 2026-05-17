@@ -4,7 +4,9 @@ import * as cmd from "../tauri/commands";
 
 const EMPTY_FORM = { name: "", sort_order: 0, is_active: true };
 
-export default function CategoriesTab() {
+interface Props { sessionUserId: string; }
+
+export default function CategoriesTab({ sessionUserId }: Props) {
   const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [selected, setSelected]     = useState<CategoryRow | null>(null);
   const [creating, setCreating]     = useState(false);
@@ -41,6 +43,7 @@ export default function CategoriesTab() {
         name: form.name.trim(),
         sort_order: form.sort_order,
         is_active: form.is_active,
+        actor_user_id: sessionUserId,
       });
       setCategories(prev =>
         creating

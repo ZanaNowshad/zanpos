@@ -44,3 +44,6 @@ rand = { version = "0.8", features = ["getrandom"] }
 # Error handling
 thiserror = "1"
 anyhow = "1"
+
+# Serial port for ESC/POS thermal printing
+serialport = "4"

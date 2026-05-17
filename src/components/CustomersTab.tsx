@@ -4,7 +4,9 @@ import * as cmd from "../tauri/commands";
 
 const EMPTY_FORM = { name: "", phone: "", email: "", notes: "" };
 
-export default function CustomersTab() {
+interface Props { sessionUserId: string; }
+
+export default function CustomersTab({ sessionUserId: _sessionUserId }: Props) {
   const [customers, setCustomers]   = useState<CustomerRow[]>([]);
   const [selected, setSelected]     = useState<CustomerRow | null>(null);
   const [creating, setCreating]     = useState(false);

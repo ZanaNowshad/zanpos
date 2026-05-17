@@ -1,4 +1,5 @@
-/// Thermal/ESC-POS printer configuration and stub print command.
+/// Thermal/ESC-POS printer configuration and printing.
+/// Uses the `serialport` crate directly (synchronous I/O on a blocking thread).
 use tauri::State;
 use serde::{Deserialize, Serialize};
 use crate::errors::{AppError, AppResult};
@@ -20,7 +21,104 @@ pub struct ThermalConfigInput {
     pub baud:    String,
 }
 
-// ─── Helper ───────────────────────────────────────────────────────────────────
+// ─── ESC/POS byte constants ───────────────────────────────────────────────────
+
+const ESC: u8  = 0x1B;
+const GS:  u8  = 0x1D;
+const LF:  u8  = 0x0A;
+
+/// Initialize printer (ESC @)
+fn esc_init() -> Vec<u8> { vec![ESC, b'@'] }
+
+/// Select alignment: 0=left, 1=center, 2=right (ESC a n)
+fn esc_align(n: u8) -> Vec<u8> { vec![ESC, b'a', n] }
+
+/// Bold on/off (ESC E n)
+fn esc_bold(on: bool) -> Vec<u8> { vec![ESC, b'E', if on { 1 } else { 0 }] }
+
+/// Double-size text on/off (GS ! n, 0x11 = double height+width)
+fn esc_double(on: bool) -> Vec<u8> { vec![GS, b'!', if on { 0x11 } else { 0x00 }] }
+
+/// Feed n lines and cut (GS V 0 = full cut)
+fn esc_feed_and_cut(lines: u8) -> Vec<u8> { vec![ESC, b'd', lines, GS, b'V', 0x00] }
+
+/// Build ESC/POS receipt byte payload.
+/// `store_name`, `header_lines`, `item_lines`, `footer_lines` are all pre-formatted strings.
+pub fn build_receipt_bytes(
+    store_name: &str,
+    receipt_lines: &[String],
+) -> Vec<u8> {
+    let mut buf: Vec<u8> = Vec::with_capacity(512);
+
+    // Initialize
+    buf.extend_from_slice(&esc_init());
+
+    // Store name — centered, double-size bold
+    buf.extend_from_slice(&esc_align(1));  // center
+    buf.extend_from_slice(&esc_double(true));
+    buf.extend_from_slice(&esc_bold(true));
+    buf.extend_from_slice(store_name.as_bytes());
+    buf.push(LF);
+    buf.extend_from_slice(&esc_double(false));
+    buf.extend_from_slice(&esc_bold(false));
+    buf.push(LF);
+
+    // Body lines — left aligned
+    buf.extend_from_slice(&esc_align(0));  // left
+    for line in receipt_lines {
+        buf.extend_from_slice(line.as_bytes());
+        buf.push(LF);
+    }
+
+    // Feed and cut
+    buf.extend_from_slice(&esc_feed_and_cut(4));
+    buf
+}
+
+/// Build a short test-page payload.
+fn build_test_bytes(port: &str, baud: &str) -> Vec<u8> {
+    let lines = vec![
+        "--------------------------------".to_string(),
+        "   ESC/POS TEST PAGE".to_string(),
+        "--------------------------------".to_string(),
+        format!("Port: {}  Baud: {}", port, baud),
+        "".to_string(),
+        "Left-aligned text".to_string(),
+    ];
+
+    let mut buf = esc_init();
+    buf.extend_from_slice(&esc_align(1));
+    buf.extend_from_slice(&esc_bold(true));
+    buf.extend_from_slice(b"ZANPOS");
+    buf.push(LF);
+    buf.extend_from_slice(&esc_bold(false));
+    buf.push(LF);
+    buf.extend_from_slice(&esc_align(0));
+    for line in &lines {
+        buf.extend_from_slice(line.as_bytes());
+        buf.push(LF);
+    }
+    buf.extend_from_slice(&esc_feed_and_cut(3));
+    buf
+}
+
+/// Write raw bytes to a serial port on a dedicated blocking thread.
+fn write_to_port(port_name: &str, baud: u32, payload: Vec<u8>) -> AppResult<()> {
+    use std::time::Duration;
+    let mut port = serialport::new(port_name, baud)
+        .timeout(Duration::from_secs(5))
+        .open()
+        .map_err(|e| AppError::Internal(format!("Cannot open port '{}': {}", port_name, e)))?;
+
+    use std::io::Write;
+    port.write_all(&payload)
+        .map_err(|e| AppError::Internal(format!("Serial write failed: {}", e)))?;
+    port.flush()
+        .map_err(|e| AppError::Internal(format!("Serial flush failed: {}", e)))?;
+    Ok(())
+}
+
+// ─── Config helpers ───────────────────────────────────────────────────────────
 
 async fn config_get(state: &AppState, key: &str, default: &str) -> String {
     sqlx::query_scalar::<_, Option<String>>(
@@ -77,69 +175,52 @@ pub async fn thermal_set_config(
     Ok(())
 }
 
-/// Stub: attempt a test print (serial port plugin not yet installed).
-/// Returns an informational message rather than an error so the UI can show it.
+/// Send a test page to the configured thermal printer.
 #[tauri::command]
 pub async fn thermal_print_test(state: State<'_, AppState>) -> Result<String, AppError> {
     let config = thermal_get_config(state).await?;
 
     if !config.enabled {
-        return Ok(
-            "Thermal printing is disabled. Enable it and configure a port first.".into()
-        );
+        return Ok("Thermal printing is disabled. Enable it in Settings first.".into());
     }
-
     if config.port.trim().is_empty() {
-        return Ok("No serial port configured. Please enter a port (e.g. COM3 or /dev/ttyUSB0).".into());
+        return Ok("No port configured. Enter a COM port (e.g. COM3) in Settings.".into());
     }
 
-    // Serial port integration requires `tauri-plugin-serialport`.
-    // Add to Cargo.toml:
-    //   tauri-plugin-serialport = { git = "https://github.com/deid84/tauri-plugin-serialport" }
-    // Register it in lib.rs:
-    //   .plugin(tauri_plugin_serialport::init())
-    // Then replace this stub with actual ESC/POS byte writing:
-    //   let mut port = serialport::new(&config.port, config.baud.parse().unwrap_or(9600))
-    //       .open()?;
-    //   port.write_all(&[0x1B, 0x40])?;  // ESC @ — initialize printer
-    //   port.write_all(b"Test Receipt\n")?;
-    //   port.write_all(&[0x1B, 0x64, 5])?; // feed 5 lines
+    let port_name = config.port.clone();
+    let baud_str  = config.baud.clone();
+    let baud: u32 = baud_str.parse().unwrap_or(9600);
+    let payload   = build_test_bytes(&port_name, &baud_str);
 
-    Ok(format!(
-        "STUB: Serial port plugin not installed.\n\
-         Configured port: {} at {} baud.\n\
-         To enable hardware printing, add tauri-plugin-serialport to Cargo.toml \
-         and implement the ESC/POS write logic in thermal_commands.rs.",
-        config.port, config.baud
-    ))
+    tokio::task::spawn_blocking(move || write_to_port(&port_name, baud, payload))
+        .await
+        .map_err(|e| AppError::Internal(format!("Thread error: {e}")))?
+        .map(|_| format!("Test page sent to {} at {} baud.", config.port, config.baud))
 }
 
-/// Stub: print receipt lines via ESC/POS.
-/// Full implementation requires `tauri-plugin-serialport`.
+/// Print receipt lines via ESC/POS to the configured thermal printer.
+/// `store_name` is printed as a centered header; `lines` are the receipt body.
 #[tauri::command]
 pub async fn print_receipt_raw(
-    lines: Vec<String>,
-    state: State<'_, AppState>,
+    store_name: String,
+    lines:      Vec<String>,
+    state:      State<'_, AppState>,
 ) -> Result<String, AppError> {
     let config = thermal_get_config(state).await?;
 
     if !config.enabled {
         return Ok("Thermal printing disabled".into());
     }
+    if config.port.trim().is_empty() {
+        return Err(AppError::Validation("No thermal printer port configured".into()));
+    }
 
-    // TODO: Replace with actual serial write when tauri-plugin-serialport is available.
-    // ESC/POS implementation:
-    //   let mut port = serialport::new(&config.port, baud).open()?;
-    //   port.write_all(&[0x1B, 0x40])?;        // initialize
-    //   for line in &lines {
-    //       port.write_all(line.as_bytes())?;
-    //       port.write_all(b"\n")?;
-    //   }
-    //   port.write_all(&[0x1D, 0x56, 0x00])?;  // cut
+    let port_name = config.port.clone();
+    let baud: u32 = config.baud.parse().unwrap_or(9600);
+    let payload   = build_receipt_bytes(&store_name, &lines);
 
-    let line_count = lines.len();
-    Ok(format!(
-        "STUB: Would print {} lines to {} (serial plugin not installed)",
-        line_count, config.port
-    ))
+    tokio::task::spawn_blocking(move || write_to_port(&port_name, baud, payload))
+        .await
+        .map_err(|e| AppError::Internal(format!("Thread error: {e}")))?
+        .map(|_| "Printed".into())
 }

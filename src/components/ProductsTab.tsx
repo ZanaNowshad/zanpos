@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import type { AdminProduct, CategoryRow, TaxRuleRow } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney, parseMoney } from "../money";
 import * as cmd from "../tauri/commands";
+import BarcodesPrintModal from "./BarcodesPrintModal";
 
 interface Props {
   sessionUserId: string;
@@ -12,6 +14,7 @@ const EMPTY_FORM = {
   name: "", category_id: "", sku: "", barcode: "",
   tax_rule_id: "", price: "", track_inventory: true,
   allow_decimal_quantity: false, reorder_point: 0, is_active: true,
+  image_path: "" as string,
 };
 
 export default function ProductsTab({ sessionUserId }: Props) {
@@ -24,6 +27,7 @@ export default function ProductsTab({ sessionUserId }: Props) {
   const [saving, setSaving]           = useState(false);
   const [error, setError]             = useState<string | null>(null);
   const [search, setSearch]           = useState("");
+  const [printProducts, setPrintProducts] = useState<AdminProduct[] | null>(null);
 
   const exp = DEVICE.currency_exponent;
   const cur = DEVICE.currency;
@@ -61,8 +65,18 @@ export default function ProductsTab({ sessionUserId }: Props) {
       allow_decimal_quantity: p.allow_decimal_quantity,
       reorder_point:          p.reorder_point,
       is_active:              p.is_active,
+      image_path:             p.image_path ?? "",
     });
     setError(null);
+  }
+
+  async function pickImage() {
+    try {
+      const path = await cmd.productPickImage();
+      if (path) set("image_path", path);
+    } catch {
+      setError("Could not open file picker");
+    }
   }
 
   function cancelEdit() { setSelected(null); setCreating(false); setError(null); }
@@ -87,6 +101,7 @@ export default function ProductsTab({ sessionUserId }: Props) {
           allow_decimal_quantity: form.allow_decimal_quantity,
           reorder_point: form.reorder_point,
           created_by_user_id: sessionUserId,
+          image_path: form.image_path.trim() || undefined,
         });
         setProducts(prev => [created, ...prev]);
       } else if (selected) {
@@ -99,6 +114,7 @@ export default function ProductsTab({ sessionUserId }: Props) {
           allow_decimal_quantity: form.allow_decimal_quantity,
           reorder_point: form.reorder_point, is_active: form.is_active,
           updated_by_user_id: sessionUserId,
+          image_path: form.image_path.trim() || undefined,
         });
         setProducts(prev => prev.map(p => p.product_id === updated.product_id ? updated : p));
       }
@@ -118,6 +134,10 @@ export default function ProductsTab({ sessionUserId }: Props) {
   );
 
   return (
+    <>
+    {printProducts && (
+      <BarcodesPrintModal products={printProducts} onClose={() => setPrintProducts(null)} />
+    )}
     <div className="bo-tab-layout">
       {/* ── List pane ── */}
       <div className="bo-list-pane">
@@ -128,24 +148,39 @@ export default function ProductsTab({ sessionUserId }: Props) {
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
+          <button
+            className="btn-secondary bo-print-labels-btn"
+            onClick={() => setPrintProducts(filtered.length > 0 ? filtered : products)}
+            title="Print barcode labels"
+          >
+            Print Labels
+          </button>
           <button className="btn-primary bo-add-btn" onClick={startCreate}>+ New</button>
         </div>
         <div className="bo-list">
           {filtered.map(p => (
-            <button
-              key={p.product_id}
-              className={`bo-list-row ${selected?.product_id === p.product_id ? "bo-list-row-active" : ""} ${!p.is_active ? "bo-list-row-inactive" : ""}`}
-              onClick={() => startEdit(p)}
-            >
-              <div className="bo-list-row-main">
-                <span className="bo-list-row-name">{p.name}</span>
-                <span className="bo-list-row-sub">{p.category_name}{p.sku ? ` · ${p.sku}` : ""}</span>
-              </div>
-              <div className="bo-list-row-right">
-                <span className="bo-list-row-price">{cur} {formatMoney(p.price_minor, exp)}</span>
-                {!p.is_active && <span className="bo-badge-inactive">Inactive</span>}
-              </div>
-            </button>
+            <div key={p.product_id} className="bo-list-row-wrap">
+              <button
+                className={`bo-list-row ${selected?.product_id === p.product_id ? "bo-list-row-active" : ""} ${!p.is_active ? "bo-list-row-inactive" : ""}`}
+                onClick={() => startEdit(p)}
+              >
+                <div className="bo-list-row-main">
+                  <span className="bo-list-row-name">{p.name}</span>
+                  <span className="bo-list-row-sub">{p.category_name}{p.sku ? ` · ${p.sku}` : ""}</span>
+                </div>
+                <div className="bo-list-row-right">
+                  <span className="bo-list-row-price">{cur} {formatMoney(p.price_minor, exp)}</span>
+                  {!p.is_active && <span className="bo-badge-inactive">Inactive</span>}
+                </div>
+              </button>
+              <button
+                className="btn-secondary bo-label-btn"
+                onClick={e => { e.stopPropagation(); setPrintProducts([p]); }}
+                title="Print label for this product"
+              >
+                Label
+              </button>
+            </div>
           ))}
           {filtered.length === 0 && (
             <div className="bo-empty">No products found.</div>
@@ -214,6 +249,31 @@ export default function ProductsTab({ sessionUserId }: Props) {
             </>
           )}
 
+          <label className="bo-label">Product Image</label>
+          <div className="prod-image-row">
+            {form.image_path && (
+              <img
+                className="prod-image-preview"
+                src={convertFileSrc(form.image_path)}
+                alt="Product"
+                onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
+              />
+            )}
+            {!form.image_path && (
+              <div className="prod-image-placeholder">No image</div>
+            )}
+            <div className="prod-image-btns">
+              <button className="btn-secondary" type="button" onClick={pickImage}>
+                Choose Image
+              </button>
+              {form.image_path && (
+                <button className="btn-secondary" type="button" onClick={() => set("image_path", "")}>
+                  Remove
+                </button>
+              )}
+            </div>
+          </div>
+
           <div className="bo-form-actions">
             <button className="btn-secondary" onClick={cancelEdit}>Cancel</button>
             <button className="btn-primary" onClick={save} disabled={saving}>
@@ -223,5 +283,6 @@ export default function ProductsTab({ sessionUserId }: Props) {
         </div>
       )}
     </div>
+    </>
   );
 }

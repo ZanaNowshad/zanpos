@@ -1,11 +1,15 @@
 import { useEffect, useState } from "react";
-import type { BranchSettings } from "../types";
+import type { BranchSettings, ThermalConfig } from "../types";
 import {
   settingsGetBranch,
   settingsUpdateBranch,
   appConfigGetTimeout,
   appConfigSetTimeout,
   dbBackup,
+  thermalGetConfig,
+  thermalSetConfig,
+  thermalPrintTest,
+  checkForUpdates,
 } from "../tauri/commands";
 
 const TIMEZONES = [
@@ -49,18 +53,34 @@ export default function SettingsTab() {
   const [backingUp, setBackingUp] = useState(false);
   const [backupMsg, setBackupMsg] = useState<string | null>(null);
 
+  // Thermal printer
+  const [thermal, setThermal]           = useState<ThermalConfig>({ enabled: false, port: "", baud: "9600" });
+  const [savingThermal, setSavingThermal] = useState(false);
+  const [savedThermal, setSavedThermal]   = useState(false);
+  const [testingPrint, setTestingPrint]   = useState(false);
+  const [printTestMsg, setPrintTestMsg]   = useState<string | null>(null);
+
+  // Auto-updater
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updateMsg, setUpdateMsg]           = useState<string | null>(null);
+
   useEffect(() => {
-    Promise.all([settingsGetBranch(), appConfigGetTimeout().catch(() => 5)])
-      .then(([s, minutes]) => {
-        setSettings(s);
-        setName(s.name);
-        setTimezone(s.timezone);
-        setAddress(s.address ?? "");
-        setPhone(s.phone ?? "");
-        setTaxNumber(s.tax_number ?? "");
-        setReceiptHeader(s.receipt_header ?? "");
-        setReceiptFooter(s.receipt_footer ?? "");
+    Promise.all([
+      settingsGetBranch(),
+      appConfigGetTimeout().catch(() => 5),
+      thermalGetConfig().catch(() => ({ enabled: false, port: "", baud: "9600" })),
+    ])
+      .then(([s, minutes, tc]) => {
+        setSettings(s as BranchSettings);
+        setName((s as BranchSettings).name);
+        setTimezone((s as BranchSettings).timezone);
+        setAddress((s as BranchSettings).address ?? "");
+        setPhone((s as BranchSettings).phone ?? "");
+        setTaxNumber((s as BranchSettings).tax_number ?? "");
+        setReceiptHeader((s as BranchSettings).receipt_header ?? "");
+        setReceiptFooter((s as BranchSettings).receipt_footer ?? "");
         setTimeoutMinutes(minutes as number);
+        setThermal(tc as ThermalConfig);
       })
       .catch(() => setError("Failed to load settings"))
       .finally(() => setLoading(false));
@@ -101,6 +121,50 @@ export default function SettingsTab() {
       setError(typeof e === "string" ? e : "Failed to save timeout");
     } finally {
       setSavingTimeout(false);
+    }
+  };
+
+  const handleSaveThermal = async () => {
+    setSavingThermal(true);
+    setPrintTestMsg(null);
+    try {
+      await thermalSetConfig(thermal);
+      setSavedThermal(true);
+      setTimeout(() => setSavedThermal(false), 3000);
+    } catch (e: unknown) {
+      setError(typeof e === "string" ? e : "Failed to save printer settings");
+    } finally {
+      setSavingThermal(false);
+    }
+  };
+
+  const handleTestPrint = async () => {
+    setTestingPrint(true);
+    setPrintTestMsg(null);
+    try {
+      const msg = await thermalPrintTest();
+      setPrintTestMsg(msg);
+    } catch (e: unknown) {
+      setPrintTestMsg(typeof e === "string" ? e : "Test failed");
+    } finally {
+      setTestingPrint(false);
+    }
+  };
+
+  const handleCheckUpdate = async () => {
+    setCheckingUpdate(true);
+    setUpdateMsg(null);
+    try {
+      const version = await checkForUpdates();
+      if (version) {
+        setUpdateMsg(`Version ${version} is available — restart to install.`);
+      } else {
+        setUpdateMsg("You are up to date.");
+      }
+    } catch (e: unknown) {
+      setUpdateMsg(typeof e === "string" ? e : "Update check failed");
+    } finally {
+      setCheckingUpdate(false);
     }
   };
 
@@ -240,6 +304,96 @@ export default function SettingsTab() {
             </button>
           </div>
           <p className="settings-hint">Lock the screen after this many minutes of inactivity.</p>
+        </section>
+
+        {/* ── Thermal Printer ── */}
+        <section className="settings-section">
+          <h3 className="settings-section-title">Receipt Printer (ESC/POS)</h3>
+          <p className="settings-hint">
+            Requires <code>tauri-plugin-serialport</code> for full hardware integration.
+            Configure the port and baud rate, then use "Test Print" to verify.
+          </p>
+
+          <div className="thermal-row">
+            <label className="bo-checkbox-label">
+              <input
+                type="checkbox"
+                checked={thermal.enabled}
+                onChange={e => setThermal(t => ({ ...t, enabled: e.target.checked }))}
+              />
+              Enable thermal printing
+            </label>
+          </div>
+
+          <div className="bo-row-two">
+            <div>
+              <label className="bo-label">Serial Port</label>
+              <input
+                className="bo-input"
+                value={thermal.port}
+                onChange={e => setThermal(t => ({ ...t, port: e.target.value }))}
+                placeholder="COM3 or /dev/ttyUSB0"
+                disabled={!thermal.enabled}
+              />
+            </div>
+            <div>
+              <label className="bo-label">Baud Rate</label>
+              <select
+                className="bo-select"
+                value={thermal.baud}
+                onChange={e => setThermal(t => ({ ...t, baud: e.target.value }))}
+                disabled={!thermal.enabled}
+              >
+                <option value="9600">9600</option>
+                <option value="19200">19200</option>
+                <option value="38400">38400</option>
+                <option value="115200">115200</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="thermal-actions">
+            <button
+              className="btn-secondary"
+              onClick={handleSaveThermal}
+              disabled={savingThermal}
+            >
+              {savingThermal ? "Saving…" : savedThermal ? "Saved ✓" : "Save Printer Settings"}
+            </button>
+            <button
+              className="btn-secondary"
+              onClick={handleTestPrint}
+              disabled={testingPrint || !thermal.enabled}
+            >
+              {testingPrint ? "Testing…" : "Test Print"}
+            </button>
+          </div>
+          {printTestMsg && (
+            <pre className="thermal-test-msg">{printTestMsg}</pre>
+          )}
+        </section>
+
+        {/* ── Application / Updater ── */}
+        <section className="settings-section">
+          <h3 className="settings-section-title">Application</h3>
+          <div className="update-row">
+            <div>
+              <div className="update-version-label">Current Version</div>
+              <div className="update-version-value">0.1.0</div>
+            </div>
+            <button
+              className="btn-secondary"
+              onClick={handleCheckUpdate}
+              disabled={checkingUpdate}
+            >
+              {checkingUpdate ? "Checking…" : "Check for Updates"}
+            </button>
+          </div>
+          {updateMsg && (
+            <div className={`update-msg ${updateMsg.includes("available") ? "update-msg-available" : "update-msg-ok"}`}>
+              {updateMsg}
+            </div>
+          )}
         </section>
 
         {error && <div className="modal-error">{error}</div>}

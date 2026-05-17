@@ -1,11 +1,12 @@
-import { useState } from "react";
-import type { PaymentInput } from "../types";
+import { useState, useEffect, useRef } from "react";
+import type { CustomerRow, PaymentInput } from "../types";
 import { formatMoney, parseMoney } from "../money";
 import { DEVICE } from "../types";
+import * as cmd from "../tauri/commands";
 
 interface Props {
   netTotal: number;
-  onConfirm: (payments: PaymentInput[]) => void;
+  onConfirm: (payments: PaymentInput[], customerId?: string) => void;
   onCancel: () => void;
   loading?: boolean;
 }
@@ -27,6 +28,26 @@ export default function PaymentModal({ netTotal, onConfirm, onCancel, loading }:
   const [lines, setLines] = useState<PaymentLine[]>([mkLine("cash")]);
   const EXP = DEVICE.currency_exponent;
   const fmt = (n: number) => `${DEVICE.currency} ${formatMoney(n, EXP)}`;
+
+  // Customer selection
+  const [custSearch, setCustSearch]       = useState("");
+  const [custResults, setCustResults]     = useState<CustomerRow[]>([]);
+  const [selectedCust, setSelectedCust]   = useState<CustomerRow | null>(null);
+  const [showCustDrop, setShowCustDrop]   = useState(false);
+  const searchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (custSearch.trim().length === 0) { setCustResults([]); return; }
+    if (searchRef.current) clearTimeout(searchRef.current);
+    searchRef.current = setTimeout(async () => {
+      try {
+        const rows = await cmd.customerList(custSearch.trim());
+        setCustResults(rows.slice(0, 8));
+        setShowCustDrop(true);
+      } catch { /* ignore */ }
+    }, 250);
+    return () => { if (searchRef.current) clearTimeout(searchRef.current); };
+  }, [custSearch]);
 
   const allocatedMinor = lines.reduce((sum, l) => {
     const amt = parseMoney(l.amountStr, EXP);
@@ -60,13 +81,50 @@ export default function PaymentModal({ netTotal, onConfirm, onCancel, loading }:
       }
       return { method: l.method, amount_minor: amount };
     });
-    onConfirm(payments);
+    onConfirm(payments, selectedCust?.customer_id);
   };
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onCancel()}>
       <div className="modal payment-modal">
         <h2>Payment</h2>
+
+        {/* ── Customer picker ── */}
+        <div className="cust-picker-section">
+          <label className="cust-picker-label">Customer (optional)</label>
+          {selectedCust ? (
+            <div className="cust-chip">
+              <span>{selectedCust.name}{selectedCust.phone ? ` · ${selectedCust.phone}` : ""}</span>
+              <span className="cust-chip-pts">{selectedCust.loyalty_points} pts</span>
+              <button className="cust-chip-remove" onClick={() => { setSelectedCust(null); setCustSearch(""); }}>×</button>
+            </div>
+          ) : (
+            <div className="cust-search-wrap">
+              <input
+                className="cust-search-input"
+                placeholder="Search by name or phone…"
+                value={custSearch}
+                onChange={e => { setCustSearch(e.target.value); if (!e.target.value) setShowCustDrop(false); }}
+                onBlur={() => setTimeout(() => setShowCustDrop(false), 180)}
+              />
+              {showCustDrop && custResults.length > 0 && (
+                <div className="cust-dropdown">
+                  {custResults.map(c => (
+                    <button
+                      key={c.customer_id}
+                      className="cust-dropdown-item"
+                      onMouseDown={() => { setSelectedCust(c); setCustSearch(""); setShowCustDrop(false); }}
+                    >
+                      <span className="cust-dd-name">{c.name}</span>
+                      {c.phone && <span className="cust-dd-phone">{c.phone}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         <div className="payment-total">
           <span>Total due</span>
           <span className="payment-total-amount">{fmt(netTotal)}</span>

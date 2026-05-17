@@ -1,6 +1,8 @@
 pub mod admin_commands;
 pub mod ai_admin_commands;
 pub mod auth_commands;
+pub mod customer_commands;
+pub mod device_commands;
 pub mod held_cart_commands;
 pub mod inventory_commands;
 pub mod phase10a_commands;
@@ -11,3 +13,5 @@ pub mod report_commands;
 pub mod setup_commands;
 pub mod shift_commands;
 pub mod sync_commands;
+pub mod thermal_commands;
+pub mod updater_commands;

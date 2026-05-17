@@ -121,9 +121,9 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
     setSearchQuery(query);
   }, []);
 
-  const handleConfirmPayment = async (payments: import("../types").PaymentInput[]) => {
+  const handleConfirmPayment = async (payments: import("../types").PaymentInput[], customerId?: string) => {
     try {
-      const result = await finalizeSale(payments);
+      const result = await finalizeSale(payments, customerId);
       setShowPayment(false);
       setSaleResult(result);
       if (result.low_stock_alerts.length > 0) {

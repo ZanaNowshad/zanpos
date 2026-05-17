@@ -8,6 +8,8 @@ import type {
   BranchSettings,
   Cart,
   CategoryRow,
+  CustomerRow,
+  DeviceRow,
   ExecuteActionInput,
   ExecuteActionResult,
   HeldCartSummary,
@@ -28,6 +30,7 @@ import type {
   SupabaseStatus,
   SyncStatus,
   TaxRuleRow,
+  ThermalConfig,
   TodaySummary,
   TopProduct,
   UndoActionResult,
@@ -133,9 +136,10 @@ export const posRemoveLine = (cart: Cart, cart_line_id: string): Promise<Cart> =
 export const posFinalizeSale = (
   cart: Cart,
   payments: PaymentInput[],
-  idempotency_key?: string
+  idempotency_key?: string,
+  customer_id?: string,
 ): Promise<SaleResult> =>
-  invoke("pos_finalize_sale", { input: { cart, payments, idempotency_key } });
+  invoke("pos_finalize_sale", { input: { cart, payments, idempotency_key, customer_id } });
 
 export const posApplyBillDiscount = (cart: Cart, discount_minor: number): Promise<Cart> =>
   invoke("pos_apply_bill_discount", { input: { cart, discount_minor } });
@@ -275,6 +279,7 @@ export const adminCreateProduct = (input: {
   tax_rule_id?: string; price_minor: number;
   track_inventory: boolean; allow_decimal_quantity: boolean;
   reorder_point: number; created_by_user_id: string;
+  image_path?: string;
 }): Promise<AdminProduct> =>
   invoke("admin_create_product", { input });
 
@@ -283,6 +288,7 @@ export const adminUpdateProduct = (input: {
   tax_rule_id?: string; price_minor: number;
   track_inventory: boolean; allow_decimal_quantity: boolean;
   reorder_point: number; is_active: boolean; updated_by_user_id: string;
+  image_path?: string;
 }): Promise<AdminProduct> =>
   invoke("admin_update_product", { input });
 
@@ -368,3 +374,58 @@ export const inventoryAdjustStock = (
   invoke("inventory_adjust_stock", {
     input: { product_id, new_quantity, notes, adjusted_by_user_id },
   });
+
+// ─── Phase 10b — Customers ────────────────────────────────────────────────────
+
+export const customerList = (search: string): Promise<CustomerRow[]> =>
+  invoke("customer_list", { search });
+
+export const customerCreate = (input: {
+  name: string; phone?: string; email?: string; notes?: string;
+}): Promise<CustomerRow> =>
+  invoke("customer_create", { input });
+
+export const customerUpdate = (input: {
+  customer_id: string; name: string; phone?: string; email?: string; notes?: string;
+}): Promise<CustomerRow> =>
+  invoke("customer_update", { input });
+
+export const customerGet = (customerId: string): Promise<CustomerRow> =>
+  invoke("customer_get", { customerId });
+
+export const customerAddLoyalty = (customerId: string, points: number): Promise<number> =>
+  invoke("customer_add_loyalty", { customerId, points });
+
+// ─── Phase 10b — Devices ──────────────────────────────────────────────────────
+
+export const deviceList = (): Promise<DeviceRow[]> =>
+  invoke("device_list");
+
+export const deviceCreate = (input: {
+  device_code: string; device_name: string;
+}): Promise<DeviceRow> =>
+  invoke("device_create", { input });
+
+export const deviceToggleActive = (deviceId: string, isActive: boolean): Promise<void> =>
+  invoke("device_toggle_active", { deviceId, isActive });
+
+// ─── Phase 10b — Product image picker ────────────────────────────────────────
+
+export const productPickImage = (): Promise<string | null> =>
+  invoke("product_pick_image");
+
+// ─── Phase 10b — Auto-updater ─────────────────────────────────────────────────
+
+export const checkForUpdates = (): Promise<string | null> =>
+  invoke("check_for_updates");
+
+// ─── Phase 10b — Thermal printer ─────────────────────────────────────────────
+
+export const thermalGetConfig = (): Promise<ThermalConfig> =>
+  invoke("thermal_get_config");
+
+export const thermalSetConfig = (input: ThermalConfig): Promise<void> =>
+  invoke("thermal_set_config", { input });
+
+export const thermalPrintTest = (): Promise<string> =>
+  invoke("thermal_print_test");

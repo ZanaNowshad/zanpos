@@ -2186,3 +2186,142 @@ textarea.field-input { resize: vertical; }
 .settings-actions    { display: flex; align-items: center; gap: 12px; justify-content: flex-end; padding-top: 12px; }
 .settings-saved      { color: var(--success); font-size: 0.88rem; font-weight: 600; }
 .settings-save-btn   { padding: 10px 24px; }
+
+/* ── Phase 10b ─────────────────────────────────────────────────────────────── */
+
+/* ── Customers tab ── */
+.cust-loyalty  { font-size: 0.78rem; color: var(--accent); font-weight: 600; }
+.cust-loyalty-info {
+  background: var(--surface2);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font-size: 0.88rem;
+  color: var(--text-dim);
+  margin: 6px 0;
+}
+
+/* ── Customer picker in PaymentModal ── */
+.cust-picker-section  { margin-bottom: 12px; }
+.cust-picker-label    { font-size: 0.78rem; color: var(--text-dim); display: block; margin-bottom: 4px; }
+.cust-chip {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface2); border-radius: 20px;
+  padding: 6px 12px; font-size: 0.85rem; width: fit-content;
+}
+.cust-chip-pts   { color: var(--accent); font-size: 0.78rem; font-weight: 600; }
+.cust-chip-remove {
+  background: none; border: none; color: var(--text-dim); cursor: pointer;
+  font-size: 1rem; line-height: 1; padding: 0 2px;
+}
+.cust-chip-remove:hover { color: var(--error); }
+.cust-search-wrap { position: relative; }
+.cust-search-input {
+  width: 100%; padding: 7px 10px;
+  background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius);
+  color: var(--text); font-size: 0.88rem; outline: none;
+}
+.cust-search-input:focus { border-color: var(--accent2); }
+.cust-dropdown {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); z-index: 100; max-height: 200px; overflow-y: auto;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+}
+.cust-dropdown-item {
+  display: flex; flex-direction: column; align-items: flex-start;
+  width: 100%; padding: 8px 12px; border: none;
+  background: none; color: var(--text); cursor: pointer; text-align: left;
+}
+.cust-dropdown-item:hover { background: var(--surface2); }
+.cust-dd-name  { font-size: 0.9rem; font-weight: 600; }
+.cust-dd-phone { font-size: 0.78rem; color: var(--text-dim); }
+
+/* ── Devices tab ── */
+.devices-layout     { padding: 16px 20px; }
+.devices-header     { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.devices-form-card  { background: var(--surface2); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+.devices-form-card h3 { margin-bottom: 12px; font-size: 1rem; }
+.devices-table      { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+.devices-table th   { text-align: left; padding: 8px 12px; color: var(--text-dim); border-bottom: 1px solid var(--border); }
+.devices-table td   { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.devices-table tr:hover td { background: var(--surface2); }
+.devices-row-current td { background: rgba(83,52,131,0.12); }
+.devices-badge         { padding: 3px 8px; border-radius: 10px; font-size: 0.75rem; font-weight: 600; }
+.devices-badge-active  { background: rgba(76,175,80,0.15); color: var(--success); }
+.devices-badge-inactive{ background: rgba(244,67,54,0.15); color: var(--error); }
+.devices-current-chip  { font-size: 0.75rem; color: var(--accent2); font-weight: 600; }
+
+/* ── Product image picker ── */
+.prod-image-row     { display: flex; align-items: center; gap: 12px; margin: 6px 0 12px; }
+.prod-image-preview {
+  width: 72px; height: 72px; object-fit: cover;
+  border-radius: var(--radius); border: 1px solid var(--border);
+}
+.prod-image-placeholder {
+  width: 72px; height: 72px; display: flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--border); border-radius: var(--radius);
+  color: var(--text-dim); font-size: 0.75rem;
+}
+.prod-image-btns    { display: flex; flex-direction: column; gap: 6px; }
+
+/* ── Products list — label button ── */
+.bo-list-row-wrap       { display: flex; align-items: stretch; }
+.bo-list-row-wrap .bo-list-row { flex: 1; }
+.bo-label-btn           { padding: 0 10px; font-size: 0.78rem; border-radius: 0 var(--radius) var(--radius) 0; border-left: 1px solid var(--border); }
+.bo-print-labels-btn    { padding: 6px 12px; font-size: 0.82rem; }
+
+/* ── Barcode print modal ── */
+.barcodes-modal         { width: 800px; max-width: 95vw; max-height: 90vh; overflow-y: auto; padding: 24px; }
+.barcodes-modal-header  { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.barcodes-modal-actions { display: flex; gap: 8px; }
+.barcodes-hint          { color: var(--text-dim); font-size: 0.85rem; margin-bottom: 16px; }
+.barcode-labels-grid    {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px;
+}
+.barcode-label {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px 8px; text-align: center; background: var(--surface);
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.barcode-label-name  { font-size: 0.78rem; font-weight: 600; line-height: 1.2; }
+.barcode-label-svg   { max-width: 100%; }
+.barcode-label-price { font-size: 0.8rem; color: var(--text-dim); }
+
+/* ── Barcode labels print-only styles ── */
+@media print {
+  body > *:not(.modal-overlay) { display: none !important; }
+  .modal-overlay > *:not(.barcodes-modal) { display: none !important; }
+  .barcodes-modal-header,
+  .barcodes-hint,
+  .barcodes-modal-actions { display: none !important; }
+  .barcodes-modal  { box-shadow: none; border: none; padding: 0; max-height: none; overflow: visible; }
+  .barcode-labels-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 50mm);
+    gap: 4mm;
+  }
+  .barcode-label {
+    width: 50mm; height: 30mm;
+    page-break-inside: avoid;
+    border: 0.5pt solid #ccc;
+    padding: 3mm;
+    font-size: 8pt;
+  }
+}
+
+/* ── Thermal printer settings ── */
+.thermal-row     { margin: 8px 0 12px; }
+.thermal-actions { display: flex; gap: 8px; margin-top: 12px; }
+.thermal-test-msg {
+  white-space: pre-wrap; font-size: 0.8rem; color: var(--text-dim);
+  background: var(--surface2); border-radius: var(--radius);
+  padding: 10px 12px; margin-top: 8px; font-family: monospace;
+}
+
+/* ── Auto-updater ── */
+.update-row           { display: flex; align-items: center; justify-content: space-between; }
+.update-version-label { font-size: 0.78rem; color: var(--text-dim); }
+.update-version-value { font-size: 0.95rem; font-weight: 600; }
+.update-msg           { margin-top: 8px; font-size: 0.85rem; padding: 8px 12px; border-radius: var(--radius); }
+.update-msg-ok        { background: rgba(76,175,80,0.1); color: var(--success); }
+.update-msg-available { background: rgba(255,152,0,0.12); color: var(--warning); }

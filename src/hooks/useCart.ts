@@ -113,11 +113,14 @@ export function useCart(session: CartSession) {
     }
   }, [cart]);
 
-  const finalizeSale = useCallback(async (payments: PaymentInput[]): Promise<SaleResult> => {
+  const finalizeSale = useCallback(async (
+    payments: PaymentInput[],
+    customerId?: string,
+  ): Promise<SaleResult> => {
     setLoading(true);
     setError(null);
     try {
-      const result = await cmd.posFinalizeSale(cart, payments);
+      const result = await cmd.posFinalizeSale(cart, payments, undefined, customerId);
       setCart(makeEmptyCart(session));
       return result;
     } catch (e: unknown) {

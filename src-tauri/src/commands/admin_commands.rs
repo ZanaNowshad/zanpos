@@ -36,6 +36,7 @@ pub struct AdminProduct {
     pub tax_rule_name:          Option<String>,
     pub price_minor:            i64,
     pub reorder_point:          i64,
+    pub image_path:             Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -76,7 +77,7 @@ pub struct RoleRow {
 const ADMIN_PRODUCT_QUERY: &str = r#"
     SELECT p.product_id, p.category_id, c.name AS category_name,
            p.name, p.sku, p.barcode, p.track_inventory, p.allow_decimal_quantity,
-           p.is_active, p.tax_rule_id, p.reorder_point,
+           p.is_active, p.tax_rule_id, p.reorder_point, p.image_path,
            t.name AS tax_rule_name,
            COALESCE(pp.price_minor, 0) AS price_minor
     FROM products p
@@ -107,6 +108,7 @@ fn row_to_admin_product(r: &sqlx::sqlite::SqliteRow) -> AdminProduct {
         tax_rule_name:          r.get("tax_rule_name"),
         price_minor:            r.get("price_minor"),
         reorder_point:          r.get("reorder_point"),
+        image_path:             r.get("image_path"),
     }
 }
 
@@ -131,6 +133,7 @@ pub struct CreateProductInput {
     pub allow_decimal_quantity: bool,
     pub reorder_point:          i64,
     pub created_by_user_id:     String,
+    pub image_path:             Option<String>,
 }
 
 #[tauri::command]
@@ -146,8 +149,8 @@ pub async fn admin_create_product(
         "INSERT INTO products
            (product_id, category_id, name, sku, barcode,
             track_inventory, allow_decimal_quantity, is_active,
-            tax_rule_id, reorder_point, currency, created_at, updated_at, version)
-         VALUES (?,?,?,?,?,?,?,1,?,?,'BHD',?,?,1)"
+            tax_rule_id, reorder_point, image_path, currency, created_at, updated_at, version)
+         VALUES (?,?,?,?,?,?,?,1,?,?,?,'BHD',?,?,1)"
     )
     .bind(&product_id)
     .bind(&input.category_id)
@@ -158,6 +161,7 @@ pub async fn admin_create_product(
     .bind(input.allow_decimal_quantity as i64)
     .bind(&input.tax_rule_id)
     .bind(input.reorder_point)
+    .bind(input.image_path.as_deref().filter(|s| !s.is_empty()))
     .bind(&now)
     .bind(&now)
     .execute(&state.db)
@@ -216,6 +220,7 @@ pub struct UpdateProductInput {
     pub reorder_point:          i64,
     pub is_active:              bool,
     pub updated_by_user_id:     String,
+    pub image_path:             Option<String>,
 }
 
 #[tauri::command]
@@ -240,7 +245,7 @@ pub async fn admin_update_product(
         "UPDATE products SET
            category_id=?, name=?, sku=?, barcode=?, tax_rule_id=?,
            track_inventory=?, allow_decimal_quantity=?,
-           reorder_point=?, is_active=?, updated_at=?
+           reorder_point=?, is_active=?, image_path=?, updated_at=?
          WHERE product_id=?"
     )
     .bind(&input.category_id)
@@ -252,6 +257,7 @@ pub async fn admin_update_product(
     .bind(input.allow_decimal_quantity as i64)
     .bind(input.reorder_point)
     .bind(input.is_active as i64)
+    .bind(input.image_path.as_deref().filter(|s| !s.is_empty()))
     .bind(&now)
     .bind(&input.product_id)
     .execute(&state.db)

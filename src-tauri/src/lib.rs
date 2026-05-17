@@ -20,6 +20,8 @@ pub struct AppState {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             tracing_subscriber::fmt()
                 .with_env_filter(
@@ -133,6 +135,25 @@ pub fn run() {
             commands::ai_admin_commands::ai_execute_action,
             commands::ai_admin_commands::ai_cancel_action,
             commands::ai_admin_commands::ai_undo_action,
+            // Customers
+            commands::customer_commands::customer_list,
+            commands::customer_commands::customer_create,
+            commands::customer_commands::customer_update,
+            commands::customer_commands::customer_get,
+            commands::customer_commands::customer_add_loyalty,
+            // Devices
+            commands::device_commands::device_list,
+            commands::device_commands::device_create,
+            commands::device_commands::device_toggle_active,
+            // Product image picker
+            commands::updater_commands::product_pick_image,
+            // Auto-updater
+            commands::updater_commands::check_for_updates,
+            // Thermal printer
+            commands::thermal_commands::thermal_get_config,
+            commands::thermal_commands::thermal_set_config,
+            commands::thermal_commands::thermal_print_test,
+            commands::thermal_commands::print_receipt_raw,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

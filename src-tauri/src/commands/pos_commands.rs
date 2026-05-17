@@ -136,6 +136,7 @@ pub struct FinalizeSaleInput {
     pub cart: Cart,
     pub payments: Vec<PaymentInput>,
     pub idempotency_key: Option<String>,
+    pub customer_id: Option<String>,
 }
 
 #[tauri::command]
@@ -144,7 +145,13 @@ pub async fn pos_finalize_sale(
     state: State<'_, AppState>,
 ) -> Result<SaleResult, AppError> {
     let key = input.idempotency_key.unwrap_or_else(|| Ulid::new().to_string());
-    sale_repo::finalize_sale(&state.db, &input.cart, input.payments, &key).await
+    sale_repo::finalize_sale(
+        &state.db,
+        &input.cart,
+        input.payments,
+        &key,
+        input.customer_id.as_deref(),
+    ).await
 }
 
 // ─── Discount commands ────────────────────────────────────────────────────────

@@ -356,6 +356,38 @@ export interface AdminProduct {
   tax_rule_name: string | null;
   price_minor: number;
   reorder_point: number;
+  image_path: string | null;
+}
+
+// ─── Phase 10b: Customers ─────────────────────────────────────────────────────
+
+export interface CustomerRow {
+  customer_id:    string;
+  branch_id:      string;
+  name:           string;
+  phone:          string | null;
+  email:          string | null;
+  loyalty_points: number;
+  created_at:     string;
+  notes:          string | null;
+}
+
+// ─── Phase 10b: Devices ───────────────────────────────────────────────────────
+
+export interface DeviceRow {
+  device_id:   string;
+  device_code: string;
+  device_name: string;
+  is_active:   boolean;
+  created_at:  string;
+}
+
+// ─── Phase 10b: Thermal config ────────────────────────────────────────────────
+
+export interface ThermalConfig {
+  enabled: boolean;
+  port:    string;
+  baud:    string;
 }
 
 export interface CategoryRow {

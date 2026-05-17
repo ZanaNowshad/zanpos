@@ -23,6 +23,7 @@ pub async fn finalize_sale(
     cart: &Cart,
     payments: Vec<PaymentInput>,
     idempotency_key: &str,
+    customer_id: Option<&str>,
 ) -> AppResult<SaleResult> {
     let total_paid: i64 = payments.iter().map(|p| p.amount_minor).sum();
     let net_total = cart.net_total();
@@ -74,13 +75,15 @@ pub async fn finalize_sale(
         "INSERT INTO sales
          (sale_id, receipt_number, branch_id, device_id, shift_id, cashier_user_id,
           status, gross_total_minor, discount_total_minor, tax_total_minor, net_total_minor,
-          currency, business_date, sold_at, created_offline, idempotency_key, sync_status)
-         VALUES (?,?,?,?,?,?,'completed',?,?,?,?,?,?,?,0,?,'pending')"
+          currency, business_date, sold_at, created_offline, idempotency_key, sync_status,
+          customer_id)
+         VALUES (?,?,?,?,?,?,'completed',?,?,?,?,?,?,?,0,?,'pending',?)"
     )
     .bind(&sale_id).bind(&receipt_number).bind(&cart.branch_id).bind(&cart.device_id)
     .bind(&cart.shift_id).bind(&cart.cashier_user_id)
     .bind(gross).bind(discount).bind(tax).bind(net)
     .bind(&currency).bind(&business_date).bind(&now).bind(idempotency_key)
+    .bind(customer_id)
     .execute(&mut *tx)
     .await?;
 
@@ -162,6 +165,20 @@ pub async fn finalize_sale(
 
     tx.commit().await?;
     tracing::info!("Sale finalized: {} ({})", sale_id, receipt_number);
+
+    // Add loyalty points: floor(net_total / 1000) — best-effort, non-fatal
+    if let Some(cid) = customer_id {
+        let points = net / 1000;
+        if points > 0 {
+            let _ = sqlx::query(
+                "UPDATE customers SET loyalty_points = loyalty_points + ? WHERE customer_id = ?"
+            )
+            .bind(points)
+            .bind(cid)
+            .execute(pool)
+            .await;
+        }
+    }
 
     // Enqueue full payloads for sync (after commit so failures don't roll back the sale)
     let _ = outbox::enqueue_sale(

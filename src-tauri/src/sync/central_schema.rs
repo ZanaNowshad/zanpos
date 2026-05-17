@@ -3,6 +3,25 @@
 /// All DDL uses IF NOT EXISTS / CREATE OR REPLACE so re-running is safe.
 pub const CENTRAL_SCHEMA_SQL: &str = r#"
 
+-- ── Store / branch registry ───────────────────────────────────────────────────
+-- Created first so terminals can query it during "join existing store" setup.
+CREATE TABLE IF NOT EXISTS branches (
+    branch_id      TEXT PRIMARY KEY,
+    branch_code    TEXT NOT NULL,
+    name           TEXT NOT NULL,
+    currency       TEXT NOT NULL DEFAULT 'BHD',
+    timezone       TEXT NOT NULL DEFAULT 'UTC',
+    address        TEXT,
+    phone          TEXT,
+    receipt_header TEXT,
+    receipt_footer TEXT,
+    tax_number     TEXT,
+    is_active      BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_branches_code ON branches (branch_code) WHERE is_active;
+
 -- ── Global event log ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS sync_events (
     global_sequence  BIGSERIAL PRIMARY KEY,

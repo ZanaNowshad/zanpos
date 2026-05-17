@@ -16,6 +16,37 @@ import "./setup-styles.css";
 
 type View = "login" | "shift_check" | "shift_open" | "pos" | "admin_chat";
 
+/** Compute the cloud connectivity banner shown on every screen post-setup. */
+function useCloudBanner(appConfig: import("./types").AppConfig | null): {
+  level: "none" | "warn" | "danger";
+  message: string;
+} {
+  if (!appConfig || !appConfig.setup_complete) return { level: "none", message: "" };
+  if (appConfig.supabase_configured) return { level: "none", message: "" };
+
+  const deadline = appConfig.cloud_grace_deadline
+    ? new Date(appConfig.cloud_grace_deadline)
+    : null;
+  const now = new Date();
+
+  if (!deadline) {
+    return { level: "warn", message: "Store not connected to cloud. Open Back Office → Sync to connect Supabase." };
+  }
+
+  const daysLeft = Math.ceil((deadline.getTime() - now.getTime()) / 86_400_000);
+
+  if (daysLeft <= 0) {
+    return {
+      level: "danger",
+      message: "Cloud connection overdue. Sales are local-only and not backed up. Connect Supabase in Back Office → Sync.",
+    };
+  }
+  return {
+    level: "warn",
+    message: `Store not connected to cloud. ${daysLeft} day${daysLeft !== 1 ? "s" : ""} remaining before sync is required. Open Back Office → Sync.`,
+  };
+}
+
 export default function App() {
   // ── Theme (initialised early so there's no flash on load) ─────────────────
   const { theme, toggle: toggleTheme } = useTheme();
@@ -137,9 +168,18 @@ export default function App() {
     );
   }
 
+  // ── Cloud connectivity warning banner ─────────────────────────────────────
+  const cloudBanner = useCloudBanner(appConfig);
+
   // ── Normal POS flow ────────────────────────────────────────────────────────
   return (
     <ErrorBoundary>
+      {cloudBanner.level !== "none" && (
+        <div className={`cloud-banner cloud-banner-${cloudBanner.level}`}>
+          {cloudBanner.level === "danger" ? "🔴" : "🟡"} {cloudBanner.message}
+        </div>
+      )}
+
       {(view === "login" || view === "shift_check") && (
         <>
           <LoginScreen onLogin={handleLogin} />

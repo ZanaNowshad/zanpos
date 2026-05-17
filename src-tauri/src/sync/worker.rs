@@ -54,6 +54,123 @@ impl SyncWorker {
         });
     }
 
+    /// Run daily data pruning: remove confirmed-synced rows beyond retention window.
+    /// Safe to call multiple times — checks last_prune_at before acting.
+    async fn prune_old_data(&self) {
+        // Only prune once per 24 hours
+        let last_prune: Option<String> = sqlx::query_scalar(
+            "SELECT value FROM app_config WHERE key = 'last_prune_at'"
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten()
+        .flatten();
+
+        if let Some(ts) = last_prune.as_deref().filter(|s| !s.is_empty()) {
+            if let Ok(t) = chrono::DateTime::parse_from_rfc3339(ts) {
+                let elapsed = chrono::Utc::now().signed_duration_since(t);
+                if elapsed.num_hours() < 24 {
+                    return; // Too soon
+                }
+            }
+        }
+
+        // Read retention config (defaults: 90 days sales, 30 days logs)
+        let sales_days: i64 = sqlx::query_scalar(
+            "SELECT CAST(value AS INTEGER) FROM app_config WHERE key = 'retention_days_sales'"
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten()
+        .flatten()
+        .unwrap_or(90);
+
+        let log_days: i64 = sqlx::query_scalar(
+            "SELECT CAST(value AS INTEGER) FROM app_config WHERE key = 'retention_days_logs'"
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten()
+        .flatten()
+        .unwrap_or(30);
+
+        // Pruning thresholds (ISO strings)
+        let sales_cutoff = (chrono::Utc::now() - chrono::Duration::days(sales_days)).to_rfc3339();
+        let log_cutoff   = (chrono::Utc::now() - chrono::Duration::days(log_days)).to_rfc3339();
+        let queue_cutoff = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339();
+
+        // 1. sync_queue: delete confirmed-synced rows older than 7 days
+        let _ = sqlx::query(
+            "DELETE FROM sync_queue WHERE status = 'synced' AND created_at < ?"
+        )
+        .bind(&queue_cutoff)
+        .execute(&self.pool)
+        .await;
+
+        // 2. sale_items, payments linked to prunable sales (pruned in correct FK order)
+        let _ = sqlx::query(
+            "DELETE FROM sale_items WHERE sale_id IN (
+               SELECT sale_id FROM sales WHERE sync_status = 'synced' AND sold_at < ?
+             )"
+        )
+        .bind(&sales_cutoff)
+        .execute(&self.pool)
+        .await;
+
+        let _ = sqlx::query(
+            "DELETE FROM payments WHERE sale_id IN (
+               SELECT sale_id FROM sales WHERE sync_status = 'synced' AND sold_at < ?
+             )"
+        )
+        .bind(&sales_cutoff)
+        .execute(&self.pool)
+        .await;
+
+        // 3. Sales themselves (sync_status = 'synced' only — never delete unsynced)
+        let _ = sqlx::query(
+            "DELETE FROM sales WHERE sync_status = 'synced' AND sold_at < ?"
+        )
+        .bind(&sales_cutoff)
+        .execute(&self.pool)
+        .await;
+
+        // 4. Audit logs older than log_days (append-only; safe to prune from local cache)
+        let _ = sqlx::query(
+            "DELETE FROM audit_logs WHERE created_at < ?"
+        )
+        .bind(&log_cutoff)
+        .execute(&self.pool)
+        .await;
+
+        // 5. Stock movements older than log_days (Supabase holds the full ledger)
+        let _ = sqlx::query(
+            "DELETE FROM stock_movements WHERE created_at < ?"
+        )
+        .bind(&log_cutoff)
+        .execute(&self.pool)
+        .await;
+
+        // 6. WAL checkpoint + VACUUM to reclaim disk space
+        let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)").execute(&self.pool).await;
+        let _ = sqlx::query("VACUUM").execute(&self.pool).await;
+
+        // Record prune timestamp
+        let now = chrono::Utc::now().to_rfc3339();
+        let _ = sqlx::query(
+            "INSERT INTO app_config(key, value, updated_at) VALUES ('last_prune_at',?,?)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at"
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.pool)
+        .await;
+
+        tracing::info!("DB prune complete — sales cutoff: {sales_cutoff}, log cutoff: {log_cutoff}");
+    }
+
     /// Run one push + pull cycle. Called by background loop and by sync_trigger_now.
     pub async fn run_once(&self) {
         // Resolve device_id from DB each cycle (handles post-setup transitions)
@@ -95,6 +212,10 @@ impl SyncWorker {
                 tracing::warn!("Sync cycle error: {e}");
             }
         }
+        drop(state); // Release lock before pruning (which is slow)
+
+        // Run daily pruning pass (no-ops if < 24 h since last run)
+        self.prune_old_data().await;
     }
 
     // ── Load client from app_config ────────────────────────────────────────────

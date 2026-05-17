@@ -115,6 +115,7 @@ pub fn run() {
             // Setup & Settings
             commands::setup_commands::app_config_load,
             commands::setup_commands::setup_wizard_complete,
+            commands::setup_commands::setup_join_store,
             commands::setup_commands::settings_get_branch,
             commands::setup_commands::settings_update_branch,
             // Phase 10a — timeout, backup, tax report, audit log
@@ -127,6 +128,7 @@ pub fn run() {
             commands::sync_commands::sync_status,
             commands::sync_commands::sync_trigger_now,
             commands::sync_commands::admin_setup_supabase,
+            commands::sync_commands::admin_setup_supabase_creds_only,
             commands::sync_commands::admin_get_supabase_status,
             // AI Admin — provider management
             commands::ai_admin_commands::admin_get_provider_config,

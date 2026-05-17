@@ -61,6 +61,14 @@ export const setupWizardComplete = (input: {
 }): Promise<AppConfig> =>
   invoke("setup_wizard_complete", { input });
 
+export const setupJoinStore = (input: {
+  supabase_url: string;
+  supabase_key: string;
+  device_name: string;
+  device_code: string;
+}): Promise<AppConfig> =>
+  invoke("setup_join_store", { input });
+
 export const settingsGetBranch = (): Promise<BranchSettings> =>
   invoke("settings_get_branch");
 
@@ -237,6 +245,12 @@ export const adminSetupSupabase = (
 
 export const adminGetSupabaseStatus = (): Promise<SupabaseStatus> =>
   invoke("admin_get_supabase_status");
+
+export const adminSetupSupabaseCredsOnly = (
+  url: string,
+  serviceKey: string,
+): Promise<void> =>
+  invoke("admin_setup_supabase_creds_only", { url, serviceKey });
 
 // ─── AI Admin — provider management ──────────────────────────────────────────
 

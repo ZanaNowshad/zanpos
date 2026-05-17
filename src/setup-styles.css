@@ -395,3 +395,36 @@
   border-top: 1px dashed var(--border);
   margin: 8px 0;
 }
+
+/* ── Setup path selector cards ─────────────────────────────────────────────── */
+.setup-path-cards {
+  display: flex; flex-direction: column; gap: 14px; margin-top: 24px;
+}
+.setup-path-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  padding: 18px 20px; border-radius: 10px; border: 1px solid var(--border);
+  background: var(--surface); cursor: pointer; text-align: left;
+  transition: border-color 0.15s, background 0.15s;
+}
+.setup-path-card:hover { border-color: var(--accent); background: var(--surface-hover, var(--surface)); }
+.setup-path-icon  { font-size: 1.8rem; }
+.setup-path-title { font-size: 1.05rem; font-weight: 700; color: var(--text); }
+.setup-path-desc  { font-size: 0.84rem; color: var(--text-dim); line-height: 1.45; }
+
+/* ── Cloud setup step extras ────────────────────────────────────────────────── */
+.setup-btn-skip {
+  background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+  padding: 9px 18px; border-radius: 8px; cursor: pointer; font-size: 0.9rem;
+}
+.setup-btn-skip:hover { border-color: var(--text-dim); }
+.setup-hint {
+  font-size: 0.8rem; color: var(--text-dim); margin-top: 12px;
+  padding: 10px 14px; background: #92400e11; border-radius: 8px;
+  border-left: 3px solid #b45309;
+}
+.setup-warn-banner {
+  background: #92400e22; color: #b45309; border-radius: 8px;
+  padding: 10px 14px; font-size: 0.85rem; margin-bottom: 14px;
+}
+.setup-body-dim { color: var(--text-dim); font-size: 0.88rem; }
+.setup-review-warn strong { color: #b45309; }

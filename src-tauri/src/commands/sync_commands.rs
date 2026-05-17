@@ -96,6 +96,39 @@ pub async fn admin_setup_supabase(
     Ok(())
 }
 
+// ── admin_setup_supabase_creds_only ──────────────────────────────────────────
+
+/// Store Supabase URL + service key without running schema migration.
+/// Used when the setup wizard user skips the PAT step — schema migration
+/// can be run later from Back Office → Sync.
+#[tauri::command]
+pub async fn admin_setup_supabase_creds_only(
+    state:       State<'_, AppState>,
+    url:         String,
+    service_key: String,
+) -> Result<(), AppError> {
+    let url = url.trim().trim_end_matches('/').to_string();
+    if url.is_empty() {
+        return Err(AppError::Validation("Supabase URL is required".into()));
+    }
+    if service_key.is_empty() {
+        return Err(AppError::Validation("Service role key is required".into()));
+    }
+
+    let client = SupabaseClient::new(url.clone(), service_key.clone());
+    // Validate connection (no schema migration)
+    client.validate().await
+        .map_err(|_| AppError::Validation(
+            "Could not connect to Supabase — check the URL and service role key".into()
+        ))?;
+
+    ai_admin_repo::set_config(&state.db, "supabase_url", &url).await?;
+    ai_admin_repo::set_config(&state.db, "supabase_service_key", &service_key).await?;
+
+    tracing::info!("Supabase credentials stored (no schema migration): {url}");
+    Ok(())
+}
+
 // ── admin_get_supabase_status ─────────────────────────────────────────────────
 
 #[derive(Serialize)]

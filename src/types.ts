@@ -138,8 +138,12 @@ export interface SaleResult {
 
 export interface SyncStatus {
   online: boolean;
+  /** True when Supabase URL + service key are persisted. */
+  supabase_configured: boolean;
   pending_events: number;
   last_successful_sync_at: string | null;
+  /** Days elapsed since last successful sync. null if never synced. */
+  days_since_last_sync: number | null;
   last_error: string | null;
   device_id: string;
 }
@@ -463,6 +467,10 @@ export interface SupabaseStatus {
 
 export interface AppConfig {
   setup_complete: boolean;
+  /** True when Supabase URL + service key are persisted in app_config. */
+  supabase_configured: boolean;
+  /** ISO timestamp when the 7-day cloud-setup grace period expires. null = Supabase configured. */
+  cloud_grace_deadline: string | null;
   branch_id: string;
   device_id: string;
   branch_name: string;

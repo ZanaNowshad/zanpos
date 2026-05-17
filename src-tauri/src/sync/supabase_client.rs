@@ -159,7 +159,61 @@ impl SupabaseClient {
             Err(AppError::Internal(format!("Pull failed ({status}): {body}")))
         }
     }
-}
+
+    // ── Branch registry helpers ────────────────────────────────────────────────
+
+    /// Fetch the first active branch from the central `branches` table.
+    /// Returns `None` if the table exists but has no rows.
+    /// Returns an error if the request fails or the table doesn't exist.
+    pub async fn pull_branch(&self) -> AppResult<Option<serde_json::Value>> {
+        let url = format!(
+            "{}/rest/v1/branches?is_active=eq.true&order=created_at.asc&limit=1",
+            self.base_url
+        );
+        let resp = self.http
+            .get(&url)
+            .header("apikey", &self.service_key)
+            .header("Authorization", format!("Bearer {}", self.service_key))
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(format!("Supabase pull_branch error: {e}")))?;
+
+        if resp.status().is_success() {
+            let rows: Vec<serde_json::Value> = resp.json().await
+                .map_err(|e| AppError::Internal(format!("pull_branch parse error: {e}")))?;
+            Ok(rows.into_iter().next())
+        } else {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            Err(AppError::Internal(format!("pull_branch failed ({status}): {body}")))
+        }
+    }
+
+    /// Upsert a branch record into the central `branches` table.
+    /// Used when a new store completes setup with Supabase configured.
+    pub async fn upsert_branch(&self, branch: &serde_json::Value) -> AppResult<()> {
+        let url = format!("{}/rest/v1/branches", self.base_url);
+        let resp = self.http
+            .post(&url)
+            .header("apikey", &self.service_key)
+            .header("Authorization", format!("Bearer {}", self.service_key))
+            .header("Content-Type", "application/json")
+            .header("Prefer", "resolution=merge-duplicates")
+            .json(branch)
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(format!("Supabase upsert_branch error: {e}")))?;
+
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            Err(AppError::Internal(format!("upsert_branch failed ({status}): {body}")))
+        }
+    }
+} // end impl SupabaseClient
 
 // ── Extract project ref from Supabase URL ─────────────────────────────────────
 

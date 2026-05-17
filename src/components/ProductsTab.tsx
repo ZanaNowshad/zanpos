@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { AdminProduct, CategoryRow, TaxRuleRow } from "../types";
+import type { AdminProduct, CategoryRow, ProductBarcodeRow, TaxRuleRow } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney, parseMoney } from "../money";
 import * as cmd from "../tauri/commands";
@@ -17,6 +17,9 @@ const EMPTY_FORM = {
   image_path: "" as string,
 };
 
+// Pending barcodes for new products (stored locally, inserted after create)
+type PendingBarcode = { tempId: string; barcode: string };
+
 export default function ProductsTab({ sessionUserId }: Props) {
   const [products, setProducts]       = useState<AdminProduct[]>([]);
   const [categories, setCategories]   = useState<CategoryRow[]>([]);
@@ -28,6 +31,13 @@ export default function ProductsTab({ sessionUserId }: Props) {
   const [error, setError]             = useState<string | null>(null);
   const [search, setSearch]           = useState("");
   const [printProducts, setPrintProducts] = useState<AdminProduct[] | null>(null);
+
+  // Additional barcodes
+  const [extraBarcodes, setExtraBarcodes] = useState<ProductBarcodeRow[]>([]); // for editing existing
+  const [pendingBarcodes, setPendingBarcodes] = useState<PendingBarcode[]>([]); // for new product
+  const [newBarcodeInput, setNewBarcodeInput] = useState("");
+  const [barcodeError, setBarcodeError] = useState<string | null>(null);
+  const newBarcodeRef = useRef<HTMLInputElement>(null);
 
   const exp = DEVICE.currency_exponent;
   const cur = DEVICE.currency;
@@ -49,6 +59,10 @@ export default function ProductsTab({ sessionUserId }: Props) {
     setCreating(true);
     setForm({ ...EMPTY_FORM, category_id: categories[0]?.category_id ?? "" });
     setError(null);
+    setPendingBarcodes([]);
+    setExtraBarcodes([]);
+    setNewBarcodeInput("");
+    setBarcodeError(null);
   }
 
   function startEdit(p: AdminProduct) {
@@ -68,6 +82,12 @@ export default function ProductsTab({ sessionUserId }: Props) {
       image_path:             p.image_path ?? "",
     });
     setError(null);
+    setNewBarcodeInput("");
+    setBarcodeError(null);
+    // Load existing extra barcodes
+    cmd.productBarcodesList(p.product_id)
+      .then(setExtraBarcodes)
+      .catch(() => setExtraBarcodes([]));
   }
 
   async function pickImage() {
@@ -79,7 +99,51 @@ export default function ProductsTab({ sessionUserId }: Props) {
     }
   }
 
-  function cancelEdit() { setSelected(null); setCreating(false); setError(null); }
+  function cancelEdit() {
+    setSelected(null); setCreating(false); setError(null);
+    setExtraBarcodes([]); setPendingBarcodes([]); setNewBarcodeInput(""); setBarcodeError(null);
+  }
+
+  async function addBarcodeForEdit() {
+    const bc = newBarcodeInput.trim();
+    if (!bc) return;
+    if (!selected) return;
+    setBarcodeError(null);
+    try {
+      const row = await cmd.productBarcodeAdd(selected.product_id, bc);
+      setExtraBarcodes(prev => [...prev, row]);
+      setNewBarcodeInput("");
+      newBarcodeRef.current?.focus();
+    } catch (e: unknown) {
+      setBarcodeError(typeof e === "string" ? e : "Failed to add barcode");
+    }
+  }
+
+  async function removeBarcodeForEdit(barcodeId: string) {
+    setBarcodeError(null);
+    try {
+      await cmd.productBarcodeRemove(barcodeId);
+      setExtraBarcodes(prev => prev.filter(b => b.barcode_id !== barcodeId));
+    } catch (e: unknown) {
+      setBarcodeError(typeof e === "string" ? e : "Failed to remove barcode");
+    }
+  }
+
+  function addPendingBarcode() {
+    const bc = newBarcodeInput.trim();
+    if (!bc) return;
+    if (pendingBarcodes.some(p => p.barcode === bc)) {
+      setBarcodeError("Barcode already in list"); return;
+    }
+    setBarcodeError(null);
+    setPendingBarcodes(prev => [...prev, { tempId: Math.random().toString(36), barcode: bc }]);
+    setNewBarcodeInput("");
+    newBarcodeRef.current?.focus();
+  }
+
+  function removePendingBarcode(tempId: string) {
+    setPendingBarcodes(prev => prev.filter(p => p.tempId !== tempId));
+  }
 
   function set(key: string, val: unknown) { setForm(f => ({ ...f, [key]: val })); }
 
@@ -103,6 +167,10 @@ export default function ProductsTab({ sessionUserId }: Props) {
           created_by_user_id: sessionUserId,
           image_path: form.image_path.trim() || undefined,
         });
+        // Insert pending extra barcodes
+        for (const pb of pendingBarcodes) {
+          try { await cmd.productBarcodeAdd(created.product_id, pb.barcode); } catch { /* skip dup */ }
+        }
         setProducts(prev => [created, ...prev]);
       } else if (selected) {
         const updated = await cmd.adminUpdateProduct({
@@ -221,6 +289,44 @@ export default function ProductsTab({ sessionUserId }: Props) {
             <div>
               <label className="bo-label">Barcode</label>
               <input className="bo-input" value={form.barcode} onChange={e => set("barcode", e.target.value)} placeholder="Optional" />
+            </div>
+          </div>
+
+          {/* Additional Barcodes */}
+          <label className="bo-label">Additional Barcodes (scan or type)</label>
+          {barcodeError && <div className="bo-form-error bo-barcode-error">{barcodeError}</div>}
+          <div className="bo-extra-barcodes">
+            {/* Existing product: show saved barcodes */}
+            {!creating && extraBarcodes.map(b => (
+              <div key={b.barcode_id} className="bo-barcode-row">
+                <span className="bo-barcode-text">{b.barcode}</span>
+                <button className="bo-barcode-remove" type="button" onClick={() => removeBarcodeForEdit(b.barcode_id)} title="Remove">✕</button>
+              </div>
+            ))}
+            {/* New product: show pending list */}
+            {creating && pendingBarcodes.map(pb => (
+              <div key={pb.tempId} className="bo-barcode-row">
+                <span className="bo-barcode-text">{pb.barcode}</span>
+                <button className="bo-barcode-remove" type="button" onClick={() => removePendingBarcode(pb.tempId)} title="Remove">✕</button>
+              </div>
+            ))}
+            {/* Add input */}
+            <div className="bo-barcode-add-row">
+              <input
+                ref={newBarcodeRef}
+                className="bo-input bo-barcode-input"
+                value={newBarcodeInput}
+                onChange={e => setNewBarcodeInput(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); if (creating) { addPendingBarcode(); } else { void addBarcodeForEdit(); } } }}
+                placeholder="Scan or type barcode…"
+              />
+              <button
+                className="btn-secondary bo-barcode-add-btn"
+                type="button"
+                onClick={() => { if (creating) { addPendingBarcode(); } else { void addBarcodeForEdit(); } }}
+              >
+                Add
+              </button>
             </div>
           </div>
 

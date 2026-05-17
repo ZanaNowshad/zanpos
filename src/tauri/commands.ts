@@ -7,6 +7,8 @@ import type {
   AppConfig,
   BranchSettings,
   Cart,
+  CashDrawerSummary,
+  CashEventRow,
   CategoryRow,
   CustomerRow,
   DeviceRow,
@@ -14,6 +16,7 @@ import type {
   ExecuteActionResult,
   HeldCartSummary,
   PaymentInput,
+  ProductBarcodeRow,
   ProductWithPrice,
   ProviderConfig,
   RangeSummary,
@@ -429,3 +432,31 @@ export const thermalSetConfig = (input: ThermalConfig): Promise<void> =>
 
 export const thermalPrintTest = (): Promise<string> =>
   invoke("thermal_print_test");
+
+// ─── Cash events ──────────────────────────────────────────────────────────────
+
+export const cashEventCreate = (
+  shift_id: string,
+  event_type: "paid_in" | "paid_out",
+  amount_minor: number,
+  note: string | undefined,
+  created_by_user_id: string,
+): Promise<CashEventRow> =>
+  invoke("cash_event_create", { shiftId: shift_id, eventType: event_type, amountMinor: amount_minor, note, createdByUserId: created_by_user_id });
+
+export const cashEventsList = (shift_id: string): Promise<CashEventRow[]> =>
+  invoke("cash_events_list", { shiftId: shift_id });
+
+export const cashDrawerSummary = (shift_id: string): Promise<CashDrawerSummary> =>
+  invoke("cash_drawer_summary", { shiftId: shift_id });
+
+// ─── Product barcodes ─────────────────────────────────────────────────────────
+
+export const productBarcodeAdd = (product_id: string, barcode: string): Promise<ProductBarcodeRow> =>
+  invoke("product_barcode_add", { productId: product_id, barcode });
+
+export const productBarcodeRemove = (barcode_id: string): Promise<void> =>
+  invoke("product_barcode_remove", { barcodeId: barcode_id });
+
+export const productBarcodesList = (product_id: string): Promise<ProductBarcodeRow[]> =>
+  invoke("product_barcodes_list", { productId: product_id });

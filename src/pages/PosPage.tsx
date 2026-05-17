@@ -17,6 +17,7 @@ import HoldModal from "../components/HoldModal";
 import RefundModal from "../components/RefundModal";
 import TodayReportModal from "../components/TodayReportModal";
 import CustomItemModal from "../components/CustomItemModal";
+import CashEventModal from "../components/CashEventModal";
 
 interface Props {
   sessionUser: SessionUser;
@@ -49,6 +50,7 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
   const [showDiscount, setShowDiscount] = useState(false);
   const [showBackOffice, setShowBackOffice] = useState(false);
   const [showCustomItem, setShowCustomItem] = useState(false);
+  const [showCashEvent, setShowCashEvent] = useState(false);
   const canOpenBackOffice = ["owner", "manager"].includes(sessionUser.role_name);
   const [restockAlerts, setRestockAlerts] = useState<LowStockAlert[]>([]);
   const restockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -67,7 +69,7 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
     const noModalOpen = () =>
       !showPayment && !saleResult && !showShiftClose &&
       !showHold && !showRefund && !showReport &&
-      !showDiscount && !showBackOffice && !showCustomItem;
+      !showDiscount && !showBackOffice && !showCustomItem && !showCashEvent;
 
     const handler = (e: KeyboardEvent) => {
       if (e.key === "F6") {
@@ -81,7 +83,7 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [showPayment, saleResult, showShiftClose, showHold, showRefund,
-      showReport, showDiscount, showBackOffice, showCustomItem, lineCount]);
+      showReport, showDiscount, showBackOffice, showCustomItem, showCashEvent, lineCount]);
 
   useEffect(() => {
     setProductLoading(true);
@@ -250,6 +252,9 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
         >
           % Discount
         </button>
+        <button className="action-btn" onClick={() => setShowCashEvent(true)}>
+          💵 Cash
+        </button>
         <button className="action-btn" onClick={() => setShowRefund(true)}>
           Refund
         </button>
@@ -270,6 +275,15 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
             setShowCustomItem(false);
           }}
           onCancel={() => setShowCustomItem(false)}
+        />
+      )}
+
+      {showCashEvent && (
+        <CashEventModal
+          shiftId={shift.shift_id}
+          userId={sessionUser.user_id}
+          onDone={() => setShowCashEvent(false)}
+          onCancel={() => setShowCashEvent(false)}
         />
       )}
 

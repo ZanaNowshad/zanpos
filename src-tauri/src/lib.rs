@@ -154,6 +154,14 @@ pub fn run() {
             commands::thermal_commands::thermal_set_config,
             commands::thermal_commands::thermal_print_test,
             commands::thermal_commands::print_receipt_raw,
+            // Cash events
+            commands::cash_commands::cash_event_create,
+            commands::cash_commands::cash_events_list,
+            commands::cash_commands::cash_drawer_summary,
+            // Product barcodes
+            commands::admin_commands::product_barcode_add,
+            commands::admin_commands::product_barcode_remove,
+            commands::admin_commands::product_barcodes_list,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

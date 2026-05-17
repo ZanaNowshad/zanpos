@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import type { SessionUser, Shift, TodaySummary } from "../types";
+import type { CashDrawerSummary, SessionUser, Shift, TodaySummary } from "../types";
 import { DEVICE } from "../types";
-import { shiftOpen, shiftClose, reportToday } from "../tauri/commands";
+import { shiftOpen, shiftClose, reportToday, cashDrawerSummary } from "../tauri/commands";
 import { formatMoney } from "../money";
 
 interface Props {
@@ -20,15 +20,21 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [todaySummary, setTodaySummary] = useState<TodaySummary | null>(null);
+  const [drawerSummary, setDrawerSummary] = useState<CashDrawerSummary | null>(null);
 
-  // Fetch today's Z-report when closing a shift
+  // Fetch today's Z-report and cash drawer summary when closing a shift
   useEffect(() => {
     if (mode !== "close") return;
     const today = new Date().toISOString().slice(0, 10);
     reportToday(DEVICE.branch_id, today)
       .then(setTodaySummary)
       .catch(() => {}); // non-fatal
-  }, [mode]);
+    if (shift) {
+      cashDrawerSummary(shift.shift_id)
+        .then(setDrawerSummary)
+        .catch(() => {}); // non-fatal
+    }
+  }, [mode, shift]);
 
   const handleOpen = async () => {
     setLoading(true);
@@ -144,17 +150,69 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
                       <span>- {DEVICE.currency} {formatMoney(todaySummary.refund_total_minor, DEVICE.currency_exponent)}</span>
                     </div>
                   )}
-                  {/* Expected cash in drawer */}
-                  <div className="zreport-row zreport-row-cash">
-                    <span>Expected in drawer</span>
-                    <span>{DEVICE.currency} {formatMoney(
-                      shift ? shift.opening_cash_minor + todaySummary.cash_total_minor - todaySummary.refund_total_minor : 0,
-                      DEVICE.currency_exponent
-                    )}</span>
-                  </div>
                 </div>
               </div>
             )}
+
+            {/* ── Cash Drawer Reconciliation ── */}
+            {drawerSummary && (
+              <div className="zreport cash-recon">
+                <div className="zreport-title">Cash Drawer Reconciliation</div>
+                <div className="zreport-grid">
+                  <div className="zreport-row">
+                    <span>Opening Float</span>
+                    <span>+ {DEVICE.currency} {formatMoney(drawerSummary.opening_minor, DEVICE.currency_exponent)}</span>
+                  </div>
+                  <div className="zreport-row">
+                    <span>Cash Sales</span>
+                    <span>+ {DEVICE.currency} {formatMoney(drawerSummary.cash_sales_minor, DEVICE.currency_exponent)}</span>
+                  </div>
+                  {drawerSummary.cash_refunds_minor > 0 && (
+                    <div className="zreport-row zreport-row-refund">
+                      <span>Cash Refunds</span>
+                      <span>- {DEVICE.currency} {formatMoney(drawerSummary.cash_refunds_minor, DEVICE.currency_exponent)}</span>
+                    </div>
+                  )}
+                  {drawerSummary.paid_in_minor > 0 && (
+                    <div className="zreport-row">
+                      <span>Paid In</span>
+                      <span>+ {DEVICE.currency} {formatMoney(drawerSummary.paid_in_minor, DEVICE.currency_exponent)}</span>
+                    </div>
+                  )}
+                  {drawerSummary.paid_out_minor > 0 && (
+                    <div className="zreport-row zreport-row-refund">
+                      <span>Paid Out</span>
+                      <span>- {DEVICE.currency} {formatMoney(drawerSummary.paid_out_minor, DEVICE.currency_exponent)}</span>
+                    </div>
+                  )}
+                  <div className="zreport-divider" />
+                  <div className="zreport-row zreport-row-cash">
+                    <span>Expected in Drawer</span>
+                    <span>{DEVICE.currency} {formatMoney(drawerSummary.expected_minor, DEVICE.currency_exponent)}</span>
+                  </div>
+                </div>
+
+                {/* Paid-in / Paid-out event list */}
+                {drawerSummary.events.length > 0 && (
+                  <div className="cash-events-list">
+                    <div className="cash-events-list-title">Cash Events</div>
+                    {drawerSummary.events.map(ev => (
+                      <div key={ev.cash_event_id} className="cash-event-item">
+                        <span className={`cash-event-badge ${ev.event_type === "paid_in" ? "cash-event-badge-in" : "cash-event-badge-out"}`}>
+                          {ev.event_type === "paid_in" ? "Paid In" : "Paid Out"}
+                        </span>
+                        <span className="cash-event-amount">
+                          {ev.event_type === "paid_out" ? "-" : "+"} {DEVICE.currency} {formatMoney(ev.amount_minor, DEVICE.currency_exponent)}
+                        </span>
+                        {ev.note && <span className="cash-event-note">{ev.note}</span>}
+                        <span className="cash-event-time">{new Date(ev.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <label className="field-label">Counted Cash ({DEVICE.currency})</label>
             <input
               className="field-input"
@@ -165,13 +223,17 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
               value={countedCash}
               onChange={e => setCountedCash(e.target.value)}
             />
-            {countedCash && todaySummary && shift && (() => {
+            {countedCash && drawerSummary && (() => {
               const countedMinor = Math.round(parseFloat(countedCash) * 1000);
-              const expectedMinor = shift.opening_cash_minor + todaySummary.cash_total_minor - todaySummary.refund_total_minor;
-              const variance = countedMinor - expectedMinor;
+              const variance = countedMinor - drawerSummary.expected_minor;
+              const label = variance === 0 ? "EXACT" : variance > 0 ? "OVER" : "UNDER";
               return (
                 <div className={`cash-variance ${variance < 0 ? "cash-variance-under" : variance > 0 ? "cash-variance-over" : "cash-variance-exact"}`}>
-                  {variance === 0 ? "✓ Cash balanced" : `Variance: ${variance > 0 ? "+" : ""}${DEVICE.currency} ${formatMoney(Math.abs(variance), DEVICE.currency_exponent)} ${variance > 0 ? "(over)" : "(short)"}`}
+                  {variance === 0
+                    ? `✓ Cash balanced — ${DEVICE.currency} ${formatMoney(countedMinor, DEVICE.currency_exponent)}`
+                    : `Variance: ${variance > 0 ? "+" : ""}${DEVICE.currency} ${formatMoney(Math.abs(variance), DEVICE.currency_exponent)}`}
+                  {" "}
+                  <span className="cash-variance-chip">{label}</span>
                 </div>
               );
             })()}

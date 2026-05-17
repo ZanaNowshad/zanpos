@@ -1,4 +1,5 @@
 pub mod admin_commands;
+pub mod cash_commands;
 pub mod ai_admin_commands;
 pub mod auth_commands;
 pub mod customer_commands;

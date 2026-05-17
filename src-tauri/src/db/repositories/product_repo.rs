@@ -87,8 +87,12 @@ pub async fn search_products(pool: &SqlitePool, query: &str, limit: i64) -> AppR
 }
 
 pub async fn get_product_by_barcode(pool: &SqlitePool, barcode: &str) -> AppResult<Option<ProductWithPrice>> {
-    let sql = format!("{} AND p.barcode = ?", PRODUCT_QUERY);
+    let sql = format!(
+        "{} AND (p.barcode = ? OR p.product_id IN (SELECT product_id FROM product_barcodes WHERE barcode = ?)) LIMIT 1",
+        PRODUCT_QUERY
+    );
     let row = sqlx::query(&sql)
+        .bind(barcode)
         .bind(barcode)
         .fetch_optional(pool)
         .await?;

@@ -1,0 +1,225 @@
+/// Cash event commands — Paid-In / Paid-Out manual cash drawer adjustments
+/// and the full cash drawer reconciliation summary.
+use tauri::State;
+use ulid::Ulid;
+use serde::Serialize;
+use sqlx::Row;
+use crate::errors::{AppError, AppResult};
+use crate::AppState;
+
+// ─── Response types ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct CashEventRow {
+    pub cash_event_id:       String,
+    pub shift_id:            String,
+    pub event_type:          String,  // "paid_in" | "paid_out"
+    pub amount_minor:        i64,
+    pub note:                Option<String>,
+    pub created_by_user_id:  String,
+    pub created_at:          String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CashDrawerSummary {
+    pub opening_minor:    i64,
+    pub cash_sales_minor: i64,
+    pub cash_refunds_minor: i64,
+    pub paid_in_minor:    i64,
+    pub paid_out_minor:   i64,
+    pub expected_minor:   i64,
+    pub counted_minor:    Option<i64>,
+    pub variance_minor:   Option<i64>,
+    pub events:           Vec<CashEventRow>,
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+async fn resolve_branch_device(state: &AppState) -> AppResult<(String, String)> {
+    let branch_row = sqlx::query(
+        "SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1"
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("No active branch configured".into()))?;
+    let branch_id: String = branch_row.get("branch_id");
+
+    let device_row = sqlx::query(
+        "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1"
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("No active device configured".into()))?;
+    let device_id: String = device_row.get("device_id");
+
+    Ok((branch_id, device_id))
+}
+
+fn row_to_event(r: &sqlx::sqlite::SqliteRow) -> CashEventRow {
+    CashEventRow {
+        cash_event_id:      r.get("cash_event_id"),
+        shift_id:           r.get("shift_id"),
+        event_type:         r.get("event_type"),
+        amount_minor:       r.get("amount_minor"),
+        note:               r.get("note"),
+        created_by_user_id: r.get("created_by_user_id"),
+        created_at:         r.get("created_at"),
+    }
+}
+
+// ─── Commands ─────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn cash_event_create(
+    shift_id:            String,
+    event_type:          String,
+    amount_minor:        i64,
+    note:                Option<String>,
+    created_by_user_id:  String,
+    state: State<'_, AppState>,
+) -> AppResult<CashEventRow> {
+    // Validate event_type
+    if event_type != "paid_in" && event_type != "paid_out" {
+        return Err(AppError::Validation(
+            "event_type must be 'paid_in' or 'paid_out'".into()
+        ));
+    }
+    if amount_minor <= 0 {
+        return Err(AppError::Validation("amount_minor must be positive".into()));
+    }
+
+    let (branch_id, device_id) = resolve_branch_device(&state).await?;
+    let cash_event_id = Ulid::new().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    sqlx::query(
+        "INSERT INTO cash_events
+           (cash_event_id, shift_id, branch_id, device_id, event_type,
+            amount_minor, note, created_by_user_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .bind(&cash_event_id)
+    .bind(&shift_id)
+    .bind(&branch_id)
+    .bind(&device_id)
+    .bind(&event_type)
+    .bind(amount_minor)
+    .bind(note.as_deref())
+    .bind(&created_by_user_id)
+    .bind(&now)
+    .execute(&state.db)
+    .await?;
+
+    let row = sqlx::query(
+        "SELECT cash_event_id, shift_id, event_type, amount_minor, note,
+                created_by_user_id, created_at
+         FROM cash_events WHERE cash_event_id = ?"
+    )
+    .bind(&cash_event_id)
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok(row_to_event(&row))
+}
+
+#[tauri::command]
+pub async fn cash_events_list(
+    shift_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<CashEventRow>> {
+    let rows = sqlx::query(
+        "SELECT cash_event_id, shift_id, event_type, amount_minor, note,
+                created_by_user_id, created_at
+         FROM cash_events WHERE shift_id = ? ORDER BY created_at"
+    )
+    .bind(&shift_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(rows.iter().map(row_to_event).collect())
+}
+
+#[tauri::command]
+pub async fn cash_drawer_summary(
+    shift_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<CashDrawerSummary> {
+    // Opening cash + closing cash from shift
+    let shift_row = sqlx::query(
+        "SELECT opening_cash_minor, counted_cash_minor FROM shifts WHERE shift_id = ?"
+    )
+    .bind(&shift_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("Shift {} not found", shift_id)))?;
+
+    let opening_minor: i64 = shift_row.get("opening_cash_minor");
+    let counted_minor: Option<i64> = shift_row.get("counted_cash_minor");
+
+    // Cash sales for this shift
+    let cash_sales_minor: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(p.amount_minor), 0)
+         FROM payments p
+         JOIN sales s ON s.sale_id = p.sale_id
+         WHERE s.shift_id = ? AND p.payment_method = 'cash' AND s.status != 'voided'"
+    )
+    .bind(&shift_id)
+    .fetch_one(&state.db)
+    .await?;
+
+    // Cash refunds for this shift (refunds on sales belonging to this shift)
+    let cash_refunds_minor: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(r.refund_total_minor), 0)
+         FROM refunds r
+         JOIN sales s ON s.sale_id = r.original_sale_id
+         WHERE s.shift_id = ?"
+    )
+    .bind(&shift_id)
+    .fetch_one(&state.db)
+    .await?;
+
+    // Paid-in total
+    let paid_in_minor: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(amount_minor), 0)
+         FROM cash_events WHERE shift_id = ? AND event_type = 'paid_in'"
+    )
+    .bind(&shift_id)
+    .fetch_one(&state.db)
+    .await?;
+
+    // Paid-out total
+    let paid_out_minor: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(amount_minor), 0)
+         FROM cash_events WHERE shift_id = ? AND event_type = 'paid_out'"
+    )
+    .bind(&shift_id)
+    .fetch_one(&state.db)
+    .await?;
+
+    let expected_minor = opening_minor + cash_sales_minor - cash_refunds_minor + paid_in_minor - paid_out_minor;
+    let variance_minor = counted_minor.map(|c| c - expected_minor);
+
+    // All events for this shift
+    let event_rows = sqlx::query(
+        "SELECT cash_event_id, shift_id, event_type, amount_minor, note,
+                created_by_user_id, created_at
+         FROM cash_events WHERE shift_id = ? ORDER BY created_at"
+    )
+    .bind(&shift_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let events = event_rows.iter().map(row_to_event).collect();
+
+    Ok(CashDrawerSummary {
+        opening_minor,
+        cash_sales_minor,
+        cash_refunds_minor,
+        paid_in_minor,
+        paid_out_minor,
+        expected_minor,
+        counted_minor,
+        variance_minor,
+        events,
+    })
+}

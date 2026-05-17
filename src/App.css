@@ -2325,3 +2325,38 @@ textarea.field-input { resize: vertical; }
 .update-msg           { margin-top: 8px; font-size: 0.85rem; padding: 8px 12px; border-radius: var(--radius); }
 .update-msg-ok        { background: rgba(76,175,80,0.1); color: var(--success); }
 .update-msg-available { background: rgba(255,152,0,0.12); color: var(--warning); }
+
+/* ── Cash Event Modal ─────────────────────────────────────────────────────────── */
+.cash-event-modal       { width: 420px; max-width: 96vw; }
+.cash-event-toggle      { display: flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin: 12px 0 10px; }
+.cash-event-tab         { flex: 1; padding: 10px; border: none; background: transparent; color: var(--text-dim); font-size: 0.95rem; cursor: pointer; transition: background 0.15s; }
+.cash-event-tab:hover   { background: var(--surface2); }
+.cash-event-tab-active  { background: var(--accent); color: #fff; font-weight: 600; }
+.cash-event-desc        { font-size: 0.84rem; color: var(--text-dim); margin: 0 0 10px; }
+.cash-event-preview     { font-size: 1.1rem; font-weight: 700; color: var(--accent); margin: 4px 0 10px; }
+.modal-btn-danger       { background: var(--error) !important; }
+
+/* ── Z-report cash reconciliation ────────────────────────────────────────────── */
+.cash-recon             { margin-top: 10px; }
+.zreport-divider        { border-top: 1px solid var(--border); margin: 6px 0; }
+.cash-events-list       { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+.cash-events-list-title { font-size: 0.82rem; font-weight: 600; color: var(--text-dim); margin-bottom: 6px; }
+.cash-event-item        { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 0.85rem; flex-wrap: wrap; }
+.cash-event-badge       { padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; font-weight: 600; }
+.cash-event-badge-in    { background: rgba(76,175,80,0.15); color: var(--success); }
+.cash-event-badge-out   { background: rgba(244,67,54,0.15); color: var(--error); }
+.cash-event-amount      { font-weight: 600; }
+.cash-event-note        { color: var(--text-dim); font-size: 0.82rem; flex: 1; }
+.cash-event-time        { color: var(--text-dim); font-size: 0.78rem; margin-left: auto; }
+.cash-variance-chip     { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.76rem; font-weight: 700; background: rgba(255,255,255,0.15); }
+
+/* ── Additional barcodes in ProductsTab ──────────────────────────────────────── */
+.bo-extra-barcodes      { margin-bottom: 12px; }
+.bo-barcode-row         { display: flex; align-items: center; gap: 8px; padding: 4px 8px; background: var(--surface2); border-radius: var(--radius); margin-bottom: 4px; }
+.bo-barcode-text        { flex: 1; font-size: 0.88rem; font-family: monospace; }
+.bo-barcode-remove      { background: transparent; border: none; color: var(--error); cursor: pointer; font-size: 1rem; padding: 0 4px; }
+.bo-barcode-remove:hover{ opacity: 0.7; }
+.bo-barcode-add-row     { display: flex; gap: 6px; margin-top: 4px; }
+.bo-barcode-input       { flex: 1; }
+.bo-barcode-add-btn     { white-space: nowrap; }
+.bo-barcode-error       { font-size: 0.82rem; margin-bottom: 6px; }

@@ -357,6 +357,40 @@ export interface AdminProduct {
   price_minor: number;
   reorder_point: number;
   image_path: string | null;
+  barcodes?: string[];
+}
+
+// ─── Cash events (Paid-In / Paid-Out) ────────────────────────────────────────
+
+export interface CashEventRow {
+  cash_event_id:      string;
+  shift_id:           string;
+  event_type:         "paid_in" | "paid_out";
+  amount_minor:       number;
+  note:               string | null;
+  created_by_user_id: string;
+  created_at:         string;
+}
+
+export interface CashDrawerSummary {
+  opening_minor:     number;
+  cash_sales_minor:  number;
+  cash_refunds_minor: number;
+  paid_in_minor:     number;
+  paid_out_minor:    number;
+  expected_minor:    number;
+  counted_minor:     number | null;
+  variance_minor:    number | null;
+  events:            CashEventRow[];
+}
+
+// ─── Product barcodes ─────────────────────────────────────────────────────────
+
+export interface ProductBarcodeRow {
+  barcode_id:  string;
+  product_id:  string;
+  barcode:     string;
+  created_at:  string;
 }
 
 // ─── Phase 10b: Customers ─────────────────────────────────────────────────────

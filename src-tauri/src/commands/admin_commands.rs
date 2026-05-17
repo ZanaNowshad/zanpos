@@ -8,6 +8,16 @@ use crate::errors::{AppError, AppResult};
 use crate::db::repositories::auth_repo;
 use crate::AppState;
 
+// ─── Product barcode row ──────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct ProductBarcodeRow {
+    pub barcode_id: String,
+    pub product_id: String,
+    pub barcode:    String,
+    pub created_at: String,
+}
+
 /// Resolve the active branch_id from the database at runtime.
 async fn active_branch_id(state: &AppState) -> AppResult<String> {
     let row = sqlx::query(
@@ -501,6 +511,72 @@ pub async fn admin_create_user(
         is_active:     active != 0,
         last_login_at: row.get("last_login_at"),
     })
+}
+
+// ─── Product barcode management ───────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn product_barcode_add(
+    product_id: String,
+    barcode:    String,
+    state: State<'_, AppState>,
+) -> AppResult<ProductBarcodeRow> {
+    let barcode_id = format!("PBC-{}", Ulid::new());
+    let now        = chrono::Utc::now().to_rfc3339();
+
+    sqlx::query(
+        "INSERT INTO product_barcodes (barcode_id, product_id, barcode, created_at)
+         VALUES (?, ?, ?, ?)"
+    )
+    .bind(&barcode_id)
+    .bind(&product_id)
+    .bind(&barcode)
+    .bind(&now)
+    .execute(&state.db)
+    .await
+    .map_err(|e| if e.to_string().contains("UNIQUE") {
+        AppError::Validation("Barcode already exists on another product".into())
+    } else { e.into() })?;
+
+    Ok(ProductBarcodeRow { barcode_id, product_id, barcode, created_at: now })
+}
+
+#[tauri::command]
+pub async fn product_barcode_remove(
+    barcode_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    let affected = sqlx::query("DELETE FROM product_barcodes WHERE barcode_id = ?")
+        .bind(&barcode_id)
+        .execute(&state.db)
+        .await?
+        .rows_affected();
+
+    if affected == 0 {
+        return Err(AppError::NotFound(format!("Barcode {} not found", barcode_id)));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn product_barcodes_list(
+    product_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<Vec<ProductBarcodeRow>> {
+    let rows = sqlx::query(
+        "SELECT barcode_id, product_id, barcode, created_at
+         FROM product_barcodes WHERE product_id = ? ORDER BY created_at"
+    )
+    .bind(&product_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(rows.iter().map(|r| ProductBarcodeRow {
+        barcode_id: r.get("barcode_id"),
+        product_id: r.get("product_id"),
+        barcode:    r.get("barcode"),
+        created_at: r.get("created_at"),
+    }).collect())
 }
 
 #[derive(Deserialize)]

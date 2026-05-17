@@ -262,44 +262,70 @@ body {
 
 /* ── Barcode input ── */
 .barcode-input-wrap {
-  padding: 9px 12px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   background: var(--surface);
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Barcode icon — left */
+.barcode-input-icon {
+  position: absolute;
+  left: 26px;
+  color: var(--text-muted);
+  font-size: 1rem;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Keyboard icon — right */
+.barcode-input-kbd {
+  position: absolute;
+  right: 26px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  pointer-events: none;
+  font-family: var(--font-mono);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  letter-spacing: 0.02em;
 }
 
 .barcode-input {
   width: 100%;
-  padding: 10px 14px 10px 38px;
+  padding: 12px 52px 12px 40px;
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1.5px solid var(--border);
   border-radius: var(--radius);
   color: var(--text);
   font-size: 0.95rem;
   font-family: var(--font);
   outline: none;
   transition: border-color 0.1s, box-shadow 0.1s;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%233E4259' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='3' width='4' height='18'/%3E%3Crect x='10' y='3' width='2' height='18'/%3E%3Crect x='15' y='3' width='4' height='18'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: 12px center;
 }
 
 .barcode-input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(240,165,0,0.18);
+  box-shadow: 0 0 0 2px rgba(240,165,0,0.15);
 }
 .barcode-input::placeholder { color: var(--text-muted); }
 .barcode-input:disabled { opacity: 0.4; }
 
-/* ── Product grid ── */
+/* ── Product grid — horizontal card layout ── */
 .product-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(142px, 1fr));
-  gap: 8px;
-  padding: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+  padding: 12px;
   overflow-y: auto;
   flex: 1;
   content-visibility: auto;
+  align-content: start;
 }
 
 .product-grid-msg {
@@ -314,53 +340,146 @@ body {
   gap: 8px;
 }
 
+/* Horizontal card: image left, content right */
 .product-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 11px 10px 9px;
+  padding: 0;
   cursor: pointer;
   text-align: left;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  /* Left-border accent pattern: precision hover, not bounce */
-  box-shadow: inset 2px 0 0 transparent;
-  transition: box-shadow 0.1s, background 0.1s, border-color 0.1s;
-  min-height: 72px;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 0;
+  transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
   position: relative;
   overflow: hidden;
+  min-height: 88px;
 }
 
 .product-card:hover {
   background: var(--surface2);
-  border-color: var(--surface4);
-  box-shadow: inset 2px 0 0 var(--accent);
+  border-color: rgba(240,165,0,0.22);
+  box-shadow: 0 2px 12px rgba(240,165,0,0.08);
 }
 
 .product-card:active { background: var(--surface3); }
 
+/* Image slot — left square */
+.product-card-img-wrap {
+  width: 80px;
+  min-width: 80px;
+  background: var(--surface2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius) 0 0 var(--radius);
+  overflow: hidden;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border2);
+}
+
+.product-card-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  draggable: false;
+}
+
+/* Placeholder icon when no image */
+.product-card-img-placeholder {
+  font-size: 1.6rem;
+  opacity: 0.2;
+}
+
+/* Content area — right */
+.product-card-body {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  position: relative;
+}
+
 .product-card-name {
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: 0.88rem;
   line-height: 1.3;
   color: var(--text);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.product-card-sub {
+  font-size: 0.72rem;
+  color: var(--text-muted);
 }
 
 .product-card-price {
   color: var(--gold);
-  font-size: 0.88rem;
-  font-weight: 600;
+  font-size: 0.9rem;
+  font-weight: 700;
   font-family: var(--font-mono);
-  margin-top: auto;
   letter-spacing: 0.01em;
+  margin-top: 2px;
 }
 
-.product-card-sku { color: var(--text-muted); font-size: 0.68rem; letter-spacing: 0.04em; }
+.product-card-sku {
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+  font-family: var(--font-mono);
+}
+
+/* Stock badges */
+.stock-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  margin-top: 3px;
+  width: fit-content;
+}
+
+.stock-badge-out {
+  background: rgba(239,68,68,0.12);
+  color: var(--error);
+  border: 1px solid rgba(239,68,68,0.25);
+}
+
+.stock-badge-out::before { content: '✕ '; }
+
+.stock-badge-low {
+  background: rgba(251,191,36,0.12);
+  color: var(--warning);
+  border: 1px solid rgba(251,191,36,0.25);
+}
+
+/* Favorite/star icon — top-right corner */
+.product-card-star {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 2px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.product-card:hover .product-card-star { opacity: 1; }
 
 /* ── Cart panel ── */
 .cart-panel {
@@ -390,6 +509,20 @@ body {
   color: var(--text-muted);
 }
 
+.cart-header-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  transition: color 0.08s, background 0.08s;
+  line-height: 1;
+}
+
+.cart-header-btn:hover { color: var(--text); background: var(--surface3); }
+
 .cart-item-count {
   background: var(--surface3);
   color: var(--text-dim);
@@ -409,32 +542,40 @@ body {
 }
 
 .cart-empty {
-  padding: 48px 20px;
+  padding: 52px 20px;
   color: var(--text-muted);
   text-align: center;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .cart-empty-icon {
-  font-size: 2rem;
-  opacity: 0.2;
-  line-height: 1;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.8rem;
+  color: var(--gold);
+  margin-bottom: 4px;
 }
 
 .cart-empty-label {
-  color: var(--text-dim);
-  font-size: 0.85rem;
-  font-weight: 500;
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 600;
 }
 
 .cart-empty-hint {
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: 0.76rem;
   max-width: 180px;
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 /* Cart line as clickable button */
@@ -585,23 +726,30 @@ body {
 /* ── PAY BUTTON — the most important element in the POS ── */
 .pay-button {
   margin: 10px 12px 12px;
-  padding: 0 16px;
-  height: 52px;
+  padding: 0 20px;
+  height: 56px;
   background: var(--accent);
   color: var(--accent-t);
   border: none;
   border-radius: var(--radius);
   font-family: var(--font-display);
   font-size: 1rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-weight: 800;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   cursor: pointer;
-  transition: background 0.1s;
+  transition: background 0.1s, box-shadow 0.1s;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  box-shadow: 0 4px 16px rgba(240,165,0,0.3);
+}
+
+.pay-button span:first-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .pay-button span:last-child {
@@ -609,15 +757,15 @@ body {
   font-weight: 700;
   font-size: 1.05rem;
   letter-spacing: 0;
-  opacity: 0.92;
 }
 
 .pay-button:disabled {
-  opacity: 0.3;
+  opacity: 0.35;
   cursor: default;
+  box-shadow: none;
 }
 
-.pay-button:not(:disabled):hover { background: var(--accent-h); }
+.pay-button:not(:disabled):hover { background: var(--accent-h); box-shadow: 0 6px 20px rgba(240,165,0,0.4); }
 .pay-button:not(:disabled):active { filter: brightness(0.92); }
 
 /* ── Action bar ── */
@@ -629,21 +777,28 @@ body {
   border-top: 1px solid var(--border);
   flex-shrink: 0;
   align-items: center;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.action-bar::-webkit-scrollbar { display: none; }
 
 .action-btn {
-  padding: 6px 12px;
-  background: transparent;
+  padding: 5px 11px;
+  background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-dim);
   cursor: pointer;
-  font-size: 0.76rem;
+  font-size: 0.73rem;
   font-weight: 500;
   font-family: var(--font);
   transition: background 0.08s, color 0.08s, border-color 0.08s;
   white-space: nowrap;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
 }
 
 .action-btn:disabled { opacity: 0.3; cursor: default; }
@@ -652,9 +807,10 @@ body {
 /* Danger variant */
 .action-btn-danger {
   color: var(--error);
-  border-color: rgba(240,82,82,0.25);
+  border-color: rgba(240,82,82,0.2);
+  background: rgba(240,82,82,0.06);
 }
-.action-btn-danger:not(:disabled):hover { background: rgba(240,82,82,0.08); color: var(--error); border-color: rgba(240,82,82,0.5); }
+.action-btn-danger:not(:disabled):hover { background: rgba(240,82,82,0.12); color: var(--error); border-color: rgba(240,82,82,0.4); }
 
 /* The Pay button in action bar — secondary (main one is in cart panel) */
 .action-btn-pay {
@@ -663,11 +819,12 @@ body {
   color: var(--accent-t);
   font-family: var(--font-display);
   font-weight: 700;
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   margin-left: auto;
-  padding: 6px 18px;
+  padding: 5px 16px;
+  flex-shrink: 0;
 }
 .action-btn-pay:not(:disabled):hover { background: var(--accent-h); border-color: var(--accent-h); }
 .action-btn-pay:disabled { opacity: 0.3; }
@@ -1222,136 +1379,157 @@ body {
 
 /* ── Login Screen ──────────────────────────────────────────────────────────── */
 .login-screen {
-  display: flex;
+  position: relative;
   min-height: 100vh;
+  display: flex;
+  align-items: center;
   background: var(--bg);
   overflow: hidden;
-  position: relative;
 }
 
-/* Left brand panel — geometric dark with gold accent shapes */
+/* Diagonal geometric border rectangles — gold glow on left side */
+.login-geo-1 {
+  position: absolute;
+  left: -180px;
+  top: -140px;
+  width: 560px;
+  height: 820px;
+  border: 1.5px solid rgba(240,165,0,0.22);
+  border-radius: 28px;
+  transform: rotate(-18deg);
+  pointer-events: none;
+  z-index: 0;
+}
+.login-geo-2 {
+  position: absolute;
+  left: -280px;
+  top: -80px;
+  width: 640px;
+  height: 900px;
+  border: 1px solid rgba(240,165,0,0.09);
+  border-radius: 32px;
+  transform: rotate(-18deg);
+  pointer-events: none;
+  z-index: 0;
+}
+/* Subtle gold radial glow at intersection */
+.login-geo-glow {
+  position: absolute;
+  left: 80px;
+  top: 30%;
+  width: 260px;
+  height: 260px;
+  background: radial-gradient(circle, rgba(240,165,0,0.10) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Left brand area — absolute on left half */
 .login-brand {
-  flex: 0 0 420px;
+  position: relative;
+  z-index: 1;
+  flex: 0 0 44%;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
   justify-content: center;
-  padding: 64px 56px;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-  position: relative;
-  overflow: hidden;
+  padding: 60px 56px 100px 72px;
+  min-height: 100vh;
   color: var(--text);
 }
 
-/* Geometric diagonal shapes — gold accent bar */
-.login-brand::before {
-  content: '';
-  position: absolute;
-  top: -80px;
-  right: -60px;
-  width: 220px;
-  height: 220px;
-  background: rgba(240,165,0,0.06);
-  border-radius: 32px;
-  transform: rotate(25deg);
-  pointer-events: none;
-}
-.login-brand::after {
-  content: '';
-  position: absolute;
-  bottom: -40px;
-  left: -40px;
-  width: 280px;
-  height: 280px;
-  background: rgba(240,165,0,0.04);
-  border-radius: 50%;
-  pointer-events: none;
-}
-
-/* Gold accent vertical stripe */
-.login-brand-accent {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 3px;
-  height: 100%;
-  background: linear-gradient(180deg, transparent 0%, var(--accent) 30%, var(--accent) 70%, transparent 100%);
-  opacity: 0.6;
-}
-
-/* Gold diagonal decorative shape */
-.login-brand-geo {
-  position: absolute;
-  top: 60px;
-  right: 20px;
-  width: 120px;
-  height: 4px;
-  background: var(--accent);
-  opacity: 0.25;
-  transform: rotate(-15deg);
-}
-
-/* Right side — login content */
+/* Right side — floating card */
 .login-right {
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 40px;
-  background: var(--bg);
-  background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.018) 1px, transparent 0);
-  background-size: 20px 20px;
+  position: relative;
+  z-index: 1;
 }
 
 .login-logo {
-  font-size: 3.2rem;
+  font-size: 4rem;
   font-weight: 800;
-  letter-spacing: 4px;
+  letter-spacing: 5px;
   font-family: var(--font-display);
   color: var(--text);
   line-height: 1;
-  margin-bottom: 14px;
+  margin-bottom: 18px;
 }
 
 .login-logo span { color: var(--gold); }
 
-.login-tagline {
-  color: var(--text-muted);
-  font-size: 0.7rem;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  font-family: var(--font-mono);
-  line-height: 1.6;
+/* Short gold rule above tagline */
+.login-brand-rule {
+  width: 36px;
+  height: 2px;
+  background: var(--gold);
+  margin-bottom: 10px;
 }
 
-.login-tagline-desc {
-  color: var(--text-dim);
-  font-size: 0.82rem;
-  margin-top: 32px;
-  line-height: 1.7;
-  max-width: 280px;
+.login-tagline {
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-family: var(--font-mono);
+}
+
+/* Bottom-left secure badge */
+.login-brand-footer {
+  position: absolute;
+  bottom: 36px;
+  left: 72px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
 }
 
 .login-panel {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 32px;
-  width: 400px;
+  border-radius: var(--radius-xl);
+  padding: 36px 32px;
+  width: 420px;
   max-width: 100%;
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-lg), 0 0 60px rgba(0,0,0,0.5);
+}
+
+/* Panel icon header (people icon for select cashier) */
+.login-panel-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--surface3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 16px;
+  font-size: 1.3rem;
+  color: var(--gold);
+  border: 1px solid var(--border);
 }
 
 .login-heading {
-  color: var(--text-muted);
-  font-size: 0.68rem;
+  color: var(--text);
+  font-size: 1rem;
   text-transform: uppercase;
-  letter-spacing: 0.16em;
-  font-weight: 700;
+  letter-spacing: 0.14em;
+  font-weight: 800;
   font-family: var(--font-display);
-  margin-bottom: 20px;
+  margin-bottom: 6px;
   text-align: center;
+}
+
+.login-subheading {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  text-align: center;
+  margin-bottom: 22px;
 }
 
 .login-back {
@@ -1380,77 +1558,102 @@ body {
   border-radius: var(--radius-sm);
 }
 
-.user-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; }
+.user-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
 
 .user-card {
   background: var(--surface2);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   color: var(--text);
   cursor: pointer;
-  padding: 20px 12px 16px;
+  padding: 24px 16px 20px;
   text-align: center;
-  transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
   position: relative;
   overflow: hidden;
-}
-
-.user-card::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--accent);
-  transform: scaleX(0);
-  transition: transform 0.15s;
-  border-radius: 0 0 var(--radius) var(--radius);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
 }
 
 .user-card:hover {
   background: var(--surface3);
-  border-color: rgba(240,165,0,0.25);
-  box-shadow: 0 4px 16px rgba(240,165,0,0.08);
+  border-color: rgba(240,165,0,0.3);
+  box-shadow: 0 6px 24px rgba(240,165,0,0.10);
 }
 
-.user-card:hover::after { transform: scaleX(1); }
-
 .user-avatar {
-  width: 52px;
-  height: 52px;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
   background: var(--surface3);
-  border: 2px solid rgba(240,165,0,0.25);
+  border: 2px solid rgba(240,165,0,0.3);
   color: var(--gold);
-  font-size: 1.4rem;
+  font-size: 1.5rem;
   font-weight: 700;
   font-family: var(--font-display);
   display: flex;
   align-items: center;
   justify-content: center;
-  margin: 0 auto 12px;
+  margin: 0 auto 14px;
 }
 
-.user-name { font-weight: 600; font-size: 0.88rem; }
-.user-role { color: var(--gold); font-size: 0.65rem; margin-top: 5px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
+.user-name { font-weight: 700; font-size: 0.92rem; margin-bottom: 6px; }
+.user-role { color: var(--gold); font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; }
+.user-arrow { color: var(--gold); font-size: 0.9rem; margin-top: 14px; opacity: 0.7; transition: opacity 0.12s, transform 0.12s; }
+.user-card:hover .user-arrow { opacity: 1; transform: translateX(3px); }
 
+/* PIN card — user badge at top */
 .login-user-badge {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 14px;
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px 16px;
+  gap: 4px;
+  padding-bottom: 20px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+}
+
+.login-user-badge .user-avatar {
+  margin-bottom: 10px;
+}
+
+.login-user-badge .user-name {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.login-user-badge .user-role {
+  font-size: 0.68rem;
+}
+
+.pin-enter-label {
+  text-align: center;
   margin-bottom: 20px;
 }
 
-.pin-display { display: flex; gap: 14px; justify-content: center; margin: 20px 0; }
+.pin-enter-label h3 {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 0.95rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.pin-enter-label p {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.pin-display { display: flex; gap: 12px; justify-content: center; margin: 0 0 20px; }
 
 .pin-dot {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
   border-radius: 50%;
   border: 2px solid var(--border);
   transition: background 0.12s, border-color 0.12s, transform 0.12s;
@@ -1459,12 +1662,12 @@ body {
 .pin-dot-filled {
   background: var(--accent);
   border-color: var(--accent);
-  transform: scale(1.15);
+  transform: scale(1.2);
   box-shadow: 0 0 8px rgba(240,165,0,0.4);
 }
 
-.pin-pad { display: flex; flex-direction: column; gap: 6px; }
-.pin-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.pin-pad { display: flex; flex-direction: column; gap: 8px; }
+.pin-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 
 .pin-key {
   background: var(--surface2);
@@ -1472,15 +1675,15 @@ body {
   border-radius: var(--radius);
   color: var(--text);
   cursor: pointer;
-  font-size: 1.3rem;
+  font-size: 1.4rem;
   font-weight: 600;
   font-family: var(--font-mono);
-  padding: 16px 0;
-  transition: background 0.08s;
+  padding: 18px 0;
+  transition: background 0.08s, border-color 0.08s;
   letter-spacing: 0;
 }
 
-.pin-key:hover { background: var(--surface3); }
+.pin-key:hover { background: var(--surface3); border-color: var(--surface4); }
 .pin-key:active { background: var(--surface4); }
 
 .pin-key-ok {
@@ -1488,17 +1691,23 @@ body {
   border-color: var(--accent);
   color: var(--accent-t);
   font-family: var(--font-display);
-  font-size: 0.85rem;
-  letter-spacing: 0.08em;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
-.pin-key-ok:hover { background: var(--accent-h); }
+.pin-key-ok:hover { background: var(--accent-h); border-color: var(--accent-h); }
 
 .pin-key-clear {
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 0.9rem;
+  background: var(--surface2);
+  color: var(--text-dim);
+  font-size: 1.1rem;
+  border-color: var(--border);
 }
 
 /* ── Checking shift overlay ────────────────────────────────────────────────── */
@@ -1598,8 +1807,14 @@ body {
   flex-shrink: 0;
 }
 
-.cat-tab:hover { color: var(--text-dim); background: var(--surface3); border-color: var(--border); }
-.cat-tab-active { background: var(--surface3); color: var(--text); border-color: var(--border); box-shadow: inset 2px 0 0 var(--accent); }
+.cat-tab:hover { color: var(--text-dim); background: transparent; }
+.cat-tab-active {
+  background: transparent;
+  color: var(--accent);
+  border-color: transparent;
+  border-bottom: 2px solid var(--accent);
+  font-weight: 700;
+}
 
 /* ── Shared modal helpers ──────────────────────────────────────────────────── */
 .modal-header-standalone {

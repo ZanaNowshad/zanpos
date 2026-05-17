@@ -30,12 +30,8 @@ export default function CartPanel({
     <div className="cart-panel">
       {/* Header */}
       <div className="cart-panel-header">
-        <span className="cart-panel-title">🛒 Cart</span>
-        {activeLines.length > 0 && (
-          <span className="cart-item-count">
-            {activeLines.length} {activeLines.length === 1 ? "item" : "items"}
-          </span>
-        )}
+        <span className="cart-panel-title">CART ({activeLines.length})</span>
+        <button className="cart-header-btn" title="Cart options">···</button>
       </div>
 
       {/* Lines */}
@@ -43,8 +39,8 @@ export default function CartPanel({
         {activeLines.length === 0 && (
           <div className="cart-empty">
             <div className="cart-empty-icon">🛒</div>
-            <div className="cart-empty-label">Cart is empty</div>
-            <div className="cart-empty-hint">Scan a barcode or tap a product to add it</div>
+            <div className="cart-empty-label">Your cart is empty</div>
+            <div className="cart-empty-hint">Scan a barcode or tap a product to add it to cart</div>
           </div>
         )}
         {activeLines.map(line => (

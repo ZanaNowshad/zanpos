@@ -57,12 +57,13 @@ export default function BarcodeInput({ onBarcode, onSearch, disabled }: Props) {
 
   return (
     <div className="barcode-input-wrap">
+      <span className="barcode-input-icon">▮▮▮</span>
       <input
         ref={ref}
         className="barcode-input"
         type="text"
         value={value}
-        placeholder="Scan barcode or search (F2)"
+        placeholder="Scan barcode or search product (F2)"
         onChange={handleChange}
         onKeyDown={handleKeyDown}
         disabled={disabled}
@@ -70,6 +71,7 @@ export default function BarcodeInput({ onBarcode, onSearch, disabled }: Props) {
         autoCorrect="off"
         spellCheck={false}
       />
+      <span className="barcode-input-kbd">F2</span>
     </div>
   );
 }

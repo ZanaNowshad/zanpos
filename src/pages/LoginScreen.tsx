@@ -27,7 +27,7 @@ export default function LoginScreen({ onLogin }: Props) {
     setError(null);
     if (key === "C") {
       setPin("");
-    } else if (key === "←") {
+    } else if (key === "⌫") {
       setPin(p => p.slice(0, -1));
     } else if (key === "OK") {
       handleSubmit();
@@ -55,49 +55,60 @@ export default function LoginScreen({ onLogin }: Props) {
     ["1", "2", "3"],
     ["4", "5", "6"],
     ["7", "8", "9"],
-    ["C", "0", "OK"],
+    ["⌫", "0", "OK"],
   ];
 
   return (
     <div className="login-screen">
-      {/* Left geometric brand panel */}
+      {/* Geometric diagonal border shapes */}
+      <div className="login-geo-1" />
+      <div className="login-geo-2" />
+      <div className="login-geo-glow" />
+
+      {/* Left brand panel */}
       <div className="login-brand">
-        <div className="login-brand-accent" />
-        <div className="login-brand-geo" />
         <div className="login-logo">ZAN<span>POS</span></div>
-        <div className="login-tagline">Local-first Point of Sale</div>
-        <div className="login-tagline-desc">
-          Secure, fast, and always available — even without an internet connection.
+        <div className="login-brand-rule" />
+        <div className="login-tagline">Local-First. Business-First.</div>
+
+        <div className="login-brand-footer">
+          <span>🛡</span>
+          <span>Secure. Reliable. Local.</span>
         </div>
       </div>
 
-      {/* Right login panel */}
+      {/* Right — floating card */}
       <div className="login-right">
         <div className="login-panel">
           {!selected ? (
             <>
+              <div className="login-panel-icon">👥</div>
               <h2 className="login-heading">Select Cashier</h2>
+              <p className="login-subheading">Choose your profile to continue</p>
               <div className="user-grid">
                 {users.map(u => (
                   <button key={u.user_id} className="user-card" onClick={() => handleUserSelect(u)}>
                     <div className="user-avatar">{u.display_name.charAt(0).toUpperCase()}</div>
                     <div className="user-name">{u.display_name}</div>
                     <div className="user-role">{u.role_name}</div>
+                    <div className="user-arrow">→</div>
                   </button>
                 ))}
               </div>
             </>
           ) : (
             <>
-              <button className="login-back" onClick={() => { setSelected(null); setPin(""); setError(null); }}>
-                ← Back
-              </button>
+              {/* User badge at top */}
               <div className="login-user-badge">
                 <div className="user-avatar">{selected.display_name.charAt(0).toUpperCase()}</div>
-                <div>
-                  <div className="user-name">{selected.display_name}</div>
-                  <div className="user-role">{selected.role_name}</div>
-                </div>
+                <div className="user-name">{selected.display_name}</div>
+                <div className="user-role">{selected.role_name}</div>
+              </div>
+
+              {/* PIN heading */}
+              <div className="pin-enter-label">
+                <h3>Enter PIN</h3>
+                <p>Enter your 6-digit PIN to continue</p>
               </div>
 
               <div className="pin-display">
@@ -114,16 +125,20 @@ export default function LoginScreen({ onLogin }: Props) {
                     {row.map(key => (
                       <button
                         key={key}
-                        className={`pin-key ${key === "OK" ? "pin-key-ok" : key === "C" ? "pin-key-clear" : ""}`}
+                        className={`pin-key ${key === "OK" ? "pin-key-ok" : key === "⌫" ? "pin-key-clear" : ""}`}
                         onClick={() => handleKey(key)}
                         disabled={loading}
                       >
-                        {key}
+                        {key === "OK" ? <>🔒 OK</> : key}
                       </button>
                     ))}
                   </div>
                 ))}
               </div>
+
+              <button className="login-back" onClick={() => { setSelected(null); setPin(""); setError(null); }}>
+                ← Back to cashier selection
+              </button>
             </>
           )}
         </div>

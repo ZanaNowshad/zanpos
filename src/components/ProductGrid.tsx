@@ -13,10 +13,10 @@ function stockBadge(p: ProductWithPrice) {
   if (!p.track_inventory || p.quantity_on_hand == null) return null;
   const qty = parseFloat(p.quantity_on_hand) || 0;
   if (qty <= 0) {
-    return <span className="stock-badge stock-badge-out">OUT</span>;
+    return <span className="stock-badge stock-badge-out">Out of Stock</span>;
   }
   if (qty <= p.reorder_point) {
-    return <span className="stock-badge stock-badge-low">LOW {p.quantity_on_hand}</span>;
+    return <span className="stock-badge stock-badge-low">Low · {p.quantity_on_hand}</span>;
   }
   return null;
 }
@@ -41,23 +41,33 @@ export default function ProductGrid({ products, onSelect, loading }: Props) {
         return (
           <button
             key={p.product_id}
-            className={`product-card${imgSrc ? " product-card-has-img" : ""}`}
+            className="product-card"
             onClick={() => onSelect(p)}
           >
-            {imgSrc && (
-              <img
-                src={imgSrc}
-                alt={p.name}
-                className="product-card-img"
-                draggable={false}
-              />
-            )}
-            <span className="product-card-name">{p.name}</span>
-            <span className="product-card-price">
-              {DEVICE.currency} {formatMoney(p.price_minor, DEVICE.currency_exponent)}
-            </span>
-            {p.sku && <span className="product-card-sku">{p.sku}</span>}
-            {stockBadge(p)}
+            {/* Image slot */}
+            <div className="product-card-img-wrap">
+              {imgSrc ? (
+                <img
+                  src={imgSrc}
+                  alt={p.name}
+                  className="product-card-img"
+                  draggable={false}
+                />
+              ) : (
+                <span className="product-card-img-placeholder">📦</span>
+              )}
+            </div>
+
+            {/* Content */}
+            <div className="product-card-body">
+              <span className="product-card-name">{p.name}</span>
+              <span className="product-card-price">
+                {DEVICE.currency} {formatMoney(p.price_minor, DEVICE.currency_exponent)}
+              </span>
+              {p.sku && <span className="product-card-sku">{p.sku}</span>}
+              {stockBadge(p)}
+              <button className="product-card-star" onClick={e => e.stopPropagation()} tabIndex={-1}>☆</button>
+            </div>
           </button>
         );
       })}

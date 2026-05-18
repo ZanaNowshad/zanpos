@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import type { Cart, PaymentInput, ProductWithPrice, SaleResult } from "../types";
+import type { Cart, CartLine, PaymentInput, ProductWithPrice, SaleResult } from "../types";
 import * as cmd from "../tauri/commands";
 import { posRecordVoid } from "../tauri/commands";
 
@@ -22,18 +22,49 @@ function makeEmptyCart(session: CartSession): Cart {
   };
 }
 
+/** Find which line changed (new or qty-bumped) between two cart snapshots. */
+function findChangedLineId(before: Cart, after: Cart): string | null {
+  const beforeIds = new Set(before.lines.map(l => l.cart_line_id));
+  // Prefer a brand-new line
+  for (const line of after.lines) {
+    if (!line.voided && !beforeIds.has(line.cart_line_id)) return line.cart_line_id;
+  }
+  // Fall back to a line whose quantity increased
+  const beforeQty = new Map(before.lines.map(l => [l.cart_line_id, l.quantity]));
+  for (const line of after.lines) {
+    if (!line.voided && beforeQty.get(line.cart_line_id) !== line.quantity) {
+      return line.cart_line_id;
+    }
+  }
+  return after.lines.filter(l => !l.voided).at(-1)?.cart_line_id ?? null;
+}
+
 export function useCart(session: CartSession) {
   const [cart, setCart] = useState<Cart>(() => makeEmptyCart(session));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [recentLineId, setRecentLineId] = useState<string | null>(null);
 
   const clearError = () => setError(null);
 
-  const addByBarcode = useCallback(async (barcode: string) => {
+  const addByBarcode = useCallback(async (barcode: string, qty?: number) => {
     setLoading(true);
     setError(null);
     try {
-      const updated = await cmd.posAddItemByBarcode(cart, barcode);
+      let updated = await cmd.posAddItemByBarcode(cart, barcode);
+      const changedId = findChangedLineId(cart, updated);
+
+      // Apply quantity prefix: posAddItemByBarcode already added 1;
+      // if prefix qty > 1, set the final quantity to (base + qty) for existing lines
+      // or just qty for new lines.
+      if (qty && qty > 1 && changedId) {
+        const existingLine = cart.lines.find(l => l.cart_line_id === changedId);
+        const baseQty = existingLine ? parseFloat(existingLine.quantity) : 0;
+        const finalQty = existingLine ? String(baseQty + qty) : String(qty);
+        updated = await cmd.posUpdateQuantity(updated, changedId, finalQty);
+      }
+
+      setRecentLineId(findChangedLineId(cart, updated));
       setCart(updated);
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Barcode not found");
@@ -47,6 +78,7 @@ export function useCart(session: CartSession) {
     setError(null);
     try {
       const updated = await cmd.posAddItem(cart, product.product_id);
+      setRecentLineId(findChangedLineId(cart, updated));
       setCart(updated);
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to add item");
@@ -67,6 +99,9 @@ export function useCart(session: CartSession) {
   const removeLine = useCallback(async (cart_line_id: string) => {
     try {
       const updated = await cmd.posRemoveLine(cart, cart_line_id);
+      // Point recent at the new last active line
+      const active = updated.lines.filter(l => !l.voided);
+      setRecentLineId(active.at(-1)?.cart_line_id ?? null);
       setCart(updated);
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to remove item");
@@ -95,8 +130,9 @@ export function useCart(session: CartSession) {
     setLoading(true);
     setError(null);
     try {
-      const priceMinor = Math.round(parseFloat(priceMajor) * 1000); // BHD has 3 decimal places
+      const priceMinor = Math.round(parseFloat(priceMajor) * 1000);
       const updated = await cmd.posAddCustomItem(cart, name, priceMinor, quantity);
+      setRecentLineId(findChangedLineId(cart, updated));
       setCart(updated);
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to add custom item");
@@ -123,6 +159,7 @@ export function useCart(session: CartSession) {
     try {
       const result = await cmd.posFinalizeSale(cart, payments, undefined, customerId);
       setCart(makeEmptyCart(session));
+      setRecentLineId(null);
       return result;
     } catch (e: unknown) {
       const msg = typeof e === "string" ? e : "Sale failed";
@@ -134,19 +171,49 @@ export function useCart(session: CartSession) {
   }, [cart, session]);
 
   const clearCart = useCallback(() => {
-    // Record audit trail for pre-tender voids (non-empty carts only)
     const activeLines = cart.lines.filter(l => !l.voided);
     if (activeLines.length > 0) {
       const total = Math.max(0,
         activeLines.reduce((s, l) => s + l.line_total_minor, 0) - cart.bill_discount_minor
       );
       posRecordVoid(cart.cart_id, session.device_id, session.cashier_user_id, activeLines.length, total)
-        .catch(() => { /* non-blocking — don't prevent cart clear */ });
+        .catch(() => {});
     }
     setCart(makeEmptyCart(session));
+    setRecentLineId(null);
   }, [cart, session]);
 
-  const replaceCart = useCallback((newCart: Cart) => setCart(newCart), []);
+  const replaceCart = useCallback((newCart: Cart) => {
+    setCart(newCart);
+    const active = newCart.lines.filter(l => !l.voided);
+    setRecentLineId(active.at(-1)?.cart_line_id ?? null);
+  }, []);
+
+  /** Increment quantity of the most recently touched line. */
+  const bumpRecentQty = useCallback(async (delta: number) => {
+    if (!recentLineId) return;
+    const line: CartLine | undefined = cart.lines.find(l => l.cart_line_id === recentLineId && !l.voided);
+    if (!line) return;
+    const current = parseFloat(line.quantity);
+    const next = current + delta;
+    if (next <= 0) {
+      await cmd.posRemoveLine(cart, recentLineId).then(updated => {
+        const active = updated.lines.filter(l => !l.voided);
+        setRecentLineId(active.at(-1)?.cart_line_id ?? null);
+        setCart(updated);
+      }).catch((e: unknown) => setError(typeof e === "string" ? e : "Failed to remove item"));
+    } else {
+      await cmd.posUpdateQuantity(cart, recentLineId, String(next)).then(updated => {
+        setCart(updated);
+      }).catch((e: unknown) => setError(typeof e === "string" ? e : "Invalid quantity"));
+    }
+  }, [cart, recentLineId]);
+
+  /** Remove the most recently touched line. */
+  const removeRecentLine = useCallback(async () => {
+    if (!recentLineId) return;
+    await removeLine(recentLineId);
+  }, [recentLineId, removeLine]);
 
   const netTotal = Math.max(
     0,
@@ -160,11 +227,14 @@ export function useCart(session: CartSession) {
     loading,
     error,
     clearError,
+    recentLineId,
     addByBarcode,
     addProduct,
     addCustomItem,
     updateQuantity,
     removeLine,
+    removeRecentLine,
+    bumpRecentQty,
     applyBillDiscount,
     applyLineDiscount,
     setLineNote,

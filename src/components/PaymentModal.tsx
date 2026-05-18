@@ -9,6 +9,10 @@ interface Props {
   onConfirm: (payments: PaymentInput[], customerId?: string) => void;
   onCancel: () => void;
   loading?: boolean;
+  /** Pre-select a payment method, bypassing the "choose method" step. */
+  initialMethod?: PaymentInput["method"];
+  /** When true, open a second payment line for split payments immediately. */
+  splitMode?: boolean;
 }
 
 interface PaymentLine {
@@ -25,8 +29,12 @@ function mkLine(method: PaymentInput["method"] = "cash"): PaymentLine {
   return { id: lineIdCounter++, method, amountStr: "", tenderedStr: "", referenceStr: "" };
 }
 
-export default function PaymentModal({ netTotal, onConfirm, onCancel, loading }: Props) {
-  const [lines, setLines] = useState<PaymentLine[]>([mkLine("cash")]);
+export default function PaymentModal({ netTotal, onConfirm, onCancel, loading, initialMethod, splitMode }: Props) {
+  const [lines, setLines] = useState<PaymentLine[]>(() => {
+    const first = mkLine(initialMethod ?? "cash");
+    if (splitMode) return [first, mkLine("card")];
+    return [first];
+  });
   const EXP = DEVICE.currency_exponent;
   const fmt = (n: number) => `${DEVICE.currency} ${formatMoney(n, EXP)}`;
 

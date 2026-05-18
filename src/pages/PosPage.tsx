@@ -312,13 +312,13 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
           disabled={lineCount === 0}
           title="Clear all items from cart"
         >
-          Clear
+          🗑 Clear
         </button>
         <button className="action-btn" onClick={() => setShowHold(true)} title="Hold cart and resume later (F6)">
-          Hold
+          ⏸ Hold
         </button>
         <button className="action-btn" onClick={() => setShowCustomItem(true)} title="Add a custom item with any price">
-          + Custom
+          ✦ Custom
         </button>
         <button
           className="action-btn"
@@ -329,7 +329,7 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
           % Discount
         </button>
         <button className="action-btn" onClick={() => setShowCashEvent(true)} title="Paid In / Paid Out / Safe Drop">
-          Cash Event
+          💵 Cash
         </button>
         <button
           className="action-btn"
@@ -339,10 +339,10 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
           }}
           title="Open drawer without a sale — audited in the system"
         >
-          No Sale
+          🔓 No Sale
         </button>
         <button className="action-btn" onClick={() => setShowRefund(true)} title="Process a return or refund">
-          Refund
+          ↩ Refund
         </button>
         <button
           className="action-btn action-btn-pay"
@@ -350,7 +350,7 @@ export default function PosPage({ sessionUser, shift, onLogout, onShiftClose, on
           disabled={lineCount === 0}
           title="Collect payment (F9)"
         >
-          Pay  F9
+          💳 Pay  F9
         </button>
       </div>
 

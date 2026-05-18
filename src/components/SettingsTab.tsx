@@ -185,23 +185,45 @@ export default function SettingsTab({ sessionUserId }: Props) {
     }
   };
 
+  const scrollTo = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const SUB_NAV = [
+    { id: "s-business",  label: "Store Settings" },
+    { id: "s-receipt",   label: "Receipt Customisation" },
+    { id: "s-security",  label: "Security" },
+    { id: "s-printer",   label: "Printers" },
+    { id: "s-app",       label: "Application" },
+  ];
+
   if (loading) return <div className="bo-empty">Loading settings…</div>;
 
   return (
     <div className="settings-layout">
-      <div className="settings-header">
-        <h2 className="settings-title">Store Settings</h2>
-        {settings && (
-          <div className="settings-meta">
-            Branch ID: <code>{settings.branch_id}</code>
-            &nbsp;·&nbsp; Currency: <strong>{settings.currency}</strong>
-            &nbsp;·&nbsp; Code: <strong>{settings.branch_code}</strong>
-          </div>
-        )}
-      </div>
+      <nav className="settings-subnav">
+        <div className="settings-subnav-label">Settings</div>
+        {SUB_NAV.map(n => (
+          <button key={n.id} className="settings-subnav-item" onClick={() => scrollTo(n.id)}>
+            {n.label}
+          </button>
+        ))}
+      </nav>
+
+      <div className="settings-scroll">
+        <div className="settings-header">
+          <h2 className="settings-title">Store Settings</h2>
+          {settings && (
+            <div className="settings-meta">
+              Branch ID: <code>{settings.branch_id}</code>
+              &nbsp;·&nbsp; Currency: <strong>{settings.currency}</strong>
+              &nbsp;·&nbsp; Code: <strong>{settings.branch_code}</strong>
+            </div>
+          )}
+        </div>
 
       <div className="settings-form">
-        <section className="settings-section">
+        <section id="s-business" className="settings-section">
           <h3 className="settings-section-title">Business Information</h3>
 
           <label className="bo-label">Store Name *</label>
@@ -238,7 +260,7 @@ export default function SettingsTab({ sessionUserId }: Props) {
           )}
         </section>
 
-        <section className="settings-section">
+        <section id="s-receipt" className="settings-section">
           <h3 className="settings-section-title">Receipt Customisation</h3>
           <p className="settings-hint">
             These lines are printed on every customer receipt.
@@ -284,7 +306,7 @@ export default function SettingsTab({ sessionUserId }: Props) {
           )}
         </section>
 
-        <section className="settings-section">
+        <section id="s-security" className="settings-section">
           <h3 className="settings-section-title">Security</h3>
 
           <label className="bo-label">Session Timeout</label>
@@ -310,7 +332,7 @@ export default function SettingsTab({ sessionUserId }: Props) {
         </section>
 
         {/* ── Thermal Printer ── */}
-        <section className="settings-section">
+        <section id="s-printer" className="settings-section">
           <h3 className="settings-section-title">Receipt Printer (ESC/POS)</h3>
           <p className="settings-hint">
             Requires <code>tauri-plugin-serialport</code> for full hardware integration.
@@ -377,7 +399,7 @@ export default function SettingsTab({ sessionUserId }: Props) {
         </section>
 
         {/* ── Application / Updater ── */}
-        <section className="settings-section">
+        <section id="s-app" className="settings-section">
           <h3 className="settings-section-title">Application</h3>
           <div className="update-row">
             <div>
@@ -408,6 +430,7 @@ export default function SettingsTab({ sessionUserId }: Props) {
           </button>
         </div>
       </div>
+      </div>{/* settings-scroll */}
     </div>
   );
 }

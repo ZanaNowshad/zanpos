@@ -3720,11 +3720,47 @@ textarea.field-input { resize: vertical; }
 
 .settings-layout {
   display: flex;
-  flex-direction: column;
-  overflow-y: auto;
+  flex-direction: row;
   height: 100%;
+  overflow: hidden;
+}
+.settings-subnav {
+  width: 196px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 16px 8px;
+  gap: 2px;
+  overflow-y: auto;
+}
+.settings-subnav-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  padding: 4px 10px 8px;
+}
+.settings-subnav-item {
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  transition: background 0.1s, color 0.1s;
+}
+.settings-subnav-item:hover { background: var(--surface2); color: var(--text-dim); }
+.settings-scroll {
+  flex: 1;
+  overflow-y: auto;
   padding: 20px 24px;
-  gap: 0;
 }
 .settings-header {
   margin-bottom: 16px;
@@ -4069,8 +4105,8 @@ textarea.field-input { resize: vertical; }
   line-height: 1;
 }
 .topbar-icon-btn:hover { background: var(--accent2); color: var(--text); }
-.topbar-icon-btn-active { background: var(--accent); color: #fff; border-color: var(--accent); }
-.topbar-icon-btn-active:hover { opacity: 0.85; color: #fff; }
+.topbar-icon-btn-active { background: var(--accent); color: var(--accent-t); border-color: var(--accent); }
+.topbar-icon-btn-active:hover { opacity: 0.85; color: var(--accent-t); }
 
 /* ── KPI Sidebar ─────────────────────────────────────────────────────────────── */
 .kpi-sidebar {

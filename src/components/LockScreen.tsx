@@ -15,9 +15,7 @@ export default function LockScreen({ user, onUnlock, onLogout }: Props) {
 
   const handleKey = (key: string) => {
     setError(null);
-    if (key === "C") {
-      setPin("");
-    } else if (key === "←") {
+    if (key === "⌫") {
       setPin(p => p.slice(0, -1));
     } else if (key === "OK") {
       handleSubmit();
@@ -45,7 +43,7 @@ export default function LockScreen({ user, onUnlock, onLogout }: Props) {
     ["1", "2", "3"],
     ["4", "5", "6"],
     ["7", "8", "9"],
-    ["C", "0", "OK"],
+    ["⌫", "0", "OK"],
   ];
 
   return (
@@ -71,7 +69,7 @@ export default function LockScreen({ user, onUnlock, onLogout }: Props) {
               {row.map(key => (
                 <button
                   key={key}
-                  className={`pin-key ${key === "OK" ? "pin-key-ok" : key === "C" ? "pin-key-clear" : ""}`}
+                  className={`pin-key ${key === "OK" ? "pin-key-ok" : key === "⌫" ? "pin-key-clear" : ""}`}
                   onClick={() => handleKey(key)}
                   disabled={loading}
                 >

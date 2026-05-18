@@ -1705,7 +1705,7 @@ body {
 .pin-key-clear {
   background: var(--surface2);
   color: var(--text-dim);
-  font-size: 1.1rem;
+  font-size: 1.4rem;
   border-color: var(--border);
 }
 
@@ -3229,6 +3229,7 @@ textarea.field-input { resize: vertical; }
 
 .lock-panel {
   background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 16px;
   padding: 40px 36px;
   display: flex;
@@ -3236,7 +3237,7 @@ textarea.field-input { resize: vertical; }
   align-items: center;
   gap: 12px;
   width: 320px;
-  box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+  box-shadow: 0 8px 40px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08);
 }
 
 .lock-icon { font-size: 2.8rem; }

@@ -57,6 +57,9 @@ export default function BackOfficeModal({ sessionUser, onClose }: Props) {
         <div className="bo-modal">
           {/* ── Header ── */}
           <div className="bo-header">
+            <div className="bo-header-logo">
+              <span className="bo-header-logo-text">ZAN<span>POS</span></span>
+            </div>
             <span className="bo-header-title">Back Office</span>
             <div className="bo-tabs">
               {tabs.map(t => (
@@ -88,7 +91,7 @@ export default function BackOfficeModal({ sessionUser, onClose }: Props) {
                   ⚡ Sync Queue
                 </button>
               )}
-              <button className="bo-close-btn" onClick={onClose}>Close</button>
+              <button className="bo-close-btn" onClick={onClose}>✕ Close</button>
             </div>
           </div>
 

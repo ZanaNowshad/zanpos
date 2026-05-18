@@ -274,7 +274,7 @@ function getThinkingLabel(lastMessage: string): string {
 
 function TopBar({
   label, user, providerLabel, showKpi, onToggleKpi,
-  onClearChat, onSettings, onBack,
+  onSettings,
 }: {
   label: string; user: string; providerLabel: string;
   showKpi: boolean; onToggleKpi: () => void;
@@ -282,30 +282,33 @@ function TopBar({
 }) {
   return (
     <div className="admin-chat-topbar">
-      <button className="topbar-btn" onClick={onBack}>← POS</button>
-      <div className="topbar-title-wrap">
-        <span className="admin-chat-title">{label}</span>
-        {providerLabel && (
-          <span className="admin-chat-provider-badge">{providerLabel}</span>
-        )}
+      {/* Logo */}
+      <div className="admin-topbar-logo">
+        <span className="admin-topbar-logo-text">ZAN<span>POS</span></span>
       </div>
+      <span className="admin-topbar-page">{label}</span>
+
+      {/* Center search hint */}
+      <div className="admin-topbar-search">
+        <span className="admin-topbar-search-ph">Ask AI anything about your business…</span>
+        <span className="admin-topbar-search-kbd">Ctrl /</span>
+      </div>
+
+      {/* Right actions */}
       <div className="topbar-actions">
         <button
           className={`topbar-icon-btn ${showKpi ? "topbar-icon-btn-active" : ""}`}
           onClick={onToggleKpi}
-          title="Toggle KPI panel"
+          title="Toggle Live Snapshot"
         >📊</button>
-        <button
-          className="topbar-icon-btn"
-          onClick={onClearChat}
-          title="Clear conversation"
-        >🗑</button>
-        <button
-          className="topbar-icon-btn"
-          onClick={onSettings}
-          title="Sync & AI settings"
-        >⚙</button>
-        <span className="admin-chat-user">{user}</span>
+        <button className="topbar-icon-btn" onClick={onSettings} title="Settings">⚙</button>
+        <div className="admin-topbar-user">
+          <div className="admin-topbar-avatar">{user.charAt(0).toUpperCase()}</div>
+          <div className="admin-topbar-user-info">
+            <span className="admin-topbar-user-name">{user}</span>
+            {providerLabel && <span className="admin-chat-provider-badge">{providerLabel}</span>}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -415,79 +418,43 @@ function KpiSidebar({ kpi, currencyExp, onRefresh }: {
 
 // ─── Welcome panel ────────────────────────────────────────────────────────────
 
-function WelcomePanel({ userName, kpi, currencyExp, onChip }: {
+function WelcomePanel({ userName, onChip }: {
   userName: string;
   kpi: KpiSnapshot;
   currencyExp: number;
   onChip: (text: string) => void;
 }) {
-  const fmt = (n: number) => {
-    const divisor = Math.pow(10, currencyExp);
-    return `BHD ${(n / divisor).toFixed(currencyExp)}`;
-  };
-
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+
+  const SUGGESTED = [
+    { icon: "📊", text: "How are today's sales compared to yesterday?", prompt: "How are today's sales compared to yesterday?" },
+    { icon: "📦", text: "Show me low stock items", prompt: "Which products are low on stock?" },
+    { icon: "🏆", text: "What are the top selling products this week?", prompt: "What are the top selling products this week?" },
+    { icon: "💵", text: "How much cash is in the drawer?", prompt: "Show me the current cash drawer status" },
+    { icon: "↩", text: "Show recent refunds", prompt: "Show me recent refunds" },
+    { icon: "👥", text: "How many transactions today?", prompt: "How many transactions were made today?" },
+  ];
 
   return (
     <div className="chat-welcome-advanced">
       <div className="welcome-header">
-        <span className="welcome-icon">◆</span>
+        <div className="welcome-avatar">✦</div>
         <div>
-          <div className="welcome-title">{greeting}, {userName}</div>
-          <div className="welcome-subtitle">AI Admin Intelligence · ZanPOS</div>
+          <div className="welcome-title">{greeting}, {userName} 👋</div>
+          <div className="welcome-subtitle">I'm your AI assistant. Ask me anything about your store performance, inventory, sales, users, and more.</div>
         </div>
       </div>
 
-      {kpi.today && (
-        <div className="welcome-insight-card">
-          <div className="welcome-insight-label">📈 Today so far</div>
-          <div className="welcome-insight-row">
-            <div className="welcome-insight-stat">
-              <div className="wi-value">{fmt(kpi.today.net_total_minor)}</div>
-              <div className="wi-label">Net Sales</div>
-            </div>
-            <div className="welcome-insight-divider" />
-            <div className="welcome-insight-stat">
-              <div className="wi-value">{kpi.today.transaction_count}</div>
-              <div className="wi-label">Transactions</div>
-            </div>
-            <div className="welcome-insight-divider" />
-            <div className="welcome-insight-stat">
-              <div className="wi-value">{fmt(kpi.today.cash_total_minor)}</div>
-              <div className="wi-label">Cash</div>
-            </div>
-          </div>
-          {(kpi.lowStockCount > 0 || kpi.outOfStockCount > 0) && (
-            <div className="welcome-alert-row">
-              {kpi.outOfStockCount > 0 && (
-                <button className="welcome-alert-chip welcome-alert-danger" onClick={() => onChip("Which products are out of stock?")}>
-                  ❌ {kpi.outOfStockCount} out of stock
-                </button>
-              )}
-              {kpi.lowStockCount > 0 && (
-                <button className="welcome-alert-chip welcome-alert-warn" onClick={() => onChip("Which products are low on stock?")}>
-                  ⚠️ {kpi.lowStockCount} low stock
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="welcome-capabilities">
-        <div className="welcome-cap-title">I can help you with:</div>
-        <div className="welcome-cap-grid">
-          <div className="welcome-cap-item">📊 Sales reports &amp; analytics</div>
-          <div className="welcome-cap-item">🏷 Product &amp; price management</div>
-          <div className="welcome-cap-item">📦 Inventory &amp; stock levels</div>
-          <div className="welcome-cap-item">💵 Cash drawer reconciliation</div>
-          <div className="welcome-cap-item">🔍 Audit trail &amp; chain verify</div>
-          <div className="welcome-cap-item">☁ Sync status &amp; conflicts</div>
-        </div>
+      <div className="welcome-suggested-label">SUGGESTED QUESTIONS</div>
+      <div className="welcome-suggested-grid">
+        {SUGGESTED.map(s => (
+          <button key={s.prompt} className="welcome-suggested-card" onClick={() => onChip(s.prompt)}>
+            <span className="welcome-suggested-icon">{s.icon}</span>
+            <span>{s.text}</span>
+          </button>
+        ))}
       </div>
-
-      <div className="welcome-hint">All changes require your confirmation before executing.</div>
     </div>
   );
 }
@@ -1143,6 +1110,32 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
       />
 
       <div className="admin-chat-body">
+        {/* ── Left sidebar nav ──────────────────────────────────────────────── */}
+        <aside className="admin-chat-sidebar">
+          <button className="admin-sidebar-back" onClick={onBackToPOS}>← Back to POS</button>
+          <nav className="admin-sidebar-nav">
+            {[
+              { icon: "✦", label: "AI Assistant", active: true },
+              { icon: "📊", label: "Today's Sales", prompt: "Give me today's sales summary" },
+              { icon: "⚠", label: "Low Stock Alerts", prompt: "Which products are low on stock?" },
+              { icon: "🏆", label: "Top Products", prompt: "What are the top selling products this month?" },
+              { icon: "↩", label: "Recent Refunds", prompt: "Show me recent refunds" },
+              { icon: "🕐", label: "Shift History", prompt: "Show me the last 5 shifts" },
+              { icon: "🔗", label: "Audit Chain", prompt: "Check the audit log chain integrity" },
+              { icon: "☁", label: "Sync Status", prompt: "What is the sync status?" },
+            ].map(item => (
+              <button
+                key={item.label}
+                className={`admin-sidebar-item${item.active ? " active" : ""}`}
+                onClick={item.prompt ? () => handleSend(item.prompt) : undefined}
+              >
+                <span className="admin-sidebar-icon">{item.icon}</span>
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </nav>
+        </aside>
+
         {/* ── Chat area ─────────────────────────────────────────────────────── */}
         <div className="admin-chat-main">
           <div className="chat-messages">

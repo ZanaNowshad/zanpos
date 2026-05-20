@@ -44,6 +44,13 @@ import type {
   UserSummary,
   ValidateProviderResult,
   NoSaleRow,
+  DeliveryRow,
+  DeliveryListFilter,
+  ConfirmDeliveryPaymentInput,
+  UpdateDeliveryStatusInput,
+  CancelDeliveryInput,
+  WhatsAppStatus,
+  SendDeliveryInput,
 } from "../types";
 
 // ─── Setup & Settings commands ────────────────────────────────────────────────
@@ -112,10 +119,11 @@ export const shiftOpen = (
 
 export const shiftClose = (
   shift_id: string,
+  actor_user_id: string,
   counted_cash_minor?: number,
   notes?: string
 ): Promise<Shift> =>
-  invoke("shift_close", { input: { shift_id, counted_cash_minor, notes } });
+  invoke("shift_close", { input: { shift_id, actor_user_id, counted_cash_minor, notes } });
 
 // ─── Product commands ─────────────────────────────────────────────────────────
 
@@ -155,14 +163,15 @@ export const posFinalizeSale = (
   payments: PaymentInput[],
   idempotency_key?: string,
   customer_id?: string,
+  delivery?: import("../types").DeliveryInput,
 ): Promise<SaleResult> =>
-  invoke("pos_finalize_sale", { input: { cart, payments, idempotency_key, customer_id } });
+  invoke("pos_finalize_sale", { input: { cart, payments, idempotency_key, customer_id, delivery } });
 
-export const posApplyBillDiscount = (cart: Cart, discount_minor: number): Promise<Cart> =>
-  invoke("pos_apply_bill_discount", { input: { cart, discount_minor } });
+export const posApplyBillDiscount = (cart: Cart, discount_minor: number, reason: string, authorized_by_user_id: string): Promise<Cart> =>
+  invoke("pos_apply_bill_discount", { input: { cart, discount_minor, reason, authorized_by_user_id } });
 
-export const posApplyLineDiscount = (cart: Cart, cart_line_id: string, discount_minor: number): Promise<Cart> =>
-  invoke("pos_apply_line_discount", { input: { cart, cart_line_id, discount_minor } });
+export const posApplyLineDiscount = (cart: Cart, cart_line_id: string, discount_minor: number, reason: string, authorized_by_user_id: string): Promise<Cart> =>
+  invoke("pos_apply_line_discount", { input: { cart, cart_line_id, discount_minor, reason, authorized_by_user_id } });
 
 export const posSetLineNote = (cart: Cart, cart_line_id: string, note: string | null): Promise<Cart> =>
   invoke("pos_set_line_note", { input: { cart, cart_line_id, note } });
@@ -203,8 +212,8 @@ export const heldCartDelete = (held_cart_id: string): Promise<void> =>
 
 // ─── Refund commands ──────────────────────────────────────────────────────────
 
-export const refundGetSale = (receipt_number: string): Promise<SaleForRefund> =>
-  invoke("refund_get_sale", { receiptNumber: receipt_number });
+export const refundGetSale = (receipt_number: string, requesting_user_id: string): Promise<SaleForRefund> =>
+  invoke("refund_get_sale", { receiptNumber: receipt_number, requestingUserId: requesting_user_id });
 
 export const refundCreate = (
   original_sale_id: string,
@@ -215,8 +224,8 @@ export const refundCreate = (
 ): Promise<RefundResult> =>
   invoke("refund_create", { input: { original_sale_id, items, reason, return_reason_code, created_by_user_id } });
 
-export const receiptReprint = (receipt_number: string): Promise<SaleResult> =>
-  invoke("receipt_reprint", { receiptNumber: receipt_number });
+export const receiptReprint = (receipt_number: string, requesting_user_id: string): Promise<SaleResult> =>
+  invoke("receipt_reprint", { receiptNumber: receipt_number, requestingUserId: requesting_user_id });
 
 // ─── Report commands ──────────────────────────────────────────────────────────
 
@@ -523,7 +532,7 @@ export const reportEodCashup = (
   branch_id: string,
   business_date: string,
 ): Promise<EodCashupReport> =>
-  invoke("report_eod_cashup", { branchId: branch_id, businessDate: business_date });
+  invoke("report_eod_cashup", { branchId: branch_id, date: business_date });
 
 export const inventoryBulkStockTake = (
   entries: Array<{ product_id: string; new_quantity: number; notes?: string }>,
@@ -539,3 +548,60 @@ export const syncQueueRetry = (syncEventId: string): Promise<void> =>
 
 export const syncQueueDismiss = (syncEventId: string): Promise<void> =>
   invoke("sync_queue_dismiss", { syncEventId });
+
+// ─── Delivery commands ────────────────────────────────────────────────────────
+
+export const deliveryList = (
+  filter: DeliveryListFilter,
+  actor_user_id: string,
+): Promise<DeliveryRow[]> =>
+  invoke("delivery_list", { filter, actorUserId: actor_user_id });
+
+export const deliveryGet = (
+  delivery_id: string,
+  actor_user_id: string,
+): Promise<DeliveryRow> =>
+  invoke("delivery_get", { deliveryId: delivery_id, actorUserId: actor_user_id });
+
+export const deliveryUpdateStatus = (
+  input: UpdateDeliveryStatusInput,
+): Promise<DeliveryRow> =>
+  invoke("delivery_update_status", { input });
+
+export const deliveryConfirmPayment = (
+  input: ConfirmDeliveryPaymentInput,
+): Promise<DeliveryRow> =>
+  invoke("delivery_confirm_payment", { input });
+
+export const deliveryCancel = (
+  input: CancelDeliveryInput,
+): Promise<DeliveryRow> =>
+  invoke("delivery_cancel", { input });
+
+export const deliveryRiderSuggestions = (
+  branch_id: string,
+  actor_user_id: string,
+): Promise<string[]> =>
+  invoke("delivery_rider_suggestions", { branchId: branch_id, actorUserId: actor_user_id });
+
+// ─── WhatsApp ─────────────────────────────────────────────────────────────────
+
+export function whatsappStatus(): Promise<WhatsAppStatus> {
+  return invoke("whatsapp_status");
+}
+
+export function whatsappSendDelivery(input: SendDeliveryInput): Promise<boolean> {
+  return invoke("whatsapp_send_delivery", { input });
+}
+
+export function whatsappDisconnect(actorUserId: string): Promise<boolean> {
+  return invoke("whatsapp_disconnect", { actorUserId });
+}
+
+export function whatsappSaveConfig(benefitNumber: string, actorUserId: string): Promise<void> {
+  return invoke("whatsapp_save_config", { benefitNumber, actorUserId });
+}
+
+export function setupSaveBenefitNumber(benefitNumber: string): Promise<void> {
+  return invoke("setup_save_benefit_number", { benefitNumber });
+}

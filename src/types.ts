@@ -80,6 +80,7 @@ export interface CartLine {
   quantity: string;
   unit_price_minor: number;
   line_discount_minor: number;
+  line_discount_reason: string | null;
   tax_rule_id: string;
   tax_rate_basis_points: number;
   tax_inclusive: boolean;
@@ -97,6 +98,7 @@ export interface Cart {
   cashier_user_id: string;
   lines: CartLine[];
   bill_discount_minor: number;
+  bill_discount_reason: string | null;
 }
 
 export interface PaymentInput {
@@ -135,6 +137,7 @@ export interface SaleResult {
   business_date: string;
   created_offline: boolean;
   low_stock_alerts: LowStockAlert[];
+  delivery?: DeliveryRow;
 }
 
 export interface SyncStatus {
@@ -232,6 +235,8 @@ export interface TodaySummary {
   card_total_minor: number;
   refund_count: number;
   refund_total_minor: number;
+  pending_delivery_count: number;
+  pending_delivery_minor: number;
 }
 
 // ─── Phase 2: AI Provider config ─────────────────────────────────────────────
@@ -325,6 +330,8 @@ export interface RangeSummary {
   card_total_minor: number;
   refund_count: number;
   refund_total_minor: number;
+  pending_delivery_count: number;
+  pending_delivery_minor: number;
 }
 
 export interface TopProduct {
@@ -396,6 +403,7 @@ export interface CashDrawerSummary {
   counted_minor:     number | null;
   variance_minor:    number | null;
   events:            CashEventRow[];
+  pending_delivery_cash_minor: number;
 }
 
 // ─── Product barcodes ─────────────────────────────────────────────────────────
@@ -492,6 +500,7 @@ export interface AppConfig {
   receipt_header: string | null;
   receipt_footer: string | null;
   tax_number: string | null;
+  whatsapp_benefit_number: string | null;
 }
 
 export interface BranchSettings {
@@ -589,3 +598,91 @@ export const DEVICE = {
     this.currency_exponent = cfg.currency_exponent;
   },
 };
+
+// ─── Delivery module types ─────────────────────────────────────────────────────
+
+export interface DeliveryInput {
+  customer_id?: string;
+  customer_name?: string;
+  contact_number: string;       // E.164: +97333050666
+  house_number?: string;
+  area?: string;
+  address_text: string;         // required
+  delivery_note?: string;
+  delivery_staff_name?: string;
+  expected_payment_method: string; // cash | card | wallet
+}
+
+export interface DeliveryRow {
+  delivery_id: string;
+  sale_id: string;
+  receipt_number: string;
+  customer_id?: string;
+  customer_name?: string;
+  contact_number: string;
+  house_number?: string;
+  area?: string;
+  address_text: string;
+  delivery_note?: string;
+  delivery_staff_name?: string;
+  expected_payment_method: string;
+  payment_status: "unpaid" | "paid" | "cancelled";
+  delivery_status: "pending" | "out_for_delivery" | "delivered" | "cancelled";
+  amount_minor: number;
+  currency: string;
+  paid_confirmed_by_user_id?: string;
+  paid_confirmed_at?: string;
+  payment_reference?: string;
+  payment_note?: string;
+  created_by_user_id: string;
+  branch_id: string;
+  device_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DeliveryListFilter {
+  payment_status?: string;
+  delivery_status?: string;
+  date_from?: string;
+  date_to?: string;
+  staff_name?: string;
+  contact_search?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ConfirmDeliveryPaymentInput {
+  delivery_id: string;
+  confirmed_by_user_id: string;
+  payment_reference?: string;
+  payment_note?: string;
+}
+
+export interface UpdateDeliveryStatusInput {
+  delivery_id: string;
+  delivery_status: string;
+  actor_user_id: string;
+}
+
+export interface CancelDeliveryInput {
+  delivery_id: string;
+  actor_user_id: string;
+}
+
+// ── WhatsApp ──────────────────────────────────────────────────────────────────
+
+export interface WhatsAppStatus {
+  connected: boolean;
+  qr?: string; // base64 PNG data URL when QR is pending
+}
+
+export interface SendDeliveryInput {
+  to: string;
+  receipt_number: string;
+  net_total_minor: number;
+  currency_exponent: number;
+  address_text: string;
+  house_number?: string;
+  area?: string;
+}

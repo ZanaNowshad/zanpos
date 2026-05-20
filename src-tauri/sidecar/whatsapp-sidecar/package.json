@@ -1,0 +1,29 @@
+{
+  "name": "whatsapp-sidecar",
+  "version": "1.0.0",
+  "description": "ZANPOS WhatsApp sidecar — Baileys HTTP bridge",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "build": "pkg . --target node18-win-x64 --output ../../binaries/whatsapp-sidecar-x86_64-pc-windows-msvc.exe --compress GZip"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.9",
+    "express": "^4.19.2",
+    "qrcode": "^1.5.4",
+    "pino": "^9.0.0"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  },
+  "pkg": {
+    "assets": [
+      "node_modules/@whiskeysockets/baileys/**/*",
+      "node_modules/@adiwajshing/keyed-db/**/*",
+      "node_modules/libsignal/**/*",
+      "node_modules/node-cache/**/*"
+    ],
+    "targets": ["node18-win-x64"],
+    "outputPath": "../../binaries"
+  }
+}

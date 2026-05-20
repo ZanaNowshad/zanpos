@@ -18,6 +18,12 @@ dist-ssr
 # Tauri build output
 src-tauri/target/
 
+# Tauri generated schemas (regenerated at build time)
+src-tauri/gen/
+
+# Test coverage reports
+coverage/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -28,3 +34,11 @@ src-tauri/target/
 *.njsproj
 *.sln
 *.sw?
+
+# Local environment overrides (never commit secrets)
+.env
+.env.local
+.env.*.local
+
+# Sidecar compiled binaries (built locally via pkg)
+src-tauri/binaries/*.exe

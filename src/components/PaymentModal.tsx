@@ -1,18 +1,21 @@
 import { useState, useEffect, useRef } from "react";
-import type { CustomerRow, PaymentInput } from "../types";
+import type { CustomerRow, DeliveryInput, PaymentInput } from "../types";
 import { formatMoney, parseMoney } from "../money";
 import { DEVICE } from "../types";
 import * as cmd from "../tauri/commands";
+import DeliveryForm from "./DeliveryForm";
 
 interface Props {
   netTotal: number;
-  onConfirm: (payments: PaymentInput[], customerId?: string) => void;
+  onConfirm: (payments: PaymentInput[], customerId?: string, delivery?: DeliveryInput) => void;
   onCancel: () => void;
   loading?: boolean;
   /** Pre-select a payment method, bypassing the "choose method" step. */
   initialMethod?: PaymentInput["method"];
   /** When true, open a second payment line for split payments immediately. */
   splitMode?: boolean;
+  /** Logged-in user ID — forwarded to DeliveryForm for RBAC. */
+  sessionUserId?: string;
 }
 
 interface PaymentLine {
@@ -29,21 +32,34 @@ function mkLine(method: PaymentInput["method"] = "cash"): PaymentLine {
   return { id: lineIdCounter++, method, amountStr: "", tenderedStr: "", referenceStr: "" };
 }
 
-export default function PaymentModal({ netTotal, onConfirm, onCancel, loading, initialMethod, splitMode }: Props) {
+export default function PaymentModal({ netTotal, onConfirm, onCancel, loading, initialMethod, splitMode, sessionUserId }: Props) {
+  const EXP = DEVICE.currency_exponent;
   const [lines, setLines] = useState<PaymentLine[]>(() => {
     const first = mkLine(initialMethod ?? "cash");
+    if (!splitMode) {
+      if (!initialMethod || initialMethod === "cash") {
+        // Cash: pre-fill exact amount so cashier just confirms
+        const exactStr = formatMoney(netTotal, DEVICE.currency_exponent);
+        first.amountStr = exactStr;
+        first.tenderedStr = exactStr;
+      } else {
+        // Card / wallet: pre-fill amount only
+        first.amountStr = formatMoney(netTotal, DEVICE.currency_exponent);
+      }
+    }
     if (splitMode) return [first, mkLine("card")];
     return [first];
   });
-  const EXP = DEVICE.currency_exponent;
   const fmt = (n: number) => `${DEVICE.currency} ${formatMoney(n, EXP)}`;
-
   // Customer selection
   const [custSearch, setCustSearch]       = useState("");
   const [custResults, setCustResults]     = useState<CustomerRow[]>([]);
   const [selectedCust, setSelectedCust]   = useState<CustomerRow | null>(null);
   const [showCustDrop, setShowCustDrop]   = useState(false);
   const searchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Delivery state
+  const [isDelivery, setIsDelivery] = useState(false);
+  const [deliveryData, setDeliveryData] = useState<Partial<DeliveryInput>>({});
 
   useEffect(() => {
     if (custSearch.trim().length === 0) { setCustResults([]); return; }
@@ -78,7 +94,13 @@ export default function PaymentModal({ netTotal, onConfirm, onCancel, loading, i
       if (l.method === "cash" && parseMoney(l.tenderedStr || l.amountStr, EXP) < parseMoney(l.amountStr, EXP)) return false;
     }
     // Total must cover the net total (cash lines may exceed — change will be given)
-    return allocatedMinor >= netTotal;
+    if (allocatedMinor < netTotal) return false;
+    // Delivery validation
+    if (isDelivery) {
+      if (!deliveryData.contact_number) return false;
+      if (!deliveryData.address_text?.trim()) return false;
+    }
+    return true;
   })();
 
   const handleConfirm = () => {
@@ -88,32 +110,24 @@ export default function PaymentModal({ netTotal, onConfirm, onCancel, loading, i
         const tendered = parseMoney(l.tenderedStr || l.amountStr, EXP);
         return { method: l.method, amount_minor: amount, tendered_minor: Math.max(tendered, amount) };
       }
-      const ref = l.referenceStr.trim();
-      return { method: l.method, amount_minor: amount, ...(ref ? { external_reference: ref } : {}) };
+      return { method: l.method, amount_minor: amount };
     });
-    onConfirm(payments, selectedCust?.customer_id);
+    let deliveryInput: DeliveryInput | undefined = undefined;
+    if (isDelivery) {
+      deliveryInput = {
+        ...(deliveryData as DeliveryInput),
+        expected_payment_method: lines[0]?.method ?? "cash",
+      };
+    }
+    onConfirm(payments, selectedCust?.customer_id, deliveryInput);
   };
 
-  // Quick-amount suggestions for cash (exact + round-up tiers)
+  // Quick-amount suggestions for cash — fixed denominations
   const quickAmounts: number[] = (() => {
-    const unit = Math.pow(10, EXP); // minor units per major unit
-    const totalMajor = netTotal / unit;
-    const seen = new Set<number>();
-    const result: number[] = [];
-    // Exact
-    seen.add(netTotal);
-    result.push(netTotal);
-    // Round up tiers: 5, 10, 20, 50, 100, 200, 500 in major units
-    for (const step of [5, 10, 20, 50, 100, 200, 500]) {
-      const rounded = Math.ceil(totalMajor / step) * step;
-      const roundedMinor = Math.round(rounded * unit);
-      if (!seen.has(roundedMinor) && roundedMinor > netTotal) {
-        seen.add(roundedMinor);
-        result.push(roundedMinor);
-        if (result.length >= 5) break;
-      }
-    }
-    return result;
+    const unit = Math.pow(10, EXP);
+    return [5, 10, 30]
+      .map(major => Math.round(major * unit))
+      .filter(minor => minor > netTotal);
   })();
 
   const applyQuickAmount = (minor: number) => {
@@ -179,11 +193,11 @@ export default function PaymentModal({ netTotal, onConfirm, onCancel, loading, i
             {quickAmounts.map(minor => (
               <button
                 key={minor}
-                className={`quick-amt-btn ${minor === netTotal ? "quick-amt-btn-exact" : ""}`}
+                className="quick-amt-btn"
                 onClick={() => applyQuickAmount(minor)}
-                title={minor === netTotal ? "Exact amount" : `Round up to ${fmt(minor)}`}
+                title={`Round up to ${fmt(minor)}`}
               >
-                {minor === netTotal ? "Exact" : fmt(minor)}
+                {fmt(minor)}
               </button>
             ))}
           </div>
@@ -211,6 +225,7 @@ export default function PaymentModal({ netTotal, onConfirm, onCancel, loading, i
                   <input
                     className="split-amount-input"
                     type="number"
+                    inputMode="decimal"
                     min="0"
                     step="0.001"
                     placeholder={idx === 0 && lines.length === 1 ? formatMoney(netTotal, EXP) : "0.000"}
@@ -228,6 +243,7 @@ export default function PaymentModal({ netTotal, onConfirm, onCancel, loading, i
                     <input
                       className="split-tendered-input"
                       type="number"
+                      inputMode="decimal"
                       min="0"
                       step="0.001"
                       placeholder={line.amountStr || "0.000"}
@@ -235,18 +251,6 @@ export default function PaymentModal({ netTotal, onConfirm, onCancel, loading, i
                       onChange={e => updateLine(line.id, { tenderedStr: e.target.value })}
                     />
                     {change > 0 && <span className="split-change">Change: {fmt(change)}</span>}
-                  </div>
-                )}
-                {line.method !== "cash" && (
-                  <div className="split-ref-row">
-                    <label>Ref / Auth #</label>
-                    <input
-                      className="split-ref-input"
-                      type="text"
-                      placeholder="Card last 4 / approval code…"
-                      value={line.referenceStr}
-                      onChange={e => updateLine(line.id, { referenceStr: e.target.value })}
-                    />
                   </div>
                 )}
               </div>
@@ -267,6 +271,31 @@ export default function PaymentModal({ netTotal, onConfirm, onCancel, loading, i
         </div>
 
         <button className="split-add-btn" onClick={addLine}>+ Add payment method</button>
+
+        {/* ── Delivery toggle ── */}
+        <div className="delivery-toggle-row">
+          <label className="delivery-toggle-label">
+            <input
+              type="checkbox"
+              className="delivery-toggle-cb"
+              checked={isDelivery}
+              onChange={e => setIsDelivery(e.target.checked)}
+            />
+            <span>🛵 Mark as Delivery</span>
+          </label>
+          {isDelivery && <span className="delivery-toggle-hint">Payment will be pending until confirmed by manager</span>}
+        </div>
+
+        {/* ── Delivery form ── */}
+        {isDelivery && (
+          <DeliveryForm
+            value={deliveryData}
+            onChange={setDeliveryData}
+            selectedCustomer={selectedCust}
+            expectedPaymentMethod={lines[0]?.method ?? "cash"}
+            actorUserId={sessionUserId ?? DEVICE.device_id}
+          />
+        )}
 
         <div className="modal-actions">
           <button className="btn-secondary" onClick={onCancel} disabled={loading}>Cancel</button>

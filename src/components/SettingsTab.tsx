@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import type { BranchSettings, ThermalConfig } from "../types";
+import { useCallback, useEffect, useState } from "react";
+import type { BranchSettings, ThermalConfig, WhatsAppStatus } from "../types";
 import {
   settingsGetBranch,
   settingsUpdateBranch,
@@ -10,7 +10,113 @@ import {
   thermalSetConfig,
   thermalPrintTest,
   checkForUpdates,
+  whatsappStatus,
+  whatsappDisconnect,
+  whatsappSaveConfig,
+  appConfigLoad,
 } from "../tauri/commands";
+import WhatsAppQRModal from "./WhatsAppQRModal";
+
+function WhatsAppSettingsSection({
+  sessionUserId,
+  sessionRole,
+}: {
+  sessionUserId: string;
+  sessionRole: string;
+}) {
+  const [status, setStatus]               = useState<WhatsAppStatus>({ connected: false });
+  const [showQR, setShowQR]               = useState(false);
+  const [benefitNum, setBenefitNum]       = useState("");
+  const [saving, setSaving]               = useState(false);
+  const [saved, setSaved]                 = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+
+  const isManager = sessionRole === "owner" || sessionRole === "manager";
+
+  const refresh = useCallback(async () => {
+    try { setStatus(await whatsappStatus()); } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    appConfigLoad().then(cfg => {
+      setBenefitNum(cfg.whatsapp_benefit_number ?? "");
+    }).catch(() => {});
+  }, [refresh]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await whatsappSaveConfig(benefitNum.trim(), sessionUserId);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e: unknown) {
+      alert(typeof e === "string" ? e : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    if (!confirm("Disconnect WhatsApp? You will need to scan the QR code again.")) return;
+    setDisconnecting(true);
+    try {
+      await whatsappDisconnect(sessionUserId);
+      await refresh();
+    } catch (e: unknown) {
+      alert(typeof e === "string" ? e : "Failed to disconnect");
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
+  return (
+    <>
+      <h3 className="settings-section-title">📱 WhatsApp</h3>
+
+      <div className="wa-settings-status-row">
+        <span className={`wa-settings-badge ${status.connected ? "wa-badge-on" : "wa-badge-off"}`}>
+          {status.connected ? "🟢 Connected" : "🔴 Disconnected"}
+        </span>
+        {!status.connected && isManager && (
+          <button className="btn-primary btn-sm" onClick={() => setShowQR(true)}>
+            Connect (Scan QR)
+          </button>
+        )}
+        {status.connected && isManager && (
+          <button className="btn-secondary btn-sm" onClick={handleDisconnect} disabled={disconnecting}>
+            {disconnecting ? "Disconnecting…" : "Disconnect"}
+          </button>
+        )}
+      </div>
+
+      <label className="bo-label">BenefitPay Number</label>
+      <p className="settings-hint">Sent in delivery WhatsApp messages so customers can pay you.</p>
+      <div className="wa-benefit-row">
+        <input
+          className="bo-input"
+          placeholder="e.g. 33050666"
+          value={benefitNum}
+          onChange={e => { setBenefitNum(e.target.value); setSaved(false); }}
+          maxLength={20}
+          disabled={!isManager}
+        />
+        {isManager && (
+          <button className="btn-primary btn-sm" onClick={handleSave} disabled={saving}>
+            {saving ? "Saving…" : saved ? "✓ Saved" : "Save"}
+          </button>
+        )}
+      </div>
+
+      {showQR && (
+        <WhatsAppQRModal
+          onClose={() => setShowQR(false)}
+          onConnected={refresh}
+        />
+      )}
+    </>
+  );
+}
 
 const TIMEZONES = [
   "Asia/Bahrain",
@@ -28,9 +134,9 @@ const TIMEZONES = [
 
 const TIMEOUT_OPTIONS = [1, 2, 5, 10, 15, 30, 60];
 
-interface Props { sessionUserId: string; }
+interface Props { sessionUserId: string; sessionRole: string; }
 
-export default function SettingsTab({ sessionUserId }: Props) {
+export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
   const [settings, setSettings] = useState<BranchSettings | null>(null);
   const [loading, setLoading]   = useState(true);
   const [saving, setSaving]     = useState(false);
@@ -194,6 +300,7 @@ export default function SettingsTab({ sessionUserId }: Props) {
     { id: "s-receipt",   label: "Receipt Customisation" },
     { id: "s-security",  label: "Security" },
     { id: "s-printer",   label: "Printers" },
+    { id: "s-whatsapp",  label: "WhatsApp" },
     { id: "s-app",       label: "Application" },
   ];
 
@@ -294,7 +401,7 @@ export default function SettingsTab({ sessionUserId }: Props) {
                 {name && <div className="receipt-mini-biz">{name}</div>}
                 {address && <div className="receipt-mini-addr">{address}</div>}
                 {phone && <div className="receipt-mini-addr">{phone}</div>}
-                {taxNumber && <div className="receipt-mini-addr">Tax: {taxNumber}</div>}
+                {taxNumber && <div className="receipt-mini-addr">TRN: {taxNumber}</div>}
                 {receiptHeader && <div className="receipt-mini-header">{receiptHeader}</div>}
                 <div className="receipt-mini-divider">- - - - - - - - - -</div>
                 <div className="receipt-mini-item">Item name × 1 .............. 1.500</div>
@@ -396,6 +503,14 @@ export default function SettingsTab({ sessionUserId }: Props) {
           {printTestMsg && (
             <pre className="thermal-test-msg">{printTestMsg}</pre>
           )}
+        </section>
+
+        {/* ── WhatsApp ── */}
+        <section id="s-whatsapp" className="settings-section">
+          <WhatsAppSettingsSection
+            sessionUserId={sessionUserId}
+            sessionRole={sessionRole}
+          />
         </section>
 
         {/* ── Application / Updater ── */}

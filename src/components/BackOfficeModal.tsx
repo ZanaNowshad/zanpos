@@ -13,11 +13,12 @@ import CashierReportTab from "./CashierReportTab";
 import EodCashupTab from "./EodCashupTab";
 import BulkStockTakeModal from "./BulkStockTakeModal";
 import SyncQueueModal from "./SyncQueueModal";
+import DeliveriesTab from "./DeliveriesTab";
 
 type Tab =
   | "products" | "categories" | "users" | "reports"
   | "inventory" | "customers" | "settings" | "audit" | "devices"
-  | "cashier" | "eod";
+  | "cashier" | "eod" | "deliveries";
 
 interface Props {
   sessionUser: SessionUser;
@@ -31,7 +32,7 @@ export default function BackOfficeModal({ sessionUser, onClose }: Props) {
   const isOwner   = sessionUser.role_name === "owner";
   const isManager = isOwner || sessionUser.role_name === "manager";
 
-  const tabs: Tab[] = ["products", "categories", "users", "reports", "cashier", "eod", "inventory", "customers", "settings"];
+  const tabs: Tab[] = ["products", "categories", "users", "reports", "cashier", "eod", "inventory", "customers", "deliveries", "settings"];
   if (isOwner) { tabs.push("audit"); tabs.push("devices"); }
 
   const tabLabel = (t: Tab) => {
@@ -47,6 +48,7 @@ export default function BackOfficeModal({ sessionUser, onClose }: Props) {
       settings:   "Settings",
       audit:      "Audit",
       devices:    "Devices",
+      deliveries: "Deliveries",
     };
     return labels[t] ?? t;
   };
@@ -105,9 +107,10 @@ export default function BackOfficeModal({ sessionUser, onClose }: Props) {
             {tab === "eod"        && <EodCashupTab     sessionUserId={sessionUser.user_id} />}
             {tab === "inventory"  && <InventoryTab     sessionUserId={sessionUser.user_id} />}
             {tab === "customers"  && <CustomersTab     sessionUserId={sessionUser.user_id} />}
-            {tab === "settings"   && <SettingsTab      sessionUserId={sessionUser.user_id} />}
+            {tab === "settings"   && <SettingsTab      sessionUserId={sessionUser.user_id} sessionRole={sessionUser.role_name} />}
             {tab === "audit"      && isOwner && <AuditLogTab  sessionUserId={sessionUser.user_id} />}
             {tab === "devices"    && isOwner && <DevicesTab   sessionUserId={sessionUser.user_id} />}
+            {tab === "deliveries" && <DeliveriesTab sessionUser={sessionUser} />}
           </div>
         </div>
       </div>

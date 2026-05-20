@@ -116,11 +116,99 @@ pub fn build_delivery_whatsapp_message(p: &WhatsAppDeliveryParams) -> String {
     )
 }
 
-// ─── Commands (stub — full implementations in next task) ─────────────────────
+// ─── Commands ─────────────────────────────────────────────────────────────────
 
 #[tauri::command]
 pub async fn whatsapp_status(_state: State<'_, AppState>) -> AppResult<WhatsAppStatus> {
-    Ok(WhatsAppStatus { connected: false, qr: None })
+    match reqwest::get(format!("{}/status", SIDECAR_URL)).await {
+        Ok(resp) => Ok(resp.json::<WhatsAppStatus>().await.unwrap_or(WhatsAppStatus {
+            connected: false,
+            qr:        None,
+        })),
+        Err(_) => Ok(WhatsAppStatus { connected: false, qr: None }),
+    }
+}
+
+#[tauri::command]
+pub async fn whatsapp_send_delivery(
+    input: SendDeliveryInput,
+    state: State<'_, AppState>,
+) -> AppResult<bool> {
+    let benefit_number: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM app_config WHERE key = 'whatsapp_benefit_number'",
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .flatten();
+
+    let store_name: Option<String> =
+        sqlx::query_scalar("SELECT name FROM branches WHERE is_active = 1 LIMIT 1")
+            .fetch_optional(&state.db)
+            .await?
+            .flatten();
+
+    let store_phone: Option<String> =
+        sqlx::query_scalar("SELECT phone FROM branches WHERE is_active = 1 LIMIT 1")
+            .fetch_optional(&state.db)
+            .await?
+            .flatten();
+
+    let message = build_delivery_whatsapp_message(&WhatsAppDeliveryParams {
+        receipt_number:    &input.receipt_number,
+        net_total_minor:   input.net_total_minor,
+        currency_exponent: input.currency_exponent,
+        address_text:      &input.address_text,
+        house_number:      input.house_number.as_deref(),
+        area:              input.area.as_deref(),
+        store_name:        store_name.as_deref().unwrap_or(""),
+        store_phone:       store_phone.as_deref(),
+        benefit_number:    benefit_number.as_deref(),
+    });
+
+    let client = reqwest::Client::new();
+    let result = client
+        .post(format!("{}/send", SIDECAR_URL))
+        .json(&serde_json::json!({ "to": input.to, "message": message }))
+        .send()
+        .await;
+
+    match result {
+        Ok(resp) => {
+            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            Ok(body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false))
+        }
+        Err(_) => Ok(false),
+    }
+}
+
+#[tauri::command]
+pub async fn whatsapp_disconnect(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<bool> {
+    crate::commands::rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let client = reqwest::Client::new();
+    Ok(client
+        .post(format!("{}/disconnect", SIDECAR_URL))
+        .send()
+        .await
+        .is_ok())
+}
+
+#[tauri::command]
+pub async fn whatsapp_save_config(
+    benefit_number: String,
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    crate::commands::rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    sqlx::query(
+        "INSERT OR REPLACE INTO app_config (key, value) VALUES ('whatsapp_benefit_number', ?)",
+    )
+    .bind(&benefit_number)
+    .execute(&state.db)
+    .await?;
+    Ok(())
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "ZANPOS WhatsApp sidecar — Baileys HTTP bridge",
   "main": "server.js",
+  "bin": "server.js",
   "scripts": {
     "start": "node server.js",
     "build": "pkg . --target node18-win-x64 --output ../../binaries/whatsapp-sidecar-x86_64-pc-windows-msvc.exe --compress GZip"

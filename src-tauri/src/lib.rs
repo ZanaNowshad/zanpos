@@ -4,16 +4,18 @@ mod db;
 mod domain;
 mod errors;
 mod inventory;
+mod secure_store;
 mod sync;
 
-use std::sync::Arc;
-use sqlx::SqlitePool;
-use tauri::Manager;
 use crate::sync::SyncWorker;
+use sqlx::SqlitePool;
+use std::sync::Arc;
+use tauri::Manager;
 
 pub struct AppState {
-    pub db:          SqlitePool,
+    pub db: SqlitePool,
     pub sync_worker: Arc<SyncWorker>,
+    pub whatsapp_child: Arc<std::sync::Mutex<Option<std::process::Child>>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -30,7 +32,9 @@ pub fn run() {
                 )
                 .init();
 
-            let app_data = app.path().app_data_dir()
+            let app_data = app
+                .path()
+                .app_data_dir()
                 .expect("Could not resolve app data directory");
             std::fs::create_dir_all(&app_data).ok();
             let db_path = app_data.join("zanpos.db");
@@ -39,7 +43,9 @@ pub fn run() {
             tracing::info!("Database path: {}", db_path_str);
 
             let db = tauri::async_runtime::block_on(async {
-                let pool = db::init_db(&db_path_str).await.expect("Failed to initialize database");
+                let pool = db::init_db(&db_path_str)
+                    .await
+                    .expect("Failed to initialize database");
                 // Migrate any legacy PLAIN: PINs to argon2id on first launch
                 if let Err(e) = db::repositories::auth_repo::rehash_plain_pins(&pool).await {
                     tracing::warn!("PIN rehash step failed: {:?}", e);
@@ -51,7 +57,44 @@ pub fn run() {
             let sync_worker = SyncWorker::new(db.clone());
             SyncWorker::spawn(sync_worker.clone());
 
-            app.manage(AppState { db, sync_worker });
+            // ── Start WhatsApp sidecar ────────────────────────────────────────────────
+            let wa_session_dir = app_data.join("wa-session");
+            std::fs::create_dir_all(&wa_session_dir).ok();
+
+            let sidecar_exe = {
+                let prod_path = app
+                    .path()
+                    .resource_dir()
+                    .map(|p| p.join("whatsapp-sidecar-x86_64-pc-windows-msvc.exe"))
+                    .unwrap_or_default();
+                let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("binaries")
+                    .join("whatsapp-sidecar-x86_64-pc-windows-msvc.exe");
+                if prod_path.exists() { prod_path } else { dev_path }
+            };
+
+            let wa_child: Arc<std::sync::Mutex<Option<std::process::Child>>> = if sidecar_exe.exists() {
+                match std::process::Command::new(&sidecar_exe)
+                    .arg(format!("--session-dir={}", wa_session_dir.to_string_lossy()))
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                {
+                    Ok(child) => {
+                        tracing::info!("WhatsApp sidecar started (pid {})", child.id());
+                        Arc::new(std::sync::Mutex::new(Some(child)))
+                    }
+                    Err(e) => {
+                        tracing::warn!("WhatsApp sidecar failed to start: {}", e);
+                        Arc::new(std::sync::Mutex::new(None))
+                    }
+                }
+            } else {
+                tracing::info!("WhatsApp sidecar binary not found — WA features disabled");
+                Arc::new(std::sync::Mutex::new(None))
+            };
+
+            app.manage(AppState { db, sync_worker, whatsapp_child: wa_child });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -150,6 +193,13 @@ pub fn run() {
             commands::ai_admin_commands::ai_execute_action,
             commands::ai_admin_commands::ai_cancel_action,
             commands::ai_admin_commands::ai_undo_action,
+            // Delivery
+            commands::delivery_commands::delivery_list,
+            commands::delivery_commands::delivery_get,
+            commands::delivery_commands::delivery_update_status,
+            commands::delivery_commands::delivery_confirm_payment,
+            commands::delivery_commands::delivery_cancel,
+            commands::delivery_commands::delivery_rider_suggestions,
             // Customers
             commands::customer_commands::customer_list,
             commands::customer_commands::customer_create,
@@ -180,6 +230,20 @@ pub fn run() {
             commands::admin_commands::product_barcode_remove,
             commands::admin_commands::product_barcodes_list,
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                let wa_child = {
+                    let state: tauri::State<'_, AppState> = window.state();
+                    Arc::clone(&state.whatsapp_child)
+                };
+                let mut guard = wa_child.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(ref mut child) = *guard {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    tracing::info!("WhatsApp sidecar terminated");
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -5,7 +5,9 @@ import {
   setupJoinStore,
   adminSetupSupabase,
   adminSetupSupabaseCredsOnly,
+  setupSaveBenefitNumber,
 } from "../tauri/commands";
+import WhatsAppQRModal from "../components/WhatsAppQRModal";
 
 interface Props {
   onComplete: (config: AppConfig) => void;
@@ -35,7 +37,7 @@ const TIMEZONES = [
 // ─── Path: New Store ──────────────────────────────────────────────────────────
 // Steps: 1=Welcome/path 2=Cloud(optional) 3=StoreInfo 4=Contact 5=Owner 6=Review
 
-type NewStep = 1 | 2 | 3 | 4 | 5 | 6;
+type NewStep = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 function NewStoreWizard({ onComplete }: { onComplete: (cfg: AppConfig) => void }) {
   const [step, setStep] = useState<NewStep>(2); // skip path-selector inside sub-wizard
@@ -59,7 +61,11 @@ function NewStoreWizard({ onComplete }: { onComplete: (cfg: AppConfig) => void }
   const [receiptHeader, setReceiptHeader] = useState("");
   const [receiptFooter, setReceiptFooter] = useState("Thank you for your purchase!");
 
-  // Step 5 — admin account
+  // Step 5 — Payments & WhatsApp
+  const [benefitNumber, setBenefitNumber] = useState("");
+  const [showWaQR, setShowWaQR]           = useState(false);
+
+  // Step 6 — admin account
   const [ownerName, setOwnerName]           = useState("");
   const [ownerUsername, setOwnerUsername]   = useState("admin");
   const [ownerPin, setOwnerPin]             = useState("");
@@ -105,7 +111,7 @@ function NewStoreWizard({ onComplete }: { onComplete: (cfg: AppConfig) => void }
   const goNext = () => {
     setError(null);
     if (step === 3 && !storeName.trim()) { setError("Store name is required"); return; }
-    if (step === 5) {
+    if (step === 6) {
       if (!ownerName.trim())     { setError("Owner name is required"); return; }
       if (!ownerUsername.trim()) { setError("Username is required"); return; }
       if (ownerPin.length < 4)   { setError("PIN must be at least 4 digits"); return; }
@@ -131,10 +137,14 @@ function NewStoreWizard({ onComplete }: { onComplete: (cfg: AppConfig) => void }
         owner_username:     ownerUsername.trim(),
         owner_pin:          ownerPin,
       });
+      // Save benefit number to app_config (non-critical — ignore failure)
+      if (benefitNumber.trim()) {
+        try { await setupSaveBenefitNumber(benefitNumber.trim()); } catch { /* ignore */ }
+      }
       onComplete(cfg);
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Setup failed — please try again");
-      setStep(5);
+      setStep(6); // was setStep(5) — Owner is now step 6
     } finally {
       setLoading(false);
     }
@@ -142,7 +152,7 @@ function NewStoreWizard({ onComplete }: { onComplete: (cfg: AppConfig) => void }
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  const LABELS = ["Cloud", "Store Info", "Contact", "Owner", "Review"];
+  const LABELS = ["Cloud", "Store Info", "Contact", "Payments", "Owner", "Review"];
   const stepIdx = step - 2; // 0-based for progress bar
 
   return (
@@ -281,8 +291,68 @@ function NewStoreWizard({ onComplete }: { onComplete: (cfg: AppConfig) => void }
         </div>
       )}
 
-      {/* ── Step 5: Owner account ── */}
+      {/* ── Step 5: Payments & WhatsApp ── */}
       {step === 5 && (
+        <div className="setup-content">
+          <h2 className="setup-title">Payments & WhatsApp</h2>
+          <p className="setup-body">
+            Set your BenefitPay number so it appears in delivery WhatsApp messages,
+            and optionally connect WhatsApp now.
+          </p>
+
+          <label className="field-label">BenefitPay Number <span className="setup-required">*</span></label>
+          <p className="setup-field-hint">Customers send delivery payments to this number via BenefitPay.</p>
+          <input
+            className="field-input"
+            type="text"
+            placeholder="e.g. 33050666"
+            value={benefitNumber}
+            onChange={e => { setBenefitNumber(e.target.value); clearError(); }}
+            maxLength={20}
+          />
+
+          <div className="setup-wa-section">
+            <div className="setup-wa-title">📱 Connect WhatsApp (optional)</div>
+            <p className="setup-field-hint">
+              ZANPOS will automatically send order confirmations to customers via WhatsApp.
+              You can skip this and connect later from Back Office → Settings.
+            </p>
+            <button
+              className="setup-btn-secondary"
+              type="button"
+              onClick={() => setShowWaQR(true)}
+            >
+              Connect WhatsApp (Scan QR)
+            </button>
+          </div>
+
+          {error && <div className="modal-error">{error}</div>}
+
+          <div className="setup-actions">
+            <button className="setup-btn-secondary" onClick={() => { setError(null); setStep(4); }}>← Back</button>
+            <button
+              className="setup-btn-primary"
+              onClick={() => {
+                if (!benefitNumber.trim()) { setError("BenefitPay number is required"); return; }
+                goNext();
+              }}
+            >
+              Next →
+            </button>
+          </div>
+
+          <p className="setup-hint">You can update all these settings anytime in Back Office → Settings.</p>
+
+          {showWaQR && (
+            <WhatsAppQRModal
+              onClose={() => setShowWaQR(false)}
+            />
+          )}
+        </div>
+      )}
+
+      {/* ── Step 6: Owner account ── */}
+      {step === 6 && (
         <div className="setup-content">
           <h2 className="setup-title">Owner Account</h2>
           <p className="setup-body">This account has full access. Keep your PIN secure.</p>
@@ -301,14 +371,14 @@ function NewStoreWizard({ onComplete }: { onComplete: (cfg: AppConfig) => void }
 
           {error && <div className="modal-error">{error}</div>}
           <div className="setup-actions">
-            <button className="setup-btn-secondary" onClick={() => { setError(null); setStep(4); }}>← Back</button>
+            <button className="setup-btn-secondary" onClick={() => { setError(null); setStep(5); }}>← Back</button>
             <button className="setup-btn-primary" onClick={goNext}>Review →</button>
           </div>
         </div>
       )}
 
-      {/* ── Step 6: Review & launch ── */}
-      {step === 6 && (
+      {/* ── Step 7: Review & launch ── */}
+      {step === 7 && (
         <div className="setup-content setup-done">
           <div className="setup-done-icon">🎉</div>
           <h2 className="setup-title">Ready to go!</h2>
@@ -331,7 +401,7 @@ function NewStoreWizard({ onComplete }: { onComplete: (cfg: AppConfig) => void }
 
           {error && <div className="modal-error">{error}</div>}
           <div className="setup-actions">
-            <button className="setup-btn-secondary" onClick={() => { setError(null); setStep(5); }} disabled={loading}>← Back</button>
+            <button className="setup-btn-secondary" onClick={() => { setError(null); setStep(6); }} disabled={loading}>← Back</button>
             <button className="setup-btn-primary setup-btn-finish" onClick={handleFinish} disabled={loading}>
               {loading ? "Setting up…" : "Launch POS 🚀"}
             </button>

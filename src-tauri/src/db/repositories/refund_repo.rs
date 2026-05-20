@@ -1,18 +1,21 @@
-use sqlx::{SqlitePool, Row};
-use ulid::Ulid;
 use crate::db::repositories::audit_hash;
-use crate::domain::refund::{SaleForRefund, SaleItemForRefund, RefundItemInput, RefundResult};
-use crate::domain::sale::{SaleResult, SaleItemSummary, PaymentSummary};
+use crate::domain::refund::{RefundItemInput, RefundResult, SaleForRefund, SaleItemForRefund};
+use crate::domain::sale::{PaymentSummary, SaleItemSummary, SaleResult};
 use crate::errors::{AppError, AppResult};
-use crate::sync::outbox;
 use crate::inventory::movements;
+use crate::sync::outbox;
+use sqlx::{Row, SqlitePool};
+use ulid::Ulid;
 
-pub async fn get_sale_by_receipt(pool: &SqlitePool, receipt_number: &str) -> AppResult<SaleForRefund> {
+pub async fn get_sale_by_receipt(
+    pool: &SqlitePool,
+    receipt_number: &str,
+) -> AppResult<SaleForRefund> {
     let sale_row = sqlx::query(
         "SELECT s.sale_id, s.receipt_number, s.net_total_minor, s.currency, s.sold_at, s.status,
                 u.display_name as cashier_name
          FROM sales s JOIN users u ON u.user_id = s.cashier_user_id
-         WHERE s.receipt_number = ?"
+         WHERE s.receipt_number = ?",
     )
     .bind(receipt_number)
     .fetch_optional(pool)
@@ -23,19 +26,22 @@ pub async fn get_sale_by_receipt(pool: &SqlitePool, receipt_number: &str) -> App
 
     let item_rows = sqlx::query(
         "SELECT sale_item_id, product_name_snapshot, quantity, unit_price_minor, line_total_minor
-         FROM sale_items WHERE sale_id = ? AND voided = 0"
+         FROM sale_items WHERE sale_id = ? AND voided = 0",
     )
     .bind(&sale_id)
     .fetch_all(pool)
     .await?;
 
-    let items = item_rows.iter().map(|r| SaleItemForRefund {
-        sale_item_id: r.get("sale_item_id"),
-        product_name_snapshot: r.get("product_name_snapshot"),
-        quantity: r.get("quantity"),
-        unit_price_minor: r.get("unit_price_minor"),
-        line_total_minor: r.get("line_total_minor"),
-    }).collect();
+    let items = item_rows
+        .iter()
+        .map(|r| SaleItemForRefund {
+            sale_item_id: r.get("sale_item_id"),
+            product_name_snapshot: r.get("product_name_snapshot"),
+            quantity: r.get("quantity"),
+            unit_price_minor: r.get("unit_price_minor"),
+            line_total_minor: r.get("line_total_minor"),
+        })
+        .collect();
 
     Ok(SaleForRefund {
         sale_id,
@@ -49,7 +55,10 @@ pub async fn get_sale_by_receipt(pool: &SqlitePool, receipt_number: &str) -> App
     })
 }
 
-pub async fn get_sale_result_by_receipt(pool: &SqlitePool, receipt_number: &str) -> AppResult<SaleResult> {
+pub async fn get_sale_result_by_receipt(
+    pool: &SqlitePool,
+    receipt_number: &str,
+) -> AppResult<SaleResult> {
     let sale_row = sqlx::query(
         "SELECT s.sale_id, s.receipt_number, s.net_total_minor, s.tax_total_minor,
                 s.discount_total_minor, s.currency, s.sold_at, s.business_date, s.created_offline,
@@ -57,7 +66,7 @@ pub async fn get_sale_result_by_receipt(pool: &SqlitePool, receipt_number: &str)
          FROM sales s
          JOIN users u ON u.user_id = s.cashier_user_id
          JOIN branches b ON b.branch_id = s.branch_id
-         WHERE s.receipt_number = ?"
+         WHERE s.receipt_number = ?",
     )
     .bind(receipt_number)
     .fetch_optional(pool)
@@ -74,26 +83,32 @@ pub async fn get_sale_result_by_receipt(pool: &SqlitePool, receipt_number: &str)
     .fetch_all(pool)
     .await?;
 
-    let items = item_rows.iter().map(|r| SaleItemSummary {
-        product_name: r.get("product_name_snapshot"),
-        quantity: r.get("quantity"),
-        unit_price_minor: r.get("unit_price_minor"),
-        line_total_minor: r.get("line_total_minor"),
-        tax_amount_minor: r.get("tax_amount_minor"),
-    }).collect();
+    let items = item_rows
+        .iter()
+        .map(|r| SaleItemSummary {
+            product_name: r.get("product_name_snapshot"),
+            quantity: r.get("quantity"),
+            unit_price_minor: r.get("unit_price_minor"),
+            line_total_minor: r.get("line_total_minor"),
+            tax_amount_minor: r.get("tax_amount_minor"),
+        })
+        .collect();
 
     let payment_rows = sqlx::query(
-        "SELECT payment_method, amount_minor, change_minor FROM payments WHERE sale_id = ?"
+        "SELECT payment_method, amount_minor, change_minor FROM payments WHERE sale_id = ?",
     )
     .bind(&sale_id)
     .fetch_all(pool)
     .await?;
 
-    let payments = payment_rows.iter().map(|r| PaymentSummary {
-        method: r.get("payment_method"),
-        amount_minor: r.get("amount_minor"),
-        change_minor: r.get("change_minor"),
-    }).collect();
+    let payments = payment_rows
+        .iter()
+        .map(|r| PaymentSummary {
+            method: r.get("payment_method"),
+            amount_minor: r.get("amount_minor"),
+            change_minor: r.get("change_minor"),
+        })
+        .collect();
 
     let created_offline: i64 = sale_row.get("created_offline");
 
@@ -112,16 +127,8 @@ pub async fn get_sale_result_by_receipt(pool: &SqlitePool, receipt_number: &str)
         business_date: sale_row.get("business_date"),
         created_offline: created_offline != 0,
         low_stock_alerts: vec![],
+        delivery: None,
     })
-}
-
-async fn next_refund_receipt_number(pool: &SqlitePool, branch_code: &str, device_code: &str) -> AppResult<String> {
-    let prefix = format!("{}-{}-REF-%", branch_code, device_code);
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM refunds WHERE refund_receipt_number LIKE ?")
-        .bind(&prefix)
-        .fetch_one(pool)
-        .await?;
-    Ok(format!("{}-{}-REF-{:08}", branch_code, device_code, count + 1))
 }
 
 pub async fn create_refund(
@@ -136,30 +143,124 @@ pub async fn create_refund(
         return Err(AppError::Validation("No items selected for refund".into()));
     }
 
-    let sale_row = sqlx::query(
-        "SELECT s.currency, s.device_id, b.branch_code, d.device_code
+    // Acquire a single connection and start with BEGIN IMMEDIATE.
+    // IMMEDIATE acquires the SQLite write lock upfront, serialising concurrent
+    // refund attempts on the same sale — preventing double-refund races.
+    let mut conn = pool.acquire().await?;
+    sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
+
+    // Inline rollback helper (called on any early-return error path).
+    macro_rules! abort {
+        ($e:expr) => {{
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            return Err($e);
+        }};
+    }
+
+    // ── Guard: original sale must exist and must not be voided ────────────────
+    let sale_status_row = sqlx::query(
+        "SELECT s.status, s.currency, s.device_id, b.branch_code, d.device_code
          FROM sales s
          JOIN branches b ON b.branch_id = s.branch_id
-         JOIN devices d ON d.device_id = s.device_id
-         WHERE s.sale_id = ?"
+         JOIN devices d  ON d.device_id  = s.device_id
+         WHERE s.sale_id = ?",
     )
     .bind(original_sale_id)
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("Original sale not found".into()))?;
+    .fetch_optional(&mut *conn)
+    .await;
 
-    let currency: String    = sale_row.get("currency");
-    let device_id: String   = sale_row.get("device_id");
+    let sale_row = match sale_status_row {
+        Ok(Some(r)) => r,
+        Ok(None) => abort!(AppError::NotFound("Original sale not found".into())),
+        Err(e) => abort!(AppError::Database(e)),
+    };
+
+    let sale_status: String = sale_row.get("status");
+    if sale_status == "voided" {
+        abort!(AppError::Validation("Cannot refund a voided sale".into()));
+    }
+
+    // ── Guard: per-item ceiling + double-refund prevention (atomic) ───────────
+    // Uses the `refunded_amount_minor` column added in migration 0013.
+    // The UPDATE is a single atomic SQL statement: if already_refunded + new_amount
+    // would exceed line_total_minor, the WHERE clause fails and rows_affected == 0.
+    for item in &items {
+        if item.refund_amount_minor <= 0 {
+            abort!(AppError::Validation(format!(
+                "Refund amount must be positive for '{}'",
+                item.product_name_snapshot
+            )));
+        }
+
+        let rows = sqlx::query(
+            "UPDATE sale_items
+             SET refunded_amount_minor = refunded_amount_minor + ?
+             WHERE sale_item_id = ? AND sale_id = ?
+               AND (refunded_amount_minor + ?) <= line_total_minor",
+        )
+        .bind(item.refund_amount_minor)
+        .bind(&item.sale_item_id)
+        .bind(original_sale_id)
+        .bind(item.refund_amount_minor)
+        .execute(&mut *conn)
+        .await;
+
+        let affected = match rows {
+            Ok(r) => r.rows_affected(),
+            Err(e) => abort!(AppError::Database(e)),
+        };
+
+        if affected == 0 {
+            // Either item not found on this sale, or refund would exceed remaining balance.
+            // Check which case to give a useful error.
+            let exists: Option<i64> = sqlx::query_scalar(
+                "SELECT 1 FROM sale_items WHERE sale_item_id = ? AND sale_id = ?",
+            )
+            .bind(&item.sale_item_id)
+            .bind(original_sale_id)
+            .fetch_optional(&mut *conn)
+            .await
+            .unwrap_or(None);
+
+            if exists.is_none() {
+                abort!(AppError::NotFound(format!(
+                    "Sale item '{}' not found on sale {}",
+                    item.product_name_snapshot, original_sale_id
+                )));
+            } else {
+                abort!(AppError::Validation(format!(
+                    "Refund amount for '{}' exceeds remaining refundable balance",
+                    item.product_name_snapshot
+                )));
+            }
+        }
+    }
+
+    let sale_row = sale_row; // already fetched above
+
+    let currency: String = sale_row.get("currency");
+    let device_id: String = sale_row.get("device_id");
     let branch_code: String = sale_row.get("branch_code");
     let device_code: String = sale_row.get("device_code");
 
     let refund_total: i64 = items.iter().map(|i| i.refund_amount_minor).sum();
     let refund_id = Ulid::new().to_string();
-    let refund_receipt_number = next_refund_receipt_number(pool, &branch_code, &device_code).await?;
+
+    // Generate receipt number inside the IMMEDIATE transaction so it's sequential.
+    let prefix = format!("{}-{}-REF-%", branch_code, device_code);
+    let count: i64 =
+        match sqlx::query_scalar("SELECT COUNT(*) FROM refunds WHERE refund_receipt_number LIKE ?")
+            .bind(&prefix)
+            .fetch_one(&mut *conn)
+            .await
+        {
+            Ok(c) => c,
+            Err(e) => abort!(AppError::Database(e)),
+        };
+    let refund_receipt_number = format!("{}-{}-REF-{:08}", branch_code, device_code, count + 1);
+
     let now = chrono::Utc::now().to_rfc3339();
     let idempotency_key = format!("refund-{}", refund_id);
-
-    let mut tx = pool.begin().await?;
 
     // Validate reason_code is one of the accepted values; fall back to 'other'
     let safe_reason_code = match reason_code {
@@ -167,78 +268,151 @@ pub async fn create_refund(
         _ => "other",
     };
 
-    sqlx::query(
+    if let Err(e) = sqlx::query(
         "INSERT INTO refunds (refund_id, original_sale_id, refund_receipt_number, reason,
          return_reason_code, refund_total_minor, currency, created_by_user_id, created_at,
          sync_status, idempotency_key)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)"
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
     )
-    .bind(&refund_id).bind(original_sale_id).bind(&refund_receipt_number)
-    .bind(reason).bind(safe_reason_code).bind(refund_total).bind(&currency)
-    .bind(created_by_user_id).bind(&now).bind(&idempotency_key)
-    .execute(&mut *tx)
-    .await?;
+    .bind(&refund_id)
+    .bind(original_sale_id)
+    .bind(&refund_receipt_number)
+    .bind(reason)
+    .bind(safe_reason_code)
+    .bind(refund_total)
+    .bind(&currency)
+    .bind(created_by_user_id)
+    .bind(&now)
+    .bind(&idempotency_key)
+    .execute(&mut *conn)
+    .await
+    {
+        abort!(AppError::Database(e));
+    }
 
     for item in &items {
         let refund_item_id = Ulid::new().to_string();
-        sqlx::query(
-            "INSERT INTO refund_items (refund_item_id, refund_id, sale_item_id, product_name_snapshot, quantity, unit_price_minor, refund_amount_minor)
-             VALUES (?, ?, ?, ?, ?, ?, ?)"
+        if let Err(e) = sqlx::query(
+            "INSERT INTO refund_items
+             (refund_item_id, refund_id, sale_item_id, product_name_snapshot,
+              quantity, unit_price_minor, refund_amount_minor)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
-        .bind(&refund_item_id).bind(&refund_id).bind(&item.sale_item_id)
-        .bind(&item.product_name_snapshot).bind(&item.quantity)
-        .bind(item.unit_price_minor).bind(item.refund_amount_minor)
-        .execute(&mut *tx)
-        .await?;
+        .bind(&refund_item_id)
+        .bind(&refund_id)
+        .bind(&item.sale_item_id)
+        .bind(&item.product_name_snapshot)
+        .bind(&item.quantity)
+        .bind(item.unit_price_minor)
+        .bind(item.refund_amount_minor)
+        .execute(&mut *conn)
+        .await
+        {
+            abort!(AppError::Database(e));
+        }
     }
 
-    sqlx::query("UPDATE sales SET status = 'partially_refunded' WHERE sale_id = ? AND status = 'completed'")
-        .bind(original_sale_id)
-        .execute(&mut *tx)
-        .await?;
-
-    let audit_id   = Ulid::new().to_string();
-    let after_json = serde_json::json!({ "refund_id": &refund_id, "total_minor": refund_total }).to_string();
-    let prev_hash  = audit_hash::fetch_last_hash(pool, &device_id).await.unwrap_or_default();
-    let hash = audit_hash::compute_audit_hash(&audit_hash::AuditHashInput {
-        audit_log_id: &audit_id, event_type: "refund.created", entity_type: "refund",
-        entity_id: &refund_id, actor_user_id: created_by_user_id,
-        created_at: &now, after_json: Some(&after_json), previous_hash: &prev_hash,
-    });
-    sqlx::query(
-        "INSERT INTO audit_logs (audit_log_id, event_type, entity_type, entity_id,
-         actor_user_id, actor_type, after_json, created_at, hash, previous_hash)
-         VALUES (?, 'refund.created', 'refund', ?, ?, 'user', ?, ?, ?, ?)"
-    )
-    .bind(&audit_id).bind(&refund_id).bind(created_by_user_id)
-    .bind(&after_json).bind(&now).bind(&hash)
-    .bind(if prev_hash.is_empty() { None } else { Some(prev_hash.clone()) })
-    .execute(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
-    tracing::info!("Refund created: {} ({})", refund_id, refund_receipt_number);
-
-    // Return stock for refunded items (after commit; failures don't roll back refund)
-    let _ = movements::return_refund(pool, &refund_id, created_by_user_id).await;
-
-    // Enqueue refund for sync
-    // Need device_id and branch_id from the original sale's device/branch
-    let sale_meta = sqlx::query(
-        "SELECT device_id, branch_id FROM sales WHERE sale_id = ?"
+    if let Err(e) = sqlx::query(
+        "UPDATE sales SET status = 'partially_refunded'
+         WHERE sale_id = ? AND status = 'completed'",
     )
     .bind(original_sale_id)
-    .fetch_optional(pool)
-    .await;
+    .execute(&mut *conn)
+    .await
+    {
+        abort!(AppError::Database(e));
+    }
+
+    let audit_id = Ulid::new().to_string();
+    let after_json =
+        serde_json::json!({ "refund_id": &refund_id, "total_minor": refund_total }).to_string();
+    let prev_hash = audit_hash::fetch_last_hash(pool, &device_id)
+        .await
+        .unwrap_or_default();
+    let hash = audit_hash::compute_audit_hash(&audit_hash::AuditHashInput {
+        audit_log_id: &audit_id,
+        event_type: "refund.created",
+        entity_type: "refund",
+        entity_id: &refund_id,
+        actor_user_id: created_by_user_id,
+        created_at: &now,
+        after_json: Some(&after_json),
+        previous_hash: &prev_hash,
+    });
+    if let Err(e) = sqlx::query(
+        "INSERT INTO audit_logs (audit_log_id, event_type, entity_type, entity_id,
+         actor_user_id, actor_type, after_json, created_at, hash, previous_hash)
+         VALUES (?, 'refund.created', 'refund', ?, ?, 'user', ?, ?, ?, ?)",
+    )
+    .bind(&audit_id)
+    .bind(&refund_id)
+    .bind(created_by_user_id)
+    .bind(&after_json)
+    .bind(&now)
+    .bind(&hash)
+    .bind(if prev_hash.is_empty() {
+        None
+    } else {
+        Some(prev_hash.clone())
+    })
+    .execute(&mut *conn)
+    .await
+    {
+        abort!(AppError::Database(e));
+    }
+
+    if let Err(e) = sqlx::query("COMMIT").execute(&mut *conn).await {
+        let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+        return Err(AppError::Database(e));
+    }
+    tracing::info!("Refund created: {} ({})", refund_id, refund_receipt_number);
+
+    // Fetch the original sale's branch_id and device_id for inventory and sync.
+    // We do this once and reuse for both stock return and outbox enqueue.
+    let sale_meta = sqlx::query("SELECT device_id, branch_id FROM sales WHERE sale_id = ?")
+        .bind(original_sale_id)
+        .fetch_optional(pool)
+        .await;
+
+    // Return stock for refunded items (after commit; failures don't roll back refund).
+    // Pass real branch/device from the original sale so movements carry correct identity.
+    if let Ok(Some(ref meta)) = sale_meta {
+        let device_id: String = meta.get("device_id");
+        let branch_id_str: String = meta.get("branch_id");
+        let _ = movements::return_refund(
+            pool,
+            &refund_id,
+            created_by_user_id,
+            &branch_id_str,
+            &device_id,
+        )
+        .await;
+    } else {
+        // Sale meta unavailable — still attempt return but log the anomaly
+        tracing::warn!(
+            "return_refund: could not resolve branch/device for sale {}",
+            original_sale_id
+        );
+    }
 
     if let Ok(Some(meta)) = sale_meta {
         let device_id: String = meta.get("device_id");
         let branch_id_str: String = meta.get("branch_id");
         let _ = outbox::enqueue_refund(
-            pool, &device_id, &branch_id_str, &refund_id, original_sale_id,
-            &refund_receipt_number, reason, refund_total, &currency,
-            created_by_user_id, &now, &idempotency_key,
-        ).await;
+            pool,
+            &device_id,
+            &branch_id_str,
+            &refund_id,
+            original_sale_id,
+            &refund_receipt_number,
+            reason,
+            refund_total,
+            &currency,
+            created_by_user_id,
+            &now,
+            &idempotency_key,
+        )
+        .await;
 
         for item in &items {
             let ri_id: Option<String> = sqlx::query_scalar(
@@ -253,10 +427,18 @@ pub async fn create_refund(
 
             if let Some(refund_item_id) = ri_id {
                 let _ = outbox::enqueue_refund_item(
-                    pool, &device_id, &branch_id_str, &refund_item_id, &refund_id,
-                    &item.sale_item_id, &item.product_name_snapshot,
-                    &item.quantity, item.unit_price_minor, item.refund_amount_minor,
-                ).await;
+                    pool,
+                    &device_id,
+                    &branch_id_str,
+                    &refund_item_id,
+                    &refund_id,
+                    &item.sale_item_id,
+                    &item.product_name_snapshot,
+                    &item.quantity,
+                    item.unit_price_minor,
+                    item.refund_amount_minor,
+                )
+                .await;
             }
         }
     }
@@ -268,4 +450,395 @@ pub async fn create_refund(
         currency,
         created_at: now,
     })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Integration tests
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::repositories::sale_repo;
+    use crate::domain::cart::{Cart, CartLine};
+    use crate::domain::sale::PaymentInput;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    const BRANCH: &str = "01JBRANCH0000000000000001";
+    const DEVICE: &str = "01JDEVICE0000000000000001";
+    const CASHIER: &str = "01JUSER000000000000CASH01";
+    const COLA_ID: &str = "01JPROD00000000000COLA001";
+    const TAX_VAT: &str = "01JTAX000000000000VAT001";
+
+    async fn make_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory pool");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("migrations");
+        // Seed enough stock so sale setup calls don't fail on stock-out checks.
+        sqlx::query("UPDATE stock_levels SET quantity_on_hand = '1000' WHERE branch_id = ?")
+            .bind(BRANCH)
+            .execute(&pool)
+            .await
+            .expect("seed stock");
+        pool
+    }
+
+    async fn insert_shift(pool: &SqlitePool) -> String {
+        let shift_id = ulid::Ulid::new().to_string();
+        sqlx::query(
+            "INSERT INTO shifts (shift_id, branch_id, device_id, cashier_user_id, opened_at, status)
+             VALUES (?, ?, ?, ?, datetime('now'), 'open')"
+        )
+        .bind(&shift_id).bind(BRANCH).bind(DEVICE).bind(CASHIER)
+        .execute(pool).await.expect("insert shift");
+        shift_id
+    }
+
+    /// Create a real sale and return (sale_id, sale_item_id) of the first item.
+    async fn create_test_sale(pool: &SqlitePool, shift_id: &str, key: &str) -> (String, String) {
+        let qty_f = 2.0_f64;
+        let subtotal = (400.0 * qty_f) as i64;
+        let tax = subtotal * 1_000 / 10_000;
+        let line = CartLine {
+            cart_line_id: ulid::Ulid::new().to_string(),
+            product_id: Some(COLA_ID.into()),
+            product_name: "Coca-Cola 330ml".into(),
+            sku: Some("COLA330".into()),
+            barcode: None,
+            quantity: "2".to_string(),
+            unit_price_minor: 400,
+            line_discount_minor: 0,
+            line_discount_reason: None,
+            tax_rule_id: TAX_VAT.to_string(),
+            tax_rate_basis_points: 1_000,
+            tax_inclusive: false,
+            tax_amount_minor: tax,
+            line_total_minor: subtotal + tax,
+            note: None,
+            voided: false,
+        };
+
+        let mut cart = Cart::new(
+            BRANCH.into(),
+            DEVICE.into(),
+            shift_id.into(),
+            CASHIER.into(),
+        );
+        cart.lines.push(line);
+
+        let payments = vec![PaymentInput {
+            method: "cash".into(),
+            amount_minor: subtotal + tax,
+            tendered_minor: Some(subtotal + tax),
+            external_reference: None,
+        }];
+
+        let result = sale_repo::finalize_sale(pool, &cart, payments, key, None, false, None)
+            .await
+            .expect("finalize_sale in test setup");
+
+        // Retrieve the sale_item_id for the inserted item
+        let item_id: String =
+            sqlx::query_scalar("SELECT sale_item_id FROM sale_items WHERE sale_id = ? LIMIT 1")
+                .bind(&result.sale_id)
+                .fetch_one(pool)
+                .await
+                .expect("fetch sale_item_id");
+
+        (result.sale_id, item_id)
+    }
+
+    // ── 1. Full refund of a sale succeeds and returns correct total ───────────
+    #[tokio::test]
+    async fn test_create_refund_happy_path() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+        let (sale_id, item_id) = create_test_sale(&pool, &shift_id, "idem-refund-1").await;
+
+        // Refund the full 2× Cola at 880 minor
+        let items = vec![RefundItemInput {
+            sale_item_id: item_id,
+            product_name_snapshot: "Coca-Cola 330ml".into(),
+            quantity: "2".to_string(),
+            unit_price_minor: 440, // (400 + 40 tax) per unit
+            refund_amount_minor: 880,
+        }];
+
+        let result = create_refund(
+            &pool,
+            &sale_id,
+            items,
+            "Defective product",
+            "defective",
+            CASHIER,
+        )
+        .await
+        .expect("create_refund");
+
+        assert_eq!(result.refund_total_minor, 880);
+        assert!(!result.refund_receipt_number.is_empty());
+        assert!(
+            result.refund_receipt_number.contains("REF"),
+            "receipt must contain REF"
+        );
+    }
+
+    // ── 2. Refund with empty items is rejected ────────────────────────────────
+    #[tokio::test]
+    async fn test_create_refund_empty_items_rejected() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+        let (sale_id, _) = create_test_sale(&pool, &shift_id, "idem-refund-empty").await;
+
+        let err = create_refund(&pool, &sale_id, vec![], "test", "other", CASHIER)
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(err, AppError::Validation(_)),
+            "empty items must fail validation"
+        );
+    }
+
+    // ── 3. Refund of a non-existent sale returns NotFound ─────────────────────
+    #[tokio::test]
+    async fn test_create_refund_unknown_sale() {
+        let pool = make_pool().await;
+
+        let items = vec![RefundItemInput {
+            sale_item_id: "fake-item".into(),
+            product_name_snapshot: "Ghost Product".into(),
+            quantity: "1".to_string(),
+            unit_price_minor: 100,
+            refund_amount_minor: 100,
+        }];
+
+        let err = create_refund(&pool, "FAKE-SALE-ID", items, "test", "other", CASHIER)
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(err, AppError::NotFound(_)),
+            "unknown sale must return NotFound"
+        );
+    }
+
+    // ── 4. Refund receipt number is sequential ────────────────────────────────
+    #[tokio::test]
+    async fn test_refund_receipt_sequential() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+        let (sale_id, item_id) = create_test_sale(&pool, &shift_id, "idem-refund-seq").await;
+
+        let make_item = || RefundItemInput {
+            sale_item_id: item_id.clone(),
+            product_name_snapshot: "Coca-Cola 330ml".into(),
+            quantity: "1".to_string(),
+            unit_price_minor: 440,
+            refund_amount_minor: 440,
+        };
+
+        // Create two refunds on the same sale (partial refunds)
+        let r1 = create_refund(
+            &pool,
+            &sale_id,
+            vec![make_item()],
+            "reason 1",
+            "other",
+            CASHIER,
+        )
+        .await
+        .expect("refund 1");
+        let r2 = create_refund(
+            &pool,
+            &sale_id,
+            vec![make_item()],
+            "reason 2",
+            "other",
+            CASHIER,
+        )
+        .await
+        .expect("refund 2");
+
+        assert_ne!(r1.refund_receipt_number, r2.refund_receipt_number);
+        // Second refund number should be higher (sequential counter)
+        assert!(r2.refund_receipt_number > r1.refund_receipt_number);
+    }
+
+    // ── 5. Partial refund marks sale as partially_refunded ────────────────────
+    #[tokio::test]
+    async fn test_partial_refund_updates_sale_status() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+        let (sale_id, item_id) = create_test_sale(&pool, &shift_id, "idem-refund-status").await;
+
+        let items = vec![RefundItemInput {
+            sale_item_id: item_id,
+            product_name_snapshot: "Coca-Cola 330ml".into(),
+            quantity: "1".to_string(),
+            unit_price_minor: 440,
+            refund_amount_minor: 440,
+        }];
+
+        create_refund(
+            &pool,
+            &sale_id,
+            items,
+            "partial return",
+            "customer_return",
+            CASHIER,
+        )
+        .await
+        .expect("partial refund");
+
+        let status: String = sqlx::query_scalar("SELECT status FROM sales WHERE sale_id = ?")
+            .bind(&sale_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch sale status");
+
+        assert_eq!(status, "partially_refunded");
+    }
+
+    // ── T7. Refund amount > original line total is rejected ───────────────────
+    #[tokio::test]
+    async fn test_refund_ceiling_enforced() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+        let (sale_id, item_id) = create_test_sale(&pool, &shift_id, "idem-t7-ceiling").await;
+
+        // The line_total_minor for 2× Cola at 440 each = 880.
+        // Attempt to refund 999 — exceeds ceiling.
+        let items = vec![RefundItemInput {
+            sale_item_id: item_id,
+            product_name_snapshot: "Coca-Cola 330ml".into(),
+            quantity: "2".to_string(),
+            unit_price_minor: 440,
+            refund_amount_minor: 999, // > 880 line_total
+        }];
+
+        let err = create_refund(&pool, &sale_id, items, "test ceiling", "other", CASHIER)
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(err, AppError::Validation(_)),
+            "refund > original line total must be rejected: got {err:?}"
+        );
+    }
+
+    // ── T9. Refund on a voided sale is rejected ───────────────────────────────
+    #[tokio::test]
+    async fn test_refund_on_voided_sale_rejected() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+        let (sale_id, item_id) = create_test_sale(&pool, &shift_id, "idem-t9-void").await;
+
+        // Void the sale first
+        sqlx::query("UPDATE sales SET status = 'voided' WHERE sale_id = ?")
+            .bind(&sale_id)
+            .execute(&pool)
+            .await
+            .expect("void sale");
+
+        let items = vec![RefundItemInput {
+            sale_item_id: item_id,
+            product_name_snapshot: "Coca-Cola 330ml".into(),
+            quantity: "1".to_string(),
+            unit_price_minor: 440,
+            refund_amount_minor: 440,
+        }];
+
+        let err = create_refund(&pool, &sale_id, items, "refund void", "other", CASHIER)
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(err, AppError::Validation(_)),
+            "refund on voided sale must be rejected: got {err:?}"
+        );
+    }
+
+    // ── T7b. Double refund on same item is rejected ───────────────────────────
+    #[tokio::test]
+    async fn test_double_refund_prevented() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+        let (sale_id, item_id) = create_test_sale(&pool, &shift_id, "idem-t7b-double").await;
+
+        let make_item = || RefundItemInput {
+            sale_item_id: item_id.clone(),
+            product_name_snapshot: "Coca-Cola 330ml".into(),
+            quantity: "2".to_string(),
+            unit_price_minor: 440,
+            refund_amount_minor: 880, // full refund
+        };
+
+        // First full refund must succeed
+        create_refund(
+            &pool,
+            &sale_id,
+            vec![make_item()],
+            "first",
+            "other",
+            CASHIER,
+        )
+        .await
+        .expect("first refund should succeed");
+
+        // Second full refund must fail — item fully refunded
+        let err = create_refund(
+            &pool,
+            &sale_id,
+            vec![make_item()],
+            "second",
+            "other",
+            CASHIER,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(err, AppError::Validation(_)),
+            "double refund must be rejected: got {err:?}"
+        );
+    }
+
+    // ── 6. Unknown reason_code defaults to 'other' ────────────────────────────
+    #[tokio::test]
+    async fn test_unknown_reason_code_defaults_to_other() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+        let (sale_id, item_id) = create_test_sale(&pool, &shift_id, "idem-refund-code").await;
+
+        let items = vec![RefundItemInput {
+            sale_item_id: item_id,
+            product_name_snapshot: "Coca-Cola 330ml".into(),
+            quantity: "1".to_string(),
+            unit_price_minor: 440,
+            refund_amount_minor: 440,
+        }];
+
+        create_refund(&pool, &sale_id, items, "reason", "INVALID_CODE", CASHIER)
+            .await
+            .expect("refund with invalid code");
+
+        let code: String = sqlx::query_scalar(
+            "SELECT return_reason_code FROM refunds WHERE original_sale_id = ? LIMIT 1",
+        )
+        .bind(&sale_id)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch reason_code");
+
+        assert_eq!(
+            code, "other",
+            "invalid reason_code must be normalised to 'other'"
+        );
+    }
 }

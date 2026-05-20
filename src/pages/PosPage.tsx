@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LowStockAlert, PaymentInput, ProductWithPrice, SaleListRow, SaleResult, SessionUser, Shift } from "../types";
 import { formatMoney } from "../money";
 import { DEVICE } from "../types";
-import { cashNoSale, productListAll, receiptReprint, refundGetSale } from "../tauri/commands";
+import { cashNoSale, productListAll, receiptReprint, refundGetSale, whatsappStatus, whatsappSendDelivery } from "../tauri/commands";
 import { useCart } from "../hooks/useCart";
 import { useSyncStatus } from "../hooks/useSyncStatus";
 import { usePosShortcuts } from "../hooks/usePosShortcuts";
@@ -194,6 +194,30 @@ export default function PosPage({
         if (restockTimerRef.current) clearTimeout(restockTimerRef.current);
         setRestockAlerts(result.low_stock_alerts);
         restockTimerRef.current = setTimeout(() => setRestockAlerts([]), 6000);
+      }
+      // ── WhatsApp delivery message ────────────────────────────────────────────
+      if (result.delivery && result.delivery.contact_number) {
+        const d = result.delivery;
+        const sendWA = async () => {
+          try {
+            const waStatus = await whatsappStatus();
+            if (waStatus.connected) {
+              await whatsappSendDelivery({
+                to:                d.contact_number,
+                receipt_number:    result.receipt_number,
+                net_total_minor:   result.net_total_minor,
+                currency_exponent: DEVICE.currency_exponent,
+                address_text:      d.address_text,
+                house_number:      d.house_number ?? undefined,
+                area:              d.area ?? undefined,
+              });
+            } else if (sessionUser.role_name === "owner" || sessionUser.role_name === "manager") {
+              setShowWaQR(true);
+            }
+            // cashier + disconnected: silent skip
+          } catch { /* never block the sale */ }
+        };
+        sendWA(); // fire-and-forget — never block the receipt flow
       }
     } catch {
       // error is set in useCart; modal stays open

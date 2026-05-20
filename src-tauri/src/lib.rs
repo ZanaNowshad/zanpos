@@ -164,6 +164,7 @@ pub fn run() {
             commands::setup_commands::setup_join_store,
             commands::setup_commands::settings_get_branch,
             commands::setup_commands::settings_update_branch,
+            commands::setup_commands::setup_save_benefit_number,
             // Phase 10a — timeout, backup, tax report, audit log
             commands::phase10a_commands::app_config_get_timeout,
             commands::phase10a_commands::app_config_set_timeout,
@@ -210,6 +211,11 @@ pub fn run() {
             commands::device_commands::device_list,
             commands::device_commands::device_create,
             commands::device_commands::device_toggle_active,
+            // WhatsApp
+            commands::whatsapp_commands::whatsapp_status,
+            commands::whatsapp_commands::whatsapp_send_delivery,
+            commands::whatsapp_commands::whatsapp_disconnect,
+            commands::whatsapp_commands::whatsapp_save_config,
             // Product image picker
             commands::updater_commands::product_pick_image,
             // Auto-updater

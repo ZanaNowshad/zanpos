@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { LowStockAlert, PaymentInput, ProductWithPrice, SaleResult, SessionUser, Shift } from "../types";
+import type { LowStockAlert, PaymentInput, ProductWithPrice, SaleListRow, SaleResult, SessionUser, Shift } from "../types";
+import { formatMoney } from "../money";
 import { DEVICE } from "../types";
-import { cashNoSale, productListAll, receiptReprint } from "../tauri/commands";
+import { cashNoSale, productListAll, receiptReprint, refundGetSale } from "../tauri/commands";
 import { useCart } from "../hooks/useCart";
 import { useSyncStatus } from "../hooks/useSyncStatus";
 import { usePosShortcuts } from "../hooks/usePosShortcuts";
+import { useIdleTimer } from "../hooks/useIdleTimer";
 import BarcodeInput, { type BarcodeInputHandle } from "../components/BarcodeInput";
 import ProductGrid from "../components/ProductGrid";
 import CartPanel from "../components/CartPanel";
@@ -20,6 +22,10 @@ import TodayReportModal from "../components/TodayReportModal";
 import CustomItemModal from "../components/CustomItemModal";
 import CashEventModal from "../components/CashEventModal";
 import XReportModal from "../components/XReportModal";
+import HelpModal from "../components/HelpModal";
+import RecentSalesModal from "../components/RecentSalesModal";
+import WhatsAppStatusPill from "../components/WhatsAppStatusPill";
+import WhatsAppQRModal from "../components/WhatsAppQRModal";
 
 interface Props {
   sessionUser: SessionUser;
@@ -64,13 +70,30 @@ export default function PosPage({
   const [showCashEvent, setShowCashEvent]   = useState(false);
   const [showXReport, setShowXReport]       = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [isReprintView, setIsReprintView]       = useState(false);
+  const [showHelp, setShowHelp]             = useState(false);
+  const [showRecent, setShowRecent]         = useState(false);
+  const [showWaQR, setShowWaQR]             = useState(false);
   const [payFastLoading, setPayFastLoading] = useState(false);
   const [restockAlerts, setRestockAlerts]   = useState<LowStockAlert[]>([]);
   const restockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // ── Resizable cart panel ──────────────────────────────────────────────────────
+  const [cartWidth, setCartWidth]   = useState(390);
+  const isResizing                  = useRef(false);
+  const resizeStartX                = useRef(0);
+  const resizeStartW                = useRef(390);
+
   const canOpenBackOffice = ["owner", "manager"].includes(sessionUser.role_name);
   const canViewXReport    = canOpenBackOffice;
   const canRefund         = ["owner", "manager", "cashier"].includes(sessionUser.role_name);
+
+  // ── Idle auto-lock: log out after 5 minutes of inactivity ────────────────────
+  // Prevents unattended terminals from staying authenticated.
+  // The timeout fires `onLogout` which returns the user to the PIN screen.
+  const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+  useIdleTimer(IDLE_TIMEOUT_MS, onLogout);
 
   const syncStatus = useSyncStatus(15_000);
 
@@ -89,14 +112,19 @@ export default function PosPage({
   const focusBarcode = useCallback(() => barcodeRef.current?.focus(), []);
 
   // ── noModalOpen — stable boolean for shortcut guard ───────────────────────────
+  // All 14 modal-visibility deps are intentional: every modal that blocks keyboard
+  // shortcuts (F-keys, barcode scan, +/−) must be listed here so the guard stays
+  // accurate. Adding a new modal? Add its state boolean to both the expression and
+  // the dependency array below.
   const noModalOpen = useMemo(() =>
-    !showPayment && !saleResult && !showShiftClose &&
+    !showPayment && !showReceiptModal && !showShiftClose &&
     !showHold && !showRefund && !showReport &&
     !showDiscount && !showBackOffice && !showCustomItem &&
-    !showCashEvent && !showXReport && !showClearConfirm,
-    [showPayment, saleResult, showShiftClose, showHold, showRefund,
+    !showCashEvent && !showXReport && !showClearConfirm &&
+    !showHelp && !showRecent,
+    [showPayment, showReceiptModal, showShiftClose, showHold, showRefund,
      showReport, showDiscount, showBackOffice, showCustomItem,
-     showCashEvent, showXReport, showClearConfirm]
+     showCashEvent, showXReport, showClearConfirm, showHelp, showRecent]
   );
 
   // ── Pay Fast ─────────────────────────────────────────────────────────────────
@@ -141,6 +169,10 @@ export default function PosPage({
     setShowPayment(true);
   }, [lineCount]);
 
+  // openPay — generic payment modal (no pre-selected method, no split).
+  // Not shown as a visible button; invoked via the F9 keyboard shortcut in
+  // usePosShortcuts. Kept separate from openPayDirect / openPaySplit so the
+  // shortcut remains available even after the footer buttons were removed.
   const openPay = useCallback(() => {
     if (lineCount === 0) return;
     setPaymentMethod(undefined);
@@ -149,13 +181,15 @@ export default function PosPage({
   }, [lineCount]);
 
   // ── Confirm payment ───────────────────────────────────────────────────────────
-  const handleConfirmPayment = async (payments: PaymentInput[], customerId?: string) => {
+  const handleConfirmPayment = async (payments: PaymentInput[], customerId?: string, deliveryInput?: import("../types").DeliveryInput) => {
     try {
-      const result = await finalizeSale(payments, customerId);
+      const result = await finalizeSale(payments, customerId, deliveryInput);
       setShowPayment(false);
+      setShowReceiptModal(false);   // banner only — not blocking modal
       setSaleResult(result);
       setLastReceiptNumber(result.receipt_number);
       setLastSaleStatus(`✓ #${result.receipt_number}`);
+      focusBarcode();               // cart is clear — cashier can scan immediately
       if (result.low_stock_alerts.length > 0) {
         if (restockTimerRef.current) clearTimeout(restockTimerRef.current);
         setRestockAlerts(result.low_stock_alerts);
@@ -166,21 +200,54 @@ export default function PosPage({
     }
   };
 
-  const handleNewSale = () => {
+  const handleNewSale = useCallback(() => {
     setSaleResult(null);
-    clearCart();
+    setShowReceiptModal(false);
+    clearCart();   // no-op after finalize (cart already empty), handles reprint path
     focusBarcode();
-  };
+  }, [clearCart, focusBarcode]);
 
-  const handleReprintLast = async () => {
+  const handleReprintLast = useCallback(async () => {
     if (!lastReceiptNumber) return;
     try {
-      const reprinted = await receiptReprint(lastReceiptNumber);
+      const reprinted = await receiptReprint(lastReceiptNumber, sessionUser.user_id);
       setSaleResult(reprinted);
+      setIsReprintView(true);
+      setShowReceiptModal(true);   // reprint always opens full modal
     } catch (e: unknown) {
       console.error("Reprint failed", e);
     }
-  };
+  }, [lastReceiptNumber]);
+
+  const handleNoSale = useCallback(async () => {
+    try { await cashNoSale(shift.shift_id, sessionUser.user_id); }
+    catch (e) { console.error("No-sale audit failed:", e); }
+  }, [shift.shift_id, sessionUser.user_id]);
+
+  // ── Edit a past sale (load items back into cart as custom items) ──────────────
+  // Items are added in parallel (Promise.allSettled) to avoid O(n) sequential
+  // IPC round-trips. allSettled ensures a single failed item doesn't leave the
+  // cart partially populated silently — failures are surfaced via console.error.
+  const handleEditSale = useCallback(async (sale: SaleListRow) => {
+    try {
+      const detail = await refundGetSale(sale.receipt_number, sessionUser.user_id);
+      clearCart();
+      const results = await Promise.allSettled(
+        detail.items.map(item => {
+          const priceMajor = formatMoney(item.unit_price_minor, DEVICE.currency_exponent);
+          return addCustomItem(item.product_name_snapshot, priceMajor, item.quantity);
+        })
+      );
+      const failed = results.filter(r => r.status === "rejected");
+      if (failed.length > 0) {
+        console.error(`Edit sale: ${failed.length}/${detail.items.length} items failed to load`, failed);
+      }
+      setShowRecent(false);
+      focusBarcode();
+    } catch (e) {
+      console.error("Failed to load sale for edit", e);
+    }
+  }, [clearCart, addCustomItem, focusBarcode]);
 
   // ── Clear cart with confirmation ──────────────────────────────────────────────
   const handleClearCartRequest = useCallback(() => {
@@ -226,22 +293,38 @@ export default function PosPage({
     onRefund:            () => canRefund && setShowRefund(true),
     onClearCart:         handleClearCartRequest,
     onReprintLast:       handleReprintLast,
-    onNoSale:            async () => {
-      try { await cashNoSale(shift.shift_id, sessionUser.user_id); }
-      catch (e) { console.error("No-sale audit failed:", e); }
-    },
+    onNoSale:            handleNoSale,
+    onXReport:           canViewXReport ? () => setShowXReport(true) : undefined,
     onIncrementRecent:   handleIncrementRecent,
     onDecrementRecent:   handleDecrementRecent,
     onRemoveRecent:      removeRecentLine,
     onLock:              onLogout,
     onReport:            () => setShowReport(true),
     onCustomItem:        () => setShowCustomItem(true),
+    onHelp:              () => setShowHelp(true),
   });
 
   // ── Focus barcode after any modal closes ──────────────────────────────────────
   useEffect(() => {
     if (noModalOpen) focusBarcode();
   }, [noModalOpen, focusBarcode]);
+
+  // ── Cart panel resize ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!isResizing.current) return;
+      const dx = resizeStartX.current - e.clientX; // dragging left = wider cart
+      const newW = Math.max(280, Math.min(700, resizeStartW.current + dx));
+      setCartWidth(newW);
+    };
+    const onUp = () => { isResizing.current = false; };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
 
   // ── Product list ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -305,30 +388,16 @@ export default function PosPage({
         <span className="top-bar-branch">{DEVICE.branch_name}</span>
         <span className="top-bar-cashier">{sessionUser.display_name}</span>
         <SyncChip status={syncStatus} />
+        <WhatsAppStatusPill
+          sessionRole={sessionUser.role_name}
+          onOpenQR={() => setShowWaQR(true)}
+        />
         <span className="top-bar-spacer" />
         <span className="top-bar-time">{clockTime}</span>
 
-        <button className="top-bar-btn" onClick={() => setShowReport(true)} title="Today's sales report">
-          Report
-        </button>
-        {canViewXReport && (
-          <button className="top-bar-btn" onClick={() => setShowXReport(true)} title="X-Report — mid-shift drawer check">
-            X-Report
-          </button>
-        )}
         {lastReceiptNumber && (
           <button className="top-bar-btn" onClick={handleReprintLast} title={`Reprint #${lastReceiptNumber} (Ctrl+P)`}>
             Reprint
-          </button>
-        )}
-        {canOpenBackOffice && (
-          <button className="top-bar-btn" onClick={() => setShowBackOffice(true)}>
-            Back Office
-          </button>
-        )}
-        {onOpenAdminChat && (
-          <button className="top-bar-btn top-bar-admin" onClick={onOpenAdminChat}>
-            AI Admin
           </button>
         )}
         {onToggleTheme && (
@@ -360,30 +429,32 @@ export default function PosPage({
       )}
 
       {/* ── Main area ── */}
-      <div className="pos-main">
+      <div className="pos-main" style={{ gridTemplateColumns: `72px 1fr ${cartWidth}px` }}>
         {/* Icon sidebar */}
         <div className="pos-sidebar">
           <button className="pos-sidebar-item active" title="Quick Sale">
             <span className="pos-sidebar-icon">⚡</span>
             <span>Sale</span>
           </button>
-          <button className="pos-sidebar-item" title="Products" onClick={() => setShowBackOffice(true)}>
-            <span className="pos-sidebar-icon">📦</span>
-            <span>Products</span>
-          </button>
-          <button className="pos-sidebar-item" title="Customers">
-            <span className="pos-sidebar-icon">👤</span>
-            <span>Customers</span>
-          </button>
           <div className="pos-sidebar-divider" />
           <button className="pos-sidebar-item" title="Today's Report" onClick={() => setShowReport(true)}>
             <span className="pos-sidebar-icon">📊</span>
             <span>Reports</span>
           </button>
+          <button className="pos-sidebar-item" title="Recent Sales — reprint or void" onClick={() => setShowRecent(true)}>
+            <span className="pos-sidebar-icon">🕐</span>
+            <span>Recent</span>
+          </button>
+          {canViewXReport && (
+            <button className="pos-sidebar-item" title="X-Report — mid-shift drawer check" onClick={() => setShowXReport(true)}>
+              <span className="pos-sidebar-icon">📋</span>
+              <span>X-Report</span>
+            </button>
+          )}
           {canOpenBackOffice && (
             <button className="pos-sidebar-item" title="Back Office" onClick={() => setShowBackOffice(true)}>
-              <span className="pos-sidebar-icon">⚙</span>
-              <span>Settings</span>
+              <span className="pos-sidebar-icon">🏢</span>
+              <span>Back Office</span>
             </button>
           )}
           <div className="pos-sidebar-spacer" />
@@ -396,7 +467,19 @@ export default function PosPage({
         </div>
 
         {/* Product area */}
-        <div className="product-area">
+        <div className="product-area" style={{ position: "relative" }}>
+          {/* Resize handle — absolutely positioned on the right edge */}
+          <div
+            className="pos-resize-handle"
+            style={{ position: "absolute", right: -3, top: 0, bottom: 0, width: 6, zIndex: 10 }}
+            onMouseDown={e => {
+              isResizing.current = true;
+              resizeStartX.current = e.clientX;
+              resizeStartW.current = cartWidth;
+              e.preventDefault();
+            }}
+            title="Drag to resize cart panel"
+          />
           <BarcodeInput
             ref={barcodeRef}
             onBarcode={handleBarcode}
@@ -405,25 +488,31 @@ export default function PosPage({
             disabled={loading || payFastLoading}
           />
 
-          {categories.length > 0 && (
-            <div className="category-tabs">
+          <div className="category-tabs">
+            <button
+              className="cat-tab cat-tab-custom"
+              onClick={() => setShowCustomItem(true)}
+              title="Add a custom item with any price"
+            >
+              ✦ Custom
+            </button>
+            <div className="cat-tab-divider" />
+            <button
+              className={`cat-tab ${selectedCategory === null ? "cat-tab-active" : ""}`}
+              onClick={() => setSelectedCategory(null)}
+            >
+              All
+            </button>
+            {categories.map(c => (
               <button
-                className={`cat-tab ${selectedCategory === null ? "cat-tab-active" : ""}`}
-                onClick={() => setSelectedCategory(null)}
+                key={c.id}
+                className={`cat-tab ${selectedCategory === c.id ? "cat-tab-active" : ""}`}
+                onClick={() => setSelectedCategory(c.id)}
               >
-                All
+                {c.name}
               </button>
-              {categories.map(c => (
-                <button
-                  key={c.id}
-                  className={`cat-tab ${selectedCategory === c.id ? "cat-tab-active" : ""}`}
-                  onClick={() => setSelectedCategory(c.id)}
-                >
-                  {c.name}
-                </button>
-              ))}
-            </div>
-          )}
+            ))}
+          </div>
 
           <ProductGrid
             products={displayProducts}
@@ -441,83 +530,66 @@ export default function PosPage({
           onRemove={removeLine}
           onApplyLineDiscount={applyLineDiscount}
           onSetLineNote={setLineNote}
-          onPay={openPay}
+          onPaySplit={openPaySplit}
+          onPayFast={handlePayFast}
+          onPayDirect={openPayDirect}
+          payFastLoading={payFastLoading}
           recentLineId={recentLineId}
           onIncrementRecent={handleIncrementRecent}
           onDecrementRecent={handleDecrementRecent}
-          onPayDirect={openPayDirect}
-          onPaySplit={openPaySplit}
-          onPayFast={handlePayFast}
-          payFastLoading={payFastLoading}
         />
       </div>
 
       {/* ── Action bar ── */}
       <div className="action-bar">
+        {/* ── Left: operational actions ── */}
         <button
           className="action-btn action-btn-danger"
           onClick={handleClearCartRequest}
           disabled={lineCount === 0}
-          title="Clear all items from cart (Ctrl+Delete)"
+          title="Clear cart — Ctrl+Delete"
         >
           🗑 Clear
         </button>
         <button
           className="action-btn"
           onClick={() => setShowHold(true)}
-          title="Hold cart and resume later (F6 · Ctrl+H)"
+          title="Hold current order or resume a held order — F6"
         >
-          ⏸ Hold
-        </button>
-        <button
-          className="action-btn"
-          onClick={() => setShowCustomItem(true)}
-          title="Add a custom item with any price"
-        >
-          ✦ Custom
+          ⏸ Hold / Resume <kbd>F6</kbd>
         </button>
         <button
           className="action-btn"
           onClick={() => setShowDiscount(true)}
           disabled={lineCount === 0}
-          title="Apply a bill-level discount (F8 · Ctrl+D)"
+          title="Apply bill discount — F8"
         >
-          % Discount
+          % Discount <kbd>F8</kbd>
         </button>
         <button
           className="action-btn"
           onClick={() => setShowCashEvent(true)}
-          title="Paid In / Paid Out / Safe Drop"
+          title="Cash In / Out / Safe Drop"
         >
           💵 Cash Event
         </button>
         <button
           className="action-btn"
-          onClick={async () => {
-            try { await cashNoSale(shift.shift_id, sessionUser.user_id); }
-            catch (e) { console.error("No-sale audit failed:", e); }
-          }}
-          title="Open drawer without a sale — audited in the system (F11)"
+          onClick={handleNoSale}
+          title="Open drawer without sale — F11"
         >
-          🔓 No Sale
+          🔓 No Sale <kbd>F11</kbd>
         </button>
         {canRefund && (
           <button
             className="action-btn"
             onClick={() => setShowRefund(true)}
-            title="Process a return or refund (Ctrl+R)"
+            title="Process a refund — Ctrl+R"
           >
             ↩ Refund
           </button>
         )}
-        <button
-          className="action-btn action-btn-pay"
-          onClick={openPay}
-          disabled={lineCount === 0}
-          title="Collect payment (F9)"
-        >
-          💳 Pay  <kbd>F9</kbd>
-        </button>
+
       </div>
 
       {/* ── Status bar ── */}
@@ -543,7 +615,7 @@ export default function PosPage({
           </>
         )}
         <span className="status-spacer" />
-        <span className="status-shortcuts">F2 Scan · F9 Pay · F12 Pay Fast · F6 Hold · +/− Qty</span>
+        <span className="status-shortcuts">F2 Scan · F12 Fast Cash · F6 Hold/Resume · F8 Discount · +/− Qty · Ctrl+H Help</span>
       </div>
 
       {/* ── Clear cart confirmation ── */}
@@ -585,6 +657,7 @@ export default function PosPage({
         <CashEventModal
           shiftId={shift.shift_id}
           userId={sessionUser.user_id}
+          cashierName={sessionUser.display_name}
           onDone={() => { setShowCashEvent(false); focusBarcode(); }}
           onCancel={() => { setShowCashEvent(false); focusBarcode(); }}
         />
@@ -594,8 +667,8 @@ export default function PosPage({
         <DiscountModal
           grossMinor={cart.lines.filter(l => !l.voided).reduce((s, l) => s + l.line_total_minor, 0)}
           currentDiscountMinor={cart.bill_discount_minor}
-          onApply={async (discount_minor) => {
-            await applyBillDiscount(discount_minor);
+          onApply={async (discount_minor, reason) => {
+            await applyBillDiscount(discount_minor, reason);
             setShowDiscount(false);
             focusBarcode();
           }}
@@ -611,11 +684,29 @@ export default function PosPage({
           onConfirm={handleConfirmPayment}
           onCancel={() => { setShowPayment(false); focusBarcode(); }}
           loading={loading}
+          sessionUserId={sessionUser.user_id}
         />
       )}
 
-      {saleResult && (
-        <ReceiptPreview sale={saleResult} onNewSale={handleNewSale} />
+      {/* ── Post-sale success banner (non-blocking) ── */}
+      {saleResult && !showReceiptModal && (
+        <div className="sale-banner">
+          <span className="sale-banner-icon">✓</span>
+          <span className="sale-banner-text">Sale #{saleResult.receipt_number}</span>
+          <button className="sale-banner-print" onClick={() => { setIsReprintView(false); setShowReceiptModal(true); }}>
+            🖨 Print Receipt
+          </button>
+          <button className="sale-banner-dismiss" onClick={handleNewSale} title="Dismiss">×</button>
+        </div>
+      )}
+
+      {/* ── Full receipt modal (explicit print or reprint) ── */}
+      {saleResult && showReceiptModal && (
+        <ReceiptPreview
+          sale={saleResult}
+          isReprint={isReprintView}
+          onNewSale={() => { setShowReceiptModal(false); setIsReprintView(false); handleNewSale(); }}
+        />
       )}
 
       {showShiftClose && (
@@ -664,6 +755,30 @@ export default function PosPage({
           actorUserId={sessionUser.user_id}
           onClose={() => { setShowXReport(false); focusBarcode(); }}
         />
+      )}
+
+      {showHelp && (
+        <HelpModal onClose={() => { setShowHelp(false); focusBarcode(); }} />
+      )}
+
+      {showRecent && (
+        <RecentSalesModal
+          onReprint={async (receiptNumber) => {
+            try {
+              const reprinted = await receiptReprint(receiptNumber, sessionUser.user_id);
+              setSaleResult(reprinted);
+              setIsReprintView(true);
+              setShowReceiptModal(true);
+              setShowRecent(false);
+            } catch (e) { console.error("Reprint failed", e); }
+          }}
+          onEdit={handleEditSale}
+          onClose={() => { setShowRecent(false); focusBarcode(); }}
+        />
+      )}
+
+      {showWaQR && (
+        <WhatsAppQRModal onClose={() => setShowWaQR(false)} />
       )}
 
       {/* ── Restock alerts toast ── */}

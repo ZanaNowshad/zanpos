@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import type {
   SessionUser,
   ChatMessage,
-  AiChatResponse,
+  StreamEvent,
   ToolPreview,
   ProviderConfig,
   ModelInfo,
@@ -11,6 +11,7 @@ import type {
   SyncStatus,
 } from "../types";
 import { DEVICE } from "../types";
+import { Channel } from "@tauri-apps/api/core";
 import {
   adminGetProviderConfig,
   adminSetAnthropic,
@@ -18,10 +19,13 @@ import {
   adminSetOpenai,
   adminSetupSupabase,
   adminGetSupabaseStatus,
-  aiChat,
+  aiChatStream,
   aiExecuteAction,
   aiCancelAction,
   aiUndoAction,
+  aiSaveMessage,
+  aiLoadHistory,
+  aiClearHistory,
   reportToday,
   inventoryGetLevels,
   syncStatus,
@@ -89,10 +93,19 @@ const QUICK_ACTIONS = [
 
 // ─── Markdown renderer ────────────────────────────────────────────────────────
 
-function MarkdownContent({ text }: { text: string }) {
-  const nodes = parseMarkdown(text);
-  return <div className="md-body">{nodes}</div>;
+function stripXmlArtifacts(text: string): string {
+  // Remove <tool_call>...</tool_call> blocks that leaked through from models
+  // that don't support native function calling
+  return text
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "")
+    .replace(/<function=\S+>[\s\S]*?<\/function>/g, "")
+    .trim();
 }
+
+const MarkdownContent = React.memo(function MarkdownContent({ text }: { text: string }) {
+  const nodes = React.useMemo(() => parseMarkdown(stripXmlArtifacts(text)), [text]);
+  return <div className="md-body">{nodes}</div>;
+});
 
 function parseMarkdown(text: string): React.ReactNode[] {
   const lines = text.split("\n");
@@ -101,7 +114,15 @@ function parseMarkdown(text: string): React.ReactNode[] {
   let key = 0;
 
   while (i < lines.length) {
+    const startI = i; // guard: detect if nothing consumed this iteration
     const line = lines[i];
+
+    // ── Blank line ────────────────────────────────────────────────────────────
+    // Check blank FIRST — prevents fall-through to paragraph with empty line
+    if (line.trim() === "") {
+      i++;
+      continue;
+    }
 
     // ── Code block ──────────────────────────────────────────────────────────
     if (line.trimStart().startsWith("```")) {
@@ -199,12 +220,6 @@ function parseMarkdown(text: string): React.ReactNode[] {
       continue;
     }
 
-    // ── Blank line ────────────────────────────────────────────────────────────
-    if (line.trim() === "") {
-      i++;
-      continue;
-    }
-
     // ── Paragraph ────────────────────────────────────────────────────────────
     const paraLines: string[] = [];
     while (
@@ -218,9 +233,17 @@ function parseMarkdown(text: string): React.ReactNode[] {
       paraLines.push(lines[i]);
       i++;
     }
-    result.push(
-      <p key={key++} className="md-p">{inlineMarkdown(paraLines.join(" "))}</p>
-    );
+    if (paraLines.length > 0) {
+      result.push(
+        <p key={key++} className="md-p">{inlineMarkdown(paraLines.join(" "))}</p>
+      );
+    }
+
+    // Safety guard: if nothing consumed this line, force-advance to avoid
+    // an infinite loop on any input pattern not matched above.
+    if (i === startI) {
+      i++;
+    }
   }
 
   return result;
@@ -524,12 +547,15 @@ function ChatBubble({
 
 // ─── Thinking bubble ──────────────────────────────────────────────────────────
 
-function ThinkingBubble({ lastMessage }: { lastMessage: string }) {
+function ThinkingBubble({ lastMessage, toolName }: { lastMessage: string; toolName: string | null }) {
   const label = getThinkingLabel(lastMessage);
   return (
     <div className="chat-bubble-wrap chat-bubble-wrap-assistant">
       <div className="chat-bubble chat-bubble-v2 assistant thinking-v2">
         <div className="thinking-context-chip">{label}</div>
+        {toolName && (
+          <div className="ai-thinking-tool">Using: {toolName.replace(/_/g, " ")}…</div>
+        )}
         <div className="thinking-dots-v2">
           <span /><span /><span />
         </div>
@@ -566,6 +592,9 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
   const [selectedModel, setSelectedModel] = useState("");
   const [savingOpenai, setSavingOpenai]   = useState(false);
 
+  // Session tracking for history persistence
+  const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID());
+
   // Chat state
   const [messages, setMessages]           = useState<DisplayMessage[]>([]);
   const [input, setInput]                 = useState("");
@@ -573,6 +602,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
   const [history, setHistory]             = useState<ChatMessage[]>([]);
   const [pendingAction, setPendingAction] = useState<DisplayMessage["pendingAction"] | null>(null);
   const [lastUserMsg, setLastUserMsg]     = useState("");
+  const [thinkingTool, setThinkingTool]   = useState<string | null>(null);
 
   // UI state
   const [showKpi, setShowKpi]             = useState(true);
@@ -580,13 +610,14 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
     loading: false, error: null, today: null, lowStockCount: 0, outOfStockCount: 0, sync: null,
   });
 
-  const bottomRef  = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const bottomRef         = useRef<HTMLDivElement>(null);
+  const textareaRef       = useRef<HTMLTextAreaElement>(null);
+  const assistantMsgIdRef = useRef<string>("");
 
   // ── Initial load ────────────────────────────────────────────────────────────
   useEffect(() => {
     Promise.all([
-      adminGetSupabaseStatus().catch(() => ({ configured: false })),
+      adminGetSupabaseStatus().catch(() => ({ configured: false } as { configured: boolean })),
       adminGetProviderConfig().catch(() => null),
     ]).then(([supaStatus, cfg]) => {
       if (cfg) {
@@ -600,19 +631,48 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
       } else {
         setSetupStep("done");
       }
+    }).catch((e) => {
+      console.error("[AdminChat] init failed:", e);
+      // Fallback: show provider picker so user can at least configure
+      setSetupStep("pick_provider");
     });
   }, []);
 
+  // ── Load history when setup is done ────────────────────────────────────────
+  useEffect(() => {
+    if (setupStep !== "done") return;
+    aiLoadHistory(DEVICE.branch_id, sessionUser.user_id)
+      .then(loaded => {
+        if (loaded.length === 0) return;
+        setMessages(loaded
+          .filter(m => m.role === "user" || m.role === "assistant")
+          .map(m => ({
+            id: crypto.randomUUID(),
+            role: m.role as "user" | "assistant",
+            text: m.content,
+            timestamp: new Date(m.created_at.replace(" ", "T")),
+          }))
+        );
+        setHistory(loaded
+          .filter(m => m.role === "user" || m.role === "assistant")
+          .map(m => ({ role: m.role as "user" | "assistant", content: m.content }))
+        );
+        const lastSessionId = loaded[loaded.length - 1]?.session_id;
+        if (lastSessionId) setSessionId(lastSessionId);
+      })
+      .catch(() => {});
+  }, [setupStep]);
+
   // ── Fetch KPI when chat is ready ────────────────────────────────────────────
+  // Sequential (not parallel) to avoid spiking Rust thread pool + SQLite
+  // connections all at once on page open, which stresses WebView2 memory.
   const fetchKpi = useCallback(async () => {
     setKpi(prev => ({ ...prev, loading: true, error: null }));
     try {
       const today = new Date().toISOString().slice(0, 10);
-      const [todaySummary, levels, syncStat] = await Promise.all([
-        reportToday(DEVICE.branch_id, today).catch(() => null),
-        inventoryGetLevels().catch(() => [] as StockLevel[]),
-        syncStatus().catch(() => null),
-      ]);
+      const todaySummary = await reportToday(DEVICE.branch_id, today).catch(() => null);
+      const levels = await inventoryGetLevels().catch(() => [] as StockLevel[]);
+      const syncStat = await syncStatus().catch(() => null);
       const lowStockCount  = levels.filter(l => l.is_low_stock && !l.is_out_of_stock).length;
       const outOfStockCount = levels.filter(l => l.is_out_of_stock).length;
       setKpi({ loading: false, error: null, today: todaySummary, lowStockCount, outOfStockCount, sync: syncStat });
@@ -622,12 +682,17 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
   }, []);
 
   useEffect(() => {
-    if (setupStep === "done") fetchKpi();
+    if (setupStep !== "done") return;
+    // Session-based only: no history loaded from DB.
+    // Fetch KPI after a short delay to avoid spiking memory on page open.
+    setTimeout(fetchKpi, 300);
   }, [setupStep, fetchKpi]);
 
   // ── Auto-scroll ─────────────────────────────────────────────────────────────
+  // Use "auto" (instant) during streaming to avoid queuing hundreds of smooth-
+  // scroll animations per token which can hold DOM references and leak memory.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    bottomRef.current?.scrollIntoView({ behavior: chatState === "idle" ? "smooth" : "auto" });
   }, [messages, chatState]);
 
   // ── Auto-expand textarea ────────────────────────────────────────────────────
@@ -725,64 +790,110 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
     }
   };
 
-  // ── Chat send ───────────────────────────────────────────────────────────────
+  // ── Chat send (streaming) ────────────────────────────────────────────────────
   const handleSend = async (overrideText?: string) => {
     const text = (overrideText ?? input).trim();
     if (!text || chatState !== "idle") return;
     setInput("");
     setLastUserMsg(text);
     addMessage({ role: "user", text });
-    const newHistory: ChatMessage[] = [...history, { role: "user", content: text }];
+    aiSaveMessage(sessionId, DEVICE.branch_id, sessionUser.user_id, "user", text, "text").catch(() => {});
+    const rawHistory: ChatMessage[] = [...history, { role: "user", content: text }];
+    // Keep bounded — 60 entries max
+    const newHistory: ChatMessage[] = rawHistory.length > 60 ? rawHistory.slice(rawHistory.length - 60) : rawHistory;
     setHistory(newHistory);
     setChatState("thinking");
+    setThinkingTool(null);
+
+    // Push empty assistant bubble (will be filled by tokens)
+    const assistantMsg = addMessage({ role: "assistant", text: "" });
+    assistantMsgIdRef.current = assistantMsg.id;
 
     try {
-      const resp: AiChatResponse = await aiChat({
-        history,
-        message: text,
-        user_id: sessionUser.user_id,
-        branch_id: DEVICE.branch_id,
-        currency_exponent: DEVICE.currency_exponent,
-      });
+      const onEvent = new Channel<StreamEvent>();
+      let finalText = "";
 
-      if (resp.type === "no_api_key") {
-        addMessage({ role: "system", text: "No AI provider configured. Please set one up." });
-        const cfg = await adminGetProviderConfig().catch(() => null);
-        if (cfg) setConfig(cfg);
-        setSetupStep("pick_provider");
-        setChatState("idle");
-        return;
-      }
+      onEvent.onmessage = (event: StreamEvent) => {
+        if (event.type === "token") {
+          finalText += event.text;
+          const currentId = assistantMsgIdRef.current;
+          setMessages(prev =>
+            prev.map(m => m.id === currentId ? { ...m, text: finalText } : m)
+          );
+        } else if (event.type === "tool_start") {
+          setThinkingTool(event.name);
+        } else if (event.type === "tool_done") {
+          setThinkingTool(null);
+        } else if (event.type === "mutation_pending") {
+          const actionData = {
+            action_id: event.action_id,
+            tool_name: event.tool_name,
+            preview: event.preview,
+            expires_at: event.expires_at,
+            assistant_text: event.assistant_text,
+          };
+          const currentId = assistantMsgIdRef.current;
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === currentId
+                ? { ...m, text: event.assistant_text || "I'd like to make the following change:", pendingAction: actionData }
+                : m
+            )
+          );
+          setPendingAction(actionData);
+          setChatState("confirm");
+          setThinkingTool(null);
+        } else if (event.type === "done") {
+          setThinkingTool(null);
+          setChatState("idle");
+          if (finalText) {
+            // Keep in-memory context bounded at 60 entries (30 exchanges)
+            setHistory(prev => {
+              const next = [...prev, { role: "assistant" as const, content: finalText }];
+              return next.length > 60 ? next.slice(next.length - 60) : next;
+            });
+            aiSaveMessage(sessionId, DEVICE.branch_id, sessionUser.user_id, "assistant", finalText, "text").catch(() => {});
+          }
+        } else if (event.type === "error") {
+          const currentId = assistantMsgIdRef.current;
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === currentId
+                ? { ...m, role: "system" as "system", text: `Error: ${event.message}` }
+                : m
+            )
+          );
+          setThinkingTool(null);
+          setChatState("idle");
+        }
+      };
 
-      if (resp.type === "message") {
-        addMessage({ role: "assistant", text: resp.content });
-        setHistory(prev => [...prev, { role: "assistant", content: resp.content }]);
-        setChatState("idle");
-        return;
-      }
-
-      if (resp.type === "pending_action") {
-        const actionData = {
-          action_id: resp.action_id,
-          tool_name: resp.tool_name,
-          preview: resp.preview,
-          expires_at: resp.expires_at,
-          assistant_text: resp.assistant_text,
-        };
-        addMessage({
-          role: "assistant",
-          text: resp.assistant_text || "I'd like to make the following change:",
-          pendingAction: actionData,
-        });
-        setPendingAction(actionData);
-        setChatState("confirm");
-        return;
-      }
+      // Cap history to last 40 messages to avoid unbounded IPC payload growth
+      const cappedHistory = history.length > 40 ? history.slice(history.length - 40) : history;
+      await aiChatStream(
+        {
+          history: cappedHistory,
+          message: text,
+          user_id: sessionUser.user_id,
+          branch_id: DEVICE.branch_id,
+          currency_exponent: DEVICE.currency_exponent,
+        },
+        onEvent
+      );
     } catch (e) {
-      addMessage({ role: "system", text: `Error: ${String(e)}` });
+      const currentId = assistantMsgIdRef.current;
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === currentId
+            ? { ...m, role: "system" as "system", text: `Error: ${String(e)}` }
+            : m
+        )
+      );
+      setThinkingTool(null);
       setChatState("idle");
     }
   };
+
 
   const handleConfirm = async () => {
     if (!pendingAction) return;
@@ -843,6 +954,20 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
     : config?.provider === "openai"
     ? `⬡ ${config.openai_model}`
     : "";
+
+  // ── Render: initial loading ─────────────────────────────────────────────────
+  if (setupStep === "loading") {
+    return (
+      <div className="admin-chat-page">
+        <div className="setup-center">
+          <div className="setup-loading-spinner">
+            <div className="spinner-ring" />
+            <p>Loading…</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // ── Render: sync setup ──────────────────────────────────────────────────────
   if (setupStep === "sync_setup" || setupStep === "sync_migrating") {
@@ -943,16 +1068,6 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
             )}
           </div>
         </div>
-      </div>
-    );
-  }
-
-  // ── Render: loading ─────────────────────────────────────────────────────────
-  if (setupStep === "loading") {
-    return (
-      <div className="admin-chat-page">
-        <SetupTopBar label="Admin AI" user={sessionUser.display_name} onBack={onBackToPOS} />
-        <div className="setup-center"><span className="setup-loading">Loading…</span></div>
       </div>
     );
   }
@@ -1104,7 +1219,9 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
         providerLabel={providerLabel}
         showKpi={showKpi}
         onToggleKpi={() => setShowKpi(v => !v)}
-        onClearChat={() => { setMessages([]); setHistory([]); setLastUserMsg(""); }}
+        onClearChat={() => {
+          setMessages([]); setHistory([]); setLastUserMsg(""); setThinkingTool(null);
+        }}
         onSettings={() => { setSettingsTab("sync"); setSetupStep("settings"); }}
         onBack={onBackToPOS}
       />
@@ -1148,16 +1265,29 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
               />
             )}
 
-            {messages.map(msg => (
-              <ChatBubble
-                key={msg.id}
-                msg={msg}
-                onUndo={msg.undoId ? () => handleUndo(msg.undoId!, msg.id) : undefined}
-              />
-            ))}
+            {messages.map((msg, i) => {
+              const msgDate = msg.timestamp.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+              const prevDate = i > 0 ? messages[i-1].timestamp.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
+              const showSep = i === 0 || msgDate !== prevDate;
+              return (
+                <React.Fragment key={msg.id}>
+                  {showSep && <div className="ai-date-sep">{msgDate}</div>}
+                  <ChatBubble msg={msg} onUndo={msg.undoId ? () => handleUndo(msg.undoId!, msg.id) : undefined} />
+                </React.Fragment>
+              );
+            })}
 
             {chatState === "thinking" && (
-              <ThinkingBubble lastMessage={lastUserMsg} />
+              messages.length === 0 || messages[messages.length - 1]?.role === "user"
+                ? <ThinkingBubble lastMessage={lastUserMsg} toolName={thinkingTool} />
+                : thinkingTool
+                    ? (
+                        <div className="ai-tool-indicator">
+                          <span className="ai-thinking-dots">●●●</span>
+                          <span className="ai-thinking-tool">Using: {thinkingTool.replace(/_/g, " ")}…</span>
+                        </div>
+                      )
+                    : null
             )}
             <div ref={bottomRef} />
           </div>
@@ -1190,7 +1320,11 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
             <div className="chat-input-hint">
               Enter to send · Shift+Enter for new line
               {messages.length > 0 && (
-                <button className="chat-clear-link" onClick={() => { setMessages([]); setHistory([]); setLastUserMsg(""); }}>
+                <button className="chat-clear-link" onClick={() => {
+                  setMessages([]); setHistory([]); setLastUserMsg(""); setThinkingTool(null);
+                  setSessionId(crypto.randomUUID());
+                  aiClearHistory(DEVICE.branch_id, sessionUser.user_id).catch(() => {});
+                }}>
                   · Clear chat
                 </button>
               )}

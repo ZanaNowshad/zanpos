@@ -10,38 +10,40 @@ interface Props {
   taxTotal: number;
   onUpdateQty: (line_id: string, qty: string) => void;
   onRemove: (line_id: string) => void;
-  onApplyLineDiscount: (line_id: string, discount_minor: number) => void;
+  onApplyLineDiscount: (line_id: string, discount_minor: number, reason: string) => void;
   onSetLineNote: (line_id: string, note: string | null) => void;
-  onPay: () => void;
-  // ── Quick Checkout additions ──────────────────────────────────────────────────
-  recentLineId: string | null;
-  onIncrementRecent: () => void;
-  onDecrementRecent: () => void;
-  onPayDirect: (method: "cash" | "card" | "wallet") => void;
   onPaySplit: () => void;
   onPayFast: () => void;
+  onPayDirect: (method: "cash" | "card" | "wallet") => void;
   payFastLoading?: boolean;
+  paymentStarted?: boolean;
+  recentLineId: string | null;
+  onBumpLine: (cart_line_id: string, delta: number) => void;
 }
 
 export default function CartPanel({
   cart, netTotal, taxTotal,
-  onUpdateQty, onRemove, onApplyLineDiscount, onSetLineNote, onPay,
-  recentLineId, onIncrementRecent, onDecrementRecent,
-  onPayDirect, onPaySplit, onPayFast, payFastLoading,
+  onUpdateQty, onRemove, onApplyLineDiscount, onSetLineNote,
+  onPaySplit, onPayFast, onPayDirect, payFastLoading,
+  paymentStarted, recentLineId, onBumpLine,
 }: Props) {
   const [editingLine, setEditingLine] = useState<CartLine | null>(null);
   const activeLines = cart.lines.filter(l => !l.voided);
   const fmt = (n: number) => `${DEVICE.currency} ${formatMoney(n, DEVICE.currency_exponent)}`;
   const grossTotal = activeLines.reduce((s, l) => s + l.line_total_minor, 0);
-  const hasDiscount = cart.bill_discount_minor > 0 || activeLines.some(l => l.line_discount_minor > 0);
   const totalDiscount = cart.bill_discount_minor + activeLines.reduce((s, l) => s + l.line_discount_minor, 0);
-  const canPay = activeLines.length > 0;
+  const isPaymentLocked = Boolean(payFastLoading || paymentStarted);
+  const canPay = activeLines.length > 0 && netTotal > 0 && !isPaymentLocked;
+
 
   return (
-    <div className="cart-panel">
+    <div className={`cart-panel ${activeLines.length > 0 ? "cart-panel-active" : "cart-panel-idle"} ${isPaymentLocked ? "cart-panel-locked" : ""}`}>
       {/* Header */}
       <div className="cart-panel-header">
-        <span className="cart-panel-title">CART ({activeLines.length})</span>
+        <div>
+          <span className="cart-panel-title">Cart</span>
+          <span className="cart-item-count">{activeLines.length} item{activeLines.length === 1 ? "" : "s"}</span>
+        </div>
         {recentLineId && (
           <span className="cart-recent-hint" title="Use +/− or Backspace to adjust recent item">
             +/− recent
@@ -51,11 +53,16 @@ export default function CartPanel({
 
       {/* Lines */}
       <div className="cart-lines">
+        {isPaymentLocked && (
+          <div className="cart-processing-banner">
+            Processing payment. Do not edit this sale.
+          </div>
+        )}
         {activeLines.length === 0 && (
           <div className="cart-empty">
             <div className="cart-empty-icon">🛒</div>
-            <div className="cart-empty-label">Your cart is empty</div>
-            <div className="cart-empty-hint">Scan a barcode or tap a product to add it</div>
+            <div className="cart-empty-label">Cart is empty</div>
+            <div className="cart-empty-hint">Scan an item, tap a product, or press <kbd>F2</kbd>.</div>
           </div>
         )}
         {activeLines.map(line => (
@@ -63,9 +70,10 @@ export default function CartPanel({
             key={line.cart_line_id}
             line={line}
             isRecent={line.cart_line_id === recentLineId}
+            disabled={isPaymentLocked}
             onEdit={() => setEditingLine(line)}
-            onIncrement={onIncrementRecent}
-            onDecrement={onDecrementRecent}
+            onIncrement={() => onBumpLine(line.cart_line_id, 1)}
+            onDecrement={() => onBumpLine(line.cart_line_id, -1)}
             onRemove={() => onRemove(line.cart_line_id)}
           />
         ))}
@@ -73,91 +81,66 @@ export default function CartPanel({
 
       {/* Totals */}
       <div className="cart-totals">
-        {taxTotal > 0 && (
-          <div className="cart-total-row">
-            <span>Tax</span>
-            <span>{fmt(taxTotal)}</span>
-          </div>
-        )}
-        {hasDiscount && (
-          <>
-            <div className="cart-total-row cart-subtotal-row">
-              <span>Subtotal</span>
-              <span>{fmt(grossTotal)}</span>
-            </div>
-            <div className="cart-total-row cart-discount-row">
-              <span>Discount</span>
-              <span>− {fmt(totalDiscount)}</span>
-            </div>
-          </>
-        )}
+        <div className="cart-total-row cart-subtotal-row">
+          <span>Subtotal</span>
+          <span>{fmt(grossTotal)}</span>
+        </div>
+        <div className="cart-total-row cart-discount-row">
+          <span>Discount</span>
+          <span>{fmt(totalDiscount)}</span>
+        </div>
+        <div className="cart-total-row">
+          <span>Tax</span>
+          <span>{fmt(taxTotal)}</span>
+        </div>
         <div className="cart-total-row cart-net-total">
-          <span>Total</span>
+          <span>TOTAL</span>
           <span>{fmt(netTotal)}</span>
         </div>
       </div>
 
-      {/* ── Payment zone ─────────────────────────────────────────────────── */}
-      <div className="pay-zone">
-        {/* Method buttons — one click to payment modal pre-set to method */}
-        <div className="pay-method-row">
-          <button
-            className="pay-method-btn"
-            disabled={!canPay}
-            onClick={() => onPayDirect("cash")}
-            title="Cash payment"
-          >
-            💵 Cash
-          </button>
-          <button
-            className="pay-method-btn"
-            disabled={!canPay}
-            onClick={() => onPayDirect("card")}
-            title="Card / terminal payment"
-          >
-            💳 Card
-          </button>
-          <button
-            className="pay-method-btn"
-            disabled={!canPay}
-            onClick={() => onPayDirect("wallet")}
-            title="Wallet / mobile payment"
-          >
-            📱 Wallet
-          </button>
-          <button
-            className="pay-method-btn"
-            disabled={!canPay}
-            onClick={onPaySplit}
-            title="Split payment across methods"
-          >
-            ⊕ Split
-          </button>
-        </div>
-
-        {/* Pay Fast — one keystroke checkout */}
+      <div className="cart-method-row">
         <button
-          className="pay-fast-btn"
+          className="cart-method-btn"
+          disabled={!canPay}
+          onClick={() => onPayDirect("cash")}
+          title="Cash payment"
+        >Cash</button>
+        <button
+          className="cart-method-btn"
+          disabled={!canPay}
+          onClick={() => onPayDirect("card")}
+          title="Card payment"
+        >Card</button>
+        <button
+          className="cart-method-btn"
+          disabled={!canPay}
+          onClick={() => onPayDirect("wallet")}
+          title="Wallet / mobile payment"
+        >Wallet</button>
+      </div>
+
+      <div className="cart-pay-row">
+        <button
+          className="cart-pay-fast-btn"
           disabled={!canPay || payFastLoading}
           onClick={onPayFast}
-          title={!canPay ? "Add items to cart first" : "Cash exact — no receipt — instant checkout (F12)"}
+          title={!canPay ? "Add items to pay" : "Fast Cash — exact amount, no receipt · F12"}
         >
-          {payFastLoading ? "Processing…" : <><span>⚡ Pay Fast</span><kbd>F12</kbd></>}
+          {payFastLoading ? "…" : <><span>Fast Cash <kbd>F12</kbd></span><span className="cart-pay-total">{fmt(netTotal)}</span></>}
         </button>
-
-        {/* Standard pay — opens full payment modal */}
         <button
-          className="pay-button"
+          className="cart-pay-split-btn"
           disabled={!canPay}
-          onClick={onPay}
-          title={!canPay ? "Add items to cart to pay" : `Collect ${fmt(netTotal)} · F9`}
+          onClick={onPaySplit}
+          title="Split across multiple payment methods"
         >
-          <span>🛒 PAY</span>
-          <span>{fmt(netTotal)}</span>
+          Split
         </button>
       </div>
 
-      {editingLine && (
+
+{editingLine && (
         <LineEditModal
           line={editingLine}
           onUpdateQty={onUpdateQty}
@@ -174,6 +157,7 @@ export default function CartPanel({
 function CartLineRow({
   line,
   isRecent,
+  disabled,
   onEdit,
   onIncrement,
   onDecrement,
@@ -181,6 +165,7 @@ function CartLineRow({
 }: {
   line: CartLine;
   isRecent: boolean;
+  disabled: boolean;
   onEdit: () => void;
   onIncrement: () => void;
   onDecrement: () => void;
@@ -192,46 +177,49 @@ function CartLineRow({
   return (
     <div className={`cart-line-wrap ${isRecent ? "cart-line-recent" : ""}`}>
       <button
-        className="cart-line-btn"
+        className="cart-line-name-btn"
         onClick={onEdit}
+        disabled={disabled}
         title="Tap to edit quantity, discount, or note"
       >
-        <div className="cart-line-main">
-          <div className="cart-line-name">{line.product_name}</div>
-          {line.note && <span className="cart-line-note">{line.note}</span>}
-          <div className="cart-line-meta">
-            <span className="cart-line-qty">×{line.quantity}</span>
-            <span className="cart-line-unit">@ {fmt(line.unit_price_minor)}</span>
-          </div>
-        </div>
-        <div className="cart-line-right">
-          {hasDiscount && (
-            <div className="cart-line-discount">−{fmt(line.line_discount_minor)}</div>
-          )}
-          <div className="cart-line-total">{fmt(line.line_total_minor)}</div>
-        </div>
+        <span className="cart-line-name">{line.product_name}</span>
+        {line.note && <span className="cart-line-note">{line.note}</span>}
+        <span className="cart-line-sku">{line.sku || line.barcode || "Custom item"}</span>
+        <span className="cart-line-unit">{DEVICE.currency} {fmt(line.unit_price_minor)}</span>
       </button>
 
-      {/* Quick controls visible on the recent item */}
-      {isRecent && (
-        <div className="cart-line-quick">
-          <button
-            className="cart-quick-btn"
-            onClick={e => { e.stopPropagation(); onDecrement(); }}
-            title="Decrease qty (−)"
-          >−</button>
-          <button
-            className="cart-quick-btn"
-            onClick={e => { e.stopPropagation(); onIncrement(); }}
-            title="Increase qty (+)"
-          >+</button>
-          <button
-            className="cart-quick-btn cart-quick-del"
-            onClick={e => { e.stopPropagation(); onRemove(); }}
-            title="Remove item (Delete)"
-          >🗑</button>
+      <div className="cart-line-controls">
+        <button
+          className="cart-qty-btn"
+          disabled={disabled}
+          aria-label={`Decrease quantity of ${line.product_name}`}
+          onClick={e => { e.stopPropagation(); onDecrement(); }}
+          title="Decrease qty"
+        >−</button>
+        <span className="cart-qty-val">{line.quantity}</span>
+        <button
+          className="cart-qty-btn"
+          disabled={disabled}
+          aria-label={`Increase quantity of ${line.product_name}`}
+          onClick={e => { e.stopPropagation(); onIncrement(); }}
+          title="Increase qty"
+        >+</button>
+
+        <div className="cart-line-total-col">
+          {hasDiscount && (
+            <span className="cart-line-discount">−{DEVICE.currency} {fmt(line.line_discount_minor)}</span>
+          )}
+          <span className="cart-line-total">{DEVICE.currency} {fmt(line.line_total_minor)}</span>
         </div>
-      )}
+
+        <button
+          className="cart-line-del-btn"
+          disabled={disabled}
+          aria-label={`Remove ${line.product_name} from cart`}
+          onClick={e => { e.stopPropagation(); onRemove(); }}
+          title={`Remove ${line.product_name}`}
+        >×</button>
+      </div>
     </div>
   );
 }

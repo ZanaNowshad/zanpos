@@ -31,6 +31,7 @@ import {
   syncStatus,
 } from "../tauri/commands";
 import ConfirmActionModal from "../components/ConfirmActionModal";
+import { clearAdminChat } from "../adminChatClear";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -615,13 +616,17 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
   const assistantMsgIdRef = useRef<string>("");
 
   const handleClearChat = useCallback(() => {
-    setMessages([]);
-    setHistory([]);
-    setLastUserMsg("");
-    setThinkingTool(null);
-    const newId = crypto.randomUUID();
-    setSessionId(newId);
-    aiClearHistory(DEVICE.branch_id, sessionUser.user_id).catch(() => {});
+    clearAdminChat({
+      branchId: DEVICE.branch_id,
+      userId: sessionUser.user_id,
+      newSessionId: () => crypto.randomUUID(),
+      clearHistory: aiClearHistory,
+      setMessages: () => setMessages([]),
+      setHistory: () => setHistory([]),
+      setLastUserMsg,
+      setThinkingTool,
+      setSessionId,
+    });
   }, [sessionUser.user_id]);
 
   // ── Initial load ────────────────────────────────────────────────────────────

@@ -614,6 +614,16 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
   const textareaRef       = useRef<HTMLTextAreaElement>(null);
   const assistantMsgIdRef = useRef<string>("");
 
+  const handleClearChat = useCallback(() => {
+    setMessages([]);
+    setHistory([]);
+    setLastUserMsg("");
+    setThinkingTool(null);
+    const newId = crypto.randomUUID();
+    setSessionId(newId);
+    aiClearHistory(DEVICE.branch_id, sessionUser.user_id).catch(() => {});
+  }, [sessionUser.user_id]);
+
   // ── Initial load ────────────────────────────────────────────────────────────
   useEffect(() => {
     Promise.all([
@@ -661,7 +671,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
         if (lastSessionId) setSessionId(lastSessionId);
       })
       .catch(() => {});
-  }, [setupStep]);
+  }, [setupStep, sessionUser.user_id]);
 
   // ── Fetch KPI when chat is ready ────────────────────────────────────────────
   // Sequential (not parallel) to avoid spiking Rust thread pool + SQLite
@@ -859,7 +869,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
           setMessages(prev =>
             prev.map(m =>
               m.id === currentId
-                ? { ...m, role: "system" as "system", text: `Error: ${event.message}` }
+                ? { ...m, role: "system" as const, text: `Error: ${event.message}` }
                 : m
             )
           );
@@ -885,7 +895,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
       setMessages(prev =>
         prev.map(m =>
           m.id === currentId
-            ? { ...m, role: "system" as "system", text: `Error: ${String(e)}` }
+            ? { ...m, role: "system" as const, text: `Error: ${String(e)}` }
             : m
         )
       );
@@ -1219,9 +1229,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
         providerLabel={providerLabel}
         showKpi={showKpi}
         onToggleKpi={() => setShowKpi(v => !v)}
-        onClearChat={() => {
-          setMessages([]); setHistory([]); setLastUserMsg(""); setThinkingTool(null);
-        }}
+        onClearChat={handleClearChat}
         onSettings={() => { setSettingsTab("sync"); setSetupStep("settings"); }}
         onBack={onBackToPOS}
       />
@@ -1320,11 +1328,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
             <div className="chat-input-hint">
               Enter to send · Shift+Enter for new line
               {messages.length > 0 && (
-                <button className="chat-clear-link" onClick={() => {
-                  setMessages([]); setHistory([]); setLastUserMsg(""); setThinkingTool(null);
-                  setSessionId(crypto.randomUUID());
-                  aiClearHistory(DEVICE.branch_id, sessionUser.user_id).catch(() => {});
-                }}>
+                <button className="chat-clear-link" onClick={handleClearChat}>
                   · Clear chat
                 </button>
               )}

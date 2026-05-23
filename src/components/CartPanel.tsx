@@ -40,19 +40,6 @@ export default function CartPanel({
 
   return (
     <div className={`cart-panel ${activeLines.length > 0 ? "cart-panel-active" : "cart-panel-idle"} ${isPaymentLocked ? "cart-panel-locked" : ""}`}>
-      {/* Header */}
-      <div className="cart-panel-header">
-        <div>
-          <span className="cart-panel-title">Cart</span>
-          <span className="cart-item-count">{activeLines.length} item{activeLines.length === 1 ? "" : "s"}</span>
-        </div>
-        {recentLineId && (
-          <span className="cart-recent-hint" title="Use +/− or Backspace to adjust recent item">
-            +/− recent
-          </span>
-        )}
-      </div>
-
       {/* Lines */}
       <div className="cart-lines">
         {isPaymentLocked && (

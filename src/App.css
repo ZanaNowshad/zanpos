@@ -3355,37 +3355,6 @@ textarea.field-input { resize: vertical; }
 .restock-toast-body  { font-size: 0.85rem; color: var(--text); }
 @keyframes toast-in { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: translateY(0); } }
 
-/* ── Phase 5: Discounts ─────────────────────────────────────────────────────── */
-
-/* Redesigned cart line (now a button) */
-.cart-line-btn {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  background: none;
-  border: none;
-  border-bottom: 1px solid var(--border);
-  color: var(--text);
-  cursor: pointer;
-  padding: 8px 4px;
-  text-align: left;
-  font-size: 0.85rem;
-  gap: 8px;
-}
-.cart-line-btn:hover { background: var(--surface2); border-radius: var(--radius); }
-.cart-line-main { flex: 1; min-width: 0; }
-.cart-line-meta { display: flex; gap: 10px; color: var(--text-dim); font-size: 0.8rem; margin-top: 2px; }
-.cart-line-note { color: var(--text-dim); font-size: 0.78rem; margin-left: 4px; }
-.cart-line-qty { color: var(--text-dim); }
-.cart-line-unit { color: var(--text-dim); }
-.cart-line-right { display: flex; flex-direction: column; align-items: flex-end; }
-.cart-line-discount { font-size: 0.75rem; color: var(--success); }
-.cart-line-total { font-weight: 600; }
-
-/* Cart totals additions */
-.cart-discount-row { color: var(--success); }
-.cart-subtotal-row { font-size: 0.85rem; }
 
 /* Discount modal */
 .discount-modal { max-width: 360px; }
@@ -6389,35 +6358,6 @@ label {
   font-size: 1rem;
 }
 
-/* ── Cart line rows — 56 px minimum, easier tap ───────────────────────────── */
-.cart-line-btn {
-  padding: 12px 14px;
-  min-height: 56px;
-  align-items: center;
-}
-.cart-line-name { font-size: 0.9rem; }
-
-/* ── Cart del button (touch-first) ───────────────────────────────────────── */
-.cart-line-del-btn {
-  background: transparent;
-  border: none;
-  border-left: 1px solid var(--border2);
-  color: var(--text-muted);
-  cursor: pointer;
-  font-size: 1rem;
-  min-width: 40px;
-  height: 34px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: background 0.1s, color 0.1s;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-}
-.cart-line-del-btn:hover  { background: rgba(239,68,68,0.08); color: var(--error); }
-.cart-line-del-btn:active { background: rgba(239,68,68,0.18); color: var(--error); }
 
 /* ── Cart qty ± bigger touch size ─────────────────────────────────────────── */
 .cart-qty-btn {
@@ -9608,20 +9548,6 @@ kbd {
 .cart-panel-active .cart-panel-header {
   background: linear-gradient(90deg, rgba(217, 144, 0, 0.10), transparent 58%), var(--surface);
 }
-.cart-panel-locked .cart-line-wrap,
-.cart-panel-locked .cart-totals {
-  opacity: 0.72;
-}
-.cart-processing-banner {
-  margin: 10px 12px;
-  padding: 10px 12px;
-  border: 1px solid rgba(37, 99, 235, 0.28);
-  border-radius: 10px;
-  background: rgba(37, 99, 235, 0.12);
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 700;
-}
 .pos-sidebar {
   width: 88px;
   padding: 8px 0;
@@ -9912,25 +9838,6 @@ kbd {
   color: var(--text);
   font-size: 14px;
   font-weight: 650;
-  font-variant-numeric: tabular-nums;
-}
-.cart-discount-row,
-.cart-discount-row span:last-child { color: var(--warning); }
-.cart-net-total {
-  margin-top: 8px;
-  padding-top: 12px;
-}
-.cart-net-total span:first-child {
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 800;
-  letter-spacing: 0;
-}
-.cart-net-total span:last-child {
-  color: var(--text);
-  font-family: var(--font);
-  font-size: 32px;
-  font-weight: 850;
   font-variant-numeric: tabular-nums;
 }
 

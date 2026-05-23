@@ -91,7 +91,7 @@ export default function CartPanel({
             <span className="num">−{fmt(totalDiscount)}</span>
           </div>
         )}
-        {totalDiscount === 0 && (
+        {totalDiscount <= 0 && (
           <div className="cart-total-row cart-discount-row">
             <span>Discount</span>
             <span className="num cart-total-neutral">{fmt(0)}</span>

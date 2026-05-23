@@ -94,7 +94,7 @@ export default function PosPage({
   const [cartWidth, setCartWidth]   = useState(() => {
     if (typeof window === "undefined") return 560;
     const usableWidth = Math.min(window.innerWidth, window.screen.availWidth || window.innerWidth);
-    return Math.round(Math.min(620, Math.max(360, usableWidth * 0.28)));
+    return Math.round(Math.min(720, Math.max(520, usableWidth * 0.42)));
   });
   const isResizing                  = useRef(false);
   const resizeStartX                = useRef(0);

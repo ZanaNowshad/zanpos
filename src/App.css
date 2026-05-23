@@ -967,7 +967,8 @@ kbd.kbd-primary {
   border-left: 1px solid var(--border);
   padding: var(--space-4) var(--space-3) var(--space-3);
   gap: var(--space-3);
-  overflow: hidden;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .numpad-display {
@@ -1055,8 +1056,7 @@ kbd.kbd-primary {
   flex-direction: column;
   gap: 4px;
   min-height: 0;
-  flex: 1;
-  overflow: hidden;
+  flex-shrink: 0;
 }
 .numpad-suggestions-header {
   display: flex;
@@ -1092,9 +1092,8 @@ kbd.kbd-primary {
   display: flex;
   flex-direction: column;
   gap: 3px;
+  max-height: 160px;
   overflow-y: auto;
-  flex: 1;
-  min-height: 0;
 }
 .numpad-suggestion-chip {
   display: flex;

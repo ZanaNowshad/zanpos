@@ -1021,6 +1021,104 @@ kbd.kbd-primary {
 .numpad-custom-btn:hover:not(:disabled) { background: rgba(240,165,0,0.18); }
 .numpad-custom-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* ── Numpad payment section (totals + buttons) ── */
+.np-pay-section {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+  flex-shrink: 0;
+}
+.np-totals {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.np-total-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 1px 0;
+  color: var(--text-muted);
+}
+.np-total-row span:last-child {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.np-discount-active span:last-child { color: var(--success); }
+.np-discount-zero span:last-child   { color: var(--text-muted); }
+.np-grand {
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: var(--text) !important;
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.np-grand span:last-child { color: var(--gold) !important; font-size: 1rem; }
+
+.np-fast-cash-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  background: var(--accent);
+  color: #000;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-weight: 800;
+  font-size: 0.82rem;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: opacity 0.12s;
+  flex-shrink: 0;
+}
+.np-fast-cash-btn:disabled { opacity: 0.38; cursor: not-allowed; }
+.np-fast-cash-btn:hover:not(:disabled) { opacity: 0.88; }
+.np-fast-cash-btn kbd {
+  font-size: 0.62rem;
+  margin-left: 4px;
+  background: rgba(0,0,0,0.15);
+  border: none;
+  border-radius: 3px;
+  padding: 1px 4px;
+  color: #000;
+}
+.np-fast-total {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.88rem;
+  font-weight: 900;
+}
+
+.np-methods {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.np-method-btn {
+  height: 32px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+.np-method-btn:hover:not(:disabled) { background: var(--surface3); border-color: var(--accent); }
+.np-method-btn:disabled { opacity: 0.38; cursor: not-allowed; }
+.np-split-btn { color: var(--text-muted); }
+
 /* ── Compact dialpad inside numpad panel ── */
 .numpad-panel .dialpad { gap: 4px; flex-shrink: 0; }
 .numpad-panel .dialpad-row { gap: 4px; }
@@ -1034,52 +1132,7 @@ kbd.kbd-primary {
 .numpad-panel .numpad-suggestion-chip { padding: 4px 8px; }
 .numpad-panel .numpad-suggestions-list { max-height: 84px; }
 
-/* ── Totals + payment inside numpad panel ── */
-.numpad-totals {
-  padding: 6px 4px 4px;
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-}
-.numpad-panel .cart-total-row {
-  font-size: 0.78rem;
-  padding: 2px 0;
-}
-.numpad-panel .cart-net-total { margin-top: 2px; }
-.numpad-panel .cart-grand-total {
-  font-size: 1.2rem !important;
-}
-.numpad-panel .cart-method-row {
-  padding: 4px 0;
-  gap: 4px;
-  flex-shrink: 0;
-}
-.numpad-panel .cart-method-btn {
-  height: 36px;
-  font-size: 0.78rem;
-  border-radius: var(--radius-sm);
-}
-.numpad-panel .cart-pay-row {
-  flex-shrink: 0;
-  border-top: none;
-  min-height: unset;
-  gap: 4px;
-}
-.numpad-panel .cart-pay-fast-btn {
-  height: 40px;
-  margin: 0;
-  font-size: 0.8rem;
-  border-radius: var(--radius-sm);
-}
-.numpad-panel .cart-pay-fast-btn kbd {
-  font-size: 0.65rem;
-  padding: 1px 4px;
-}
-.numpad-panel .cart-pay-split-btn {
-  height: 34px;
-  margin: 0;
-  font-size: 0.78rem;
-  border-radius: var(--radius-sm);
-}
+/* (payment section in numpad panel uses .np-* classes — see above) */
 
 /* Custom Item bar — sits between scan strip and cart */
 .pos-custom-item-bar {

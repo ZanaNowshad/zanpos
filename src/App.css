@@ -2135,40 +2135,97 @@ kbd.kbd-primary {
 }
 
 /* ── Category tabs ─────────────────────────────────────────────────────────── */
+/* ── Category / filter toolbar ── */
 .category-tabs {
   display: flex;
-  gap: 4px;
-  padding: 7px 10px;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
   overflow-x: auto;
   scrollbar-width: none;
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
 }
 .category-tabs::-webkit-scrollbar { display: none; }
 
 .cat-tab {
-  background: transparent;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: var(--radius-pill);
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--text-muted);
-  cursor: pointer;
-  font-size: 0.74rem;
+  font-size: 0.8rem;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  padding: 4px 12px;
+  font-family: var(--font);
+  cursor: pointer;
   white-space: nowrap;
-  transition: all 0.08s;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
   flex-shrink: 0;
 }
-
-.cat-tab:hover { color: var(--text-dim); background: transparent; }
+.cat-tab:hover { background: var(--surface2); color: var(--text-dim); }
 .cat-tab-active {
-  background: transparent;
+  background: var(--accent2);
   color: var(--accent);
-  border-color: transparent;
-  border-bottom: 2px solid var(--accent);
+  border-color: rgba(240,165,0,0.25);
+}
+[data-theme="light"] .cat-tab-active {
+  background: #FFF4E5;
+  color: #B45309;
+  border-color: rgba(180,83,9,0.2);
+}
+
+/* Custom Item — action button, distinct from category tabs */
+.cat-tab-custom {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(240,165,0,0.35);
+  background: var(--accent2);
+  color: var(--accent);
+  font-size: 0.8rem;
   font-weight: 700;
+  font-family: var(--font);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.12s, border-color 0.12s;
+}
+.cat-tab-custom:hover { background: rgba(240,165,0,0.18); border-color: rgba(240,165,0,0.5); }
+[data-theme="light"] .cat-tab-custom {
+  background: #FFF7ED;
+  border-color: rgba(180,83,9,0.25);
+  color: #B45309;
+}
+
+/* Divider between Custom Item action and category pills */
+.cat-tab-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  flex-shrink: 0;
+  margin: 0 var(--space-1);
+}
+
+.cat-tab-spacer { flex: 1; min-width: var(--space-2); }
+
+/* "Show unavailable" toggle — right-aligned */
+.unavailable-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  white-space: nowrap;
+  user-select: none;
+}
+.unavailable-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 /* ── Shared modal helpers ──────────────────────────────────────────────────── */
@@ -6801,9 +6858,6 @@ label {
 .cart-pay-split-btn:disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
 
 /* custom tab */
-.cat-tab-custom { color: var(--accent); font-weight: 700; }
-.cat-tab-custom:hover { background: rgba(240,165,0,0.08); }
-.cat-tab-divider { width: 1px; background: var(--border); margin: 4px 2px; flex-shrink: 0; align-self: stretch; }
 
 /* help modal */
 .help-modal { width: 560px; max-width: 95vw; max-height: 85vh; overflow-y: auto; }
@@ -9720,22 +9774,6 @@ kbd {
   color: var(--accent-h);
   border-bottom-color: var(--accent-h);
 }
-.cat-tab-spacer { flex: 1; }
-.unavailable-toggle {
-  height: 36px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--text-dim);
-  background: var(--surface);
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-.unavailable-toggle input { accent-color: var(--accent-h); }
 
 .product-grid {
   grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));

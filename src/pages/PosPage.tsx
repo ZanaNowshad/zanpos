@@ -530,6 +530,7 @@ export default function PosPage({
             paymentStarted={showPayment}
             recentLineId={recentLineId}
             onBumpLine={bumpLine}
+            compact={true}
           />
         </div>
 
@@ -551,6 +552,60 @@ export default function PosPage({
           >
             ✦ Custom Item
           </button>
+
+          {/* Totals */}
+          {(() => {
+            const activeLines = cart.lines.filter(l => !l.voided);
+            const grossTotal = activeLines.reduce((s, l) => s + l.line_total_minor, 0);
+            const totalDiscount = cart.bill_discount_minor + activeLines.reduce((s, l) => s + l.line_discount_minor, 0);
+            const fmt = (n: number) => `${DEVICE.currency} ${formatMoney(n, DEVICE.currency_exponent)}`;
+            const canPay = activeLines.length > 0 && netTotal > 0 && !(payFastLoading || showPayment);
+            return (
+              <>
+                <div className="cart-totals numpad-totals">
+                  <div className="cart-total-row cart-subtotal-row">
+                    <span>Subtotal</span>
+                    <span className="num">{fmt(grossTotal)}</span>
+                  </div>
+                  {totalDiscount > 0 ? (
+                    <div className="cart-total-row cart-discount-row cart-discount-active">
+                      <span>Discount</span>
+                      <span className="num">−{fmt(totalDiscount)}</span>
+                    </div>
+                  ) : (
+                    <div className="cart-total-row cart-discount-row">
+                      <span>Discount</span>
+                      <span className="num cart-total-neutral">{fmt(0)}</span>
+                    </div>
+                  )}
+                  <div className="cart-total-row">
+                    <span>Tax</span>
+                    <span className="num">{fmt(taxTotal)}</span>
+                  </div>
+                  <div className="cart-total-row cart-net-total">
+                    <span>TOTAL</span>
+                    <span className="num cart-grand-total">{fmt(netTotal)}</span>
+                  </div>
+                </div>
+                <div className="cart-method-row">
+                  <button className="cart-method-btn" disabled={!canPay} onClick={() => openPayDirect("cash")} title="Cash payment">Cash</button>
+                  <button className="cart-method-btn" disabled={!canPay} onClick={() => openPayDirect("card")} title="Card payment">Card</button>
+                  <button className="cart-method-btn" disabled={!canPay} onClick={() => openPayDirect("wallet")} title="Wallet / mobile payment">Wallet</button>
+                </div>
+                <div className="cart-pay-row">
+                  <button
+                    className="cart-pay-fast-btn"
+                    disabled={!canPay || payFastLoading}
+                    onClick={handlePayFast}
+                    title={!canPay ? "Add items to pay" : "Fast Cash — exact amount, no receipt · F12"}
+                  >
+                    {payFastLoading ? "…" : <><span>Fast Cash <kbd>F12</kbd></span><span className="cart-pay-total">{fmt(netTotal)}</span></>}
+                  </button>
+                  <button className="cart-pay-split-btn" disabled={!canPay} onClick={openPaySplit} title="Split across multiple payment methods">Split</button>
+                </div>
+              </>
+            );
+          })()}
         </div>
       </div>
 

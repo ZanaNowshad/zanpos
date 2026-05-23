@@ -950,11 +950,21 @@ kbd.kbd-primary {
   font-weight: 700;
   font-family: var(--font);
   cursor: pointer;
-  margin-top: auto;
   transition: background 0.12s;
 }
 .numpad-custom-btn:hover:not(:disabled) { background: rgba(240,165,0,0.18); }
 .numpad-custom-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Totals + payment inside numpad panel */
+.numpad-totals {
+  padding: var(--space-2) var(--space-2);
+  border-top: 1px solid var(--border);
+  margin-top: auto;
+}
+.numpad-panel .cart-method-row,
+.numpad-panel .cart-pay-row {
+  margin-top: 0;
+}
 
 /* Cart-first layout: col wrapping scan strip + cart */
 .pos-cart-col {

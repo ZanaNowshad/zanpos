@@ -19,13 +19,15 @@ interface Props {
   paymentStarted?: boolean;
   recentLineId: string | null;
   onBumpLine: (cart_line_id: string, delta: number) => void;
+  /** When true, hides totals + payment buttons (rendered externally in numpad panel) */
+  compact?: boolean;
 }
 
 export default function CartPanel({
   cart, netTotal, taxTotal,
   onUpdateQty, onRemove, onApplyLineDiscount, onSetLineNote,
   onPaySplit, onPayFast, onPayDirect, payFastLoading,
-  paymentStarted, recentLineId, onBumpLine,
+  paymentStarted, recentLineId, onBumpLine, compact,
 }: Props) {
   const [editingLine, setEditingLine] = useState<CartLine | null>(null);
   const activeLines = cart.lines.filter(l => !l.voided);
@@ -79,73 +81,77 @@ export default function CartPanel({
         ))}
       </div>
 
-      {/* Totals */}
-      <div className="cart-totals">
-        <div className="cart-total-row cart-subtotal-row">
-          <span>Subtotal</span>
-          <span className="num">{fmt(grossTotal)}</span>
-        </div>
-        {totalDiscount > 0 && (
-          <div className="cart-total-row cart-discount-row cart-discount-active">
-            <span>Discount</span>
-            <span className="num">−{fmt(totalDiscount)}</span>
+      {/* Totals + Payment — hidden in compact mode (rendered in numpad panel) */}
+      {!compact && (
+        <>
+          <div className="cart-totals">
+            <div className="cart-total-row cart-subtotal-row">
+              <span>Subtotal</span>
+              <span className="num">{fmt(grossTotal)}</span>
+            </div>
+            {totalDiscount > 0 && (
+              <div className="cart-total-row cart-discount-row cart-discount-active">
+                <span>Discount</span>
+                <span className="num">−{fmt(totalDiscount)}</span>
+              </div>
+            )}
+            {totalDiscount <= 0 && (
+              <div className="cart-total-row cart-discount-row">
+                <span>Discount</span>
+                <span className="num cart-total-neutral">{fmt(0)}</span>
+              </div>
+            )}
+            <div className="cart-total-row">
+              <span>Tax</span>
+              <span className="num">{fmt(taxTotal)}</span>
+            </div>
+            <div className="cart-total-row cart-net-total">
+              <span>TOTAL</span>
+              <span className="num cart-grand-total">{fmt(netTotal)}</span>
+            </div>
           </div>
-        )}
-        {totalDiscount <= 0 && (
-          <div className="cart-total-row cart-discount-row">
-            <span>Discount</span>
-            <span className="num cart-total-neutral">{fmt(0)}</span>
+
+          <div className="cart-method-row">
+            <button
+              className="cart-method-btn"
+              disabled={!canPay}
+              onClick={() => onPayDirect("cash")}
+              title="Cash payment"
+            >Cash</button>
+            <button
+              className="cart-method-btn"
+              disabled={!canPay}
+              onClick={() => onPayDirect("card")}
+              title="Card payment"
+            >Card</button>
+            <button
+              className="cart-method-btn"
+              disabled={!canPay}
+              onClick={() => onPayDirect("wallet")}
+              title="Wallet / mobile payment"
+            >Wallet</button>
           </div>
-        )}
-        <div className="cart-total-row">
-          <span>Tax</span>
-          <span className="num">{fmt(taxTotal)}</span>
-        </div>
-        <div className="cart-total-row cart-net-total">
-          <span>TOTAL</span>
-          <span className="num cart-grand-total">{fmt(netTotal)}</span>
-        </div>
-      </div>
 
-      <div className="cart-method-row">
-        <button
-          className="cart-method-btn"
-          disabled={!canPay}
-          onClick={() => onPayDirect("cash")}
-          title="Cash payment"
-        >Cash</button>
-        <button
-          className="cart-method-btn"
-          disabled={!canPay}
-          onClick={() => onPayDirect("card")}
-          title="Card payment"
-        >Card</button>
-        <button
-          className="cart-method-btn"
-          disabled={!canPay}
-          onClick={() => onPayDirect("wallet")}
-          title="Wallet / mobile payment"
-        >Wallet</button>
-      </div>
-
-      <div className="cart-pay-row">
-        <button
-          className="cart-pay-fast-btn"
-          disabled={!canPay || payFastLoading}
-          onClick={onPayFast}
-          title={!canPay ? "Add items to pay" : "Fast Cash — exact amount, no receipt · F12"}
-        >
-          {payFastLoading ? "…" : <><span>Fast Cash <kbd>F12</kbd></span><span className="cart-pay-total">{fmt(netTotal)}</span></>}
-        </button>
-        <button
-          className="cart-pay-split-btn"
-          disabled={!canPay}
-          onClick={onPaySplit}
-          title="Split across multiple payment methods"
-        >
-          Split
-        </button>
-      </div>
+          <div className="cart-pay-row">
+            <button
+              className="cart-pay-fast-btn"
+              disabled={!canPay || payFastLoading}
+              onClick={onPayFast}
+              title={!canPay ? "Add items to pay" : "Fast Cash — exact amount, no receipt · F12"}
+            >
+              {payFastLoading ? "…" : <><span>Fast Cash <kbd>F12</kbd></span><span className="cart-pay-total">{fmt(netTotal)}</span></>}
+            </button>
+            <button
+              className="cart-pay-split-btn"
+              disabled={!canPay}
+              onClick={onPaySplit}
+              title="Split across multiple payment methods"
+            >
+              Split
+            </button>
+          </div>
+        </>
+      )}
 
 
 {editingLine && (

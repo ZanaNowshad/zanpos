@@ -6680,57 +6680,6 @@ label {
   border-top: 2px solid var(--border);
   min-height: 56px;
 }
-.cart-pay-fast-btn {
-  flex: 3;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  padding: 10px 12px;
-  background: var(--accent);
-  color: #fff;
-  border: none;
-  border-right: 1px solid rgba(255,255,255,0.2);
-  border-radius: 0;
-  cursor: pointer;
-  font-weight: 700;
-  font-size: 0.9rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  transition: background 0.12s, opacity 0.12s;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-.cart-pay-fast-btn:hover:not(:disabled) { background: var(--accent-h); }
-.cart-pay-fast-btn:active:not(:disabled) { opacity: 0.85; }
-.cart-pay-fast-btn:disabled {
-  background: var(--surface2);
-  color: var(--text-muted);
-  box-shadow: none;
-  opacity: 1;
-  cursor: not-allowed;
-  pointer-events: none;
-}
-.cart-pay-total { font-size: 0.75rem; font-weight: 500; opacity: 0.88; font-family: var(--font-mono); }
-.cart-pay-split-btn {
-  flex: 1;
-  padding: 10px 8px;
-  background: var(--surface2);
-  color: var(--text);
-  border: none;
-  border-radius: 0;
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 0.78rem;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  transition: background 0.12s;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-.cart-pay-split-btn:hover:not(:disabled) { background: var(--border); }
-.cart-pay-split-btn:disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
 
 /* custom tab */
 
@@ -6788,29 +6737,78 @@ label {
 .bo-cost-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 6px; }
 .bo-cost-hint { font-size: 0.78rem; color: var(--text-muted); margin: 2px 0 6px; font-family: var(--font-mono); }
 
-/* cart method row (Cash / Card / Wallet above fast-cash/split) */
+/* ── Payment buttons ── */
 .cart-method-row {
   display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
+
 .cart-method-btn {
   flex: 1;
-  padding: 9px 4px;
+  height: 52px;
+  border-radius: var(--radius-md);
+  border: 1.5px solid var(--border);
   background: var(--surface2);
-  border: none;
-  border-right: 1px solid var(--border);
   color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 700;
+  font-family: var(--font);
   cursor: pointer;
-  font-size: 0.78rem;
-  font-weight: 600;
-  transition: background 0.1s;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
+  transition: background 0.12s, border-color 0.12s, transform 0.08s;
 }
-.cart-method-btn:last-child { border-right: none; }
-.cart-method-btn:hover:not(:disabled) { background: var(--border); }
-.cart-method-btn:disabled { opacity: 0.3; cursor: not-allowed; pointer-events: none; }
+.cart-method-btn:hover:not(:disabled) { background: var(--surface3); border-color: rgba(240,165,0,0.3); }
+.cart-method-btn:active:not(:disabled) { transform: scale(0.97); }
+.cart-method-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+/* Colour-coded payment methods */
+.cart-method-btn[title*="Cash"]:not(:disabled)   { border-color: rgba(34,197,94,0.3);  }
+.cart-method-btn[title*="Card"]:not(:disabled)   { border-color: rgba(37,99,235,0.3);  }
+.cart-method-btn[title*="Wallet"]:not(:disabled) { border-color: rgba(240,165,0,0.3);  }
+
+/* Fast-cash + split */
+.cart-pay-fast-btn {
+  width: 100%;
+  height: 52px;
+  margin: 0 var(--space-4) var(--space-2);
+  border-radius: var(--radius-md);
+  border: none;
+  background: var(--accent);
+  color: var(--accent-t);
+  font-size: 1rem;
+  font-weight: 800;
+  font-family: var(--font);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  transition: background 0.12s, transform 0.08s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+.cart-pay-fast-btn:hover:not(:disabled) { background: var(--accent-h); }
+.cart-pay-fast-btn:active:not(:disabled) { transform: scale(0.98); }
+.cart-pay-fast-btn:disabled { opacity: 0.45; cursor: not-allowed; background: var(--surface3); color: var(--text-muted); }
+
+.cart-pay-split-btn {
+  width: 100%;
+  height: 40px;
+  margin: 0 var(--space-4) var(--space-2);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.cart-pay-split-btn:hover:not(:disabled) { background: var(--surface2); }
+.cart-pay-split-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* ── Custom item suggestion chips ─────────────────────────────────────── */
 .ci-suggest-row {
@@ -9841,33 +9839,6 @@ kbd {
   font-variant-numeric: tabular-nums;
 }
 
-.cart-method-row {
-  gap: 8px;
-  padding: 0 16px 10px;
-  border-top: none;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-.cart-method-btn {
-  height: 56px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface);
-  color: var(--text);
-  font-size: 15px;
-  font-weight: 700;
-}
-.cart-method-btn:last-child { border-right: 1px solid var(--border); }
-.cart-method-btn:hover:not(:disabled) {
-  background: var(--accent2);
-  border-color: var(--accent-h);
-}
-.cart-method-btn:disabled,
-.cart-pay-fast-btn:disabled,
-.cart-pay-split-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
 .cart-pay-row {
   min-height: 64px;
   gap: 8px;
@@ -9876,33 +9847,10 @@ kbd {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 112px;
 }
-.cart-pay-fast-btn {
-  height: 56px;
-  border-radius: 12px;
-  flex-direction: row;
-  justify-content: space-between;
-  color: var(--accent-t);
-  font-size: 15px;
-  text-transform: none;
-  letter-spacing: 0;
-}
-.cart-pay-fast-btn kbd {
-  margin-left: 6px;
-}
 .cart-pay-total {
   font-size: 14px;
   font-weight: 750;
   font-variant-numeric: tabular-nums;
-}
-.cart-pay-split-btn {
-  height: 56px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface2);
-  color: var(--text-dim);
-  font-size: 15px;
-  text-transform: none;
-  letter-spacing: 0;
 }
 
 .action-bar {
@@ -9997,18 +9945,10 @@ kbd {
 }
 
 @media (max-width: 1600px) {
-  .cart-method-row {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 6px;
-    padding-inline: 12px;
-  }
   .cart-pay-row {
     grid-template-columns: 1fr;
     padding-inline: 12px;
     padding-bottom: 12px;
-  }
-  .cart-pay-split-btn {
-    width: 100%;
   }
   .cart-net-total span:last-child {
     font-size: 28px;

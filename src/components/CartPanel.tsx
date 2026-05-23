@@ -83,19 +83,27 @@ export default function CartPanel({
       <div className="cart-totals">
         <div className="cart-total-row cart-subtotal-row">
           <span>Subtotal</span>
-          <span>{fmt(grossTotal)}</span>
+          <span className="num">{fmt(grossTotal)}</span>
         </div>
-        <div className="cart-total-row cart-discount-row">
-          <span>Discount</span>
-          <span>{fmt(totalDiscount)}</span>
-        </div>
+        {totalDiscount > 0 && (
+          <div className="cart-total-row cart-discount-row cart-discount-active">
+            <span>Discount</span>
+            <span className="num">−{fmt(totalDiscount)}</span>
+          </div>
+        )}
+        {totalDiscount === 0 && (
+          <div className="cart-total-row cart-discount-row">
+            <span>Discount</span>
+            <span className="num cart-total-neutral">{fmt(0)}</span>
+          </div>
+        )}
         <div className="cart-total-row">
           <span>Tax</span>
-          <span>{fmt(taxTotal)}</span>
+          <span className="num">{fmt(taxTotal)}</span>
         </div>
         <div className="cart-total-row cart-net-total">
           <span>TOTAL</span>
-          <span>{fmt(netTotal)}</span>
+          <span className="num cart-grand-total">{fmt(netTotal)}</span>
         </div>
       </div>
 

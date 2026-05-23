@@ -107,7 +107,7 @@ export default function PosPage({
   const {
     cart, loading, error, clearError,
     recentLineId,
-    addByBarcode, addCustomItem,
+    addByBarcode, addProduct, addCustomItem,
     updateQuantity, removeLine, removeRecentLine, bumpRecentQty, bumpLine,
     applyBillDiscount, applyLineDiscount, setLineNote,
     finalizeSale, clearCart, replaceCart,
@@ -519,6 +519,16 @@ export default function PosPage({
           <BarcodeInput
             ref={barcodeRef}
             onBarcode={handleBarcode}
+            onSelectProduct={async (product) => {
+              const qty = parseInt(numpadValue) > 1 ? numpadValue : undefined;
+              try {
+                await addProduct(product, qty);
+                barcodeRef.current?.flashSuccess();
+                setNumpadValue("1");
+              } catch {
+                barcodeRef.current?.flashError();
+              }
+            }}
             onSearch={() => {}}
             onEscape={() => {}}
             disabled={loading || payFastLoading}

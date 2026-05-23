@@ -386,6 +386,7 @@ body {
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   background: var(--surface);
+  position: relative;
 }
 
 .barcode-input-row {
@@ -471,6 +472,69 @@ body {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 0 4px;
+}
+
+/* ── Barcode / search dropdown ── */
+.barcode-dropdown {
+  position: absolute;
+  top: calc(100% - 2px);
+  left: var(--space-4);
+  right: var(--space-4);
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.28);
+  z-index: 200;
+  overflow: hidden;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.barcode-dropdown-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 10px 16px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  text-align: left;
+  gap: 12px;
+  transition: background 0.08s;
+}
+.barcode-dropdown-item:last-child { border-bottom: none; }
+.barcode-dropdown-item:hover,
+.barcode-dropdown-item-active {
+  background: var(--accent2) !important;
+}
+.bdi-name {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bdi-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.bdi-sku {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+.bdi-price {
+  font-size: 0.88rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
 }
 
 /* ── Keyboard shortcut badges — one consistent component ── */

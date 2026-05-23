@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import type { Cart, CartLine, PaymentInput, ProductWithPrice, SaleResult } from "../types";
+import { DEVICE } from "../types";
 import * as cmd from "../tauri/commands";
 import { posRecordVoid } from "../tauri/commands";
 
@@ -19,6 +20,7 @@ function makeEmptyCart(session: CartSession): Cart {
     cashier_user_id: session.cashier_user_id,
     lines: [],
     bill_discount_minor: 0,
+    bill_discount_reason: null,
   };
 }
 
@@ -73,11 +75,11 @@ export function useCart(session: CartSession) {
     }
   }, [cart]);
 
-  const addProduct = useCallback(async (product: ProductWithPrice) => {
+  const addProduct = useCallback(async (product: ProductWithPrice, qty?: string) => {
     setLoading(true);
     setError(null);
     try {
-      const updated = await cmd.posAddItem(cart, product.product_id);
+      const updated = await cmd.posAddItem(cart, product.product_id, qty);
       setRecentLineId(findChangedLineId(cart, updated));
       setCart(updated);
     } catch (e: unknown) {
@@ -108,29 +110,29 @@ export function useCart(session: CartSession) {
     }
   }, [cart]);
 
-  const applyBillDiscount = useCallback(async (discount_minor: number) => {
+  const applyBillDiscount = useCallback(async (discount_minor: number, reason: string) => {
     try {
-      const updated = await cmd.posApplyBillDiscount(cart, discount_minor);
+      const updated = await cmd.posApplyBillDiscount(cart, discount_minor, reason, session.cashier_user_id);
       setCart(updated);
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to apply discount");
     }
-  }, [cart]);
+  }, [cart, session.cashier_user_id]);
 
-  const applyLineDiscount = useCallback(async (cart_line_id: string, discount_minor: number) => {
+  const applyLineDiscount = useCallback(async (cart_line_id: string, discount_minor: number, reason: string) => {
     try {
-      const updated = await cmd.posApplyLineDiscount(cart, cart_line_id, discount_minor);
+      const updated = await cmd.posApplyLineDiscount(cart, cart_line_id, discount_minor, reason, session.cashier_user_id);
       setCart(updated);
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to apply line discount");
     }
-  }, [cart]);
+  }, [cart, session.cashier_user_id]);
 
   const addCustomItem = useCallback(async (name: string, priceMajor: string, quantity: string) => {
     setLoading(true);
     setError(null);
     try {
-      const priceMinor = Math.round(parseFloat(priceMajor) * 1000);
+      const priceMinor = Math.round(parseFloat(priceMajor) * Math.pow(10, DEVICE.currency_exponent));
       const updated = await cmd.posAddCustomItem(cart, name, priceMinor, quantity);
       setRecentLineId(findChangedLineId(cart, updated));
       setCart(updated);
@@ -153,11 +155,12 @@ export function useCart(session: CartSession) {
   const finalizeSale = useCallback(async (
     payments: PaymentInput[],
     customerId?: string,
+    deliveryInput?: import("../types").DeliveryInput,
   ): Promise<SaleResult> => {
     setLoading(true);
     setError(null);
     try {
-      const result = await cmd.posFinalizeSale(cart, payments, undefined, customerId);
+      const result = await cmd.posFinalizeSale(cart, payments, undefined, customerId, deliveryInput);
       setCart(makeEmptyCart(session));
       setRecentLineId(null);
       return result;
@@ -189,25 +192,30 @@ export function useCart(session: CartSession) {
     setRecentLineId(active.at(-1)?.cart_line_id ?? null);
   }, []);
 
-  /** Increment quantity of the most recently touched line. */
-  const bumpRecentQty = useCallback(async (delta: number) => {
-    if (!recentLineId) return;
-    const line: CartLine | undefined = cart.lines.find(l => l.cart_line_id === recentLineId && !l.voided);
+  /** Bump quantity of any specific line (used by inline +/− controls). */
+  const bumpLine = useCallback(async (cart_line_id: string, delta: number) => {
+    const line: CartLine | undefined = cart.lines.find(l => l.cart_line_id === cart_line_id && !l.voided);
     if (!line) return;
     const current = parseFloat(line.quantity);
     const next = current + delta;
     if (next <= 0) {
-      await cmd.posRemoveLine(cart, recentLineId).then(updated => {
+      await cmd.posRemoveLine(cart, cart_line_id).then(updated => {
         const active = updated.lines.filter(l => !l.voided);
         setRecentLineId(active.at(-1)?.cart_line_id ?? null);
         setCart(updated);
       }).catch((e: unknown) => setError(typeof e === "string" ? e : "Failed to remove item"));
     } else {
-      await cmd.posUpdateQuantity(cart, recentLineId, String(next)).then(updated => {
+      await cmd.posUpdateQuantity(cart, cart_line_id, String(next)).then(updated => {
         setCart(updated);
       }).catch((e: unknown) => setError(typeof e === "string" ? e : "Invalid quantity"));
     }
-  }, [cart, recentLineId]);
+  }, [cart]);
+
+  /** Increment quantity of the most recently touched line (keyboard shortcut). */
+  const bumpRecentQty = useCallback(async (delta: number) => {
+    if (!recentLineId) return;
+    await bumpLine(recentLineId, delta);
+  }, [recentLineId, bumpLine]);
 
   /** Remove the most recently touched line. */
   const removeRecentLine = useCallback(async () => {
@@ -234,6 +242,7 @@ export function useCart(session: CartSession) {
     updateQuantity,
     removeLine,
     removeRecentLine,
+    bumpLine,
     bumpRecentQty,
     applyBillDiscount,
     applyLineDiscount,

@@ -1,8 +1,11 @@
-import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle } from "react";
+import React, { useRef, useEffect, useState, useCallback, forwardRef, useImperativeHandle } from "react";
+import { ScanBarcode } from "lucide-react";
 
 export interface BarcodeInputHandle {
   focus: () => void;
   clear: () => void;
+  flashSuccess: () => void;
+  flashError: () => void;
 }
 
 interface Props {
@@ -17,7 +20,7 @@ interface Props {
  * Unified barcode/search input.
  * - Barcode scanners emit fast keystrokes ending with Enter.
  * - Keyboard search is slower; debounced at 300ms.
- * - Supports quantity prefix: "3*123456" or "3x123456" → qty=3, barcode=123456.
+ * - Supports quantity prefix: "3*barcode" or "3x123456" → qty=3, barcode=123456.
  * - F2 always returns focus here; expose .focus() via ref for programmatic use.
  */
 const BarcodeInput = forwardRef<BarcodeInputHandle, Props>(function BarcodeInput(
@@ -26,11 +29,20 @@ const BarcodeInput = forwardRef<BarcodeInputHandle, Props>(function BarcodeInput
 ) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState("");
+  const [scanState, setScanState] = useState<"" | "success" | "error">("");
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearFlash = useCallback(() => {
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setScanState(""), 600);
+  }, []);
 
   useImperativeHandle(ref, () => ({
     focus: () => inputRef.current?.focus(),
     clear: () => setValue(""),
+    flashSuccess: () => { setScanState("success"); clearFlash(); },
+    flashError:   () => { setScanState("error");   clearFlash(); },
   }));
 
   // Auto-focus on mount; F2 / F3 always return focus here
@@ -49,6 +61,7 @@ const BarcodeInput = forwardRef<BarcodeInputHandle, Props>(function BarcodeInput
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = e.target.value;
     setValue(v);
+    setScanState("");
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
     debounceTimer.current = setTimeout(() => {
       if (v.trim()) onSearch(v.trim());
@@ -81,6 +94,7 @@ const BarcodeInput = forwardRef<BarcodeInputHandle, Props>(function BarcodeInput
     } else if (e.key === "Escape") {
       e.preventDefault();
       setValue("");
+      setScanState("");
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
       onSearch("");
       onEscape?.();
@@ -89,21 +103,26 @@ const BarcodeInput = forwardRef<BarcodeInputHandle, Props>(function BarcodeInput
 
   return (
     <div className="barcode-input-wrap">
-      <span className="barcode-input-icon">▮▮▮</span>
-      <input
-        ref={inputRef}
-        className="barcode-input"
-        type="text"
-        value={value}
-        placeholder="Scan barcode or search product · qty prefix: 3*barcode (F2)"
-        onChange={handleChange}
-        onKeyDown={handleKeyDown}
-        disabled={disabled}
-        autoComplete="off"
-        autoCorrect="off"
-        spellCheck={false}
-      />
-      <span className="barcode-input-kbd">F2</span>
+      <div className="barcode-input-row">
+        <span className="barcode-input-icon">
+          <ScanBarcode size={18} strokeWidth={1.75} />
+        </span>
+        <input
+          ref={inputRef}
+          className={`barcode-input${scanState ? ` scan-${scanState}` : ""}`}
+          type="text"
+          value={value}
+          placeholder="Scan barcode or search product…"
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+          disabled={disabled}
+          autoComplete="off"
+          autoCorrect="off"
+          spellCheck={false}
+        />
+        <kbd className="barcode-input-kbd">F2</kbd>
+      </div>
+      <p className="barcode-input-hint">Tip: type <code>3*barcode</code> to add a quantity</p>
     </div>
   );
 });

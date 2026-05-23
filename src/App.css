@@ -138,9 +138,9 @@ body {
 }
 
 /* ── Light mode refinements ── */
-/* Softer, less dominant search focus ring */
 [data-theme="light"] .barcode-input:focus {
-  box-shadow: 0 0 0 1.5px rgba(212,146,0,0.22);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
+  border-color: var(--color-focus);
 }
 /* Product cards need a shadow to lift off the grey bg */
 [data-theme="light"] .product-card {
@@ -393,73 +393,97 @@ body {
   background: var(--bg);
 }
 
-/* ── Barcode input ── */
+/* ── Scan / search input ── */
 .barcode-input-wrap {
-  padding: 10px 14px;
+  padding: var(--space-3) var(--space-4) var(--space-2);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   background: var(--surface);
+}
+
+.barcode-input-row {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
 }
 
-/* Barcode icon — left */
 .barcode-input-icon {
   position: absolute;
-  left: 26px;
+  left: 16px;
   color: var(--text-muted);
-  font-size: 1rem;
   pointer-events: none;
   z-index: 1;
+  display: flex;
+  align-items: center;
 }
 
-/* Keyboard icon — right */
 .barcode-input-kbd {
   position: absolute;
-  right: 26px;
+  right: 14px;
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   pointer-events: none;
   font-family: var(--font-mono);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 1px 6px;
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 2px 6px;
   letter-spacing: 0.02em;
+  background: var(--surface2);
 }
 
 .barcode-input {
   width: 100%;
-  padding: 12px 52px 12px 40px;
+  height: 52px;
+  padding: 0 52px 0 44px;
   background: var(--bg);
   border: 1.5px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   color: var(--text);
-  font-size: 0.95rem;
+  font-size: 1.1rem;
   font-family: var(--font);
+  font-weight: 500;
   outline: none;
-  transition: border-color 0.1s, box-shadow 0.1s;
+  transition: border-color 0.12s, box-shadow 0.12s;
 }
-
 .barcode-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(240,165,0,0.15);
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 3px var(--color-focus-ring);
 }
-.barcode-input::placeholder { color: var(--text-muted); font-size: 0.88rem; }
+.barcode-input::placeholder {
+  color: var(--text-muted);
+  font-size: 1rem;
+  font-weight: 400;
+}
 .barcode-input:disabled { opacity: 0.4; }
 .barcode-input.scan-success {
   border-color: var(--success);
-  box-shadow: 0 0 0 2px rgba(34,197,94,0.2);
+  box-shadow: 0 0 0 3px rgba(34,197,94,0.18);
   animation: scan-flash 0.5s ease-out forwards;
 }
 .barcode-input.scan-error {
   border-color: var(--error);
-  box-shadow: 0 0 0 2px rgba(239,68,68,0.2);
+  box-shadow: 0 0 0 3px rgba(239,68,68,0.18);
 }
 @keyframes scan-flash {
-  0%   { box-shadow: 0 0 0 3px rgba(34,197,94,0.35); }
-  100% { box-shadow: 0 0 0 2px rgba(34,197,94,0.2); }
+  0%   { box-shadow: 0 0 0 4px rgba(34,197,94,0.3); }
+  100% { box-shadow: 0 0 0 3px rgba(34,197,94,0.18); }
+}
+
+.barcode-input-hint {
+  margin-top: 5px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  padding-left: 4px;
+  line-height: 1.4;
+}
+.barcode-input-hint code {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
 }
 
 /* ── Global kbd shortcut chips ────────────────────────────────────────────── */

@@ -197,45 +197,97 @@ body {
   overflow: hidden;
 }
 
+/* ── Top bar ── */
 .top-bar {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 0 14px;
-  height: 44px;
+  height: 56px;
+  padding: 0 var(--space-4);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  font-size: 0.8rem;
+  flex-shrink: 0;
+  gap: var(--space-4);
+}
+
+.top-bar-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
   flex-shrink: 0;
 }
 
+.top-bar-center {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  justify-content: center;
+}
+
+.top-bar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.top-bar-sep { color: var(--border); margin: 0 2px; }
+
 .top-bar-branch {
-  font-family: var(--font);
   font-weight: 600;
   font-size: 0.88rem;
   color: var(--text);
-  letter-spacing: 0.03em;
-  margin-right: 2px;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Status pill — compact, pill-shaped */
+.top-bar-pill {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  font-size: 0.76rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.top-bar-pill-success {
+  background: var(--color-success-soft);
+  color: var(--success);
+}
+.top-bar-pill-warning {
+  background: var(--color-warning-soft);
+  color: var(--warning);
+}
+.top-bar-pill-danger {
+  background: var(--color-danger-soft);
+  color: var(--error);
+}
+
+.top-bar-time {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+  margin-right: var(--space-1);
 }
 
 .top-bar-cashier {
   color: var(--text-dim);
   font-size: 0.76rem;
-  padding: 2px 8px;
+  padding: 3px 9px;
   background: var(--surface2);
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   letter-spacing: 0.02em;
-}
-
-.top-bar-sep { color: var(--border); margin: 0 1px; }
-
-.top-bar-time {
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
-  letter-spacing: 0.08em;
-  font-weight: 500;
+  white-space: nowrap;
 }
 
 .pos-main {
@@ -323,14 +375,13 @@ body {
 /* ── ZANPOS logo in top bar ── */
 .top-bar-logo {
   font-family: var(--font-display);
-  font-size: 0.95rem;
+  font-size: 1rem;
   font-weight: 800;
   letter-spacing: 0.04em;
   color: var(--text);
   white-space: nowrap;
   flex-shrink: 0;
 }
-
 .top-bar-logo span { color: var(--gold); }
 
 /* ── Product area ── */
@@ -2020,66 +2071,44 @@ kbd.kbd-primary {
 
 /* ── Top bar buttons ───────────────────────────────────────────────────────── */
 .top-bar-btn {
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface2);
   color: var(--text-dim);
-  cursor: pointer;
-  font-size: 0.74rem;
+  font-size: 0.78rem;
   font-weight: 600;
+  cursor: pointer;
   font-family: var(--font);
-  padding: 4px 9px;
-  transition: background 0.08s, color 0.08s, border-color 0.08s;
   white-space: nowrap;
-  letter-spacing: 0.03em;
+  transition: background 0.1s, color 0.1s;
   display: inline-flex;
   align-items: center;
   gap: 4px;
 }
-
-.top-bar-btn:hover {
-  background: var(--surface3);
-  color: var(--text);
-  border-color: var(--border);
-}
+.top-bar-btn:hover { background: var(--surface3); color: var(--text); }
 
 .top-bar-btn-danger {
-  color: var(--error);
-  border-color: rgba(240,82,82,0.2);
-}
-
-.top-bar-btn-danger:hover {
-  background: rgba(240,82,82,0.1);
-  border-color: rgba(240,82,82,0.4);
+  background: var(--color-danger-soft);
+  border-color: rgba(239,68,68,0.3);
   color: var(--error);
 }
+.top-bar-btn-danger:hover { background: rgba(239,68,68,0.18); color: var(--error); }
 
-.top-bar-logout {
-  color: var(--text-muted);
-  border-color: rgba(255,255,255,0.06);
-}
-
-.top-bar-logout:hover {
-  background: rgba(240,82,82,0.08);
-  border-color: rgba(240,82,82,0.3);
-  color: var(--error);
-}
+.top-bar-logout { color: var(--text-muted); }
+.top-bar-theme  { font-size: 1rem; padding: 0 8px; }
 
 .top-bar-admin {
   background: var(--accent2);
   border-color: rgba(240,165,0,0.2);
   color: var(--accent);
 }
-
 .top-bar-admin:hover {
   background: var(--accent);
   color: var(--accent-t);
   border-color: var(--accent);
 }
-
-.top-bar-spacer { flex: 1; }
-
-.top-bar-theme { font-size: 0.8rem; }
 
 /* ── Category tabs ─────────────────────────────────────────────────────────── */
 .category-tabs {
@@ -6428,8 +6457,7 @@ label {
 
 /* ── Top bar buttons ─────────────────────────────────────────────────────── */
 .top-bar-btn {
-  min-height: 36px;
-  padding: 7px 12px;
+  min-height: 32px;
 }
 
 /* ── PIN pad — bigger keys for easy typing ────────────────────────────────── */
@@ -9542,45 +9570,12 @@ kbd {
   font-variant-numeric: tabular-nums;
 }
 
-.top-bar {
-  height: 56px;
-  gap: 8px;
-  padding: 0 16px;
-}
-.top-bar-branch { font-size: 15px; font-weight: 700; letter-spacing: 0; }
-.top-bar-cashier,
 .sync-chip,
 .wa-status-pill {
   min-height: 28px;
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-}
-.top-bar-time {
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0;
-}
-.top-bar-btn { min-height: 40px; }
-.top-bar-chip {
-  min-height: 28px;
-  display: inline-flex;
-  align-items: center;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface2);
-  color: var(--text-dim);
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-.top-bar-chip-shift {
-  color: var(--success);
-  background: rgba(3, 152, 85, 0.12);
-  border-color: rgba(3, 152, 85, 0.24);
 }
 
 .pos-main { background: var(--bg); }

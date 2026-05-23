@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  BarChart2, Clock, ClipboardList, Building2, Bike, StickyNote,
+  Sparkles, ShoppingBag
+} from "lucide-react";
 import type { LowStockAlert, PaymentInput, ProductWithPrice, SaleListRow, SaleResult, SessionUser, Shift } from "../types";
 import { formatMoney } from "../money";
 import { DEVICE } from "../types";
-import { cashNoSale, productListAll, receiptReprint, refundGetSale, whatsappStatus, whatsappSendDelivery } from "../tauri/commands";
+import { cashNoSale, productListAll, receiptReprint, refundGetSale, whatsappStatus, whatsappSendDelivery, appConfigLoad } from "../tauri/commands";
+import { loadWaFormat, buildDeliveryMessage } from "../utils/waMessageFormat";
 import { useCart } from "../hooks/useCart";
 import { useSyncStatus } from "../hooks/useSyncStatus";
 import { usePosShortcuts } from "../hooks/usePosShortcuts";
 import { useIdleTimer } from "../hooks/useIdleTimer";
+import { filterProductsForSale } from "../posProductFilters";
 import BarcodeInput, { type BarcodeInputHandle } from "../components/BarcodeInput";
 import ProductGrid from "../components/ProductGrid";
 import CartPanel from "../components/CartPanel";
@@ -26,6 +32,8 @@ import HelpModal from "../components/HelpModal";
 import RecentSalesModal from "../components/RecentSalesModal";
 import WhatsAppStatusPill from "../components/WhatsAppStatusPill";
 import WhatsAppQRModal from "../components/WhatsAppQRModal";
+import StickyNotesPanel from "../components/StickyNotesPanel";
+import DeliveriesTab from "../components/DeliveriesTab";
 
 interface Props {
   sessionUser: SessionUser;
@@ -52,6 +60,7 @@ export default function PosPage({
   const [productLoading, setProductLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [showUnavailable, setShowUnavailable] = useState(false);
 
   // ── Modal state ───────────────────────────────────────────────────────────────
   const [showPayment, setShowPayment]     = useState(false);
@@ -75,15 +84,21 @@ export default function PosPage({
   const [showHelp, setShowHelp]             = useState(false);
   const [showRecent, setShowRecent]         = useState(false);
   const [showWaQR, setShowWaQR]             = useState(false);
+  const [showNotes, setShowNotes]           = useState(false);
+  const [showDeliveries, setShowDeliveries] = useState(false);
   const [payFastLoading, setPayFastLoading] = useState(false);
   const [restockAlerts, setRestockAlerts]   = useState<LowStockAlert[]>([]);
   const restockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Resizable cart panel ──────────────────────────────────────────────────────
-  const [cartWidth, setCartWidth]   = useState(390);
+  const [cartWidth, setCartWidth]   = useState(() => {
+    if (typeof window === "undefined") return 560;
+    const usableWidth = Math.min(window.innerWidth, window.screen.availWidth || window.innerWidth);
+    return Math.round(Math.min(620, Math.max(360, usableWidth * 0.28)));
+  });
   const isResizing                  = useRef(false);
   const resizeStartX                = useRef(0);
-  const resizeStartW                = useRef(390);
+  const resizeStartW                = useRef(cartWidth);
 
   const canOpenBackOffice = ["owner", "manager"].includes(sessionUser.role_name);
   const canViewXReport    = canOpenBackOffice;
@@ -101,7 +116,7 @@ export default function PosPage({
     cart, loading, error, clearError,
     recentLineId,
     addByBarcode, addProduct, addCustomItem,
-    updateQuantity, removeLine, removeRecentLine, bumpRecentQty,
+    updateQuantity, removeLine, removeRecentLine, bumpRecentQty, bumpLine,
     applyBillDiscount, applyLineDiscount, setLineNote,
     finalizeSale, clearCart, replaceCart,
     netTotal, taxTotal, lineCount,
@@ -202,6 +217,35 @@ export default function PosPage({
           try {
             const waStatus = await whatsappStatus();
             if (waStatus.connected) {
+              // Build message from custom template (falls back to Rust builder if not set)
+              let messageOverride: string | undefined;
+              try {
+                const fmt = loadWaFormat();
+                const cfg = await appConfigLoad();
+                const activeLines = fmt.language === "ar" ? fmt.ar_lines : fmt.en_lines;
+                const now = new Date();
+                const dateStr = now.toLocaleDateString(fmt.language === "ar" ? "ar-BH" : "en-GB", {
+                  day: "numeric", month: "long", year: "numeric",
+                }) + ", " + now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+                const method = result.payments[0]?.method ?? "cash";
+                const methodLabel = method === "wallet" ? "BenefitPay" : method.charAt(0).toUpperCase() + method.slice(1);
+                const vars = {
+                  customer_name:  d.customer_name ?? "",
+                  receipt_number: result.receipt_number,
+                  date:           dateStr,
+                  amount:         `${DEVICE.currency} ${formatMoney(result.net_total_minor, DEVICE.currency_exponent)}`,
+                  address:        d.address_text,
+                  house_number:   d.house_number ?? "",
+                  area:           d.area ?? "",
+                  delivery_note:  d.delivery_note ?? "",
+                  method:         methodLabel,
+                  benefit_number: cfg.whatsapp_benefit_number ?? "",
+                  store_name:     DEVICE.branch_name,
+                  store_phone:    "",
+                };
+                messageOverride = buildDeliveryMessage(activeLines, vars, result.items, DEVICE.currency_exponent);
+              } catch { /* if template build fails, fall through to Rust builder */ }
+
               await whatsappSendDelivery({
                 to:                d.contact_number,
                 receipt_number:    result.receipt_number,
@@ -210,6 +254,7 @@ export default function PosPage({
                 address_text:      d.address_text,
                 house_number:      d.house_number ?? undefined,
                 area:              d.area ?? undefined,
+                message_override:  messageOverride,
               });
             } else if (sessionUser.role_name === "owner" || sessionUser.role_name === "manager") {
               setShowWaQR(true);
@@ -241,7 +286,7 @@ export default function PosPage({
     } catch (e: unknown) {
       console.error("Reprint failed", e);
     }
-  }, [lastReceiptNumber]);
+  }, [lastReceiptNumber, sessionUser.user_id]);
 
   const handleNoSale = useCallback(async () => {
     try { await cashNoSale(shift.shift_id, sessionUser.user_id); }
@@ -271,7 +316,7 @@ export default function PosPage({
     } catch (e) {
       console.error("Failed to load sale for edit", e);
     }
-  }, [clearCart, addCustomItem, focusBarcode]);
+  }, [clearCart, addCustomItem, focusBarcode, sessionUser.user_id]);
 
   // ── Clear cart with confirmation ──────────────────────────────────────────────
   const handleClearCartRequest = useCallback(() => {
@@ -294,7 +339,12 @@ export default function PosPage({
 
   // ── Barcode scan handler ──────────────────────────────────────────────────────
   const handleBarcode = useCallback(async (barcode: string, qty?: number) => {
-    await addByBarcode(barcode, qty);
+    try {
+      await addByBarcode(barcode, qty);
+      barcodeRef.current?.flashSuccess();
+    } catch {
+      barcodeRef.current?.flashError();
+    }
     // BarcodeInput clears and stays focused automatically
   }, [addByBarcode]);
 
@@ -338,7 +388,7 @@ export default function PosPage({
     const onMove = (e: MouseEvent) => {
       if (!isResizing.current) return;
       const dx = resizeStartX.current - e.clientX; // dragging left = wider cart
-      const newW = Math.max(280, Math.min(700, resizeStartW.current + dx));
+      const newW = Math.max(360, Math.min(620, resizeStartW.current + dx));
       setCartWidth(newW);
     };
     const onUp = () => { isResizing.current = false; };
@@ -368,18 +418,8 @@ export default function PosPage({
   }, [allProducts]);
 
   const displayProducts = useMemo(() => {
-    let products = allProducts;
-    if (selectedCategory) products = products.filter(p => p.category_id === selectedCategory);
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      products = products.filter(p =>
-        p.name.toLowerCase().includes(q) ||
-        p.sku?.toLowerCase().includes(q) ||
-        p.barcode?.includes(q)
-      );
-    }
-    return products;
-  }, [allProducts, selectedCategory, searchQuery]);
+    return filterProductsForSale(allProducts, { selectedCategory, searchQuery, showUnavailable });
+  }, [allProducts, selectedCategory, searchQuery, showUnavailable]);
 
   // ── Clock ─────────────────────────────────────────────────────────────────────
   const [clockTime, setClockTime] = useState(() =>
@@ -404,41 +444,51 @@ export default function PosPage({
   const pendingEvents = syncStatus?.pending_events ?? 0;
 
   return (
-    <div className="pos-layout">
+    <div className={`pos-layout ${lineCount > 0 ? "pos-has-cart" : "pos-idle"} ${showPayment || payFastLoading ? "pos-payment-started" : ""} ${!isOnline ? "pos-offline" : "pos-online"}`}>
       {/* ── Top bar ── */}
       <div className="top-bar">
-        <span className="top-bar-logo">ZAN<span>POS</span></span>
-        <span className="top-bar-sep">·</span>
-        <span className="top-bar-branch">{DEVICE.branch_name}</span>
-        <span className="top-bar-cashier">{sessionUser.display_name}</span>
-        <SyncChip status={syncStatus} />
-        <WhatsAppStatusPill
-          sessionRole={sessionUser.role_name}
-          onOpenQR={() => setShowWaQR(true)}
-        />
-        <span className="top-bar-spacer" />
-        <span className="top-bar-time">{clockTime}</span>
+        {/* Left: brand */}
+        <div className="top-bar-left">
+          <span className="top-bar-logo">ZAN<span>POS</span></span>
+          <span className="top-bar-sep">·</span>
+          <span className="top-bar-branch">{DEVICE.branch_name}</span>
+        </div>
 
-        {lastReceiptNumber && (
-          <button className="top-bar-btn" onClick={handleReprintLast} title={`Reprint #${lastReceiptNumber} (Ctrl+P)`}>
-            Reprint
+        {/* Centre: operational status pills */}
+        <div className="top-bar-center">
+          <span className="top-bar-pill top-bar-pill-success">Shift Open</span>
+          <SyncChip status={syncStatus} />
+          <WhatsAppStatusPill
+            sessionRole={sessionUser.role_name}
+            onOpenQR={() => setShowWaQR(true)}
+          />
+        </div>
+
+        {/* Right: time + user + actions */}
+        <div className="top-bar-right">
+          <span className="top-bar-time">{clockTime}</span>
+          <span className="top-bar-cashier">{sessionUser.display_name}</span>
+          {lastReceiptNumber && (
+            <button className="top-bar-btn" onClick={handleReprintLast} title={`Reprint #${lastReceiptNumber} (Ctrl+P)`}>
+              Reprint
+            </button>
+          )}
+          {onToggleTheme && (
+            <button
+              className="top-bar-btn top-bar-theme"
+              onClick={onToggleTheme}
+              title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
+            >
+              {theme === "dark" ? "☀" : "🌙"}
+            </button>
+          )}
+          <button className="top-bar-btn top-bar-btn-danger" onClick={() => setShowShiftClose(true)}>
+            Close Shift
           </button>
-        )}
-        {onToggleTheme && (
-          <button
-            className="top-bar-btn top-bar-theme"
-            onClick={onToggleTheme}
-            title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
-          >
-            {theme === "dark" ? "☀" : "🌙"}
+          <button className="top-bar-btn top-bar-logout" onClick={onLogout} title="Ctrl+L">
+            Logout
           </button>
-        )}
-        <button className="top-bar-btn top-bar-btn-danger" onClick={() => setShowShiftClose(true)}>
-          Close Shift
-        </button>
-        <button className="top-bar-btn top-bar-logout" onClick={onLogout} title="Ctrl+L">
-          Logout
-        </button>
+        </div>
       </div>
 
       {/* ── Error banner ── */}
@@ -453,38 +503,48 @@ export default function PosPage({
       )}
 
       {/* ── Main area ── */}
-      <div className="pos-main" style={{ gridTemplateColumns: `72px 1fr ${cartWidth}px` }}>
+      <div className="pos-main" style={{ gridTemplateColumns: `88px minmax(0, 1fr) ${cartWidth}px` }}>
         {/* Icon sidebar */}
         <div className="pos-sidebar">
           <button className="pos-sidebar-item active" title="Quick Sale">
-            <span className="pos-sidebar-icon">⚡</span>
+            <ShoppingBag size={18} strokeWidth={1.75} />
             <span>Sale</span>
           </button>
           <div className="pos-sidebar-divider" />
           <button className="pos-sidebar-item" title="Today's Report" onClick={() => setShowReport(true)}>
-            <span className="pos-sidebar-icon">📊</span>
+            <BarChart2 size={18} strokeWidth={1.75} />
             <span>Reports</span>
           </button>
           <button className="pos-sidebar-item" title="Recent Sales — reprint or void" onClick={() => setShowRecent(true)}>
-            <span className="pos-sidebar-icon">🕐</span>
+            <Clock size={18} strokeWidth={1.75} />
             <span>Recent</span>
           </button>
           {canViewXReport && (
             <button className="pos-sidebar-item" title="X-Report — mid-shift drawer check" onClick={() => setShowXReport(true)}>
-              <span className="pos-sidebar-icon">📋</span>
+              <ClipboardList size={18} strokeWidth={1.75} />
               <span>X-Report</span>
             </button>
           )}
           {canOpenBackOffice && (
             <button className="pos-sidebar-item" title="Back Office" onClick={() => setShowBackOffice(true)}>
-              <span className="pos-sidebar-icon">🏢</span>
+              <Building2 size={18} strokeWidth={1.75} />
               <span>Back Office</span>
+            </button>
+          )}
+          <button className="pos-sidebar-item" title="Deliveries" onClick={() => setShowDeliveries(true)}>
+            <Bike size={18} strokeWidth={1.75} />
+            <span>Deliveries</span>
+          </button>
+          {canOpenBackOffice && (
+            <button className="pos-sidebar-item" title="Notes (admin)" onClick={() => setShowNotes(true)}>
+              <StickyNote size={18} strokeWidth={1.75} />
+              <span>Notes</span>
             </button>
           )}
           <div className="pos-sidebar-spacer" />
           {onOpenAdminChat && (
             <button className="pos-sidebar-item" title="AI Admin" onClick={onOpenAdminChat}>
-              <span className="pos-sidebar-icon">✦</span>
+              <Sparkles size={18} strokeWidth={1.75} />
               <span>AI</span>
             </button>
           )}
@@ -518,7 +578,7 @@ export default function PosPage({
               onClick={() => setShowCustomItem(true)}
               title="Add a custom item with any price"
             >
-              ✦ Custom
+              ✦ Custom Item
             </button>
             <div className="cat-tab-divider" />
             <button
@@ -536,12 +596,22 @@ export default function PosPage({
                 {c.name}
               </button>
             ))}
+            <span className="cat-tab-spacer" />
+            <label className="unavailable-toggle">
+              <input
+                type="checkbox"
+                checked={showUnavailable}
+                onChange={e => setShowUnavailable(e.target.checked)}
+              />
+              Show unavailable
+            </label>
           </div>
 
           <ProductGrid
             products={displayProducts}
             onSelect={handleProductSelect}
             loading={productLoading}
+            cartProductIds={new Set(cart.lines.filter(l => !l.voided && l.product_id).map(l => l.product_id!))}
           />
         </div>
 
@@ -558,62 +628,66 @@ export default function PosPage({
           onPayFast={handlePayFast}
           onPayDirect={openPayDirect}
           payFastLoading={payFastLoading}
+          paymentStarted={showPayment}
           recentLineId={recentLineId}
-          onIncrementRecent={handleIncrementRecent}
-          onDecrementRecent={handleDecrementRecent}
+          onBumpLine={bumpLine}
         />
       </div>
 
       {/* ── Action bar ── */}
       <div className="action-bar">
-        {/* ── Left: operational actions ── */}
-        <button
-          className="action-btn action-btn-danger"
-          onClick={handleClearCartRequest}
-          disabled={lineCount === 0}
-          title="Clear cart — Ctrl+Delete"
-        >
-          🗑 Clear
-        </button>
-        <button
-          className="action-btn"
-          onClick={() => setShowHold(true)}
-          title="Hold current order or resume a held order — F6"
-        >
-          ⏸ Hold / Resume <kbd>F6</kbd>
-        </button>
-        <button
-          className="action-btn"
-          onClick={() => setShowDiscount(true)}
-          disabled={lineCount === 0}
-          title="Apply bill discount — F8"
-        >
-          % Discount <kbd>F8</kbd>
-        </button>
-        <button
-          className="action-btn"
-          onClick={() => setShowCashEvent(true)}
-          title="Cash In / Out / Safe Drop"
-        >
-          💵 Cash Event
-        </button>
-        <button
-          className="action-btn"
-          onClick={handleNoSale}
-          title="Open drawer without sale — F11"
-        >
-          🔓 No Sale <kbd>F11</kbd>
-        </button>
-        {canRefund && (
+        <div className="action-group action-group-transaction">
+          <button
+            className="action-btn action-btn-danger"
+            onClick={handleClearCartRequest}
+            disabled={lineCount === 0}
+            title="Clear cart — Ctrl+Delete"
+          >
+            Clear <kbd>Ctrl+⌫</kbd>
+          </button>
           <button
             className="action-btn"
-            onClick={() => setShowRefund(true)}
-            title="Process a refund — Ctrl+R"
+            onClick={() => setShowHold(true)}
+            title="Hold current order or resume a held order — F6"
           >
-            ↩ Refund
+            Hold / Resume <kbd>F6</kbd>
           </button>
-        )}
-
+        </div>
+        <div className="action-group action-group-modifiers">
+          <button
+            className="action-btn"
+            onClick={() => setShowDiscount(true)}
+            disabled={lineCount === 0}
+            title="Apply bill discount — F8"
+          >
+            Discount <span className="action-lock">🔒</span> <kbd>F8</kbd>
+          </button>
+          {canRefund && (
+            <button
+              className="action-btn action-btn-danger"
+              onClick={() => setShowRefund(true)}
+              title="Process a refund — Ctrl+R"
+            >
+              Refund <span className="action-lock">🔒</span> <kbd>F10</kbd>
+            </button>
+          )}
+        </div>
+        <div className="action-group action-group-operational">
+          <button
+            className="action-btn"
+            onClick={() => setShowCashEvent(true)}
+            title="Cash In / Out / Safe Drop"
+          >
+            Cash Event <span className="action-lock">🔒</span>
+          </button>
+          <button
+            className="action-btn"
+            onClick={handleNoSale}
+            title="Open drawer without sale — F11"
+          >
+            No Sale <span className="action-lock">🔒</span> <kbd>F11</kbd>
+          </button>
+        </div>
       </div>
 
       {/* ── Status bar ── */}
@@ -639,7 +713,14 @@ export default function PosPage({
           </>
         )}
         <span className="status-spacer" />
-        <span className="status-shortcuts">F2 Scan · F12 Fast Cash · F6 Hold/Resume · F8 Discount · +/− Qty · Ctrl+H Help</span>
+        <span className="status-shortcuts">
+          <kbd>F2</kbd> Scan &nbsp;
+          <kbd>F12</kbd> Fast Cash &nbsp;
+          <kbd>F6</kbd> Hold &nbsp;
+          <kbd>F8</kbd> Discount &nbsp;
+          <kbd>+</kbd><kbd>−</kbd> Qty &nbsp;
+          <kbd>Ctrl+H</kbd> Help
+        </span>
       </div>
 
       {/* ── Clear cart confirmation ── */}
@@ -803,6 +884,24 @@ export default function PosPage({
 
       {showWaQR && (
         <WhatsAppQRModal onClose={() => setShowWaQR(false)} />
+      )}
+
+      {showNotes && (
+        <StickyNotesPanel onClose={() => setShowNotes(false)} />
+      )}
+
+      {showDeliveries && (
+        <div className="dlv-modal-overlay">
+          <div className="dlv-modal-shell">
+            <div className="dlv-modal-header">
+              <span className="dlv-modal-title">🛵 Deliveries</span>
+              <button className="dlv-modal-close" onClick={() => { setShowDeliveries(false); focusBarcode(); }}>✕</button>
+            </div>
+            <div className="dlv-modal-body">
+              <DeliveriesTab sessionUser={sessionUser} />
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Restock alerts toast ── */}

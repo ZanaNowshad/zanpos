@@ -167,7 +167,7 @@ const BarcodeInput = forwardRef<BarcodeInputHandle, Props>(function BarcodeInput
     <div className="barcode-input-wrap">
       <div className="barcode-input-row">
         <span className="barcode-input-icon">
-          <ScanBarcode size={18} strokeWidth={1.75} />
+          <ScanBarcode size={16} strokeWidth={1.75} />
         </span>
         <input
           ref={inputRef}

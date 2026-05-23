@@ -533,13 +533,31 @@ export default function PosPage({
             onEscape={() => {}}
             disabled={loading || payFastLoading}
           />
-          <button
-            className="pos-custom-item-bar"
-            onClick={() => setShowCustomItem(true)}
-            disabled={loading || payFastLoading}
-          >
-            ✦ Custom Item
-          </button>
+          {/* Quick-add strip: Custom Item chip + saved suggestion chips */}
+          <div className="pos-quickadd-strip">
+            <button
+              className="pos-quickadd-custom"
+              onClick={() => setShowCustomItem(true)}
+              disabled={loading || payFastLoading}
+              title="Add a custom item"
+            >✦ Custom</button>
+            {suggestions.map(s => (
+              <button
+                key={s.id}
+                className="pos-quickadd-chip"
+                disabled={loading || payFastLoading}
+                onClick={async () => {
+                  await addCustomItem(s.name, s.price, numpadValue);
+                  setNumpadValue("1");
+                  focusBarcode();
+                }}
+                title={`${s.name} — ${DEVICE.currency} ${s.price}`}
+              >
+                <span className="pqc-name">{s.name}</span>
+                <span className="pqc-price">{s.price}</span>
+              </button>
+            ))}
+          </div>
           <CartPanel
             cart={cart}
             netTotal={netTotal}
@@ -570,36 +588,6 @@ export default function PosPage({
             )}
           </div>
           <Dialpad onKey={handleNumpadKey} />
-
-          {/* Saved suggestions */}
-          <div className="numpad-suggestions">
-            <div className="numpad-suggestions-header">
-              <span className="numpad-suggestions-label">Quick Add</span>
-              <button className="numpad-suggestions-manage" onClick={() => setShowCustomItem(true)} title="Manage suggestions">⚙</button>
-            </div>
-            {suggestions.length === 0 ? (
-              <div className="numpad-suggestions-empty">No saved items yet — tap ⚙ to add</div>
-            ) : (
-              <div className="numpad-suggestions-list">
-                {suggestions.map(s => (
-                  <button
-                    key={s.id}
-                    className="numpad-suggestion-chip"
-                    disabled={loading || payFastLoading}
-                    onClick={async () => {
-                      await addCustomItem(s.name, s.price, numpadValue);
-                      setNumpadValue("1");
-                      focusBarcode();
-                    }}
-                    title={`Add ${s.name} × ${numpadValue}`}
-                  >
-                    <span className="numpad-chip-name">{s.name}</span>
-                    <span className="numpad-chip-price">{DEVICE.currency} {s.price}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
 
           {/* Totals + Payment */}
           {(() => {

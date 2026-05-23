@@ -382,7 +382,7 @@ body {
 
 /* ── Scan / search input ── */
 .barcode-input-wrap {
-  padding: var(--space-3) var(--space-4) var(--space-2);
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   background: var(--surface);
@@ -390,24 +390,23 @@ body {
 }
 
 .barcode-input-row {
-  position: relative;
   display: flex;
   align-items: center;
+  gap: 8px;
 }
 
+/* Icon sits OUTSIDE the input as a flex sibling */
 .barcode-input-icon {
-  position: absolute;
-  left: 16px;
-  color: var(--text-muted);
-  pointer-events: none;
-  z-index: 1;
   display: flex;
   align-items: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  pointer-events: none;
 }
 
+/* F2 badge sits OUTSIDE the input as a flex sibling */
 .barcode-input-kbd {
-  position: absolute;
-  right: 14px;
+  flex-shrink: 0;
   color: var(--text-muted);
   font-size: 0.72rem;
   pointer-events: none;
@@ -421,14 +420,14 @@ body {
 }
 
 .barcode-input {
-  width: 100%;
-  height: 52px;
-  padding: 0 52px 0 44px;
+  flex: 1;
+  height: 44px;
+  padding: 0 12px;
   background: var(--bg);
   border: 1.5px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   color: var(--text);
-  font-size: 1.1rem;
+  font-size: 1rem;
   font-family: var(--font);
   font-weight: 500;
   outline: none;
@@ -1134,24 +1133,66 @@ kbd.kbd-primary {
 
 /* (payment section in numpad panel uses .np-* classes — see above) */
 
-/* Custom Item bar — sits between scan strip and cart */
-.pos-custom-item-bar {
+/* ── Quick-add chip strip (Custom Item + suggestion chips) ── */
+.pos-quickadd-strip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-  width: 100%;
-  height: 36px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.pos-quickadd-strip::-webkit-scrollbar { display: none; }
+
+.pos-quickadd-custom {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
   background: var(--accent2);
-  border: none;
-  border-bottom: 1px solid rgba(240,165,0,0.25);
+  border: 1px solid rgba(240,165,0,0.4);
+  border-radius: var(--radius-sm);
   color: var(--accent);
-  font-size: 0.84rem;
+  font-size: 0.76rem;
   font-weight: 700;
   font-family: var(--font);
+  white-space: nowrap;
   cursor: pointer;
-  letter-spacing: 0.02em;
-  transition: background 0.12s;
+  flex-shrink: 0;
+  transition: background 0.1s;
 }
-.pos-custom-item-bar:hover:not(:disabled) { background: rgba(240,165,0,0.18); }
-.pos-custom-item-bar:disabled { opacity: 0.4; cursor: not-allowed; }
+.pos-quickadd-custom:hover:not(:disabled) { background: rgba(240,165,0,0.2); }
+.pos-quickadd-custom:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.pos-quickadd-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 9px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.1s, border-color 0.1s;
+}
+.pos-quickadd-chip:hover:not(:disabled) { background: var(--surface3); border-color: var(--accent); }
+.pos-quickadd-chip:disabled { opacity: 0.4; cursor: not-allowed; }
+.pqc-name {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.pqc-price {
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
 
 /* Saved suggestions in numpad panel */
 .numpad-suggestions {
@@ -10099,6 +10140,9 @@ label {
 }
 
 .cart-line-wrap {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
   min-height: 0;
   border-bottom: 1px solid var(--border2);
   border-radius: 0;
@@ -10108,66 +10152,73 @@ label {
   outline: 1px solid rgba(217, 144, 0, 0.28);
 }
 .cart-line-name-btn {
+  flex: 1;
+  min-width: 0;
   min-height: 0;
-  padding: 6px 14px 2px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 1px 10px;
+  padding: 5px 8px 5px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
   border-bottom: none;
 }
 .cart-line-name {
-  grid-column: 1;
-  font-size: 13px;
-  font-weight: 650;
-}
-.cart-line-unit {
-  grid-column: 2;
-  grid-row: 1;
-  color: var(--text);
   font-size: 12px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 .cart-line-sku,
 .cart-line-note {
-  grid-column: 1;
   color: var(--text-muted);
   font-size: 10px;
   font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 .cart-line-controls {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
   min-height: 0;
-  padding: 2px 8px 6px 14px;
-  gap: 5px;
+  padding: 0 6px 0 0;
+  gap: 3px;
 }
 .cart-qty-btn {
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  font-size: 15px;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  font-size: 14px;
 }
 .cart-qty-val {
-  width: 28px;
+  width: 24px;
+  text-align: center;
   color: var(--text);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-.cart-line-total-col { padding-right: 6px; }
+.cart-line-total-col { padding-right: 4px; }
 .cart-line-total {
   color: var(--text);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 750;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding: 0 4px;
 }
 .cart-line-discount {
   color: var(--warning);
-  font-size: 11px;
+  font-size: 10px;
 }
 .cart-line-del-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
 }
 
 .cart-totals {

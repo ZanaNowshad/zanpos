@@ -177,6 +177,7 @@ function CartLineRow({
 
   return (
     <div className={`cart-line-wrap ${isRecent ? "cart-line-recent" : ""}`}>
+      {/* Name area — clickable to edit */}
       <button
         className="cart-line-name-btn"
         onClick={onEdit}
@@ -184,42 +185,23 @@ function CartLineRow({
         title="Tap to edit quantity, discount, or note"
       >
         <span className="cart-line-name">{line.product_name}</span>
-        {line.note && <span className="cart-line-note">{line.note}</span>}
         <span className="cart-line-sku">{line.sku || line.barcode || "Custom item"}</span>
-        <span className="cart-line-unit">{DEVICE.currency} {fmt(line.unit_price_minor)}</span>
+        {line.note && <span className="cart-line-note">{line.note}</span>}
       </button>
 
+      {/* Controls: − qty + | total | × */}
       <div className="cart-line-controls">
-        <button
-          className="cart-qty-btn"
-          disabled={disabled}
-          aria-label={`Decrease quantity of ${line.product_name}`}
-          onClick={e => { e.stopPropagation(); onDecrement(); }}
-          title="Decrease qty"
-        >−</button>
+        <button className="cart-qty-btn" disabled={disabled}
+          onClick={e => { e.stopPropagation(); onDecrement(); }}>−</button>
         <span className="cart-qty-val">{line.quantity}</span>
-        <button
-          className="cart-qty-btn"
-          disabled={disabled}
-          aria-label={`Increase quantity of ${line.product_name}`}
-          onClick={e => { e.stopPropagation(); onIncrement(); }}
-          title="Increase qty"
-        >+</button>
-
-        <div className="cart-line-total-col">
-          {hasDiscount && (
-            <span className="cart-line-discount">−{DEVICE.currency} {fmt(line.line_discount_minor)}</span>
-          )}
-          <span className="cart-line-total">{DEVICE.currency} {fmt(line.line_total_minor)}</span>
-        </div>
-
-        <button
-          className="cart-line-del-btn"
-          disabled={disabled}
-          aria-label={`Remove ${line.product_name} from cart`}
-          onClick={e => { e.stopPropagation(); onRemove(); }}
-          title={`Remove ${line.product_name}`}
-        >×</button>
+        <button className="cart-qty-btn" disabled={disabled}
+          onClick={e => { e.stopPropagation(); onIncrement(); }}>+</button>
+        <span className="cart-line-total">
+          {hasDiscount && <s className="cart-line-discount">{DEVICE.currency} {fmt(line.unit_price_minor)}</s>}
+          {DEVICE.currency} {fmt(line.line_total_minor)}
+        </span>
+        <button className="cart-line-del-btn" disabled={disabled}
+          onClick={e => { e.stopPropagation(); onRemove(); }}>×</button>
       </div>
     </div>
   );

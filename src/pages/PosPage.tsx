@@ -3,18 +3,17 @@ import {
   BarChart2, Clock, ClipboardList, Building2, Bike, StickyNote,
   Sparkles, ShoppingBag
 } from "lucide-react";
-import type { LowStockAlert, PaymentInput, ProductWithPrice, SaleListRow, SaleResult, SessionUser, Shift } from "../types";
+import type { LowStockAlert, PaymentInput, SaleListRow, SaleResult, SessionUser, Shift } from "../types";
 import { formatMoney } from "../money";
 import { DEVICE } from "../types";
-import { cashNoSale, productListAll, receiptReprint, refundGetSale, whatsappStatus, whatsappSendDelivery, appConfigLoad } from "../tauri/commands";
+import { cashNoSale, receiptReprint, refundGetSale, whatsappStatus, whatsappSendDelivery, appConfigLoad } from "../tauri/commands";
 import { loadWaFormat, buildDeliveryMessage } from "../utils/waMessageFormat";
 import { useCart } from "../hooks/useCart";
 import { useSyncStatus } from "../hooks/useSyncStatus";
 import { usePosShortcuts } from "../hooks/usePosShortcuts";
 import { useIdleTimer } from "../hooks/useIdleTimer";
-import { filterProductsForSale } from "../posProductFilters";
 import BarcodeInput, { type BarcodeInputHandle } from "../components/BarcodeInput";
-import ProductGrid from "../components/ProductGrid";
+import Dialpad, { applyDialpadKey } from "../components/Dialpad";
 import CartPanel from "../components/CartPanel";
 import BackOfficeModal from "../components/BackOfficeModal";
 import DiscountModal from "../components/DiscountModal";
@@ -55,13 +54,6 @@ export default function PosPage({
     cashier_user_id: sessionUser.user_id,
   };
 
-  // ── Products ─────────────────────────────────────────────────────────────────
-  const [allProducts, setAllProducts] = useState<ProductWithPrice[]>([]);
-  const [productLoading, setProductLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [showUnavailable, setShowUnavailable] = useState(false);
-
   // ── Modal state ───────────────────────────────────────────────────────────────
   const [showPayment, setShowPayment]     = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentInput["method"] | undefined>(undefined);
@@ -90,15 +82,7 @@ export default function PosPage({
   const [restockAlerts, setRestockAlerts]   = useState<LowStockAlert[]>([]);
   const restockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Resizable cart panel ──────────────────────────────────────────────────────
-  const [cartWidth, setCartWidth]   = useState(() => {
-    if (typeof window === "undefined") return 560;
-    const usableWidth = Math.min(window.innerWidth, window.screen.availWidth || window.innerWidth);
-    return Math.round(Math.min(720, Math.max(520, usableWidth * 0.42)));
-  });
-  const isResizing                  = useRef(false);
-  const resizeStartX                = useRef(0);
-  const resizeStartW                = useRef(cartWidth);
+  const [numpadValue, setNumpadValue] = useState("1");
 
   const canOpenBackOffice = ["owner", "manager"].includes(sessionUser.role_name);
   const canViewXReport    = canOpenBackOffice;
@@ -115,7 +99,7 @@ export default function PosPage({
   const {
     cart, loading, error, clearError,
     recentLineId,
-    addByBarcode, addProduct, addCustomItem,
+    addByBarcode, addCustomItem,
     updateQuantity, removeLine, removeRecentLine, bumpRecentQty, bumpLine,
     applyBillDiscount, applyLineDiscount, setLineNote,
     finalizeSale, clearCart, replaceCart,
@@ -339,18 +323,17 @@ export default function PosPage({
 
   // ── Barcode scan handler ──────────────────────────────────────────────────────
   const handleBarcode = useCallback(async (barcode: string, qty?: number) => {
+    // If BarcodeInput already parsed a "3*barcode" prefix, use that qty.
+    // Otherwise use numpadValue as the pending multiplier.
+    const effectiveQty = qty ?? (parseInt(numpadValue) || 1);
     try {
-      await addByBarcode(barcode, qty);
+      await addByBarcode(barcode, effectiveQty);
       barcodeRef.current?.flashSuccess();
+      setNumpadValue("1"); // reset after successful scan
     } catch {
       barcodeRef.current?.flashError();
     }
-    // BarcodeInput clears and stays focused automatically
-  }, [addByBarcode]);
-
-  const handleSearch = useCallback((query: string) => {
-    setSearchQuery(query);
-  }, []);
+  }, [addByBarcode, numpadValue]);
 
   // ── Shortcut manager ─────────────────────────────────────────────────────────
   usePosShortcuts({
@@ -383,44 +366,6 @@ export default function PosPage({
     if (noModalOpen) focusBarcode();
   }, [noModalOpen, focusBarcode]);
 
-  // ── Cart panel resize ─────────────────────────────────────────────────────────
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      if (!isResizing.current) return;
-      const dx = resizeStartX.current - e.clientX; // dragging left = wider cart
-      const newW = Math.max(360, Math.min(620, resizeStartW.current + dx));
-      setCartWidth(newW);
-    };
-    const onUp = () => { isResizing.current = false; };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
-  }, []);
-
-  // ── Product list ──────────────────────────────────────────────────────────────
-  useEffect(() => {
-    setProductLoading(true);
-    productListAll()
-      .then(setAllProducts)
-      .catch(e => console.error("Failed to load products", e))
-      .finally(() => setProductLoading(false));
-  }, []);
-
-  const categories = useMemo(() => {
-    const seen = new Map<string, string>();
-    for (const p of allProducts) {
-      if (!seen.has(p.category_id)) seen.set(p.category_id, p.category_name);
-    }
-    return Array.from(seen.entries()).map(([id, name]) => ({ id, name }));
-  }, [allProducts]);
-
-  const displayProducts = useMemo(() => {
-    return filterProductsForSale(allProducts, { selectedCategory, searchQuery, showUnavailable });
-  }, [allProducts, selectedCategory, searchQuery, showUnavailable]);
-
   // ── Clock ─────────────────────────────────────────────────────────────────────
   const [clockTime, setClockTime] = useState(() =>
     new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
@@ -433,11 +378,22 @@ export default function PosPage({
     return () => clearInterval(t);
   }, []);
 
-  // ── Product select (from grid tap) ────────────────────────────────────────────
-  const handleProductSelect = useCallback(async (p: ProductWithPrice) => {
-    await addProduct(p);
-    focusBarcode();
-  }, [addProduct, focusBarcode]);
+  // ── Numpad key handler ────────────────────────────────────────────────────────
+  const handleNumpadKey = useCallback((key: string) => {
+    // "C" clears back to "1"
+    if (key === "C") {
+      setNumpadValue("1");
+      return;
+    }
+    const next = applyDialpadKey(numpadValue === "1" && key !== "⌫" ? "" : numpadValue, key);
+    // Keep value at minimum "1" visually, but store "" as "1" on confirm
+    const clamped = next === "" ? "1" : next;
+    setNumpadValue(clamped);
+    // Live-update recent cart line qty
+    if (recentLineId && next !== "" && next !== "0") {
+      updateQuantity(recentLineId, next);
+    }
+  }, [numpadValue, recentLineId, updateQuantity]);
 
   // ── Sync status helpers ───────────────────────────────────────────────────────
   const isOnline      = syncStatus?.online ?? false;
@@ -503,7 +459,7 @@ export default function PosPage({
       )}
 
       {/* ── Main area ── */}
-      <div className="pos-main" style={{ gridTemplateColumns: `88px minmax(0, 1fr) ${cartWidth}px` }}>
+      <div className="pos-main" style={{ gridTemplateColumns: "88px minmax(0, 1fr) 300px" }}>
         {/* Icon sidebar */}
         <div className="pos-sidebar">
           <button className="pos-sidebar-item active" title="Quick Sale">
@@ -550,88 +506,52 @@ export default function PosPage({
           )}
         </div>
 
-        {/* Product area */}
-        <div className="product-area" style={{ position: "relative" }}>
-          {/* Resize handle — absolutely positioned on the right edge */}
-          <div
-            className="pos-resize-handle"
-            style={{ position: "absolute", right: -3, top: 0, bottom: 0, width: 6, zIndex: 10 }}
-            onMouseDown={e => {
-              isResizing.current = true;
-              resizeStartX.current = e.clientX;
-              resizeStartW.current = cartWidth;
-              e.preventDefault();
-            }}
-            title="Drag to resize cart panel"
-          />
+        {/* Cart column — scan strip + full cart */}
+        <div className="pos-cart-col">
           <BarcodeInput
             ref={barcodeRef}
             onBarcode={handleBarcode}
-            onSearch={handleSearch}
-            onEscape={() => { setSearchQuery(""); setSelectedCategory(null); }}
+            onSearch={() => {}}
+            onEscape={() => {}}
             disabled={loading || payFastLoading}
           />
-
-          <div className="category-tabs">
-            <button
-              className="cat-tab cat-tab-custom"
-              onClick={() => setShowCustomItem(true)}
-              title="Add a custom item with any price"
-            >
-              ✦ Custom Item
-            </button>
-            <div className="cat-tab-divider" />
-            <button
-              className={`cat-tab ${selectedCategory === null ? "cat-tab-active" : ""}`}
-              onClick={() => setSelectedCategory(null)}
-            >
-              All
-            </button>
-            {categories.map(c => (
-              <button
-                key={c.id}
-                className={`cat-tab ${selectedCategory === c.id ? "cat-tab-active" : ""}`}
-                onClick={() => setSelectedCategory(c.id)}
-              >
-                {c.name}
-              </button>
-            ))}
-            <span className="cat-tab-spacer" />
-            <label className="unavailable-toggle">
-              <input
-                type="checkbox"
-                checked={showUnavailable}
-                onChange={e => setShowUnavailable(e.target.checked)}
-              />
-              Show unavailable
-            </label>
-          </div>
-
-          <ProductGrid
-            products={displayProducts}
-            onSelect={handleProductSelect}
-            loading={productLoading}
-            cartProductIds={new Set(cart.lines.filter(l => !l.voided && l.product_id).map(l => l.product_id!))}
+          <CartPanel
+            cart={cart}
+            netTotal={netTotal}
+            taxTotal={taxTotal}
+            onUpdateQty={updateQuantity}
+            onRemove={removeLine}
+            onApplyLineDiscount={applyLineDiscount}
+            onSetLineNote={setLineNote}
+            onPaySplit={openPaySplit}
+            onPayFast={handlePayFast}
+            onPayDirect={openPayDirect}
+            payFastLoading={payFastLoading}
+            paymentStarted={showPayment}
+            recentLineId={recentLineId}
+            onBumpLine={bumpLine}
           />
         </div>
 
-        {/* Cart area */}
-        <CartPanel
-          cart={cart}
-          netTotal={netTotal}
-          taxTotal={taxTotal}
-          onUpdateQty={updateQuantity}
-          onRemove={removeLine}
-          onApplyLineDiscount={applyLineDiscount}
-          onSetLineNote={setLineNote}
-          onPaySplit={openPaySplit}
-          onPayFast={handlePayFast}
-          onPayDirect={openPayDirect}
-          payFastLoading={payFastLoading}
-          paymentStarted={showPayment}
-          recentLineId={recentLineId}
-          onBumpLine={bumpLine}
-        />
+        {/* Numpad panel */}
+        <div className="numpad-panel">
+          <div className="numpad-display">
+            <span className="numpad-multiplier">× {numpadValue}</span>
+            {recentLineId && (
+              <span className="numpad-recent-name">
+                {cart.lines.find(l => l.cart_line_id === recentLineId && !l.voided)?.product_name}
+              </span>
+            )}
+          </div>
+          <Dialpad onKey={handleNumpadKey} />
+          <button
+            className="numpad-custom-btn"
+            onClick={() => setShowCustomItem(true)}
+            disabled={loading || payFastLoading}
+          >
+            ✦ Custom Item
+          </button>
+        </div>
       </div>
 
       {/* ── Action bar ── */}

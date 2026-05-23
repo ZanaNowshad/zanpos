@@ -664,6 +664,8 @@ kbd.kbd-primary {
   background: var(--surface);
   border-left: 1px solid var(--border);
   overflow: hidden;
+  flex: 1;
+  min-height: 0;
 }
 
 .cart-panel-header {
@@ -892,6 +894,88 @@ kbd.kbd-primary {
 
 /* Locked cart */
 .cart-panel-locked .cart-lines { opacity: 0.6; pointer-events: none; }
+
+/* ── Numpad panel (right column) ── */
+.numpad-panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  padding: var(--space-4) var(--space-3) var(--space-3);
+  gap: var(--space-3);
+  overflow: hidden;
+}
+
+.numpad-display {
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  min-height: 72px;
+  justify-content: center;
+}
+
+.numpad-multiplier {
+  font-size: 2.2rem;
+  font-weight: 900;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--gold);
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.numpad-recent-name {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  text-align: right;
+}
+
+.numpad-custom-btn {
+  width: 100%;
+  height: 44px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(240,165,0,0.35);
+  background: var(--accent2);
+  color: var(--accent);
+  font-size: 0.88rem;
+  font-weight: 700;
+  font-family: var(--font);
+  cursor: pointer;
+  margin-top: auto;
+  transition: background 0.12s;
+}
+.numpad-custom-btn:hover:not(:disabled) { background: rgba(240,165,0,0.18); }
+.numpad-custom-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Cart-first layout: col wrapping scan strip + cart */
+.pos-cart-col {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+/* Compact scan strip in cart-first mode */
+.pos-cart-col .barcode-input-wrap {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.pos-cart-col .barcode-input {
+  height: 44px;
+  font-size: 1rem;
+}
+.pos-cart-col .barcode-input-hint {
+  display: none;
+}
 
 /* ── PAY BUTTON — the most important element in the POS ── */
 .pay-button {
@@ -9532,19 +9616,6 @@ label {
 }
 
 .pos-main { background: var(--bg); }
-.pos-main {
-  grid-template-columns: 88px minmax(0, 1fr) !important;
-  padding-right: clamp(360px, 30vw, 620px);
-}
-.cart-panel {
-  position: fixed;
-  top: 56px;
-  right: 0;
-  bottom: 108px;
-  width: clamp(360px, 30vw, 620px);
-  z-index: 20;
-  box-shadow: -1px 0 0 var(--border);
-}
 .cart-panel-active .cart-panel-header {
   background: linear-gradient(90deg, rgba(217, 144, 0, 0.10), transparent 58%), var(--surface);
 }

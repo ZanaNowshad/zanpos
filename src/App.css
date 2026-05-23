@@ -965,9 +965,9 @@ kbd.kbd-primary {
   flex-direction: column;
   background: var(--surface);
   border-left: 1px solid var(--border);
-  padding: var(--space-4) var(--space-3) var(--space-3);
-  gap: var(--space-3);
-  overflow-y: auto;
+  padding: 8px 8px 8px;
+  gap: 6px;
+  overflow: hidden;
   min-height: 0;
 }
 
@@ -975,17 +975,18 @@ kbd.kbd-primary {
   background: var(--bg);
   border: 1.5px solid var(--border);
   border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-4);
+  padding: 6px 12px;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 4px;
-  min-height: 72px;
+  gap: 2px;
+  min-height: 52px;
   justify-content: center;
+  flex-shrink: 0;
 }
 
 .numpad-multiplier {
-  font-size: 2.2rem;
+  font-size: 1.7rem;
   font-weight: 900;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
@@ -1020,15 +1021,64 @@ kbd.kbd-primary {
 .numpad-custom-btn:hover:not(:disabled) { background: rgba(240,165,0,0.18); }
 .numpad-custom-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* Totals + payment inside numpad panel */
+/* ── Compact dialpad inside numpad panel ── */
+.numpad-panel .dialpad { gap: 4px; flex-shrink: 0; }
+.numpad-panel .dialpad-row { gap: 4px; }
+.numpad-panel .dialpad-key {
+  height: 36px;
+  font-size: 1rem;
+  border-radius: var(--radius-sm);
+}
+
+/* ── Compact suggestions inside numpad panel ── */
+.numpad-panel .numpad-suggestion-chip { padding: 4px 8px; }
+.numpad-panel .numpad-suggestions-list { max-height: 84px; }
+
+/* ── Totals + payment inside numpad panel ── */
 .numpad-totals {
-  padding: var(--space-2) var(--space-2);
+  padding: 6px 4px 4px;
   border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
-.numpad-panel .cart-method-row,
+.numpad-panel .cart-total-row {
+  font-size: 0.78rem;
+  padding: 2px 0;
+}
+.numpad-panel .cart-net-total { margin-top: 2px; }
+.numpad-panel .cart-grand-total {
+  font-size: 1.2rem !important;
+}
+.numpad-panel .cart-method-row {
+  padding: 4px 0;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.numpad-panel .cart-method-btn {
+  height: 36px;
+  font-size: 0.78rem;
+  border-radius: var(--radius-sm);
+}
 .numpad-panel .cart-pay-row {
-  margin-top: 0;
+  flex-shrink: 0;
+  border-top: none;
+  min-height: unset;
+  gap: 4px;
+}
+.numpad-panel .cart-pay-fast-btn {
+  height: 40px;
+  margin: 0;
+  font-size: 0.8rem;
+  border-radius: var(--radius-sm);
+}
+.numpad-panel .cart-pay-fast-btn kbd {
+  font-size: 0.65rem;
+  padding: 1px 4px;
+}
+.numpad-panel .cart-pay-split-btn {
+  height: 34px;
+  margin: 0;
+  font-size: 0.78rem;
+  border-radius: var(--radius-sm);
 }
 
 /* Custom Item bar — sits between scan strip and cart */

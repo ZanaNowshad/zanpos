@@ -84,6 +84,14 @@ export default function PosPage({
 
   const [numpadValue, setNumpadValue] = useState("1");
 
+  // Saved custom-item suggestions — loaded from localStorage, refreshed after modal closes
+  const [suggestions, setSuggestions] = useState<{ id: string; name: string; price: string }[]>(() => {
+    try { return JSON.parse(localStorage.getItem("zanpos_custom_suggestions") || "[]"); } catch { return []; }
+  });
+  const refreshSuggestions = useCallback(() => {
+    try { setSuggestions(JSON.parse(localStorage.getItem("zanpos_custom_suggestions") || "[]")); } catch { setSuggestions([]); }
+  }, []);
+
   const canOpenBackOffice = ["owner", "manager"].includes(sessionUser.role_name);
   const canViewXReport    = canOpenBackOffice;
   const canRefund         = ["owner", "manager", "cashier"].includes(sessionUser.role_name);
@@ -506,7 +514,7 @@ export default function PosPage({
           )}
         </div>
 
-        {/* Cart column — scan strip + full cart */}
+        {/* Cart column — scan strip + custom item btn + full cart */}
         <div className="pos-cart-col">
           <BarcodeInput
             ref={barcodeRef}
@@ -515,6 +523,13 @@ export default function PosPage({
             onEscape={() => {}}
             disabled={loading || payFastLoading}
           />
+          <button
+            className="pos-custom-item-bar"
+            onClick={() => setShowCustomItem(true)}
+            disabled={loading || payFastLoading}
+          >
+            ✦ Custom Item
+          </button>
           <CartPanel
             cart={cart}
             netTotal={netTotal}
@@ -545,13 +560,36 @@ export default function PosPage({
             )}
           </div>
           <Dialpad onKey={handleNumpadKey} />
-          <button
-            className="numpad-custom-btn"
-            onClick={() => setShowCustomItem(true)}
-            disabled={loading || payFastLoading}
-          >
-            ✦ Custom Item
-          </button>
+
+          {/* Saved suggestions */}
+          <div className="numpad-suggestions">
+            <div className="numpad-suggestions-header">
+              <span className="numpad-suggestions-label">Quick Add</span>
+              <button className="numpad-suggestions-manage" onClick={() => setShowCustomItem(true)} title="Manage suggestions">⚙</button>
+            </div>
+            {suggestions.length === 0 ? (
+              <div className="numpad-suggestions-empty">No saved items yet — tap ⚙ to add</div>
+            ) : (
+              <div className="numpad-suggestions-list">
+                {suggestions.map(s => (
+                  <button
+                    key={s.id}
+                    className="numpad-suggestion-chip"
+                    disabled={loading || payFastLoading}
+                    onClick={async () => {
+                      await addCustomItem(s.name, s.price, numpadValue);
+                      setNumpadValue("1");
+                      focusBarcode();
+                    }}
+                    title={`Add ${s.name} × ${numpadValue}`}
+                  >
+                    <span className="numpad-chip-name">{s.name}</span>
+                    <span className="numpad-chip-price">{DEVICE.currency} {s.price}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Totals */}
           {(() => {
@@ -727,9 +765,10 @@ export default function PosPage({
           onAdd={async (name, price, qty) => {
             await addCustomItem(name, price, qty);
             setShowCustomItem(false);
+            refreshSuggestions();
             focusBarcode();
           }}
-          onCancel={() => { setShowCustomItem(false); focusBarcode(); }}
+          onCancel={() => { setShowCustomItem(false); refreshSuggestions(); focusBarcode(); }}
         />
       )}
 

@@ -1038,27 +1038,28 @@ kbd.kbd-primary {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 0.75rem;
+  font-size: 0.88rem;
   font-weight: 600;
-  padding: 1px 0;
+  padding: 2px 0;
   color: var(--text-muted);
 }
 .np-total-row span:last-child {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+  font-size: 0.9rem;
   color: var(--text);
 }
 .np-discount-active span:last-child { color: var(--success); }
 .np-discount-zero span:last-child   { color: var(--text-muted); }
 .np-grand {
-  font-size: 0.88rem;
+  font-size: 1rem;
   font-weight: 800;
   color: var(--text) !important;
   margin-top: 2px;
   padding-top: 4px;
   border-top: 1px solid var(--border);
 }
-.np-grand span:last-child { color: var(--gold) !important; font-size: 1rem; }
+.np-grand span:last-child { color: var(--gold) !important; font-size: 1.15rem; }
 
 .np-fast-cash-btn {
   display: flex;
@@ -1072,7 +1073,7 @@ kbd.kbd-primary {
   border: none;
   border-radius: var(--radius-sm);
   font-weight: 800;
-  font-size: 0.82rem;
+  font-size: 0.95rem;
   font-family: var(--font);
   cursor: pointer;
   transition: opacity 0.12s;
@@ -1081,7 +1082,7 @@ kbd.kbd-primary {
 .np-fast-cash-btn:disabled { opacity: 0.38; cursor: not-allowed; }
 .np-fast-cash-btn:hover:not(:disabled) { opacity: 0.88; }
 .np-fast-cash-btn kbd {
-  font-size: 0.62rem;
+  font-size: 0.65rem;
   margin-left: 4px;
   background: rgba(0,0,0,0.15);
   border: none;
@@ -1092,7 +1093,7 @@ kbd.kbd-primary {
 .np-fast-total {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 0.88rem;
+  font-size: 1rem;
   font-weight: 900;
 }
 
@@ -1108,7 +1109,7 @@ kbd.kbd-primary {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text);
-  font-size: 0.72rem;
+  font-size: 0.85rem;
   font-weight: 700;
   font-family: var(--font);
   cursor: pointer;
@@ -10189,16 +10190,16 @@ label {
   gap: 3px;
 }
 .cart-qty-btn {
-  width: 22px;
-  height: 22px;
-  border-radius: 5px;
-  font-size: 14px;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  font-size: 18px;
 }
 .cart-qty-val {
-  width: 24px;
+  width: 26px;
   text-align: center;
   color: var(--text);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }

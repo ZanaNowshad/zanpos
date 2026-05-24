@@ -232,13 +232,31 @@ pub async fn pos_apply_bill_discount(
     state: State<'_, AppState>,
 ) -> Result<Cart, AppError> {
     let discount = input.discount_minor.max(0);
-    if discount > 0 && input.reason.trim().is_empty() {
+    // Load discount-related business flags.
+    let require_reason_val: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM app_config WHERE key = 'flag_require_discount_reason'",
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let require_discount_reason = require_reason_val.as_deref() != Some("0"); // default true
+
+    let cashier_discount_val: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM app_config WHERE key = 'flag_cashier_can_discount'",
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let cashier_can_discount = cashier_discount_val.as_deref() == Some("1");
+
+    if discount > 0 && require_discount_reason && input.reason.trim().is_empty() {
         return Err(AppError::Validation(
             "A reason is required when applying a bill discount".into(),
         ));
     }
-    // Discounts require manager or owner authorization — cashiers cannot apply them.
-    if discount > 0 {
+    if discount > 0 && !cashier_can_discount {
         rbac::manager_or_owner(&state.db, &input.authorized_by_user_id).await?;
     }
     let mut cart = input.cart;
@@ -313,13 +331,31 @@ pub async fn pos_apply_line_discount(
     state: State<'_, AppState>,
 ) -> Result<Cart, AppError> {
     let discount = input.discount_minor.max(0);
-    if discount > 0 && input.reason.trim().is_empty() {
+    // Load discount-related business flags.
+    let require_reason_val: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM app_config WHERE key = 'flag_require_discount_reason'",
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let require_discount_reason = require_reason_val.as_deref() != Some("0"); // default true
+
+    let cashier_discount_val: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM app_config WHERE key = 'flag_cashier_can_discount'",
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let cashier_can_discount = cashier_discount_val.as_deref() == Some("1");
+
+    if discount > 0 && require_discount_reason && input.reason.trim().is_empty() {
         return Err(AppError::Validation(
             "A reason is required when applying a line discount".into(),
         ));
     }
-    // Discounts require manager or owner authorization — cashiers cannot apply them.
-    if discount > 0 {
+    if discount > 0 && !cashier_can_discount {
         rbac::manager_or_owner(&state.db, &input.authorized_by_user_id).await?;
     }
     let mut cart = input.cart;

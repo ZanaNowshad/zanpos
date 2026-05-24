@@ -221,6 +221,8 @@ pub fn run() {
             // WhatsApp
             commands::whatsapp_commands::whatsapp_status,
             commands::whatsapp_commands::whatsapp_send_delivery,
+            commands::whatsapp_commands::whatsapp_notify_arrival,
+            commands::whatsapp_commands::whatsapp_payment_reminder,
             commands::whatsapp_commands::whatsapp_disconnect,
             commands::whatsapp_commands::whatsapp_save_config,
             // Product image picker

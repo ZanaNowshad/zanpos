@@ -22,6 +22,9 @@ pub struct SendDeliveryInput {
     pub address_text: String,
     pub house_number: Option<String>,
     pub area: Option<String>,
+    /// Pre-built message from the frontend template editor.
+    /// When present, skips the Rust message builder entirely.
+    pub message_override: Option<String>,
 }
 
 // ─── Message builder ──────────────────────────────────────────────────────────
@@ -153,32 +156,22 @@ pub async fn whatsapp_send_delivery(
             .await?
             .flatten();
 
-    let message = build_delivery_whatsapp_message(&WhatsAppDeliveryParams {
-        receipt_number:    &input.receipt_number,
-        net_total_minor:   input.net_total_minor,
-        currency_exponent: input.currency_exponent,
-        address_text:      &input.address_text,
-        house_number:      input.house_number.as_deref(),
-        area:              input.area.as_deref(),
-        store_name:        store_name.as_deref().unwrap_or(""),
-        store_phone:       store_phone.as_deref(),
-        benefit_number:    benefit_number.as_deref(),
+    // Use frontend-built message if provided, otherwise fall back to Rust builder
+    let message = input.message_override.clone().unwrap_or_else(|| {
+        build_delivery_whatsapp_message(&WhatsAppDeliveryParams {
+            receipt_number:    &input.receipt_number,
+            net_total_minor:   input.net_total_minor,
+            currency_exponent: input.currency_exponent,
+            address_text:      &input.address_text,
+            house_number:      input.house_number.as_deref(),
+            area:              input.area.as_deref(),
+            store_name:        store_name.as_deref().unwrap_or(""),
+            store_phone:       store_phone.as_deref(),
+            benefit_number:    benefit_number.as_deref(),
+        })
     });
 
-    let client = reqwest::Client::new();
-    let result = client
-        .post(format!("{}/send", SIDECAR_URL))
-        .json(&serde_json::json!({ "to": input.to, "message": message }))
-        .send()
-        .await;
-
-    match result {
-        Ok(resp) => {
-            let body: serde_json::Value = resp.json().await.unwrap_or_default();
-            Ok(body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false))
-        }
-        Err(_) => Ok(false),
-    }
+    send_raw(&input.to, &message).await
 }
 
 #[tauri::command]
@@ -209,6 +202,109 @@ pub async fn whatsapp_save_config(
     .execute(&state.db)
     .await?;
     Ok(())
+}
+
+// ─── Notify arrival ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct NotifyArrivalInput {
+    pub to: String,
+    pub receipt_number: String,
+}
+
+/// Sends a short bilingual WhatsApp message: "Delivery is outside, please come collect."
+#[tauri::command]
+pub async fn whatsapp_notify_arrival(
+    input: NotifyArrivalInput,
+    _state: State<'_, AppState>,
+) -> AppResult<bool> {
+    let message = format!(
+        "🚚 Your delivery is here!\n\
+         The delivery man is outside. Please come out to collect your order.\n\n\
+         Order #{r}\n\
+         ─────────────────\n\
+         🚚 طلبك وصل!\n\
+         عامل التوصيل في الخارج. من فضلك انزل لاستلام طلبك.\n\n\
+         طلب #{r}",
+        r = input.receipt_number,
+    );
+    send_raw(&input.to, &message).await
+}
+
+// ─── Payment reminder ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct PaymentReminderInput {
+    pub to: String,
+    pub receipt_number: String,
+    pub amount_minor: i64,
+    pub currency_exponent: i32,
+    /// ISO currency code passed from frontend DEVICE constant, e.g. "BHD"
+    pub currency: String,
+}
+
+/// Sends a bilingual WhatsApp payment reminder that includes the store's
+/// BenefitPay number (fetched from app_config) and the outstanding amount.
+#[tauri::command]
+pub async fn whatsapp_payment_reminder(
+    input: PaymentReminderInput,
+    state: State<'_, AppState>,
+) -> AppResult<bool> {
+    let benefit_number: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM app_config WHERE key = 'whatsapp_benefit_number'",
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .flatten();
+
+    let amount = fmt_money(input.amount_minor, input.currency_exponent);
+
+    let message = match benefit_number.as_deref() {
+        Some(bn) => format!(
+            "💳 Payment Reminder — Order #{r}\n\
+             Amount due: {cur} {amount}\n\n\
+             Please send payment via BenefitPay to: {bn}\n\
+             Then reply with a screenshot of your payment receipt to confirm. 🧾\n\n\
+             Thank you! 🙏\n\
+             ─────────────────\n\
+             💳 تذكير بالدفع — طلب #{r}\n\
+             المبلغ المستحق: {amount} {cur}\n\n\
+             يرجى إرسال المبلغ عبر BenefitPay إلى: {bn}\n\
+             ثم أرسل لنا صورة من إيصال الدفع للتأكيد. 🧾\n\n\
+             شكراً! 🙏",
+            r = input.receipt_number, cur = input.currency, amount = amount, bn = bn,
+        ),
+        None => format!(
+            "💳 Payment Reminder — Order #{r}\n\
+             Amount due: {cur} {amount}\n\n\
+             Please reply with a screenshot of your payment receipt to confirm. 🧾\n\n\
+             Thank you! 🙏\n\
+             ─────────────────\n\
+             💳 تذكير بالدفع — طلب #{r}\n\
+             المبلغ المستحق: {amount} {cur}\n\n\
+             يرجى إرسال لنا صورة من إيصال الدفع للتأكيد. 🧾\n\n\
+             شكراً! 🙏",
+            r = input.receipt_number, cur = input.currency, amount = amount,
+        ),
+    };
+    send_raw(&input.to, &message).await
+}
+
+/// Internal helper: POST a raw message to the sidecar /send endpoint.
+async fn send_raw(to: &str, message: &str) -> AppResult<bool> {
+    let client = reqwest::Client::new();
+    match client
+        .post(format!("{}/send", SIDECAR_URL))
+        .json(&serde_json::json!({ "to": to, "message": message }))
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            Ok(body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false))
+        }
+        Err(_) => Ok(false),
+    }
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

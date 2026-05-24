@@ -7989,6 +7989,35 @@ label {
 }
 .dlv-action-danger:hover { background: rgba(239,68,68,0.16); border-color: var(--error); }
 
+/* ── Customer contact actions (Call & Notify / Payment Reminder) ── */
+.dlv-contact-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 0 4px;
+  border-top: 1px solid var(--border2);
+  margin-top: 4px;
+}
+.dlv-action-call {
+  background: rgba(99,102,241,0.1);
+  border-color: rgba(99,102,241,0.35);
+  color: #a5b4fc;
+}
+.dlv-action-call:hover:not(:disabled) { background: rgba(99,102,241,0.2); border-color: rgba(99,102,241,0.6); }
+.dlv-action-remind {
+  background: rgba(240,165,0,0.1);
+  border-color: rgba(240,165,0,0.35);
+  color: var(--accent);
+}
+.dlv-action-remind:hover:not(:disabled) { background: rgba(240,165,0,0.2); border-color: var(--accent); }
+.dlv-action-sent {
+  background: rgba(34,197,94,0.1) !important;
+  border-color: rgba(34,197,94,0.4) !important;
+  color: var(--success) !important;
+}
+.dlv-action-call:disabled,
+.dlv-action-remind:disabled { opacity: 0.55; cursor: not-allowed; }
+
 /* ── Confirm payment form ── */
 .dlv-confirm-form {
   display: flex;

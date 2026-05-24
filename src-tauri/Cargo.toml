@@ -1,6 +1,6 @@
 [package]
 name = "zanpos"
-version = "0.1.0"
+version = "1.0.0"
 description = "ZANPOS — Local-first offline-capable retail POS for Windows"
 authors = ["ZANPOS Contributors"]
 edition = "2021"

@@ -1,9 +1,11 @@
 [package]
 name = "zanpos"
 version = "0.1.0"
-description = "ZANPOS - Local-first Windows POS"
-authors = ["you"]
+description = "ZANPOS — Local-first offline-capable retail POS for Windows"
+authors = ["ZANPOS Contributors"]
 edition = "2021"
+# Minimum Rust version enforced in CI (dtolnay/rust-toolchain@stable tracks this)
+rust-version = "1.77"
 
 [lib]
 name = "zanpos_lib"
@@ -34,8 +36,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
-# HTTP client for AI API
-reqwest = { version = "0.12", features = ["json"] }
+# HTTP client for AI API + streaming
+reqwest = { version = "0.12", features = ["json", "stream"] }
+futures = "0.3"
 
 # Password hashing
 argon2 = { version = "0.5", features = ["rand"] }
@@ -51,3 +54,13 @@ serialport = "4"
 # Hash / HMAC for audit chain
 sha2 = "0.10"
 hex = "0.4"
+
+# Secure credential storage (Windows Credential Manager by default on Windows)
+keyring = "2"
+
+# AI migration agent dependencies
+mysql      = "25"
+tiberius   = { version = "0.12", default-features = false, features = ["tokio", "vendored-openssl"] }
+calamine   = "0.24"
+csv        = "1.3"
+tokio-util = { version = "0.7", features = ["compat"] }

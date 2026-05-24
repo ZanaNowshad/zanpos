@@ -165,6 +165,8 @@ pub fn run() {
             commands::setup_commands::settings_get_branch,
             commands::setup_commands::settings_update_branch,
             commands::setup_commands::setup_save_benefit_number,
+            commands::setup_commands::business_flags_load,
+            commands::setup_commands::business_flags_save,
             // Phase 10a — timeout, backup, tax report, audit log
             commands::phase10a_commands::app_config_get_timeout,
             commands::phase10a_commands::app_config_set_timeout,
@@ -194,6 +196,11 @@ pub fn run() {
             commands::ai_admin_commands::ai_execute_action,
             commands::ai_admin_commands::ai_cancel_action,
             commands::ai_admin_commands::ai_undo_action,
+            // AI Admin — streaming + history
+            commands::ai_admin_commands::ai_chat_stream,
+            commands::ai_admin_commands::ai_save_message,
+            commands::ai_admin_commands::ai_load_history,
+            commands::ai_admin_commands::ai_clear_history,
             // Delivery
             commands::delivery_commands::delivery_list,
             commands::delivery_commands::delivery_get,

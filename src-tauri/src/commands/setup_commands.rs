@@ -556,3 +556,98 @@ pub async fn setup_save_benefit_number(
     .await?;
     Ok(())
 }
+
+// ─── Business flags ───────────────────────────────────────────────────────────
+
+/// Operational toggles that control business rules in the POS.
+/// All flags are stored as "0"/"1" strings in app_config.
+#[derive(Debug, Serialize, serde::Deserialize, Clone)]
+pub struct BusinessFlags {
+    /// Allow a sale to finalize even when stock quantity would go below zero.
+    pub allow_negative_stock: bool,
+    /// When true, a non-empty reason is required for every discount applied.
+    pub require_discount_reason: bool,
+    /// When true, cashiers (not just managers/owners) may apply discounts.
+    pub cashier_can_discount: bool,
+    /// When true, the thermal receipt prints automatically after every sale.
+    pub auto_print_receipt: bool,
+}
+
+impl Default for BusinessFlags {
+    fn default() -> Self {
+        Self {
+            allow_negative_stock: false,
+            require_discount_reason: true,
+            cashier_can_discount: false,
+            auto_print_receipt: false,
+        }
+    }
+}
+
+/// Read a single boolean flag from app_config ("1" == true, anything else == false).
+async fn read_flag(pool: &sqlx::SqlitePool, key: &str, default: bool) -> bool {
+    let val: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM app_config WHERE key = ?",
+    )
+    .bind(key)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    match val.as_deref() {
+        Some(v) => v == "1",
+        None => default,
+    }
+}
+
+/// Write a single boolean flag to app_config (upsert).
+async fn write_flag(
+    pool: &sqlx::SqlitePool,
+    key: &str,
+    value: bool,
+) -> crate::errors::AppResult<()> {
+    sqlx::query(
+        "INSERT INTO app_config (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(key)
+    .bind(if value { "1" } else { "0" })
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn business_flags_load(
+    state: State<'_, AppState>,
+) -> Result<BusinessFlags, AppError> {
+    let flags = BusinessFlags {
+        allow_negative_stock:    read_flag(&state.db, "flag_allow_negative_stock",    false).await,
+        require_discount_reason: read_flag(&state.db, "flag_require_discount_reason", true).await,
+        cashier_can_discount:    read_flag(&state.db, "flag_cashier_can_discount",    false).await,
+        auto_print_receipt:      read_flag(&state.db, "flag_auto_print_receipt",      false).await,
+    };
+    Ok(flags)
+}
+
+#[derive(Deserialize)]
+pub struct SaveBusinessFlagsInput {
+    pub flags: BusinessFlags,
+    pub actor_user_id: String,
+}
+
+#[tauri::command]
+pub async fn business_flags_save(
+    input: SaveBusinessFlagsInput,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    // Only managers and owners may change business rules.
+    rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
+
+    write_flag(&state.db, "flag_allow_negative_stock",    input.flags.allow_negative_stock).await?;
+    write_flag(&state.db, "flag_require_discount_reason", input.flags.require_discount_reason).await?;
+    write_flag(&state.db, "flag_cashier_can_discount",    input.flags.cashier_can_discount).await?;
+    write_flag(&state.db, "flag_auto_print_receipt",      input.flags.auto_print_receipt).await?;
+
+    Ok(())
+}

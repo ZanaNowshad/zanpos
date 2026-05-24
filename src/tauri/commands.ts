@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, Channel } from "@tauri-apps/api/core";
 import type {
   AdminProduct,
   AdminUserRow,
@@ -6,6 +6,7 @@ import type {
   AiChatResponse,
   AppConfig,
   BranchSettings,
+  BusinessFlags,
   BulkStockTakeResult,
   Cart,
   CashDrawerSummary,
@@ -41,6 +42,8 @@ import type {
   TodaySummary,
   TopProduct,
   UndoActionResult,
+  AiChatMessage,
+  StreamEvent,
   UserSummary,
   ValidateProviderResult,
   NoSaleRow,
@@ -95,6 +98,17 @@ export const settingsUpdateBranch = (input: {
   actor_user_id: string;
 }): Promise<BranchSettings> =>
   invoke("settings_update_branch", { input });
+
+// ─── Business flags ────────────────────────────────────────────────────────────
+
+export const businessFlagsLoad = (): Promise<BusinessFlags> =>
+  invoke("business_flags_load");
+
+export const businessFlagsSave = (
+  flags: BusinessFlags,
+  actor_user_id: string,
+): Promise<void> =>
+  invoke("business_flags_save", { input: { flags, actor_user_id } });
 
 // ─── Auth commands ────────────────────────────────────────────────────────────
 
@@ -310,6 +324,32 @@ export const aiUndoAction = (
   currencyExponent: number
 ): Promise<UndoActionResult> =>
   invoke("ai_undo_action", { undoId, userId, currencyExponent });
+
+export const aiChatStream = (
+  input: AiChatInput,
+  onEvent: Channel<StreamEvent>
+): Promise<void> => invoke("ai_chat_stream", { input, onEvent });
+
+export const aiSaveMessage = (
+  sessionId: string,
+  branchId: string,
+  userId: string,
+  role: string,
+  content: string,
+  messageType: string
+): Promise<number> =>
+  invoke("ai_save_message", { sessionId, branchId, userId, role, content, messageType });
+
+export const aiLoadHistory = (
+  branchId: string,
+  userId: string
+): Promise<AiChatMessage[]> =>
+  invoke("ai_load_history", { branchId, userId });
+
+export const aiClearHistory = (
+  branchId: string,
+  userId: string
+): Promise<void> => invoke("ai_clear_history", { branchId, userId });
 
 // ─── Back-office admin commands ───────────────────────────────────────────────
 

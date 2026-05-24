@@ -316,6 +316,34 @@ export interface UndoActionResult {
   followup: string;
 }
 
+// ─── AI streaming & history ───────────────────────────────────────────────────
+
+export interface AiChatMessage {
+  id: number;
+  session_id: string;
+  branch_id: string;
+  user_id: string;
+  role: string;
+  content: string;
+  message_type: string;
+  created_at: string;
+}
+
+export type StreamEvent =
+  | { type: "token"; text: string }
+  | { type: "tool_start"; name: string }
+  | { type: "tool_done"; name: string }
+  | {
+      type: "mutation_pending";
+      action_id: string;
+      tool_name: string;
+      preview: ToolPreview;
+      expires_at: string;
+      assistant_text: string;
+    }
+  | { type: "done" }
+  | { type: "error"; message: string };
+
 // ─── Phase 7: Enhanced report types ──────────────────────────────────────────
 
 export interface RangeSummary {
@@ -516,6 +544,17 @@ export interface BranchSettings {
   tax_number: string | null;
 }
 
+export interface BusinessFlags {
+  /** Allow a sale to finalize even when stock quantity would go below zero. */
+  allow_negative_stock: boolean;
+  /** When true, a non-empty reason is required for every discount applied. */
+  require_discount_reason: boolean;
+  /** When true, cashiers (not just managers/owners) may apply discounts. */
+  cashier_can_discount: boolean;
+  /** When true, the thermal receipt prints automatically after every sale. */
+  auto_print_receipt: boolean;
+}
+
 // ─── Cashier report ───────────────────────────────────────────────────────────
 
 export interface CashierSummaryRow {
@@ -685,4 +724,6 @@ export interface SendDeliveryInput {
   address_text: string;
   house_number?: string;
   area?: string;
+  /** Pre-built message from the frontend template editor. Overrides Rust builder. */
+  message_override?: string;
 }

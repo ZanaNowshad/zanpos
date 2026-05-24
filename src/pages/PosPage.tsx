@@ -503,7 +503,7 @@ export default function PosPage({
       )}
 
       {/* ── Main area ── */}
-      <div className="pos-main" style={{ gridTemplateColumns: "88px minmax(0, 1fr) 300px" }}>
+      <div className="pos-main" style={{ gridTemplateColumns: "88px minmax(0, 1fr) 370px" }}>
         {/* Icon sidebar */}
         <div className="pos-sidebar">
           <button className="pos-sidebar-item active" title="Quick Sale">

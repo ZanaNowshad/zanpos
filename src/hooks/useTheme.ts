@@ -4,25 +4,27 @@ export type Theme =
   | "dark"
   | "light"
   | "midnight"
+  | "blossom"
   | "forest"
-  | "rose"
-  | "ocean"
-  | "slate";
+  | "sky"
+  | "sage";
 
 export interface ThemeMeta {
   id: Theme;
   label: string;
   icon: string;
+  /** true = light background, false = dark */
+  isLight: boolean;
 }
 
 export const THEMES: ThemeMeta[] = [
-  { id: "dark",     label: "Dark",     icon: "🌑" },
-  { id: "light",    label: "Light",    icon: "☀"  },
-  { id: "midnight", label: "Midnight", icon: "✦"  },
-  { id: "forest",   label: "Forest",   icon: "🌿" },
-  { id: "rose",     label: "Rose",     icon: "🌸" },
-  { id: "ocean",    label: "Ocean",    icon: "🌊" },
-  { id: "slate",    label: "Slate",    icon: "🔮" },
+  { id: "dark",     label: "Dark",     icon: "🌑", isLight: false },
+  { id: "light",    label: "Light",    icon: "☀",  isLight: true  },
+  { id: "midnight", label: "Midnight", icon: "✦",  isLight: false },
+  { id: "blossom",  label: "Blossom",  icon: "🌸", isLight: true  },
+  { id: "forest",   label: "Forest",   icon: "🌿", isLight: false },
+  { id: "sky",      label: "Sky",      icon: "🌤", isLight: true  },
+  { id: "sage",     label: "Sage",     icon: "🍃", isLight: true  },
 ];
 
 const THEME_IDS = THEMES.map(t => t.id);

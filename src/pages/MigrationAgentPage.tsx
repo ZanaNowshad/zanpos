@@ -1,6 +1,11 @@
 import React, { useState, useRef, useEffect } from "react";
 import type { MigrationContext, MigrationChatResponse, MigrationPreview } from "../types";
-import { migrationAgentChat, migrationConfirmExecute, adminGetProviderConfig, adminSetAnthropic } from "../tauri/commands";
+import {
+  migrationAgentChat, migrationConfirmExecute,
+  adminGetProviderConfig, adminSetAnthropic,
+  adminValidateOpenai, adminSetOpenai,
+} from "../tauri/commands";
+import type { ModelInfo } from "../types";
 import { open as openFilePicker } from "@tauri-apps/plugin-dialog";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -151,67 +156,347 @@ function MigrationPreviewCard({
 
 // ─── AI Config Setup Panel ────────────────────────────────────────────────────
 
-function AiSetupPanel({ onConfigured }: { onConfigured: () => void }) {
-  const [apiKey, setApiKey] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+type AiProvider = "anthropic" | "openai";
 
-  const handleSave = async () => {
-    const key = apiKey.trim();
-    if (!key.startsWith("sk-ant-")) {
-      setError("Key must start with sk-ant-");
-      return;
-    }
-    setSaving(true);
-    setError(null);
+function AiSetupPanel({ onConfigured }: { onConfigured: () => void }) {
+  const [provider, setProvider]         = useState<AiProvider>("anthropic");
+  // Anthropic
+  const [anthropicKey, setAnthropicKey] = useState("");
+  // OpenAI
+  const [baseUrl, setBaseUrl]           = useState("https://api.openai.com/v1");
+  const [openaiKey, setOpenaiKey]       = useState("");
+  const [models, setModels]             = useState<ModelInfo[]>([]);
+  const [selectedModel, setSelectedModel] = useState("");
+  const [validating, setValidating]     = useState(false);
+  // Shared
+  const [saving, setSaving]             = useState(false);
+  const [error, setError]               = useState<string | null>(null);
+
+  // ── Anthropic save ────────────────────────────────────────────────────────
+  const handleSaveAnthropic = async () => {
+    const key = anthropicKey.trim();
+    if (!key.startsWith("sk-ant-")) { setError("Key must start with sk-ant-"); return; }
+    setSaving(true); setError(null);
+    try { await adminSetAnthropic(key); onConfigured(); }
+    catch (e) { setError(String(e)); }
+    finally { setSaving(false); }
+  };
+
+  // ── OpenAI: validate → fetch models ───────────────────────────────────────
+  const handleValidateOpenai = async () => {
+    setError(null); setModels([]); setSelectedModel("");
+    setValidating(true);
     try {
-      await adminSetAnthropic(key);
+      const res = await adminValidateOpenai(baseUrl.trim(), openaiKey.trim());
+      if (res.success && res.models.length > 0) {
+        setModels(res.models);
+        setSelectedModel(res.models[0].id);
+      } else {
+        setError(res.error ?? "Validation failed — check URL and key");
+      }
+    } catch (e) { setError(String(e)); }
+    finally { setValidating(false); }
+  };
+
+  // ── OpenAI save ────────────────────────────────────────────────────────────
+  const handleSaveOpenai = async () => {
+    if (!selectedModel) return;
+    setSaving(true); setError(null);
+    try {
+      await adminSetOpenai(baseUrl.trim(), openaiKey.trim(), selectedModel);
       onConfigured();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setSaving(false);
-    }
+    } catch (e) { setError(String(e)); }
+    finally { setSaving(false); }
+  };
+
+  const card: React.CSSProperties = {
+    maxWidth: 500, width: "100%", padding: 32,
+    background: "var(--surface)", borderRadius: 12,
+    border: "1px solid var(--border)", margin: 24,
+  };
+  const inp: React.CSSProperties = {
+    width: "100%", padding: "9px 12px", borderRadius: 7,
+    border: "1px solid var(--border)", background: "var(--bg)",
+    color: "var(--text)", fontSize: "0.875rem",
+    boxSizing: "border-box", marginBottom: 12,
+  };
+  const lbl: React.CSSProperties = {
+    display: "block", fontSize: "0.8rem", fontWeight: 600,
+    marginBottom: 5, color: "var(--text-dim)",
   };
 
   return (
     <div className="mig-page" style={{ alignItems: "center", justifyContent: "center" }}>
-      <div style={{ maxWidth: 480, width: "100%", padding: 32, background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)", margin: 24 }}>
-        <div style={{ fontSize: "2rem", marginBottom: 12 }}>🤖</div>
-        <h2 style={{ margin: "0 0 8px", fontSize: "1.1rem", fontWeight: 700 }}>Set up AI before migrating</h2>
-        <p style={{ margin: "0 0 20px", fontSize: "0.875rem", color: "var(--text-dim)", lineHeight: 1.5 }}>
-          The Migration Agent needs an Anthropic API key to run. Enter your key below — it will be saved securely and used for both the Migration Agent and Back Office AI.
+      <div style={card}>
+        <div style={{ fontSize: "2rem", marginBottom: 10 }}>🤖</div>
+        <h2 style={{ margin: "0 0 6px", fontSize: "1.1rem", fontWeight: 700 }}>Set up AI before migrating</h2>
+        <p style={{ margin: "0 0 20px", fontSize: "0.85rem", color: "var(--text-dim)", lineHeight: 1.5 }}>
+          Choose your AI provider. Keys are stored securely on this device and shared with Back Office AI.
         </p>
 
-        <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, marginBottom: 6, color: "var(--text-dim)" }}>
-          Anthropic API Key
-        </label>
-        <input
-          type="password"
-          placeholder="sk-ant-api03-…"
-          value={apiKey}
-          onChange={e => { setApiKey(e.target.value); setError(null); }}
-          onKeyDown={e => e.key === "Enter" && handleSave()}
-          autoFocus
-          style={{ width: "100%", padding: "9px 12px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: "0.875rem", boxSizing: "border-box", marginBottom: 12 }}
-        />
+        {/* Provider toggle */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+          {(["anthropic", "openai"] as AiProvider[]).map(p => (
+            <button key={p} onClick={() => { setProvider(p); setError(null); }} style={{
+              flex: 1, padding: "8px 0", borderRadius: 8, fontWeight: 600, fontSize: "0.85rem",
+              cursor: "pointer", transition: "all 0.15s",
+              background: provider === p ? "var(--accent)" : "var(--surface)",
+              color: provider === p ? "#fff" : "var(--text-dim)",
+              border: `1.5px solid ${provider === p ? "var(--accent)" : "var(--border)"}`,
+            }}>
+              {p === "anthropic" ? "◆ Anthropic (Claude)" : "⬡ OpenAI / Custom"}
+            </button>
+          ))}
+        </div>
 
-        {error && <div style={{ color: "#ef4444", fontSize: "0.8rem", marginBottom: 10 }}>{error}</div>}
+        {/* ── Anthropic panel ── */}
+        {provider === "anthropic" && (
+          <>
+            <label style={lbl}>Anthropic API Key</label>
+            <input type="password" placeholder="sk-ant-api03-…" value={anthropicKey} autoFocus
+              onChange={e => { setAnthropicKey(e.target.value); setError(null); }}
+              onKeyDown={e => e.key === "Enter" && handleSaveAnthropic()}
+              style={inp} />
+            {error && <div style={{ color: "#ef4444", fontSize: "0.8rem", marginBottom: 10 }}>{error}</div>}
+            <button onClick={handleSaveAnthropic} disabled={saving || !anthropicKey.trim()} style={{
+              width: "100%", padding: 10, background: "var(--accent)", color: "#fff",
+              border: "none", borderRadius: 8, fontWeight: 700, fontSize: "0.9rem",
+              cursor: saving || !anthropicKey.trim() ? "not-allowed" : "pointer",
+              opacity: saving || !anthropicKey.trim() ? 0.5 : 1,
+            }}>
+              {saving ? "Saving…" : "Save & Start Migration →"}
+            </button>
+            <p style={{ margin: "10px 0 0", fontSize: "0.75rem", color: "var(--text-dim)", textAlign: "center" }}>
+              Get your key at <span style={{ color: "var(--accent)" }}>console.anthropic.com</span>
+            </p>
+          </>
+        )}
 
-        <button
-          onClick={handleSave}
-          disabled={saving || !apiKey.trim()}
-          style={{ width: "100%", padding: "10px", background: "var(--accent)", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: "0.9rem", cursor: saving ? "wait" : "pointer", opacity: saving || !apiKey.trim() ? 0.5 : 1 }}
-        >
-          {saving ? "Saving…" : "Save & Start Migration →"}
-        </button>
+        {/* ── OpenAI panel ── */}
+        {provider === "openai" && (
+          <>
+            <label style={lbl}>Base URL</label>
+            <input type="text" value={baseUrl}
+              onChange={e => { setBaseUrl(e.target.value); setModels([]); setSelectedModel(""); setError(null); }}
+              style={inp} />
 
-        <p style={{ margin: "12px 0 0", fontSize: "0.75rem", color: "var(--text-dim)", textAlign: "center" }}>
-          Get your key at{" "}
-          <span style={{ color: "var(--accent)" }}>console.anthropic.com</span>
-        </p>
+            <label style={lbl}>API Key</label>
+            <input type="password" placeholder="sk-…" value={openaiKey}
+              onChange={e => { setOpenaiKey(e.target.value); setModels([]); setSelectedModel(""); setError(null); }}
+              style={{ ...inp, marginBottom: 14 }} />
+
+            {error && <div style={{ color: "#ef4444", fontSize: "0.8rem", marginBottom: 10 }}>{error}</div>}
+
+            {/* Step 1: validate & fetch models */}
+            {models.length === 0 && (
+              <button onClick={handleValidateOpenai}
+                disabled={validating || !baseUrl.trim() || !openaiKey.trim()}
+                style={{
+                  width: "100%", padding: 10, background: "var(--surface2, var(--surface))",
+                  color: "var(--text)", border: "1.5px solid var(--border)",
+                  borderRadius: 8, fontWeight: 600, fontSize: "0.875rem",
+                  cursor: validating || !baseUrl.trim() || !openaiKey.trim() ? "not-allowed" : "pointer",
+                  opacity: validating || !baseUrl.trim() || !openaiKey.trim() ? 0.5 : 1,
+                  marginBottom: 8,
+                }}>
+                {validating ? "Connecting…" : "Validate & Fetch Models"}
+              </button>
+            )}
+
+            {/* Step 2: model select + save */}
+            {models.length > 0 && (
+              <>
+                <label style={lbl}>Model</label>
+                <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)}
+                  style={{ ...inp, marginBottom: 14 }}>
+                  {models.map(m => (
+                    <option key={m.id} value={m.id}>{m.id}</option>
+                  ))}
+                </select>
+                <button onClick={handleSaveOpenai} disabled={saving || !selectedModel}
+                  style={{
+                    width: "100%", padding: 10, background: "var(--accent)", color: "#fff",
+                    border: "none", borderRadius: 8, fontWeight: 700, fontSize: "0.9rem",
+                    cursor: saving || !selectedModel ? "not-allowed" : "pointer",
+                    opacity: saving || !selectedModel ? 0.5 : 1,
+                  }}>
+                  {saving ? "Saving…" : "Save & Start Migration →"}
+                </button>
+              </>
+            )}
+          </>
+        )}
       </div>
     </div>
+  );
+}
+
+// ─── AI Settings Drawer (in-chat model switcher) ──────────────────────────────
+
+function AiSettingsDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: (label: string) => void }) {
+  const [provider, setProvider]           = useState<AiProvider>("anthropic");
+  const [anthropicKey, setAnthropicKey]   = useState("");
+  const [baseUrl, setBaseUrl]             = useState("https://api.openai.com/v1");
+  const [openaiKey, setOpenaiKey]         = useState("");
+  const [models, setModels]               = useState<ModelInfo[]>([]);
+  const [selectedModel, setSelectedModel] = useState("");
+  const [validating, setValidating]       = useState(false);
+  const [saving, setSaving]               = useState(false);
+  const [error, setError]                 = useState<string | null>(null);
+
+  // Pre-fill from current config
+  useEffect(() => {
+    adminGetProviderConfig().then(cfg => {
+      if (cfg.provider === "openai") {
+        setProvider("openai");
+        if (cfg.openai_base_url) setBaseUrl(cfg.openai_base_url);
+        if (cfg.openai_model)    setSelectedModel(cfg.openai_model);
+      }
+    }).catch(() => {});
+  }, []);
+
+  const inp: React.CSSProperties = {
+    width: "100%", padding: "8px 11px", borderRadius: 7,
+    border: "1px solid var(--border)", background: "var(--bg)",
+    color: "var(--text)", fontSize: "0.85rem",
+    boxSizing: "border-box", marginBottom: 10,
+  };
+  const lbl: React.CSSProperties = {
+    display: "block", fontSize: "0.78rem", fontWeight: 600,
+    marginBottom: 4, color: "var(--text-dim)",
+  };
+
+  const handleSaveAnthropic = async () => {
+    const key = anthropicKey.trim();
+    if (!key.startsWith("sk-ant-")) { setError("Key must start with sk-ant-"); return; }
+    setSaving(true); setError(null);
+    try { await adminSetAnthropic(key); onSaved("◆ Claude"); }
+    catch (e) { setError(String(e)); }
+    finally { setSaving(false); }
+  };
+
+  const handleValidate = async () => {
+    setError(null); setModels([]); setSelectedModel(""); setValidating(true);
+    try {
+      const res = await adminValidateOpenai(baseUrl.trim(), openaiKey.trim());
+      if (res.success && res.models.length > 0) {
+        setModels(res.models); setSelectedModel(res.models[0].id);
+      } else { setError(res.error ?? "Validation failed"); }
+    } catch (e) { setError(String(e)); }
+    finally { setValidating(false); }
+  };
+
+  const handleSaveOpenai = async () => {
+    if (!selectedModel) return;
+    setSaving(true); setError(null);
+    try {
+      await adminSetOpenai(baseUrl.trim(), openaiKey.trim(), selectedModel);
+      onSaved(`⬡ ${selectedModel}`);
+    } catch (e) { setError(String(e)); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div onClick={onClose} style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 40,
+      }} />
+      {/* Drawer */}
+      <div style={{
+        position: "fixed", top: 0, right: 0, bottom: 0, width: 340,
+        background: "var(--surface)", borderLeft: "1px solid var(--border)",
+        zIndex: 41, display: "flex", flexDirection: "column",
+        boxShadow: "-4px 0 24px rgba(0,0,0,0.3)",
+      }}>
+        {/* Drawer header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
+          <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>⚙ AI Model Settings</span>
+          <button onClick={onClose} style={{
+            background: "none", border: "none", cursor: "pointer",
+            color: "var(--text-dim)", fontSize: "1.2rem", lineHeight: 1, padding: 2,
+          }}>✕</button>
+        </div>
+
+        {/* Drawer body */}
+        <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+          {/* Provider toggle */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 18 }}>
+            {(["anthropic", "openai"] as AiProvider[]).map(p => (
+              <button key={p} onClick={() => { setProvider(p); setError(null); setModels([]); }} style={{
+                flex: 1, padding: "7px 0", borderRadius: 7, fontWeight: 600, fontSize: "0.8rem",
+                cursor: "pointer", transition: "all 0.15s",
+                background: provider === p ? "var(--accent)" : "transparent",
+                color: provider === p ? "#fff" : "var(--text-dim)",
+                border: `1.5px solid ${provider === p ? "var(--accent)" : "var(--border)"}`,
+              }}>
+                {p === "anthropic" ? "◆ Anthropic" : "⬡ OpenAI / Custom"}
+              </button>
+            ))}
+          </div>
+
+          {/* Anthropic */}
+          {provider === "anthropic" && (
+            <>
+              <label style={lbl}>Anthropic API Key</label>
+              <input type="password" placeholder="sk-ant-api03-…" value={anthropicKey}
+                onChange={e => { setAnthropicKey(e.target.value); setError(null); }}
+                onKeyDown={e => e.key === "Enter" && handleSaveAnthropic()}
+                style={inp} autoFocus />
+              {error && <div style={{ color: "#ef4444", fontSize: "0.78rem", marginBottom: 8 }}>{error}</div>}
+              <button onClick={handleSaveAnthropic} disabled={saving || !anthropicKey.trim()} style={{
+                width: "100%", padding: 9, background: "var(--accent)", color: "#fff",
+                border: "none", borderRadius: 7, fontWeight: 700, fontSize: "0.875rem",
+                cursor: saving || !anthropicKey.trim() ? "not-allowed" : "pointer",
+                opacity: saving || !anthropicKey.trim() ? 0.5 : 1,
+              }}>{saving ? "Saving…" : "Save Changes"}</button>
+              <p style={{ margin: "8px 0 0", fontSize: "0.72rem", color: "var(--text-dim)", textAlign: "center" }}>
+                console.anthropic.com
+              </p>
+            </>
+          )}
+
+          {/* OpenAI */}
+          {provider === "openai" && (
+            <>
+              <label style={lbl}>Base URL</label>
+              <input type="text" value={baseUrl}
+                onChange={e => { setBaseUrl(e.target.value); setModels([]); setSelectedModel(""); setError(null); }}
+                style={inp} />
+              <label style={lbl}>API Key</label>
+              <input type="password" placeholder="sk-…" value={openaiKey}
+                onChange={e => { setOpenaiKey(e.target.value); setModels([]); setSelectedModel(""); setError(null); }}
+                style={{ ...inp, marginBottom: 12 }} />
+              {error && <div style={{ color: "#ef4444", fontSize: "0.78rem", marginBottom: 8 }}>{error}</div>}
+              {models.length === 0 ? (
+                <button onClick={handleValidate}
+                  disabled={validating || !baseUrl.trim() || !openaiKey.trim()} style={{
+                    width: "100%", padding: 9, background: "transparent",
+                    color: "var(--text)", border: "1.5px solid var(--border)",
+                    borderRadius: 7, fontWeight: 600, fontSize: "0.875rem",
+                    cursor: validating || !baseUrl.trim() || !openaiKey.trim() ? "not-allowed" : "pointer",
+                    opacity: validating || !baseUrl.trim() || !openaiKey.trim() ? 0.5 : 1,
+                  }}>{validating ? "Connecting…" : "Validate & Fetch Models"}</button>
+              ) : (
+                <>
+                  <label style={lbl}>Model</label>
+                  <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)} style={inp}>
+                    {models.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
+                  </select>
+                  <button onClick={handleSaveOpenai} disabled={saving || !selectedModel} style={{
+                    width: "100%", padding: 9, background: "var(--accent)", color: "#fff",
+                    border: "none", borderRadius: 7, fontWeight: 700, fontSize: "0.875rem",
+                    cursor: saving || !selectedModel ? "not-allowed" : "pointer",
+                    opacity: saving || !selectedModel ? 0.5 : 1,
+                  }}>{saving ? "Saving…" : "Save Changes"}</button>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -229,6 +514,8 @@ export default function MigrationAgentPage({ onDone }: Props) {
   const [executing, setExecuting] = useState(false);
   // null = checking, false = not configured, true = ready
   const [aiReady, setAiReady] = useState<boolean | null>(null);
+  const [providerLabel, setProviderLabel] = useState("⚙ AI");
+  const [showAiSettings, setShowAiSettings] = useState(false);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -236,7 +523,12 @@ export default function MigrationAgentPage({ onDone }: Props) {
   // Check AI config on mount
   useEffect(() => {
     adminGetProviderConfig()
-      .then(cfg => setAiReady(cfg.provider !== "" && (cfg.anthropic_key_set || cfg.openai_key_set)))
+      .then(cfg => {
+        const ready = cfg.provider !== "" && (cfg.anthropic_key_set || cfg.openai_key_set);
+        setAiReady(ready);
+        if (cfg.provider === "anthropic") setProviderLabel("◆ Claude");
+        else if (cfg.provider === "openai") setProviderLabel(`⬡ ${cfg.openai_model || "OpenAI"}`);
+      })
       .catch(() => setAiReady(false));
   }, []);
 
@@ -427,23 +719,45 @@ export default function MigrationAgentPage({ onDone }: Props) {
           );
         })}
 
-        {/* Skip / Close button */}
-        <button
-          onClick={onDone}
-          style={{
-            marginLeft: "auto",
-            padding: "4px 12px",
-            background: "transparent",
-            border: "1px solid var(--border)",
-            borderRadius: 6,
-            cursor: "pointer",
-            color: "var(--text-dim)",
-            fontSize: "0.8rem",
-          }}
-        >
-          Skip → Launch POS
-        </button>
+        {/* Right-side controls */}
+        <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
+          {/* AI model badge — click to open settings drawer */}
+          <button
+            onClick={() => setShowAiSettings(true)}
+            title="Change AI provider / model"
+            style={{
+              padding: "4px 10px", borderRadius: 6, cursor: "pointer",
+              background: "var(--accent)", color: "#fff",
+              border: "none", fontSize: "0.78rem", fontWeight: 600,
+              opacity: 0.9,
+            }}
+          >
+            {providerLabel}
+          </button>
+          <button
+            onClick={onDone}
+            style={{
+              padding: "4px 12px", background: "transparent",
+              border: "1px solid var(--border)", borderRadius: 6,
+              cursor: "pointer", color: "var(--text-dim)", fontSize: "0.8rem",
+            }}
+          >
+            Skip → Launch POS
+          </button>
+        </div>
       </div>
+
+      {/* AI Settings Drawer */}
+      {showAiSettings && (
+        <AiSettingsDrawer
+          onClose={() => setShowAiSettings(false)}
+          onSaved={(label) => {
+            setProviderLabel(label);
+            setShowAiSettings(false);
+            addMessage({ role: "system", text: `✅ AI switched to **${label}**` });
+          }}
+        />
+      )}
 
       {/* Chat area */}
       <div className="mig-chat-area">

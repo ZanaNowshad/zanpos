@@ -154,10 +154,13 @@ export default function PosPage({
       const result = await finalizeSale([payment]);
       setLastReceiptNumber(result.receipt_number);
       setLastSaleStatus(`✓ #${result.receipt_number} · Cash · ${DEVICE.currency} ${(netTotal / Math.pow(10, DEVICE.currency_exponent)).toFixed(DEVICE.currency_exponent)}`);
-      // Auto-print receipt if the business flag is enabled
-      if (bizFlags.auto_print_receipt) {
+      // Auto-print receipt — read fresh flags at point-of-use so Settings changes
+      // take effect without requiring a page reload.
+      const currentFlags = await businessFlagsLoad().catch(() => bizFlags);
+      setBizFlags(currentFlags);
+      if (currentFlags.auto_print_receipt) {
         // TODO: call thermalPrintReceipt(result.receipt_number) when that command exists
-        // The flag is loaded and checked — wiring is ready for when print command is available
+        // The flag gate is wired — ready for when the thermal receipt print command is built.
       }
       // No ReceiptPreview — cart already cleared in finalizeSale
       focusBarcode();
@@ -208,10 +211,13 @@ export default function PosPage({
       setSaleResult(result);
       setLastReceiptNumber(result.receipt_number);
       setLastSaleStatus(`✓ #${result.receipt_number}`);
-      // Auto-print receipt if the business flag is enabled
-      if (bizFlags.auto_print_receipt) {
+      // Auto-print receipt — read fresh flags at point-of-use so Settings changes
+      // take effect without requiring a page reload.
+      const currentFlags = await businessFlagsLoad().catch(() => bizFlags);
+      setBizFlags(currentFlags);
+      if (currentFlags.auto_print_receipt) {
         // TODO: call thermalPrintReceipt(result.receipt_number) when that command exists
-        // The flag is loaded and checked — wiring is ready for when print command is available
+        // The flag gate is wired — ready for when the thermal receipt print command is built.
       }
       focusBarcode();               // cart is clear — cashier can scan immediately
       if (result.low_stock_alerts.length > 0) {

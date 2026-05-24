@@ -10418,5 +10418,22 @@ label {
 }
 .biz-toggle input:checked + .biz-toggle-track::after {
   transform: translateX(22px);
-  background: #000;
+  background: var(--bg);
+}
+
+/* Coming-soon flag row */
+.biz-flag-row--coming-soon { opacity: 0.7; }
+.biz-coming-soon-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--accent2);
+  color: var(--accent);
+  vertical-align: middle;
+  line-height: 1.6;
 }

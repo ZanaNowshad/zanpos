@@ -561,7 +561,7 @@ pub async fn setup_save_benefit_number(
 
 /// Operational toggles that control business rules in the POS.
 /// All flags are stored as "0"/"1" strings in app_config.
-#[derive(Debug, Serialize, serde::Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BusinessFlags {
     /// Allow a sale to finalize even when stock quantity would go below zero.
     pub allow_negative_stock: bool,

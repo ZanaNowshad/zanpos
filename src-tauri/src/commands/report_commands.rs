@@ -595,7 +595,7 @@ mod tests {
             tendered_minor: Some(250),
             external_reference: None,
         }];
-        sale_repo::finalize_sale(&pool, &cart, payments, "idem-t10-eod", None, false, None)
+        sale_repo::finalize_sale(&pool, &cart, payments, "idem-t10-eod", None, false, None, false)
             .await
             .expect("finalize sale");
 

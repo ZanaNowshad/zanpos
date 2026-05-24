@@ -197,6 +197,7 @@ pub async fn pos_finalize_sale(
     )
     .fetch_optional(&state.db)
     .await
+    .inspect_err(|e| tracing::warn!("Failed to read flag_allow_negative_stock: {e}; defaulting to false (stock guard ON)"))
     .ok()
     .flatten();
     let allow_negative_stock = flag_val.as_deref() == Some("1");
@@ -226,18 +227,16 @@ pub struct ApplyBillDiscountInput {
     pub authorized_by_user_id: String,
 }
 
-#[tauri::command]
-pub async fn pos_apply_bill_discount(
-    input: ApplyBillDiscountInput,
-    state: State<'_, AppState>,
-) -> Result<Cart, AppError> {
-    let discount = input.discount_minor.max(0);
-    // Load discount-related business flags.
+/// Load the two discount-policy flags in a single helper to avoid duplication.
+/// Returns `(require_discount_reason, cashier_can_discount)`.
+/// Defaults: require_reason = true (fail-safe), cashier_can_discount = false (fail-safe).
+async fn load_discount_flags(db: &sqlx::SqlitePool) -> (bool, bool) {
     let require_reason_val: Option<String> = sqlx::query_scalar(
         "SELECT value FROM app_config WHERE key = 'flag_require_discount_reason'",
     )
-    .fetch_optional(&state.db)
+    .fetch_optional(db)
     .await
+    .inspect_err(|e| tracing::warn!("Failed to read flag_require_discount_reason: {e}; defaulting to true"))
     .ok()
     .flatten();
     let require_discount_reason = require_reason_val.as_deref() != Some("0"); // default true
@@ -245,11 +244,24 @@ pub async fn pos_apply_bill_discount(
     let cashier_discount_val: Option<String> = sqlx::query_scalar(
         "SELECT value FROM app_config WHERE key = 'flag_cashier_can_discount'",
     )
-    .fetch_optional(&state.db)
+    .fetch_optional(db)
     .await
+    .inspect_err(|e| tracing::warn!("Failed to read flag_cashier_can_discount: {e}; defaulting to false"))
     .ok()
     .flatten();
     let cashier_can_discount = cashier_discount_val.as_deref() == Some("1");
+
+    (require_discount_reason, cashier_can_discount)
+}
+
+#[tauri::command]
+pub async fn pos_apply_bill_discount(
+    input: ApplyBillDiscountInput,
+    state: State<'_, AppState>,
+) -> Result<Cart, AppError> {
+    let discount = input.discount_minor.max(0);
+    let (require_discount_reason, cashier_can_discount) =
+        load_discount_flags(&state.db).await;
 
     if discount > 0 && require_discount_reason && input.reason.trim().is_empty() {
         return Err(AppError::Validation(
@@ -331,24 +343,8 @@ pub async fn pos_apply_line_discount(
     state: State<'_, AppState>,
 ) -> Result<Cart, AppError> {
     let discount = input.discount_minor.max(0);
-    // Load discount-related business flags.
-    let require_reason_val: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM app_config WHERE key = 'flag_require_discount_reason'",
-    )
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
-    let require_discount_reason = require_reason_val.as_deref() != Some("0"); // default true
-
-    let cashier_discount_val: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM app_config WHERE key = 'flag_cashier_can_discount'",
-    )
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
-    let cashier_can_discount = cashier_discount_val.as_deref() == Some("1");
+    let (require_discount_reason, cashier_can_discount) =
+        load_discount_flags(&state.db).await;
 
     if discount > 0 && require_discount_reason && input.reason.trim().is_empty() {
         return Err(AppError::Validation(

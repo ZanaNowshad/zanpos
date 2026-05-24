@@ -538,7 +538,7 @@ mod tests {
             external_reference: None,
         }];
 
-        let result = sale_repo::finalize_sale(pool, &cart, payments, key, None, false, None)
+        let result = sale_repo::finalize_sale(pool, &cart, payments, key, None, false, None, false)
             .await
             .expect("finalize_sale in test setup");
 

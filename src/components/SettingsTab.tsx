@@ -255,6 +255,7 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
   };
 
   const handleSaveFlags = async () => {
+    setError(null);
     setSavingFlags(true);
     setSavedFlags(false);
     try {
@@ -561,12 +562,17 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
               </label>
             </div>
 
-            <div className="biz-flag-row">
+            <div className="biz-flag-row biz-flag-row--coming-soon">
               <div className="biz-flag-info">
-                <div className="biz-flag-label">Auto-print receipt after every sale</div>
+                <div className="biz-flag-label">
+                  Auto-print receipt after every sale
+                  <span className="biz-coming-soon-badge">Coming soon</span>
+                </div>
                 <div className="biz-flag-hint">
                   Automatically sends the receipt to the thermal printer immediately after payment
                   is accepted. Requires the thermal printer to be configured and enabled.
+                  This setting is saved but has no effect until the receipt print command is
+                  available in a future update.
                 </div>
               </div>
               <label className="biz-toggle">

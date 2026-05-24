@@ -904,7 +904,68 @@ mod tests {
         );
     }
 
-    // ── 7. Receipt number is sequential per device/branch ────────────────────
+    // ── 7. allow_negative_stock=true lets a sale proceed below zero ────────────
+    #[tokio::test]
+    async fn test_allow_negative_stock_sells_through_zero() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+        let product_id = "01JPROD00000000000COLA001";
+        let branch_id = BRANCH;
+
+        // Seed stock at exactly 0 — would normally block a sale
+        sqlx::query(
+            "INSERT INTO stock_levels
+             (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at)
+             VALUES ('SL-COLA-NEG', ?, ?, '0', datetime('now'))
+             ON CONFLICT(product_id, branch_id)
+             DO UPDATE SET quantity_on_hand = '0'",
+        )
+        .bind(product_id)
+        .bind(branch_id)
+        .execute(&pool)
+        .await
+        .expect("seed zero stock");
+
+        let payment = vec![PaymentInput {
+            method: "cash".into(),
+            amount_minor: 440,
+            tendered_minor: Some(440),
+            external_reference: None,
+        }];
+
+        let mut cart = Cart::new(
+            BRANCH.into(),
+            DEVICE.into(),
+            shift_id.clone(),
+            CASHIER.into(),
+        );
+        cart.lines.push(cola_line("1"));
+
+        // With allow_negative_stock=true the sale must succeed even at stock=0
+        let result = finalize_sale(&pool, &cart, payment, "idem-neg-stock", None, false, None, true).await;
+        assert!(
+            result.is_ok(),
+            "sale must succeed with allow_negative_stock=true even when stock=0: {result:?}"
+        );
+
+        // Stock should now be -1
+        let qty: String = sqlx::query_scalar(
+            "SELECT quantity_on_hand FROM stock_levels WHERE product_id = ? AND branch_id = ?",
+        )
+        .bind(product_id)
+        .bind(branch_id)
+        .fetch_one(&pool)
+        .await
+        .expect("stock row must exist");
+
+        let qty_f: f64 = qty.parse().expect("quantity_on_hand must be numeric");
+        assert!(
+            qty_f < 0.0,
+            "stock must be negative after oversell with flag ON, got: {qty}"
+        );
+    }
+
+    // ── 8. Receipt number is sequential per device/branch ────────────────────
     #[tokio::test]
     async fn test_receipt_number_sequential() {
         let pool = make_pool().await;

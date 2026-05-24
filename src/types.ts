@@ -730,32 +730,44 @@ export interface SendDeliveryInput {
 
 // ── Migration Agent ───────────────────────────────────────────────────────────
 
-export interface MigrationContext {
-  db_type?: "sqlite" | "mysql" | "mssql" | "csv";
-  path_or_connstr?: string;
-  attached_file_path?: string;
+export interface ColumnSchema {
+  name: string;
+  samples: string[];
 }
 
-export interface MigrationChatInput {
-  history: ChatMessage[];
-  message: string;
-  user_id: string;
-  context: MigrationContext;
+export interface SheetSchema {
+  name: string;
+  columns: ColumnSchema[];
+  row_count: number;
 }
 
-export interface TableMigrationSummary {
+export interface FileSchema {
+  file_path: string;
+  file_type: string;
+  sheets: SheetSchema[];
+}
+
+export interface ColumnMapping {
+  source_col: string;
+  target_col: string;
+  transform: string;
+  notes?: string;
+}
+
+export interface SheetMapping {
+  source_sheet: string;
   target_table: string;
-  rows: number;
-  skipped: number;
+  column_mappings: ColumnMapping[];
 }
 
-export interface MigrationPreview {
-  tables: TableMigrationSummary[];
-  total_rows: number;
-  warnings: string[];
+export interface MappingConfig {
+  sheet_mappings: SheetMapping[];
 }
 
-export type MigrationChatResponse =
-  | { type: "Message"; content: string }
-  | { type: "PendingMigration"; script: string; description: string; preview: MigrationPreview }
-  | { type: "NoApiKey" };
+export type MigrationProgress =
+  | { type: "started"; total_sheets: number }
+  | { type: "sheet_start"; sheet: string; target: string; total_rows: number }
+  | { type: "sheet_progress"; sheet: string; done: number; total: number }
+  | { type: "sheet_done"; sheet: string; target: string; inserted: number; skipped: number }
+  | { type: "done"; message: string }
+  | { type: "error"; message: string };

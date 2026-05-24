@@ -54,8 +54,9 @@ import type {
   CancelDeliveryInput,
   WhatsAppStatus,
   SendDeliveryInput,
-  MigrationChatInput,
-  MigrationChatResponse,
+  FileSchema,
+  MappingConfig,
+  MigrationProgress,
 } from "../types";
 
 // ─── Setup & Settings commands ────────────────────────────────────────────────
@@ -674,10 +675,19 @@ export function setupSaveBenefitNumber(benefitNumber: string): Promise<void> {
 
 // ── Migration Agent ───────────────────────────────────────────────────────────
 
-export function migrationAgentChat(input: MigrationChatInput): Promise<MigrationChatResponse> {
-  return invoke("migration_agent_chat", { input });
-}
+export const migrationInspectFile = (path: string): Promise<FileSchema> =>
+  invoke("migration_inspect_file", { path });
 
-export function migrationConfirmExecute(script: string, userId: string): Promise<string> {
-  return invoke("migration_confirm_execute", { script, userId });
-}
+export const migrationAiMap = (
+  schema: FileSchema,
+  currencyExponent: number,
+): Promise<MappingConfig> =>
+  invoke("migration_ai_map", { schema, currencyExponent });
+
+export const migrationExecute = (
+  path: string,
+  mapping: MappingConfig,
+  currencyExponent: number,
+  onEvent: Channel<MigrationProgress>,
+): Promise<void> =>
+  invoke("migration_execute", { path, mapping, currencyExponent, onEvent });

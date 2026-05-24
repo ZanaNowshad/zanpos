@@ -120,10 +120,22 @@ function toolMeta(name: string) {
 // ─── Tool Call Card ────────────────────────────────────────────────────────────
 
 function ToolCallCard({ entry }: { entry: ToolCallEntry }) {
-  const meta = toolMeta(entry.name);
+  const [elapsed, setElapsed] = useState(0);
+  const meta  = toolMeta(entry.name);
   const running = entry.status === "running";
+
+  useEffect(() => {
+    if (!running) return;
+    setElapsed(0);
+    const id = setInterval(() => setElapsed(Date.now() - entry.startTime), 80);
+    return () => clearInterval(id);
+  }, [running, entry.startTime]);
+
   return (
     <div className={`ai-tool-card${running ? " ai-tool-card--running" : " ai-tool-card--done"}`}>
+      {/* Shimmer sweep while running */}
+      {running && <div className="ai-tool-shimmer" />}
+
       {/* Colored left accent strip */}
       <div className="ai-tool-strip" style={{ background: meta.color }} />
 
@@ -132,7 +144,7 @@ function ToolCallCard({ entry }: { entry: ToolCallEntry }) {
 
       {/* Text body */}
       <div className="ai-tool-body">
-        <div className="ai-tool-label">
+        <div className="ai-tool-label" style={{ color: running ? meta.color : undefined }}>
           {running ? `Calling ${meta.label}…` : meta.label}
         </div>
         <div className="ai-tool-raw">{entry.name}</div>
@@ -141,12 +153,103 @@ function ToolCallCard({ entry }: { entry: ToolCallEntry }) {
       {/* Status */}
       <div className="ai-tool-status">
         {running ? (
-          <span className="ai-tool-spinner" />
+          <div className="ai-tool-running-status">
+            <span className="ai-tool-spinner" />
+            {elapsed > 100 && (
+              <span className="ai-tool-elapsed-live">{elapsed}ms</span>
+            )}
+          </div>
         ) : (
           <span className="ai-tool-done-badge">
             ✓ {entry.duration !== undefined ? `${entry.duration}ms` : "done"}
           </span>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Live Activity Bar ────────────────────────────────────────────────────────
+
+type ActivityPhase = "thinking" | "tool" | "streaming";
+
+function LiveActivityBar({
+  chatState,
+  liveToolCalls,
+  tokenCount,
+  streamStartTime,
+}: {
+  chatState: ChatState;
+  liveToolCalls: ToolCallEntry[];
+  tokenCount: number;
+  streamStartTime: number | null;
+}) {
+  const [, tick] = useState(0);
+
+  useEffect(() => {
+    if (chatState === "idle") return;
+    const id = setInterval(() => tick(n => n + 1), 100);
+    return () => clearInterval(id);
+  }, [chatState]);
+
+  if (chatState === "idle") return null;
+
+  const elapsed     = streamStartTime ? Date.now() - streamStartTime : 0;
+  const runningTool = liveToolCalls.find(t => t.status === "running");
+
+  const phase: ActivityPhase =
+    runningTool   ? "tool"      :
+    tokenCount > 0 ? "streaming" :
+    "thinking";
+
+  const meta = runningTool ? toolMeta(runningTool.name) : null;
+
+  return (
+    <div className={`lab lab--${phase}`}>
+      <div className="lab-inner">
+
+        {/* Left: animated indicator */}
+        <div className="lab-indicator">
+          {phase === "thinking" && (
+            <div className="lab-dots">
+              <span /><span /><span />
+            </div>
+          )}
+          {phase === "tool" && (
+            <div className="lab-ring" style={{ borderTopColor: meta?.color ?? "var(--accent)" }} />
+          )}
+          {phase === "streaming" && (
+            <div className="lab-wave">
+              <span /><span /><span /><span /><span />
+            </div>
+          )}
+        </div>
+
+        {/* Center: text */}
+        <div className="lab-text">
+          {phase === "thinking" && <span className="lab-status">Thinking…</span>}
+          {phase === "tool" && meta && (
+            <span className="lab-status">
+              <span className="lab-tool-icon">{meta.icon}</span>
+              {" Calling "}<strong>{meta.label}</strong>
+            </span>
+          )}
+          {phase === "streaming" && (
+            <span className="lab-status">
+              Streaming response
+              <span className="lab-token-count">{tokenCount} tokens</span>
+            </span>
+          )}
+        </div>
+
+        {/* Right: elapsed + cursor pip */}
+        <div className="lab-right">
+          {elapsed > 300 && (
+            <span className="lab-elapsed">{(elapsed / 1000).toFixed(1)}s</span>
+          )}
+          {phase === "streaming" && <span className="lab-blink-dot" />}
+        </div>
+
       </div>
     </div>
   );
@@ -372,23 +475,6 @@ function inlineMarkdown(text: string): React.ReactNode {
   return parts.length === 0 ? text : parts;
 }
 
-// ─── Thinking context chip ─────────────────────────────────────────────────────
-
-function getThinkingLabel(lastMessage: string): string {
-  const m = lastMessage.toLowerCase();
-  if (/\b(sale|revenue|report|today|total|transaction)\b/.test(m)) return "📊 Fetching sales data…";
-  if (/\b(stock|inventory|level|reorder|low)\b/.test(m))            return "📦 Checking inventory…";
-  if (/\b(cash|drawer|float|drop|paid)\b/.test(m))                  return "💵 Reading cash drawer…";
-  if (/\b(refund|return)\b/.test(m))                                 return "🔄 Looking up refunds…";
-  if (/\b(product|item|barcode|sku|price|catalog)\b/.test(m))       return "🏷 Searching products…";
-  if (/\b(audit|chain|tamper|hash|integrity)\b/.test(m))            return "🔍 Verifying audit chain…";
-  if (/\b(sync|cloud|supabase|upload|queue)\b/.test(m))             return "☁ Checking sync status…";
-  if (/\b(shift|cashier|open|close|session)\b/.test(m))             return "🕐 Loading shift data…";
-  if (/\b(top|best|popular|sell)\b/.test(m))                        return "🏆 Ranking products…";
-  if (/\b(categor|group|type)\b/.test(m))                           return "📂 Fetching categories…";
-  return "🤔 Analyzing your request…";
-}
-
 // ─── Subcomponents ────────────────────────────────────────────────────────────
 
 function TopBar({
@@ -597,9 +683,11 @@ function QuickChipsBar({ onSelect }: { onSelect: (text: string) => void }) {
 function ChatBubble({
   msg,
   onUndo,
+  isStreaming = false,
 }: {
   msg: DisplayMessage;
   onUndo?: () => void;
+  isStreaming?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -611,13 +699,24 @@ function ChatBubble({
   };
 
   const timeStr = msg.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const isEmpty  = isStreaming && msg.role === "assistant" && msg.text === "";
 
   return (
     <div className={`chat-bubble-wrap chat-bubble-wrap-${msg.role}`}>
-      <div className={`chat-bubble chat-bubble-v2 ${msg.role}`}>
+      <div className={`chat-bubble chat-bubble-v2 ${msg.role}${isStreaming ? " chat-bubble--streaming" : ""}`}>
         <div className="bubble-body">
           {msg.role === "assistant" ? (
-            <MarkdownContent text={msg.text} />
+            isEmpty ? (
+              /* Skeleton dots while waiting for first token */
+              <div className="bubble-skeleton">
+                <span /><span /><span />
+              </div>
+            ) : (
+              <>
+                <MarkdownContent text={msg.text} />
+                {isStreaming && <span className="stream-cursor" aria-hidden="true" />}
+              </>
+            )
           ) : (
             <div className="bubble-text-plain">{msg.text}</div>
           )}
@@ -637,33 +736,17 @@ function ChatBubble({
           </div>
         )}
 
-        <div className="bubble-footer">
-          <span className="bubble-timestamp">{timeStr}</span>
-          {msg.role !== "system" && (
-            <button className="bubble-copy-btn" onClick={handleCopy} title="Copy message">
-              {copied ? "✓" : "⎘"}
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Thinking bubble ──────────────────────────────────────────────────────────
-
-function ThinkingBubble({ lastMessage, toolName }: { lastMessage: string; toolName: string | null }) {
-  const label = getThinkingLabel(lastMessage);
-  return (
-    <div className="chat-bubble-wrap chat-bubble-wrap-assistant">
-      <div className="chat-bubble chat-bubble-v2 assistant thinking-v2">
-        <div className="thinking-context-chip">{label}</div>
-        {toolName && (
-          <div className="ai-thinking-tool">Using: {toolName.replace(/_/g, " ")}…</div>
+        {!isEmpty && (
+          <div className="bubble-footer">
+            <span className="bubble-timestamp">{timeStr}</span>
+            {isStreaming && <span className="bubble-streaming-badge">● live</span>}
+            {msg.role !== "system" && !isStreaming && (
+              <button className="bubble-copy-btn" onClick={handleCopy} title="Copy message">
+                {copied ? "✓" : "⎘"}
+              </button>
+            )}
+          </div>
         )}
-        <div className="thinking-dots-v2">
-          <span /><span /><span />
-        </div>
       </div>
     </div>
   );
@@ -706,10 +789,12 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
   const [chatState, setChatState]         = useState<ChatState>("idle");
   const [history, setHistory]             = useState<ChatMessage[]>([]);
   const [pendingAction, setPendingAction]   = useState<DisplayMessage["pendingAction"] | null>(null);
-  const [lastUserMsg, setLastUserMsg]       = useState("");
-  const [thinkingTool, setThinkingTool]     = useState<string | null>(null);
   const [liveToolCalls, setLiveToolCalls]   = useState<ToolCallEntry[]>([]);
   const liveToolCallsRef                    = useRef<ToolCallEntry[]>([]);
+  const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
+  const [tokenCount, setTokenCount]         = useState(0);
+  const tokenCountRef                       = useRef(0);
+  const [streamStartTime, setStreamStartTime] = useState<number | null>(null);
 
   // UI state
   const [showKpi, setShowKpi]             = useState(true);
@@ -729,8 +814,6 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
       clearHistory: aiClearHistory,
       setMessages: () => setMessages([]),
       setHistory: () => setHistory([]),
-      setLastUserMsg,
-      setThinkingTool,
       setSessionId,
     });
   }, [sessionUser.user_id]);
@@ -916,7 +999,6 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
     const text = (overrideText ?? input).trim();
     if (!text || chatState !== "idle") return;
     setInput("");
-    setLastUserMsg(text);
     addMessage({ role: "user", text });
     aiSaveMessage(sessionId, DEVICE.branch_id, sessionUser.user_id, "user", text, "text").catch(() => {});
     const rawHistory: ChatMessage[] = [...history, { role: "user", content: text }];
@@ -924,14 +1006,17 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
     const newHistory: ChatMessage[] = rawHistory.length > 60 ? rawHistory.slice(rawHistory.length - 60) : rawHistory;
     setHistory(newHistory);
     setChatState("thinking");
-    setThinkingTool(null);
-    // Reset live tool calls for this new response
+    // Reset live tool calls + streaming metrics for this new response
     liveToolCallsRef.current = [];
     setLiveToolCalls([]);
+    tokenCountRef.current = 0;
+    setTokenCount(0);
+    setStreamStartTime(Date.now());
 
     // Push empty assistant bubble (will be filled by tokens)
     const assistantMsg = addMessage({ role: "assistant", text: "" });
     assistantMsgIdRef.current = assistantMsg.id;
+    setStreamingMsgId(assistantMsg.id);
 
     try {
       const onEvent = new Channel<StreamEvent>();
@@ -940,12 +1025,13 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
       onEvent.onmessage = (event: StreamEvent) => {
         if (event.type === "token") {
           finalText += event.text;
+          tokenCountRef.current += 1;
+          setTokenCount(tokenCountRef.current);
           const currentId = assistantMsgIdRef.current;
           setMessages(prev =>
             prev.map(m => m.id === currentId ? { ...m, text: finalText } : m)
           );
         } else if (event.type === "tool_start") {
-          setThinkingTool(event.name);
           // Add live tool call card
           const entry: ToolCallEntry = {
             id: `${event.name}-${Date.now()}`,
@@ -956,7 +1042,6 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
           liveToolCallsRef.current = [...liveToolCallsRef.current, entry];
           setLiveToolCalls([...liveToolCallsRef.current]);
         } else if (event.type === "tool_done") {
-          setThinkingTool(null);
           // Mark tool call as done with duration
           const now = Date.now();
           liveToolCallsRef.current = liveToolCallsRef.current.map(e =>
@@ -983,9 +1068,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
           );
           setPendingAction(actionData);
           setChatState("confirm");
-          setThinkingTool(null);
         } else if (event.type === "done") {
-          setThinkingTool(null);
           // Stamp stored tool calls into the assistant message, reset live state
           const storedCalls = [...liveToolCallsRef.current];
           if (storedCalls.length > 0) {
@@ -996,6 +1079,8 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
           }
           liveToolCallsRef.current = [];
           setLiveToolCalls([]);
+          setStreamingMsgId(null);
+          setStreamStartTime(null);
           setChatState("idle");
           if (finalText) {
             // Keep in-memory context bounded at 60 entries (30 exchanges)
@@ -1014,9 +1099,10 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
                 : m
             )
           );
-          setThinkingTool(null);
           liveToolCallsRef.current = [];
           setLiveToolCalls([]);
+          setStreamingMsgId(null);
+          setStreamStartTime(null);
           setChatState("idle");
         }
       };
@@ -1042,7 +1128,10 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
             : m
         )
       );
-      setThinkingTool(null);
+      liveToolCallsRef.current = [];
+      setLiveToolCalls([]);
+      setStreamingMsgId(null);
+      setStreamStartTime(null);
       setChatState("idle");
     }
   };
@@ -1420,15 +1509,20 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
               const msgDate = msg.timestamp.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
               const prevDate = i > 0 ? messages[i-1].timestamp.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
               const showSep = i === 0 || msgDate !== prevDate;
+              const isStreaming = msg.id === streamingMsgId;
               return (
                 <React.Fragment key={msg.id}>
                   {showSep && <div className="ai-date-sep">{msgDate}</div>}
-                  <ChatBubble msg={msg} onUndo={msg.undoId ? () => handleUndo(msg.undoId!, msg.id) : undefined} />
+                  <ChatBubble
+                    msg={msg}
+                    isStreaming={isStreaming}
+                    onUndo={msg.undoId ? () => handleUndo(msg.undoId!, msg.id) : undefined}
+                  />
                 </React.Fragment>
               );
             })}
 
-            {/* Live tool call cards — rendered while streaming */}
+            {/* Live tool call cards — rendered while AI is calling tools */}
             {liveToolCalls.length > 0 && (
               <div className="live-tool-calls">
                 <div className="live-tool-calls-header">
@@ -1438,13 +1532,16 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
               </div>
             )}
 
-            {chatState === "thinking" && liveToolCalls.length === 0 && (
-              messages.length === 0 || messages[messages.length - 1]?.role === "user"
-                ? <ThinkingBubble lastMessage={lastUserMsg} toolName={thinkingTool} />
-                : null
-            )}
             <div ref={bottomRef} />
           </div>
+
+          {/* ── Live activity bar ─────────────────────────────────────────── */}
+          <LiveActivityBar
+            chatState={chatState}
+            liveToolCalls={liveToolCalls}
+            tokenCount={tokenCount}
+            streamStartTime={streamStartTime}
+          />
 
           {/* ── Footer: chips + input ──────────────────────────────────────── */}
           <div className="chat-footer-area">

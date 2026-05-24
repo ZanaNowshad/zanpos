@@ -244,6 +244,9 @@ pub fn run() {
             commands::admin_commands::product_barcode_add,
             commands::admin_commands::product_barcode_remove,
             commands::admin_commands::product_barcodes_list,
+            // Migration agent
+            commands::migration_commands::migration_agent_chat,
+            commands::migration_commands::migration_confirm_execute,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

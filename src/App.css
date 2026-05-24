@@ -7099,13 +7099,52 @@ label {
 /* custom tab */
 
 /* help modal */
-.help-modal { width: 560px; max-width: 95vw; max-height: 85vh; overflow-y: auto; }
-.help-shortcut-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin: 12px 0; }
-.help-shortcut-table th { text-align: left; padding: 6px 12px; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); border-bottom: 1px solid var(--border); }
-.help-shortcut-table td { padding: 7px 12px; border-bottom: 1px solid var(--border); color: var(--text); }
+.help-modal { width: 600px; max-width: 95vw; max-height: 88vh; overflow-y: auto; }
+.help-modal-body { padding: 4px 16px 8px; display: flex; flex-direction: column; gap: 18px; }
+
+.help-section { display: flex; flex-direction: column; gap: 0; }
+.help-section-heading {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--accent);
+  padding: 0 4px 5px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+}
+
+.help-shortcut-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.help-shortcut-table td { padding: 6px 8px; border-bottom: 1px solid var(--border2); color: var(--text); vertical-align: middle; }
 .help-shortcut-table tr:last-child td { border-bottom: none; }
 .help-shortcut-table tr:hover td { background: var(--surface2); }
-.help-kbd { font-family: var(--font-mono); font-size: 0.78rem; background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; white-space: nowrap; }
+
+.help-kbd-cell { width: 210px; white-space: nowrap; }
+.help-action-cell { color: var(--text-dim); font-size: 0.83rem; }
+
+.help-kbd {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  background: var(--surface3);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 2px 7px;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.help-kbd-sep { color: var(--text-muted); font-size: 0.75rem; }
+
+.help-tip {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  line-height: 1.5;
+}
 
 /* recent sales modal */
 .recent-sales-modal { width: 720px; max-width: 95vw; max-height: 85vh; display: flex; flex-direction: column; }

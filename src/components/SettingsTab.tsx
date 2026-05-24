@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import type { BranchSettings, ThermalConfig, WhatsAppStatus } from "../types";
+import type { BranchSettings, BusinessFlags, ThermalConfig, WhatsAppStatus } from "../types";
+import ReceiptDesignEditor from "./ReceiptDesignEditor";
+import WaMessageEditor from "./WaMessageEditor";
 import {
   settingsGetBranch,
   settingsUpdateBranch,
@@ -14,6 +16,8 @@ import {
   whatsappDisconnect,
   whatsappSaveConfig,
   appConfigLoad,
+  businessFlagsLoad,
+  businessFlagsSave,
 } from "../tauri/commands";
 import WhatsAppQRModal from "./WhatsAppQRModal";
 
@@ -168,6 +172,16 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
   const [testingPrint, setTestingPrint]   = useState(false);
   const [printTestMsg, setPrintTestMsg]   = useState<string | null>(null);
 
+  // Business flags
+  const [flags, setFlags] = useState<BusinessFlags>({
+    allow_negative_stock: false,
+    require_discount_reason: true,
+    cashier_can_discount: false,
+    auto_print_receipt: false,
+  });
+  const [savingFlags, setSavingFlags] = useState(false);
+  const [savedFlags, setSavedFlags]   = useState(false);
+
   // Auto-updater
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updateMsg, setUpdateMsg]           = useState<string | null>(null);
@@ -177,8 +191,14 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
       settingsGetBranch(),
       appConfigGetTimeout().catch(() => 5),
       thermalGetConfig().catch(() => ({ enabled: false, port: "", baud: "9600" })),
+      businessFlagsLoad().catch(() => ({
+        allow_negative_stock: false,
+        require_discount_reason: true,
+        cashier_can_discount: false,
+        auto_print_receipt: false,
+      })),
     ])
-      .then(([s, minutes, tc]) => {
+      .then(([s, minutes, tc, bf]) => {
         setSettings(s as BranchSettings);
         setName((s as BranchSettings).name);
         setTimezone((s as BranchSettings).timezone);
@@ -189,6 +209,7 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
         setReceiptFooter((s as BranchSettings).receipt_footer ?? "");
         setTimeoutMinutes(minutes as number);
         setThermal(tc as ThermalConfig);
+        setFlags(bf as BusinessFlags);
       })
       .catch(() => setError("Failed to load settings"))
       .finally(() => setLoading(false));
@@ -230,6 +251,20 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
       setError(typeof e === "string" ? e : "Failed to save timeout");
     } finally {
       setSavingTimeout(false);
+    }
+  };
+
+  const handleSaveFlags = async () => {
+    setSavingFlags(true);
+    setSavedFlags(false);
+    try {
+      await businessFlagsSave(flags, sessionUserId);
+      setSavedFlags(true);
+      setTimeout(() => setSavedFlags(false), 3000);
+    } catch (e: unknown) {
+      setError(typeof e === "string" ? e : "Failed to save business rules");
+    } finally {
+      setSavingFlags(false);
     }
   };
 
@@ -291,27 +326,36 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
     }
   };
 
-  const scrollTo = (id: string) => {
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
+  const [activeSection, setActiveSection] = useState("s-business");
 
   const SUB_NAV = [
     { id: "s-business",  label: "Store Settings" },
-    { id: "s-receipt",   label: "Receipt Customisation" },
+    { id: "s-receipt",   label: "Receipt Text" },
+    { id: "s-design",    label: "Receipt Design" },
     { id: "s-security",  label: "Security" },
+    { id: "s-rules",     label: "Business Rules" },
     { id: "s-printer",   label: "Printers" },
     { id: "s-whatsapp",  label: "WhatsApp" },
+    { id: "s-wa-format", label: "WA Message" },
     { id: "s-app",       label: "Application" },
   ];
+
+  const scrollTo = (id: string) => {
+    setActiveSection(id);
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   if (loading) return <div className="bo-empty">Loading settings…</div>;
 
   return (
     <div className="settings-layout">
       <nav className="settings-subnav">
-        <div className="settings-subnav-label">Settings</div>
         {SUB_NAV.map(n => (
-          <button key={n.id} className="settings-subnav-item" onClick={() => scrollTo(n.id)}>
+          <button
+            key={n.id}
+            className={`settings-subnav-item${activeSection === n.id ? " active" : ""}`}
+            onClick={() => scrollTo(n.id)}
+          >
             {n.label}
           </button>
         ))}
@@ -413,6 +457,23 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
           )}
         </section>
 
+        {/* ── Receipt Design ── */}
+        <section id="s-design" className="settings-section">
+          <h3 className="settings-section-title">Receipt Design</h3>
+          <p className="settings-hint">
+            Customise the layout, font size, paper width, and which information appears on printed receipts.
+            Changes are saved locally on this device.
+          </p>
+          <ReceiptDesignEditor
+            storeName={name}
+            storeAddress={address}
+            storePhone={phone}
+            taxNumber={taxNumber}
+            receiptHeader={receiptHeader}
+            receiptFooter={receiptFooter}
+          />
+        </section>
+
         <section id="s-security" className="settings-section">
           <h3 className="settings-section-title">Security</h3>
 
@@ -436,6 +497,99 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
             </button>
           </div>
           <p className="settings-hint">Lock the screen after this many minutes of inactivity.</p>
+        </section>
+
+        {/* ── Business Rules ── */}
+        <section id="s-rules" className="settings-section">
+          <h3 className="settings-section-title">Business Rules</h3>
+          <p className="settings-hint">
+            Control how the POS behaves at the counter. Changes take effect immediately on the next action.
+          </p>
+
+          <div className="biz-flag-list">
+            <div className="biz-flag-row">
+              <div className="biz-flag-info">
+                <div className="biz-flag-label">Allow selling when out of stock</div>
+                <div className="biz-flag-hint">
+                  Sales proceed even if stock quantity is zero or negative.
+                  Use during stocktakes or when back-ordering is acceptable.
+                </div>
+              </div>
+              <label className="biz-toggle">
+                <input
+                  type="checkbox"
+                  checked={flags.allow_negative_stock}
+                  onChange={e => setFlags(f => ({ ...f, allow_negative_stock: e.target.checked }))}
+                />
+                <span className="biz-toggle-track" />
+              </label>
+            </div>
+
+            <div className="biz-flag-row">
+              <div className="biz-flag-info">
+                <div className="biz-flag-label">Require a reason for every discount</div>
+                <div className="biz-flag-hint">
+                  When ON (default), the cashier must type a reason before applying any discount.
+                  Turn OFF for simpler operations where audit reasons are not needed.
+                </div>
+              </div>
+              <label className="biz-toggle">
+                <input
+                  type="checkbox"
+                  checked={flags.require_discount_reason}
+                  onChange={e => setFlags(f => ({ ...f, require_discount_reason: e.target.checked }))}
+                />
+                <span className="biz-toggle-track" />
+              </label>
+            </div>
+
+            <div className="biz-flag-row">
+              <div className="biz-flag-info">
+                <div className="biz-flag-label">Allow cashiers to apply discounts</div>
+                <div className="biz-flag-hint">
+                  When OFF (default), only managers and owners can apply discounts.
+                  Turn ON if the owner is also the cashier or to trust all staff with discounts.
+                </div>
+              </div>
+              <label className="biz-toggle">
+                <input
+                  type="checkbox"
+                  checked={flags.cashier_can_discount}
+                  onChange={e => setFlags(f => ({ ...f, cashier_can_discount: e.target.checked }))}
+                />
+                <span className="biz-toggle-track" />
+              </label>
+            </div>
+
+            <div className="biz-flag-row">
+              <div className="biz-flag-info">
+                <div className="biz-flag-label">Auto-print receipt after every sale</div>
+                <div className="biz-flag-hint">
+                  Automatically sends the receipt to the thermal printer immediately after payment
+                  is accepted. Requires the thermal printer to be configured and enabled.
+                </div>
+              </div>
+              <label className="biz-toggle">
+                <input
+                  type="checkbox"
+                  checked={flags.auto_print_receipt}
+                  onChange={e => setFlags(f => ({ ...f, auto_print_receipt: e.target.checked }))}
+                />
+                <span className="biz-toggle-track" />
+              </label>
+            </div>
+          </div>
+
+          <div className="settings-actions" style={{ marginTop: "16px" }}>
+            {savedFlags && <span className="settings-saved">✓ Saved</span>}
+            <button
+              className="btn-primary settings-save-btn"
+              onClick={handleSaveFlags}
+              disabled={savingFlags}
+            >
+              {savingFlags ? "Saving…" : "Save Business Rules"}
+            </button>
+          </div>
         </section>
 
         {/* ── Thermal Printer ── */}
@@ -511,6 +665,17 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
             sessionUserId={sessionUserId}
             sessionRole={sessionRole}
           />
+        </section>
+
+        {/* ── WhatsApp Message Format ── */}
+        <section id="s-wa-format" className="settings-section">
+          <h3 className="settings-section-title">💬 WhatsApp Message Format</h3>
+          <p className="settings-hint">
+            Customise the message sent to customers when a delivery order is confirmed.
+            Choose language, toggle lines on/off, edit text, and reorder.
+            Changes are saved on this device only.
+          </p>
+          <WaMessageEditor />
         </section>
 
         {/* ── Application / Updater ── */}

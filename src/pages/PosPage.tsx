@@ -4,6 +4,7 @@ import {
   Sparkles, ShoppingBag
 } from "lucide-react";
 import type { BusinessFlags, LowStockAlert, PaymentInput, SaleListRow, SaleResult, SessionUser, Shift } from "../types";
+import { type Theme, THEMES } from "../hooks/useTheme";
 import { formatMoney } from "../money";
 import { DEVICE } from "../types";
 import { businessFlagsLoad, cashNoSale, receiptReprint, refundGetSale, whatsappStatus, whatsappSendDelivery, appConfigLoad } from "../tauri/commands";
@@ -40,7 +41,7 @@ interface Props {
   onLogout: () => void;
   onShiftClose: (closed: boolean) => void;
   onOpenAdminChat?: () => void;
-  theme?: "dark" | "light";
+  theme?: Theme;
   onToggleTheme?: () => void;
 }
 
@@ -467,15 +468,20 @@ export default function PosPage({
               Reprint
             </button>
           )}
-          {onToggleTheme && (
-            <button
-              className="top-bar-btn top-bar-theme"
-              onClick={onToggleTheme}
-              title={theme === "dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
-            >
-              {theme === "dark" ? "☀" : "🌙"}
-            </button>
-          )}
+          {onToggleTheme && theme && (() => {
+            const meta   = THEMES.find(t => t.id === theme)!;
+            const idx    = THEMES.findIndex(t => t.id === theme);
+            const next   = THEMES[(idx + 1) % THEMES.length];
+            return (
+              <button
+                className="top-bar-btn top-bar-theme"
+                onClick={onToggleTheme}
+                title={`Theme: ${meta.label} — click for ${next.label}`}
+              >
+                {meta.icon} {meta.label}
+              </button>
+            );
+          })()}
           <button className="top-bar-btn top-bar-btn-danger" onClick={() => setShowShiftClose(true)}>
             Close Shift
           </button>

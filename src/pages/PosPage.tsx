@@ -3,10 +3,10 @@ import {
   BarChart2, Clock, ClipboardList, Building2, Bike, StickyNote,
   Sparkles, ShoppingBag
 } from "lucide-react";
-import type { LowStockAlert, PaymentInput, SaleListRow, SaleResult, SessionUser, Shift } from "../types";
+import type { BusinessFlags, LowStockAlert, PaymentInput, SaleListRow, SaleResult, SessionUser, Shift } from "../types";
 import { formatMoney } from "../money";
 import { DEVICE } from "../types";
-import { cashNoSale, receiptReprint, refundGetSale, whatsappStatus, whatsappSendDelivery, appConfigLoad } from "../tauri/commands";
+import { businessFlagsLoad, cashNoSale, receiptReprint, refundGetSale, whatsappStatus, whatsappSendDelivery, appConfigLoad } from "../tauri/commands";
 import { loadWaFormat, buildDeliveryMessage } from "../utils/waMessageFormat";
 import { useCart } from "../hooks/useCart";
 import { useSyncStatus } from "../hooks/useSyncStatus";
@@ -82,6 +82,13 @@ export default function PosPage({
   const [restockAlerts, setRestockAlerts]   = useState<LowStockAlert[]>([]);
   const restockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [bizFlags, setBizFlags] = useState<BusinessFlags>({
+    allow_negative_stock: false,
+    require_discount_reason: true,
+    cashier_can_discount: false,
+    auto_print_receipt: false,
+  });
+
   const [numpadValue, setNumpadValue] = useState("1");
 
   // Saved custom-item suggestions — loaded from localStorage, refreshed after modal closes
@@ -147,6 +154,11 @@ export default function PosPage({
       const result = await finalizeSale([payment]);
       setLastReceiptNumber(result.receipt_number);
       setLastSaleStatus(`✓ #${result.receipt_number} · Cash · ${DEVICE.currency} ${(netTotal / Math.pow(10, DEVICE.currency_exponent)).toFixed(DEVICE.currency_exponent)}`);
+      // Auto-print receipt if the business flag is enabled
+      if (bizFlags.auto_print_receipt) {
+        // TODO: call thermalPrintReceipt(result.receipt_number) when that command exists
+        // The flag is loaded and checked — wiring is ready for when print command is available
+      }
       // No ReceiptPreview — cart already cleared in finalizeSale
       focusBarcode();
       if (result.low_stock_alerts.length > 0) {
@@ -196,6 +208,11 @@ export default function PosPage({
       setSaleResult(result);
       setLastReceiptNumber(result.receipt_number);
       setLastSaleStatus(`✓ #${result.receipt_number}`);
+      // Auto-print receipt if the business flag is enabled
+      if (bizFlags.auto_print_receipt) {
+        // TODO: call thermalPrintReceipt(result.receipt_number) when that command exists
+        // The flag is loaded and checked — wiring is ready for when print command is available
+      }
       focusBarcode();               // cart is clear — cashier can scan immediately
       if (result.low_stock_alerts.length > 0) {
         if (restockTimerRef.current) clearTimeout(restockTimerRef.current);
@@ -373,6 +390,13 @@ export default function PosPage({
   useEffect(() => {
     if (noModalOpen) focusBarcode();
   }, [noModalOpen, focusBarcode]);
+
+  // ── Load business flags on mount ─────────────────────────────────────────────
+  useEffect(() => {
+    businessFlagsLoad()
+      .then(f => setBizFlags(f))
+      .catch(() => {}); // non-fatal — defaults apply
+  }, []);
 
   // ── Clock ─────────────────────────────────────────────────────────────────────
   const [clockTime, setClockTime] = useState(() =>

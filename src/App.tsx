@@ -6,6 +6,7 @@ import LoginScreen from "./pages/LoginScreen";
 import PosPage from "./pages/PosPage";
 import AdminChatPage from "./pages/AdminChatPage";
 import SetupWizard from "./pages/SetupWizard";
+import MigrationAgentPage from "./pages/MigrationAgentPage";
 import ShiftModal from "./components/ShiftModal";
 import LockScreen from "./components/LockScreen";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -16,8 +17,10 @@ import "./setup-styles.css";
 
 type View = "login" | "shift_check" | "shift_open" | "pos" | "admin_chat";
 
-/** Compute the cloud connectivity banner shown on every screen post-setup. */
-function useCloudBanner(appConfig: import("./types").AppConfig | null): {
+/** Compute the cloud connectivity banner shown on every screen post-setup.
+ *  This is a plain function (no hooks used inside), NOT a React hook.
+ *  Named without the 'use' prefix to avoid false-positive from ESLint rules-of-hooks. */
+function computeCloudBanner(appConfig: import("./types").AppConfig | null): {
   level: "none" | "warn" | "danger";
   message: string;
 } {
@@ -69,6 +72,9 @@ export default function App() {
       })
       .finally(() => setConfigLoading(false));
   }, []);
+
+  // ── Migration mode (post-setup import flow) ───────────────────────────────
+  const [migrationMode, setMigrationMode] = useState(false);
 
   // ── Session state ──────────────────────────────────────────────────────────
   const [view, setView]               = useState<View>("login");
@@ -152,7 +158,25 @@ export default function App() {
   if (!appConfig.setup_complete) {
     return (
       <ErrorBoundary>
-        <SetupWizard onComplete={handleSetupComplete} />
+        <SetupWizard
+          onComplete={handleSetupComplete}
+          onMigrate={(cfg) => {
+            DEVICE.init(cfg);
+            setAppConfig(cfg);
+            setMigrationMode(true);
+          }}
+        />
+      </ErrorBoundary>
+    );
+  }
+
+  // ── Migration agent (post-setup import flow) ───────────────────────────────
+  if (migrationMode) {
+    return (
+      <ErrorBoundary>
+        <MigrationAgentPage
+          onDone={() => setMigrationMode(false)}
+        />
       </ErrorBoundary>
     );
   }
@@ -169,7 +193,7 @@ export default function App() {
   }
 
   // ── Cloud connectivity warning banner ─────────────────────────────────────
-  const cloudBanner = useCloudBanner(appConfig);
+  const cloudBanner = computeCloudBanner(appConfig);
 
   // ── Normal POS flow ────────────────────────────────────────────────────────
   return (

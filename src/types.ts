@@ -727,3 +727,35 @@ export interface SendDeliveryInput {
   /** Pre-built message from the frontend template editor. Overrides Rust builder. */
   message_override?: string;
 }
+
+// ── Migration Agent ───────────────────────────────────────────────────────────
+
+export interface MigrationContext {
+  db_type?: "sqlite" | "mysql" | "mssql" | "csv";
+  path_or_connstr?: string;
+  attached_file_path?: string;
+}
+
+export interface MigrationChatInput {
+  history: ChatMessage[];
+  message: string;
+  user_id: string;
+  context: MigrationContext;
+}
+
+export interface TableMigrationSummary {
+  target_table: string;
+  rows: number;
+  skipped: number;
+}
+
+export interface MigrationPreview {
+  tables: TableMigrationSummary[];
+  total_rows: number;
+  warnings: string[];
+}
+
+export type MigrationChatResponse =
+  | { type: "Message"; content: string }
+  | { type: "PendingMigration"; script: string; description: string; preview: MigrationPreview }
+  | { type: "NoApiKey" };

@@ -54,6 +54,8 @@ import type {
   CancelDeliveryInput,
   WhatsAppStatus,
   SendDeliveryInput,
+  MigrationChatInput,
+  MigrationChatResponse,
 } from "../types";
 
 // ─── Setup & Settings commands ────────────────────────────────────────────────
@@ -668,4 +670,14 @@ export function whatsappSaveConfig(benefitNumber: string, actorUserId: string): 
 
 export function setupSaveBenefitNumber(benefitNumber: string): Promise<void> {
   return invoke("setup_save_benefit_number", { benefitNumber });
+}
+
+// ── Migration Agent ───────────────────────────────────────────────────────────
+
+export function migrationAgentChat(input: MigrationChatInput): Promise<MigrationChatResponse> {
+  return invoke("migration_agent_chat", { input });
+}
+
+export function migrationConfirmExecute(script: string, userId: string): Promise<string> {
+  return invoke("migration_confirm_execute", { script, userId });
 }

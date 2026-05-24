@@ -10466,3 +10466,352 @@ label {
   vertical-align: middle;
   line-height: 1.6;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Migration Agent Page
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.mig-page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body, system-ui, sans-serif);
+}
+
+/* ── Phase stepper ── */
+.mig-header {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 14px 20px 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.mig-header-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-right: 16px;
+  white-space: nowrap;
+}
+
+.mig-phase-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+.mig-phase-step--active {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.mig-phase-step--done {
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
+.mig-phase-sep {
+  color: var(--border);
+  font-size: 0.75rem;
+  padding: 0 2px;
+}
+
+/* ── Chat area ── */
+.mig-chat-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mig-bubble {
+  max-width: 80%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.mig-bubble--user {
+  background: var(--accent);
+  color: #fff;
+  align-self: flex-end;
+  border-bottom-right-radius: 4px;
+}
+
+.mig-bubble--assistant {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  align-self: flex-start;
+  border-bottom-left-radius: 4px;
+}
+
+.mig-bubble--system {
+  align-self: center;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  background: none;
+  font-style: italic;
+}
+
+.mig-thinking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  border-bottom-left-radius: 4px;
+  align-self: flex-start;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  max-width: 80%;
+}
+
+.mig-dot-pulse {
+  display: flex;
+  gap: 4px;
+}
+
+.mig-dot-pulse span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: mig-pulse 1.4s infinite both;
+}
+
+.mig-dot-pulse span:nth-child(2) { animation-delay: 0.2s; }
+.mig-dot-pulse span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes mig-pulse {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+/* ── Migration preview card ── */
+.mig-preview-card {
+  background: var(--surface);
+  border: 2px solid var(--accent);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin: 8px 0;
+  align-self: flex-start;
+  max-width: 90%;
+  width: 100%;
+}
+
+.mig-preview-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 10px;
+}
+
+.mig-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  margin-bottom: 10px;
+}
+
+.mig-preview-table th {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.mig-preview-table td {
+  padding: 4px 8px;
+  color: var(--text);
+}
+
+.mig-preview-total {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.mig-warning-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: color-mix(in srgb, #f59e0b 15%, transparent);
+  color: #d97706;
+  border: 1px solid #f59e0b44;
+  border-radius: 20px;
+  padding: 3px 10px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  margin: 2px 0;
+}
+
+/* ── CONFIRM button ── */
+.mig-confirm-btn {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 12px 20px;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: 0.05em;
+  transition: opacity 0.2s, transform 0.1s;
+}
+
+.mig-confirm-btn:hover { opacity: 0.92; transform: translateY(-1px); }
+.mig-confirm-btn:active { transform: translateY(0); }
+.mig-confirm-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+/* ── Done banner ── */
+.mig-done-banner {
+  background: color-mix(in srgb, #22c55e 12%, transparent);
+  border: 1px solid #22c55e44;
+  border-radius: 10px;
+  padding: 14px 18px;
+  text-align: center;
+  font-size: 0.9rem;
+  color: #16a34a;
+  margin: 8px 0;
+  align-self: stretch;
+}
+
+/* ── Input bar ── */
+.mig-input-bar {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  align-items: flex-end;
+}
+
+.mig-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: 0.875rem;
+  resize: none;
+  min-height: 38px;
+  max-height: 120px;
+  outline: none;
+  font-family: inherit;
+  line-height: 1.4;
+}
+
+.mig-input:focus { border-color: var(--accent); }
+
+.mig-send-btn {
+  padding: 8px 16px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+  white-space: nowrap;
+  align-self: flex-end;
+}
+
+.mig-send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.mig-send-btn:hover:not(:disabled) { opacity: 0.85; }
+
+.mig-attach-btn {
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.875rem;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: border-color 0.2s;
+  align-self: flex-end;
+}
+
+.mig-attach-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Done screen ── */
+.mig-done-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 40px;
+  text-align: center;
+}
+
+.mig-launch-btn {
+  padding: 14px 32px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.mig-launch-btn:hover { opacity: 0.88; }
+
+/* ── Setup wizard integration ── */
+.setup-or-divider {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  margin: 12px 0 8px;
+  position: relative;
+}
+
+.setup-btn-migrate {
+  width: 100%;
+  padding: 10px 16px;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s;
+  text-align: center;
+}
+
+.setup-btn-migrate:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.setup-btn-migrate:disabled { opacity: 0.4; cursor: not-allowed; }

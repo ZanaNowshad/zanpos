@@ -11,6 +11,7 @@ import WhatsAppQRModal from "../components/WhatsAppQRModal";
 
 interface Props {
   onComplete: (config: AppConfig) => void;
+  onMigrate?: (config: AppConfig) => void;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -39,7 +40,7 @@ const TIMEZONES = [
 
 type NewStep = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
-function NewStoreWizard({ onComplete }: { onComplete: (cfg: AppConfig) => void }) {
+function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig) => void; onMigrate: (cfg: AppConfig) => void }) {
   const [step, setStep] = useState<NewStep>(2); // skip path-selector inside sub-wizard
 
   // Step 2 — Cloud (soft-required)
@@ -406,6 +407,41 @@ function NewStoreWizard({ onComplete }: { onComplete: (cfg: AppConfig) => void }
               {loading ? "Setting up…" : "Launch POS 🚀"}
             </button>
           </div>
+          <div className="setup-or-divider">— or —</div>
+          <button
+            className="setup-btn-migrate"
+            onClick={async () => {
+              // Complete setup first, then hand off to migration flow
+              setLoading(true);
+              setError(null);
+              try {
+                const cfg = await setupWizardComplete({
+                  store_name:         storeName.trim(),
+                  store_address:      address.trim()        || undefined,
+                  store_phone:        phone.trim()           || undefined,
+                  receipt_header:     receiptHeader.trim()   || undefined,
+                  receipt_footer:     receiptFooter.trim()   || undefined,
+                  tax_number:         taxNumber.trim()       || undefined,
+                  currency,
+                  timezone,
+                  owner_display_name: ownerName.trim(),
+                  owner_username:     ownerUsername.trim(),
+                  owner_pin:          ownerPin,
+                });
+                if (benefitNumber.trim()) {
+                  try { await setupSaveBenefitNumber(benefitNumber.trim()); } catch { /* ignore */ }
+                }
+                onMigrate(cfg);
+              } catch (e: unknown) {
+                setError(typeof e === "string" ? e : "Setup failed — please try again");
+              } finally {
+                setLoading(false);
+              }
+            }}
+            disabled={loading}
+          >
+            ↩ Import from an existing POS
+          </button>
         </div>
       )}
     </div>
@@ -543,10 +579,10 @@ function JoinStoreWizard({ onComplete }: { onComplete: (cfg: AppConfig) => void 
 
 type SetupPath = null | "new" | "join";
 
-export default function SetupWizard({ onComplete }: Props) {
+export default function SetupWizard({ onComplete, onMigrate }: Props) {
   const [path, setPath] = useState<SetupPath>(null);
 
-  if (path === "new")  return <div className="setup-screen"><NewStoreWizard onComplete={onComplete} /></div>;
+  if (path === "new")  return <div className="setup-screen"><NewStoreWizard onComplete={onComplete} onMigrate={onMigrate ?? onComplete} /></div>;
   if (path === "join") return <div className="setup-screen"><JoinStoreWizard onComplete={onComplete} /></div>;
 
   // ── Path selector ──────────────────────────────────────────────────────────

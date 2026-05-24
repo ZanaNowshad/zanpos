@@ -533,12 +533,20 @@ mod tests {
             .run(&pool)
             .await
             .expect("migrations");
-        // Seed adequate stock so finalize_sale in test setup doesn't fail on stock-out.
-        sqlx::query("UPDATE stock_levels SET quantity_on_hand = '1000' WHERE branch_id = ?")
-            .bind(BRANCH)
-            .execute(&pool)
-            .await
-            .expect("seed stock");
+        // Migration 0018 removes demo data; re-seed product + stock needed by tests.
+        sqlx::query(
+            "INSERT OR IGNORE INTO categories (category_id, name, sort_order, is_active, created_at, updated_at)
+             VALUES ('01JCAT000000000000DRINK01', 'Drinks', 1, 1, datetime('now'), datetime('now'))"
+        ).execute(&pool).await.expect("seed test category");
+        sqlx::query(
+            "INSERT OR IGNORE INTO products
+             (product_id, category_id, name, sku, barcode, track_inventory, reorder_point, is_active, tax_rule_id, currency, created_at, updated_at)
+             VALUES ('01JPROD00000000000WATR001', '01JCAT000000000000DRINK01', 'Water 500ml', 'WATR-500', '6281001511222', 1, 10, 1, '01JTAX000000000000ZERO01', 'BHD', datetime('now'), datetime('now'))"
+        ).execute(&pool).await.expect("seed test product");
+        sqlx::query(
+            "INSERT OR IGNORE INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at)
+             VALUES ('SL-TEST-WATR', '01JPROD00000000000WATR001', ?, '1000', datetime('now'))"
+        ).bind(BRANCH).execute(&pool).await.expect("seed test stock");
         pool
     }
 

@@ -575,13 +575,28 @@ mod tests {
             .run(&pool)
             .await
             .expect("migrations");
-        // Seed enough stock for tracked products so sale tests don't hit stock-out errors.
-        // Real production stock is set via stock-intake workflows; migrations start at '0'.
-        sqlx::query("UPDATE stock_levels SET quantity_on_hand = '1000' WHERE branch_id = ?")
-            .bind(BRANCH)
-            .execute(&pool)
-            .await
-            .expect("seed stock");
+        // 0018_remove_demo_data.sql deleted the sample products; re-seed the two
+        // products this test module needs so FK constraints are satisfied.
+        sqlx::query(
+            "INSERT OR IGNORE INTO categories (category_id, name, sort_order, is_active, created_at, updated_at)
+             VALUES ('01JCAT000000000000DRINK01', 'Drinks', 1, 1, datetime('now'), datetime('now'))"
+        ).execute(&pool).await.expect("seed test category");
+
+        sqlx::query(
+            "INSERT OR IGNORE INTO products
+             (product_id, category_id, name, sku, barcode, track_inventory, is_active, tax_rule_id, currency, created_at, updated_at)
+             VALUES
+             ('01JPROD00000000000COLA001', '01JCAT000000000000DRINK01', 'Coca-Cola 330ml', 'COLA-330', '5449000000996', 1, 1, '01JTAX000000000000VAT001', 'BHD', datetime('now'), datetime('now')),
+             ('01JPROD00000000000WATR001', '01JCAT000000000000DRINK01', 'Water 500ml',     'WATR-500', '6281001511222', 1, 1, '01JTAX000000000000ZERO01', 'BHD', datetime('now'), datetime('now'))"
+        ).execute(&pool).await.expect("seed test products");
+
+        sqlx::query(
+            "INSERT OR IGNORE INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at)
+             VALUES
+             ('SL-TEST-COLA', '01JPROD00000000000COLA001', '01JBRANCH0000000000000001', '1000', datetime('now')),
+             ('SL-TEST-WATR', '01JPROD00000000000WATR001', '01JBRANCH0000000000000001', '1000', datetime('now'))"
+        ).execute(&pool).await.expect("seed test stock");
+
         pool
     }
 

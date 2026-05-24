@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import type { MigrationContext, MigrationChatResponse, MigrationPreview } from "../types";
-import { migrationAgentChat, migrationConfirmExecute } from "../tauri/commands";
+import { migrationAgentChat, migrationConfirmExecute, adminGetProviderConfig, adminSetAnthropic } from "../tauri/commands";
 import { open as openFilePicker } from "@tauri-apps/plugin-dialog";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -149,6 +149,72 @@ function MigrationPreviewCard({
   );
 }
 
+// ─── AI Config Setup Panel ────────────────────────────────────────────────────
+
+function AiSetupPanel({ onConfigured }: { onConfigured: () => void }) {
+  const [apiKey, setApiKey] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSave = async () => {
+    const key = apiKey.trim();
+    if (!key.startsWith("sk-ant-")) {
+      setError("Key must start with sk-ant-");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await adminSetAnthropic(key);
+      onConfigured();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mig-page" style={{ alignItems: "center", justifyContent: "center" }}>
+      <div style={{ maxWidth: 480, width: "100%", padding: 32, background: "var(--surface)", borderRadius: 12, border: "1px solid var(--border)", margin: 24 }}>
+        <div style={{ fontSize: "2rem", marginBottom: 12 }}>🤖</div>
+        <h2 style={{ margin: "0 0 8px", fontSize: "1.1rem", fontWeight: 700 }}>Set up AI before migrating</h2>
+        <p style={{ margin: "0 0 20px", fontSize: "0.875rem", color: "var(--text-dim)", lineHeight: 1.5 }}>
+          The Migration Agent needs an Anthropic API key to run. Enter your key below — it will be saved securely and used for both the Migration Agent and Back Office AI.
+        </p>
+
+        <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, marginBottom: 6, color: "var(--text-dim)" }}>
+          Anthropic API Key
+        </label>
+        <input
+          type="password"
+          placeholder="sk-ant-api03-…"
+          value={apiKey}
+          onChange={e => { setApiKey(e.target.value); setError(null); }}
+          onKeyDown={e => e.key === "Enter" && handleSave()}
+          autoFocus
+          style={{ width: "100%", padding: "9px 12px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: "0.875rem", boxSizing: "border-box", marginBottom: 12 }}
+        />
+
+        {error && <div style={{ color: "#ef4444", fontSize: "0.8rem", marginBottom: 10 }}>{error}</div>}
+
+        <button
+          onClick={handleSave}
+          disabled={saving || !apiKey.trim()}
+          style={{ width: "100%", padding: "10px", background: "var(--accent)", color: "#fff", border: "none", borderRadius: 8, fontWeight: 700, fontSize: "0.9rem", cursor: saving ? "wait" : "pointer", opacity: saving || !apiKey.trim() ? 0.5 : 1 }}
+        >
+          {saving ? "Saving…" : "Save & Start Migration →"}
+        </button>
+
+        <p style={{ margin: "12px 0 0", fontSize: "0.75rem", color: "var(--text-dim)", textAlign: "center" }}>
+          Get your key at{" "}
+          <span style={{ color: "var(--accent)" }}>console.anthropic.com</span>
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function MigrationAgentPage({ onDone }: Props) {
@@ -161,9 +227,18 @@ export default function MigrationAgentPage({ onDone }: Props) {
   const [pendingPreview, setPendingPreview] = useState<MigrationPreview | null>(null);
   const [pendingDescription, setPendingDescription] = useState("");
   const [executing, setExecuting] = useState(false);
+  // null = checking, false = not configured, true = ready
+  const [aiReady, setAiReady] = useState<boolean | null>(null);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Check AI config on mount
+  useEffect(() => {
+    adminGetProviderConfig()
+      .then(cfg => setAiReady(cfg.provider !== "" && (cfg.anthropic_key_set || cfg.openai_key_set)))
+      .catch(() => setAiReady(false));
+  }, []);
 
   // Build history for backend (role + content only)
   const history = messages
@@ -317,6 +392,18 @@ export default function MigrationAgentPage({ onDone }: Props) {
 
   // ── Phase stepper ─────────────────────────────────────────────────────────
   const currentPhaseIdx = PHASE_ORDER.indexOf(phase);
+
+  // ── AI config gate ────────────────────────────────────────────────────────
+  if (aiReady === null) {
+    return (
+      <div className="mig-page" style={{ alignItems: "center", justifyContent: "center" }}>
+        <div style={{ color: "var(--text-dim)", fontSize: "0.9rem" }}>Checking AI configuration…</div>
+      </div>
+    );
+  }
+  if (aiReady === false) {
+    return <AiSetupPanel onConfigured={() => setAiReady(true)} />;
+  }
 
   return (
     <div className="mig-page">

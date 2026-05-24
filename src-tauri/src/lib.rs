@@ -62,11 +62,13 @@ pub fn run() {
             std::fs::create_dir_all(&wa_session_dir).ok();
 
             let sidecar_exe = {
-                let prod_path = app
-                    .path()
-                    .resource_dir()
-                    .map(|p| p.join("whatsapp-sidecar-x86_64-pc-windows-msvc.exe"))
+                // Production: externalBin is placed next to the main exe, NOT in resources\
+                let exe_dir = std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|p| p.to_path_buf()))
                     .unwrap_or_default();
+                let prod_path = exe_dir.join("whatsapp-sidecar-x86_64-pc-windows-msvc.exe");
+                // Dev: sidecar lives in src-tauri/binaries/
                 let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                     .join("binaries")
                     .join("whatsapp-sidecar-x86_64-pc-windows-msvc.exe");

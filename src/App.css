@@ -9648,7 +9648,7 @@ label {
   background: var(--border);
 }
 
-/* ── AI Chat: tool indicator during streaming ────────────────────────────────── */
+/* ── AI Chat: tool indicator during streaming (legacy, kept for ThinkingBubble) ── */
 .ai-tool-indicator {
   display: flex;
   align-items: center;
@@ -9669,6 +9669,161 @@ label {
 }
 @keyframes ai-pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
 @keyframes fade-in  { from { opacity:0; transform: translateY(3px); } to { opacity:1; transform: none; } }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   AI Tool Call Cards — explicit tool transparency UI
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Live container (during streaming, above the ref div) */
+.live-tool-calls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 4px;
+  animation: fade-in 0.2s ease;
+}
+
+.live-tool-calls-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.live-tool-calls-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* Stored in bubble footer */
+.bubble-tool-calls {
+  border-top: 1px solid var(--border);
+  padding: 10px 0 4px;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.bubble-tool-calls-label {
+  font-size: 0.71rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin-bottom: 4px;
+}
+
+/* The card itself */
+.ai-tool-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  position: relative;
+  transition: border-color 0.3s, box-shadow 0.3s;
+  min-height: 42px;
+}
+
+.ai-tool-card--running {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  animation: tool-card-pulse 2s ease-in-out infinite;
+}
+
+.ai-tool-card--done {
+  border-color: #22c55e44;
+}
+
+@keyframes tool-card-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50%       { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
+}
+
+/* Left color strip */
+.ai-tool-strip {
+  width: 4px;
+  align-self: stretch;
+  flex-shrink: 0;
+  border-radius: 0;
+  opacity: 0.85;
+}
+
+/* Emoji icon */
+.ai-tool-icon {
+  font-size: 1.1rem;
+  flex-shrink: 0;
+  width: 24px;
+  text-align: center;
+  line-height: 1;
+}
+
+/* Text body */
+.ai-tool-body {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 4px 8px 0;
+}
+
+.ai-tool-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ai-tool-card--running .ai-tool-label {
+  color: var(--accent);
+}
+
+.ai-tool-raw {
+  font-family: "Fira Mono", "Consolas", monospace;
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  margin-top: 1px;
+}
+
+/* Status column */
+.ai-tool-status {
+  padding: 0 12px 0 8px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+/* Spinner for "running" */
+.ai-tool-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: tool-spin 0.7s linear infinite;
+}
+
+@keyframes tool-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Done badge */
+.ai-tool-done-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #22c55e;
+  background: color-mix(in srgb, #22c55e 12%, transparent);
+  border: 1px solid #22c55e33;
+  border-radius: 20px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
 
 /* ── Checkout popup redesign (pm-*) ────────────────────────────────────────── */
 

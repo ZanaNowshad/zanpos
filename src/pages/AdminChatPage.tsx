@@ -45,6 +45,7 @@ interface DisplayMessage {
   role: "user" | "assistant" | "system";
   text: string;
   timestamp: Date;
+  toolCalls?: ToolCallEntry[];
   pendingAction?: {
     action_id: string;
     tool_name: string;
@@ -56,6 +57,100 @@ interface DisplayMessage {
 }
 
 type ChatState = "idle" | "thinking" | "confirm";
+
+// ─── Tool-call tracking ────────────────────────────────────────────────────────
+
+interface ToolCallEntry {
+  id: string;
+  name: string;
+  startTime: number;
+  status: "running" | "done";
+  duration?: number; // ms
+}
+
+const TOOL_META: Record<string, { icon: string; label: string; color: string }> = {
+  get_today_summary:       { icon: "📊", label: "Today's Summary",        color: "#6366f1" },
+  list_products:           { icon: "🏷",  label: "Product List",           color: "#0ea5e9" },
+  search_products:         { icon: "🔍", label: "Product Search",          color: "#0ea5e9" },
+  get_product:             { icon: "🏷",  label: "Product Details",        color: "#0ea5e9" },
+  update_product_price:    { icon: "💲", label: "Updating Price",          color: "#f59e0b" },
+  set_product_active:      { icon: "🔄", label: "Toggling Product",        color: "#f59e0b" },
+  update_product_name:     { icon: "✏",  label: "Renaming Product",        color: "#f59e0b" },
+  get_stock_levels:        { icon: "📦", label: "Stock Levels",            color: "#22c55e" },
+  get_low_stock:           { icon: "⚠",  label: "Low Stock Check",         color: "#f59e0b" },
+  get_cash_summary:        { icon: "💵", label: "Cash Drawer",             color: "#10b981" },
+  get_recent_refunds:      { icon: "↩",  label: "Recent Refunds",          color: "#8b5cf6" },
+  get_audit_log:           { icon: "📋", label: "Audit Log",               color: "#ef4444" },
+  get_sync_status:         { icon: "☁",  label: "Sync Status",             color: "#0ea5e9" },
+  get_daily_report:        { icon: "📅", label: "Daily Report",            color: "#6366f1" },
+  get_date_range_report:   { icon: "📈", label: "Date Range Report",       color: "#6366f1" },
+  get_top_products:        { icon: "🏆", label: "Top Products",            color: "#f59e0b" },
+  get_shift_history:       { icon: "🕐", label: "Shift History",           color: "#8b5cf6" },
+  list_categories:         { icon: "📂", label: "Categories",              color: "#0ea5e9" },
+  list_safe_drops:         { icon: "💰", label: "Safe Drops",              color: "#10b981" },
+  list_no_sale_events:     { icon: "🔒", label: "No-Sale Events",          color: "#ef4444" },
+  get_audit_chain_status:  { icon: "🔗", label: "Audit Chain",             color: "#ef4444" },
+  get_hourly_sales:        { icon: "⏰", label: "Hourly Sales",            color: "#6366f1" },
+  get_sales_by_category:   { icon: "📊", label: "Sales by Category",      color: "#6366f1" },
+  get_cashier_performance: { icon: "👤", label: "Cashier Performance",     color: "#8b5cf6" },
+  update_reorder_point:    { icon: "📦", label: "Update Reorder Point",    color: "#f59e0b" },
+  create_product:          { icon: "➕", label: "Creating Product",        color: "#f59e0b" },
+  list_customers:          { icon: "👥", label: "Customer List",           color: "#8b5cf6" },
+  get_customer:            { icon: "👤", label: "Customer Details",        color: "#8b5cf6" },
+  create_customer:         { icon: "👤", label: "Creating Customer",       color: "#f59e0b" },
+  update_customer:         { icon: "✏",  label: "Updating Customer",       color: "#f59e0b" },
+  list_deliveries:         { icon: "🚚", label: "Deliveries",              color: "#f59e0b" },
+  list_users:              { icon: "👥", label: "Users",                   color: "#8b5cf6" },
+  get_stock_movements:     { icon: "📦", label: "Stock Movements",         color: "#22c55e" },
+  get_tax_report:          { icon: "🧾", label: "Tax Report",              color: "#6366f1" },
+  search_market_prices:    { icon: "🌐", label: "Market Prices",           color: "#0ea5e9" },
+  get_exchange_rates:      { icon: "💱", label: "Exchange Rates",          color: "#0ea5e9" },
+  get_prayer_times:        { icon: "🕌", label: "Prayer Times",            color: "#0ea5e9" },
+  get_bahrain_holidays:    { icon: "🇧🇭", label: "Bahrain Holidays",       color: "#0ea5e9" },
+};
+
+function toolMeta(name: string) {
+  return TOOL_META[name] ?? {
+    icon: "⚙",
+    label: name.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
+    color: "#6b7280",
+  };
+}
+
+// ─── Tool Call Card ────────────────────────────────────────────────────────────
+
+function ToolCallCard({ entry }: { entry: ToolCallEntry }) {
+  const meta = toolMeta(entry.name);
+  const running = entry.status === "running";
+  return (
+    <div className={`ai-tool-card${running ? " ai-tool-card--running" : " ai-tool-card--done"}`}>
+      {/* Colored left accent strip */}
+      <div className="ai-tool-strip" style={{ background: meta.color }} />
+
+      {/* Icon */}
+      <div className="ai-tool-icon">{meta.icon}</div>
+
+      {/* Text body */}
+      <div className="ai-tool-body">
+        <div className="ai-tool-label">
+          {running ? `Calling ${meta.label}…` : meta.label}
+        </div>
+        <div className="ai-tool-raw">{entry.name}</div>
+      </div>
+
+      {/* Status */}
+      <div className="ai-tool-status">
+        {running ? (
+          <span className="ai-tool-spinner" />
+        ) : (
+          <span className="ai-tool-done-badge">
+            ✓ {entry.duration !== undefined ? `${entry.duration}ms` : "done"}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ── Setup wizard state machine ────────────────────────────────────────────────
 type SetupStep =
@@ -533,6 +628,15 @@ function ChatBubble({
             <button className="chat-undo-btn" onClick={onUndo}>↩ Undo this change</button>
           )}
         </div>
+
+        {/* Stored tool calls — shown after response is complete */}
+        {msg.toolCalls && msg.toolCalls.length > 0 && (
+          <div className="bubble-tool-calls">
+            <div className="bubble-tool-calls-label">🔧 Tools used</div>
+            {msg.toolCalls.map(tc => <ToolCallCard key={tc.id} entry={tc} />)}
+          </div>
+        )}
+
         <div className="bubble-footer">
           <span className="bubble-timestamp">{timeStr}</span>
           {msg.role !== "system" && (
@@ -601,9 +705,11 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
   const [input, setInput]                 = useState("");
   const [chatState, setChatState]         = useState<ChatState>("idle");
   const [history, setHistory]             = useState<ChatMessage[]>([]);
-  const [pendingAction, setPendingAction] = useState<DisplayMessage["pendingAction"] | null>(null);
-  const [lastUserMsg, setLastUserMsg]     = useState("");
-  const [thinkingTool, setThinkingTool]   = useState<string | null>(null);
+  const [pendingAction, setPendingAction]   = useState<DisplayMessage["pendingAction"] | null>(null);
+  const [lastUserMsg, setLastUserMsg]       = useState("");
+  const [thinkingTool, setThinkingTool]     = useState<string | null>(null);
+  const [liveToolCalls, setLiveToolCalls]   = useState<ToolCallEntry[]>([]);
+  const liveToolCallsRef                    = useRef<ToolCallEntry[]>([]);
 
   // UI state
   const [showKpi, setShowKpi]             = useState(true);
@@ -819,6 +925,9 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
     setHistory(newHistory);
     setChatState("thinking");
     setThinkingTool(null);
+    // Reset live tool calls for this new response
+    liveToolCallsRef.current = [];
+    setLiveToolCalls([]);
 
     // Push empty assistant bubble (will be filled by tokens)
     const assistantMsg = addMessage({ role: "assistant", text: "" });
@@ -837,8 +946,25 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
           );
         } else if (event.type === "tool_start") {
           setThinkingTool(event.name);
+          // Add live tool call card
+          const entry: ToolCallEntry = {
+            id: `${event.name}-${Date.now()}`,
+            name: event.name,
+            startTime: Date.now(),
+            status: "running",
+          };
+          liveToolCallsRef.current = [...liveToolCallsRef.current, entry];
+          setLiveToolCalls([...liveToolCallsRef.current]);
         } else if (event.type === "tool_done") {
           setThinkingTool(null);
+          // Mark tool call as done with duration
+          const now = Date.now();
+          liveToolCallsRef.current = liveToolCallsRef.current.map(e =>
+            e.name === event.name && e.status === "running"
+              ? { ...e, status: "done" as const, duration: now - e.startTime }
+              : e
+          );
+          setLiveToolCalls([...liveToolCallsRef.current]);
         } else if (event.type === "mutation_pending") {
           const actionData = {
             action_id: event.action_id,
@@ -860,6 +986,16 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
           setThinkingTool(null);
         } else if (event.type === "done") {
           setThinkingTool(null);
+          // Stamp stored tool calls into the assistant message, reset live state
+          const storedCalls = [...liveToolCallsRef.current];
+          if (storedCalls.length > 0) {
+            const currentId = assistantMsgIdRef.current;
+            setMessages(prev =>
+              prev.map(m => m.id === currentId ? { ...m, toolCalls: storedCalls } : m)
+            );
+          }
+          liveToolCallsRef.current = [];
+          setLiveToolCalls([]);
           setChatState("idle");
           if (finalText) {
             // Keep in-memory context bounded at 60 entries (30 exchanges)
@@ -879,6 +1015,8 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
             )
           );
           setThinkingTool(null);
+          liveToolCallsRef.current = [];
+          setLiveToolCalls([]);
           setChatState("idle");
         }
       };
@@ -1290,17 +1428,20 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
               );
             })}
 
-            {chatState === "thinking" && (
+            {/* Live tool call cards — rendered while streaming */}
+            {liveToolCalls.length > 0 && (
+              <div className="live-tool-calls">
+                <div className="live-tool-calls-header">
+                  <span className="live-tool-calls-label">🔧 AI is calling tools</span>
+                </div>
+                {liveToolCalls.map(tc => <ToolCallCard key={tc.id} entry={tc} />)}
+              </div>
+            )}
+
+            {chatState === "thinking" && liveToolCalls.length === 0 && (
               messages.length === 0 || messages[messages.length - 1]?.role === "user"
                 ? <ThinkingBubble lastMessage={lastUserMsg} toolName={thinkingTool} />
-                : thinkingTool
-                    ? (
-                        <div className="ai-tool-indicator">
-                          <span className="ai-thinking-dots">●●●</span>
-                          <span className="ai-thinking-tool">Using: {thinkingTool.replace(/_/g, " ")}…</span>
-                        </div>
-                      )
-                    : null
+                : null
             )}
             <div ref={bottomRef} />
           </div>

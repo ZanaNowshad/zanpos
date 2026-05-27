@@ -5629,6 +5629,10 @@ textarea.field-input { resize: vertical; }
 }
 
 .printer-selected-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
   margin-top: 10px;
   font-size: 0.82rem;
   color: var(--text);
@@ -5636,6 +5640,23 @@ textarea.field-input { resize: vertical; }
   border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
   border-radius: var(--radius-sm);
   padding: 7px 12px;
+}
+.printer-default-tag {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: 20px;
+  padding: 1px 7px;
+}
+.printer-baud-hint {
+  margin-left: 6px;
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--text-muted, var(--text-dim));
 }
 
 /* ── Auto-updater ── */

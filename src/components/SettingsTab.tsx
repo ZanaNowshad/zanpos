@@ -259,6 +259,14 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
     try {
       const ports = await thermalListPorts();
       setAvailablePorts(ports);
+      // Auto-select the OS default printer when no printer is configured yet
+      setThermal(prev => {
+        if (prev.port === "") {
+          const def = ports.find(p => p.is_default) ?? ports[0];
+          return def ? { ...prev, port: def.port } : prev;
+        }
+        return prev;
+      });
     } finally {
       setPortsLoading(false);
     }
@@ -858,7 +866,7 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
           <div className="bo-row-two">
             <div>
               <label className="bo-label">
-                Printer / Port
+                Printer
                 <button
                   type="button"
                   className="printer-refresh-btn"
@@ -866,14 +874,14 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
                   disabled={portsLoading}
                   title="Scan for connected printers"
                 >
-                  {portsLoading ? "…" : "↺ Refresh"}
+                  {portsLoading ? "…" : "↺ Scan"}
                 </button>
               </label>
               {availablePorts.length === 0 && !portsLoading ? (
                 <div className="printer-no-ports">
-                  No serial/USB printers detected.
+                  No printers detected.
                   <br />
-                  <span className="rpt-dim">Connect your printer and click ↺ Refresh.</span>
+                  <span className="rpt-dim">Make sure your printer is on and connected, then click ↺ Scan.</span>
                 </div>
               ) : (
                 <select
@@ -886,15 +894,18 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
                   {availablePorts.map(p => (
                     <option key={p.port} value={p.port}>{p.label}</option>
                   ))}
-                  {/* If saved port is not in the list, show it as a fallback option */}
+                  {/* If saved printer is no longer in the list, show it as a saved fallback */}
                   {thermal.port && !availablePorts.some(p => p.port === thermal.port) && (
-                    <option value={thermal.port}>{thermal.port} (saved — not detected)</option>
+                    <option value={thermal.port}>{thermal.port} ⚠ (saved — not detected)</option>
                   )}
                 </select>
               )}
             </div>
             <div>
-              <label className="bo-label">Baud Rate</label>
+              <label className="bo-label">
+                Baud Rate
+                <span className="printer-baud-hint">(serial only)</span>
+              </label>
               <select
                 className="bo-select"
                 value={thermal.baud}
@@ -909,12 +920,15 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
             </div>
           </div>
 
-          {thermal.port && (
-            <div className="printer-selected-badge">
-              ✓ Selected: <strong>{availablePorts.find(p => p.port === thermal.port)?.label ?? thermal.port}</strong>
-              <span className="rpt-dim" style={{ marginLeft: 8 }}>@ {thermal.baud} baud</span>
-            </div>
-          )}
+          {thermal.port && (() => {
+            const entry = availablePorts.find(p => p.port === thermal.port);
+            return (
+              <div className="printer-selected-badge">
+                ✓ Selected: <strong>{entry?.label ?? thermal.port}</strong>
+                {entry?.is_default && <span className="printer-default-tag">System Default</span>}
+              </div>
+            );
+          })()}
 
           <div className="thermal-actions">
             <button

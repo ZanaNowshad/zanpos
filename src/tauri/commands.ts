@@ -604,6 +604,8 @@ export const checkForUpdates = (): Promise<string | null> =>
 export interface PortEntry {
   port: string;
   label: string;
+  /** True if this is the OS-default printer (Windows only; always false for serial ports) */
+  is_default: boolean;
 }
 
 export const thermalListPorts = (): Promise<PortEntry[]> =>

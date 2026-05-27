@@ -1,60 +1,67 @@
+use crate::errors::{AppError, AppResult};
+use crate::AppState;
+use serde::{Deserialize, Serialize};
 /// Thermal/ESC-POS printer configuration and printing.
 /// Uses the `serialport` crate directly (synchronous I/O on a blocking thread).
 use tauri::State;
-use serde::{Deserialize, Serialize};
-use crate::errors::{AppError, AppResult};
-use crate::AppState;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
 pub struct ThermalConfig {
     pub enabled: bool,
-    pub port:    String,
-    pub baud:    String,
+    pub port: String,
+    pub baud: String,
 }
 
 #[derive(Deserialize)]
 pub struct ThermalConfigInput {
     pub enabled: bool,
-    pub port:    String,
-    pub baud:    String,
+    pub port: String,
+    pub baud: String,
 }
 
 // ─── ESC/POS byte constants ───────────────────────────────────────────────────
 
-const ESC: u8  = 0x1B;
-const GS:  u8  = 0x1D;
-const LF:  u8  = 0x0A;
+const ESC: u8 = 0x1B;
+const GS: u8 = 0x1D;
+const LF: u8 = 0x0A;
 
 /// Initialize printer (ESC @)
-fn esc_init() -> Vec<u8> { vec![ESC, b'@'] }
+fn esc_init() -> Vec<u8> {
+    vec![ESC, b'@']
+}
 
 /// Select alignment: 0=left, 1=center, 2=right (ESC a n)
-fn esc_align(n: u8) -> Vec<u8> { vec![ESC, b'a', n] }
+fn esc_align(n: u8) -> Vec<u8> {
+    vec![ESC, b'a', n]
+}
 
 /// Bold on/off (ESC E n)
-fn esc_bold(on: bool) -> Vec<u8> { vec![ESC, b'E', if on { 1 } else { 0 }] }
+fn esc_bold(on: bool) -> Vec<u8> {
+    vec![ESC, b'E', if on { 1 } else { 0 }]
+}
 
 /// Double-size text on/off (GS ! n, 0x11 = double height+width)
-fn esc_double(on: bool) -> Vec<u8> { vec![GS, b'!', if on { 0x11 } else { 0x00 }] }
+fn esc_double(on: bool) -> Vec<u8> {
+    vec![GS, b'!', if on { 0x11 } else { 0x00 }]
+}
 
 /// Feed n lines and cut (GS V 0 = full cut)
-fn esc_feed_and_cut(lines: u8) -> Vec<u8> { vec![ESC, b'd', lines, GS, b'V', 0x00] }
+fn esc_feed_and_cut(lines: u8) -> Vec<u8> {
+    vec![ESC, b'd', lines, GS, b'V', 0x00]
+}
 
 /// Build ESC/POS receipt byte payload.
 /// `store_name`, `header_lines`, `item_lines`, `footer_lines` are all pre-formatted strings.
-pub fn build_receipt_bytes(
-    store_name: &str,
-    receipt_lines: &[String],
-) -> Vec<u8> {
+pub fn build_receipt_bytes(store_name: &str, receipt_lines: &[String]) -> Vec<u8> {
     let mut buf: Vec<u8> = Vec::with_capacity(512);
 
     // Initialize
     buf.extend_from_slice(&esc_init());
 
     // Store name — centered, double-size bold
-    buf.extend_from_slice(&esc_align(1));  // center
+    buf.extend_from_slice(&esc_align(1)); // center
     buf.extend_from_slice(&esc_double(true));
     buf.extend_from_slice(&esc_bold(true));
     buf.extend_from_slice(store_name.as_bytes());
@@ -64,7 +71,7 @@ pub fn build_receipt_bytes(
     buf.push(LF);
 
     // Body lines — left aligned
-    buf.extend_from_slice(&esc_align(0));  // left
+    buf.extend_from_slice(&esc_align(0)); // left
     for line in receipt_lines {
         buf.extend_from_slice(line.as_bytes());
         buf.push(LF);
@@ -102,8 +109,23 @@ fn build_test_bytes(port: &str, baud: &str) -> Vec<u8> {
     buf
 }
 
-/// Write raw bytes to a serial port on a dedicated blocking thread.
+/// Route raw bytes to either a serial COM port or a Windows-named printer.
+///
+/// Routing rule (Windows):
+///   • Port name starts with "COM" (case-insensitive) → serial
+///   • Anything else → Windows print spooler RAW job
+///
+/// On non-Windows platforms only serial is supported.
 fn write_to_port(port_name: &str, baud: u32, payload: Vec<u8>) -> AppResult<()> {
+    #[cfg(windows)]
+    {
+        if !port_name.trim().to_uppercase().starts_with("COM") {
+            // Named Windows printer — bypass serial, use Win32 spooler
+            return write_to_windows_printer(port_name, &payload);
+        }
+    }
+
+    // Serial / COM port path
     use std::time::Duration;
     let mut port = serialport::new(port_name, baud)
         .timeout(Duration::from_secs(5))
@@ -118,26 +140,105 @@ fn write_to_port(port_name: &str, baud: u32, payload: Vec<u8>) -> AppResult<()> 
     Ok(())
 }
 
+/// Send raw ESC/POS bytes directly to a Windows-named printer via the Win32
+/// print spooler with data type "RAW" (bypasses GDI rendering entirely).
+///
+/// This is the standard method for USB thermal printers whose Windows driver
+/// does not create a virtual COM port.
+#[cfg(windows)]
+fn write_to_windows_printer(printer_name: &str, payload: &[u8]) -> AppResult<()> {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use winapi::shared::minwindef::{DWORD, LPBYTE};
+    use winapi::um::winspool::{
+        ClosePrinter, EndDocPrinter, EndPagePrinter, OpenPrinterW, StartDocPrinterW,
+        StartPagePrinter, WritePrinter, DOC_INFO_1W,
+    };
+
+    fn to_wide(s: &str) -> Vec<u16> {
+        OsStr::new(s)
+            .encode_wide()
+            .chain(std::iter::once(0u16))
+            .collect()
+    }
+
+    let wide_name = to_wide(printer_name);
+    let wide_raw = to_wide("RAW");
+    let wide_doc = to_wide("ZANPOS Receipt");
+
+    unsafe {
+        // Open printer handle
+        let mut h_printer = std::ptr::null_mut();
+        if OpenPrinterW(
+            wide_name.as_ptr() as *mut _,
+            &mut h_printer,
+            std::ptr::null_mut(),
+        ) == 0
+            || h_printer.is_null()
+        {
+            let err = winapi::um::errhandlingapi::GetLastError();
+            return Err(AppError::Internal(format!(
+                "Cannot open printer '{}' (Win32 error {})",
+                printer_name, err
+            )));
+        }
+
+        // Start a raw document
+        let mut doc_info = DOC_INFO_1W {
+            pDocName: wide_doc.as_ptr() as *mut _,
+            pOutputFile: std::ptr::null_mut(),
+            pDatatype: wide_raw.as_ptr() as *mut _,
+        };
+        let job_id = StartDocPrinterW(h_printer, 1, &mut doc_info as *mut DOC_INFO_1W as LPBYTE);
+        if job_id == 0 {
+            ClosePrinter(h_printer);
+            return Err(AppError::Internal(format!(
+                "StartDocPrinter failed for '{}'",
+                printer_name
+            )));
+        }
+
+        // Start page + write bytes + end page
+        if StartPagePrinter(h_printer) == 0 {
+            EndDocPrinter(h_printer);
+            ClosePrinter(h_printer);
+            return Err(AppError::Internal("StartPagePrinter failed".into()));
+        }
+
+        let mut written: DWORD = 0;
+        WritePrinter(
+            h_printer,
+            payload.as_ptr() as LPBYTE,
+            payload.len() as DWORD,
+            &mut written,
+        );
+
+        EndPagePrinter(h_printer);
+        EndDocPrinter(h_printer);
+        ClosePrinter(h_printer);
+    }
+
+    Ok(())
+}
+
 // ─── Config helpers ───────────────────────────────────────────────────────────
 
 async fn config_get(state: &AppState, key: &str, default: &str) -> String {
-    sqlx::query_scalar::<_, Option<String>>(
-        "SELECT value FROM app_config WHERE key = ?"
-    )
-    .bind(key)
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten()
-    .flatten()
-    .unwrap_or_else(|| default.to_string())
+    sqlx::query_scalar::<_, Option<String>>("SELECT value FROM app_config WHERE key = ?")
+        .bind(key)
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .flatten()
+        .unwrap_or_else(|| default.to_string())
 }
 
 async fn config_set(state: &AppState, key: &str, value: &str) -> AppResult<()> {
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
         "INSERT INTO app_config(key, value, updated_at) VALUES(?,?,?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
     )
     .bind(key)
     .bind(value)
@@ -149,12 +250,155 @@ async fn config_set(state: &AppState, key: &str, value: &str) -> AppResult<()> {
 
 // ─── Commands ─────────────────────────────────────────────────────────────────
 
+/// A printer entry shown in the printer picker dropdown.
+#[derive(Debug, Serialize)]
+pub struct PortEntry {
+    /// Identifier used for printing — either a COM port ("COM3") or a Windows printer name ("EPSON TM-T88V")
+    pub port: String,
+    /// Human-readable label shown in the UI
+    pub label: String,
+    /// True if this is the operating-system default printer
+    pub is_default: bool,
+}
+
+/// Enumerate all printers available on this machine:
+///   1. Windows system printers (real device names from the print spooler)
+///   2. Serial/COM ports (USB-to-serial adapters, Bluetooth virtual COM, etc.)
+///
+/// Windows printer entries always appear first; serial ports are appended below.
+/// The OS-default printer is flagged with `is_default = true` and marked in its label.
+#[tauri::command]
+pub fn thermal_list_ports() -> Vec<PortEntry> {
+    let mut entries: Vec<PortEntry> = Vec::new();
+
+    // ── 1. Windows system printers via PowerShell / WMI ──────────────────────
+    //   Uses Win32_Printer (WMI class) which exposes the real printer name and
+    //   which one is the current default.  Works on Windows 7 – 11.
+    #[cfg(windows)]
+    {
+        entries.extend(list_windows_printers());
+    }
+
+    // ── 2. Serial / COM ports via the serialport crate ────────────────────────
+    //   Catches USB-to-serial adapters (Prolific, FTDI, Silabs) and Bluetooth
+    //   virtual COM ports that bypass the print spooler entirely.
+    if let Ok(ports) = serialport::available_ports() {
+        // Build a set of port names already covered by the Windows printer list
+        // so we don't create duplicate entries (some printers expose both paths).
+        let already_listed: std::collections::HashSet<String> =
+            entries.iter().map(|e| e.port.to_uppercase()).collect();
+
+        for p in ports {
+            // Skip if already represented as a Windows printer
+            if already_listed.contains(&p.port_name.to_uppercase()) {
+                continue;
+            }
+            let description = match &p.port_type {
+                serialport::SerialPortType::UsbPort(info) => {
+                    let parts: Vec<&str> = [info.manufacturer.as_deref(), info.product.as_deref()]
+                        .iter()
+                        .filter_map(|x| *x)
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    if parts.is_empty() {
+                        None
+                    } else {
+                        Some(parts.join(" "))
+                    }
+                }
+                _ => None,
+            };
+            let label = match description {
+                Some(desc) => format!("{} — {} [Serial]", p.port_name, desc),
+                None => format!("{} [Serial]", p.port_name),
+            };
+            entries.push(PortEntry {
+                port: p.port_name,
+                label,
+                is_default: false,
+            });
+        }
+    }
+
+    entries
+}
+
+/// Query installed Windows printers via PowerShell's Win32_Printer WMI class.
+/// Returns an empty Vec on any failure — the serial port list is still returned.
+#[cfg(windows)]
+fn list_windows_printers() -> Vec<PortEntry> {
+    // PowerShell command: enumerate Win32_Printer objects, extract Name + Default flag,
+    // serialise to JSON.  On PS 5.1 ConvertTo-Json may return a single object instead of
+    // an array when there is exactly one printer — we handle that on the Rust side.
+    let ps_cmd = "Get-CimInstance -Class Win32_Printer \
+                  | Select-Object Name, Default \
+                  | ConvertTo-Json -Compress";
+
+    let output = match std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", ps_cmd])
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return vec![],
+    };
+
+    if !output.status.success() {
+        return vec![];
+    }
+
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let text = raw.trim();
+    if text.is_empty() {
+        return vec![];
+    }
+
+    // Normalise to a JSON array (PS 5.1 returns a bare object for single-printer systems)
+    let json_str = if text.starts_with('[') {
+        text.to_string()
+    } else if text.starts_with('{') {
+        format!("[{}]", text)
+    } else {
+        return vec![];
+    };
+
+    #[derive(serde::Deserialize)]
+    struct WinPrinter {
+        #[serde(rename = "Name")]
+        name: String,
+        #[serde(rename = "Default")]
+        default: Option<bool>,
+    }
+
+    let printers: Vec<WinPrinter> = match serde_json::from_str(&json_str) {
+        Ok(v) => v,
+        Err(_) => return vec![],
+    };
+
+    printers
+        .into_iter()
+        .filter(|p| !p.name.trim().is_empty())
+        .map(|p| {
+            let is_default = p.default.unwrap_or(false);
+            let label = if is_default {
+                format!("{} ★ (Default)", p.name)
+            } else {
+                p.name.clone()
+            };
+            PortEntry {
+                port: p.name,
+                label,
+                is_default,
+            }
+        })
+        .collect()
+}
+
 /// Get current thermal printer configuration.
 #[tauri::command]
 pub async fn thermal_get_config(state: State<'_, AppState>) -> Result<ThermalConfig, AppError> {
     let enabled_str = config_get(&state, "thermal_printer_enabled", "0").await;
-    let port        = config_get(&state, "thermal_printer_port", "").await;
-    let baud        = config_get(&state, "thermal_printer_baud", "9600").await;
+    let port = config_get(&state, "thermal_printer_port", "").await;
+    let baud = config_get(&state, "thermal_printer_baud", "9600").await;
 
     Ok(ThermalConfig {
         enabled: enabled_str == "1",
@@ -169,7 +413,12 @@ pub async fn thermal_set_config(
     input: ThermalConfigInput,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    config_set(&state, "thermal_printer_enabled", if input.enabled { "1" } else { "0" }).await?;
+    config_set(
+        &state,
+        "thermal_printer_enabled",
+        if input.enabled { "1" } else { "0" },
+    )
+    .await?;
     config_set(&state, "thermal_printer_port", &input.port).await?;
     config_set(&state, "thermal_printer_baud", &input.baud).await?;
     Ok(())
@@ -188,9 +437,9 @@ pub async fn thermal_print_test(state: State<'_, AppState>) -> Result<String, Ap
     }
 
     let port_name = config.port.clone();
-    let baud_str  = config.baud.clone();
+    let baud_str = config.baud.clone();
     let baud: u32 = baud_str.parse().unwrap_or(9600);
-    let payload   = build_test_bytes(&port_name, &baud_str);
+    let payload = build_test_bytes(&port_name, &baud_str);
 
     tokio::task::spawn_blocking(move || write_to_port(&port_name, baud, payload))
         .await
@@ -203,8 +452,8 @@ pub async fn thermal_print_test(state: State<'_, AppState>) -> Result<String, Ap
 #[tauri::command]
 pub async fn print_receipt_raw(
     store_name: String,
-    lines:      Vec<String>,
-    state:      State<'_, AppState>,
+    lines: Vec<String>,
+    state: State<'_, AppState>,
 ) -> Result<String, AppError> {
     let config = thermal_get_config(state).await?;
 
@@ -212,15 +461,44 @@ pub async fn print_receipt_raw(
         return Ok("Thermal printing disabled".into());
     }
     if config.port.trim().is_empty() {
-        return Err(AppError::Validation("No thermal printer port configured".into()));
+        return Err(AppError::Validation(
+            "No thermal printer port configured".into(),
+        ));
     }
 
     let port_name = config.port.clone();
     let baud: u32 = config.baud.parse().unwrap_or(9600);
-    let payload   = build_receipt_bytes(&store_name, &lines);
+    let payload = build_receipt_bytes(&store_name, &lines);
 
     tokio::task::spawn_blocking(move || write_to_port(&port_name, baud, payload))
         .await
         .map_err(|e| AppError::Internal(format!("Thread error: {e}")))?
         .map(|_| "Printed".into())
+}
+
+/// ESC/POS cash drawer kick pulse (pin 2 or pin 5).
+/// Standard sequence: ESC p 0 t1 t2  (0x1B 0x70 0x00 0x19 0xFA)
+fn esc_open_drawer() -> Vec<u8> {
+    vec![ESC, b'p', 0x00, 0x19, 0xFA]
+}
+
+/// Open the cash drawer connected to the thermal printer's RJ-11 port.
+/// Non-fatal: returns Ok("no_printer") if thermal printing is disabled or no port configured.
+#[tauri::command]
+pub async fn open_cash_drawer(state: State<'_, AppState>) -> Result<String, AppError> {
+    let config = thermal_get_config(state).await?;
+
+    if !config.enabled || config.port.trim().is_empty() {
+        // Drawer kick silently skipped — no printer configured.
+        return Ok("no_printer".into());
+    }
+
+    let port_name = config.port.clone();
+    let baud: u32 = config.baud.parse().unwrap_or(9600);
+    let payload = esc_open_drawer();
+
+    tokio::task::spawn_blocking(move || write_to_port(&port_name, baud, payload))
+        .await
+        .map_err(|e| AppError::Internal(format!("Thread error: {e}")))?
+        .map(|_| "opened".into())
 }

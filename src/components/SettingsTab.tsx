@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { BranchSettings, BusinessFlags, ThermalConfig, WhatsAppStatus } from "../types";
+import type { BranchSettings, BusinessFlags, ImportContactsResult, TaxRuleRow, ThermalConfig, WhatsAppStatus } from "../types";
 import ReceiptDesignEditor from "./ReceiptDesignEditor";
 import WaMessageEditor from "./WaMessageEditor";
 import {
@@ -8,6 +8,7 @@ import {
   appConfigGetTimeout,
   appConfigSetTimeout,
   dbBackup,
+  thermalListPorts,
   thermalGetConfig,
   thermalSetConfig,
   thermalPrintTest,
@@ -15,9 +16,12 @@ import {
   whatsappStatus,
   whatsappDisconnect,
   whatsappSaveConfig,
+  whatsappImportContacts,
   appConfigLoad,
   businessFlagsLoad,
   businessFlagsSave,
+  adminListTaxRules,
+  adminSaveTaxRule,
 } from "../tauri/commands";
 import WhatsAppQRModal from "./WhatsAppQRModal";
 
@@ -34,6 +38,9 @@ function WhatsAppSettingsSection({
   const [saving, setSaving]               = useState(false);
   const [saved, setSaved]                 = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [importing, setImporting]         = useState(false);
+  const [importResult, setImportResult]   = useState<ImportContactsResult | null>(null);
+  const [importError, setImportError]     = useState<string | null>(null);
 
   const isManager = sessionRole === "owner" || sessionRole === "manager";
 
@@ -74,6 +81,30 @@ function WhatsAppSettingsSection({
     }
   };
 
+  const handleImportContacts = useCallback(async () => {
+    setImporting(true);
+    setImportResult(null);
+    setImportError(null);
+    try {
+      const result = await whatsappImportContacts(sessionUserId);
+      setImportResult(result);
+      // Auto-clear the success message after 8 seconds
+      setTimeout(() => setImportResult(null), 8_000);
+    } catch (e: unknown) {
+      setImportError(typeof e === "string" ? e : "Failed to import contacts");
+      setTimeout(() => setImportError(null), 6_000);
+    } finally {
+      setImporting(false);
+    }
+  }, [sessionUserId]);
+
+  // Called by QRModal when the QR scan succeeds — refresh status then trigger import
+  const handleConnected = useCallback(async () => {
+    await refresh();
+    // Give Baileys a moment to fire contacts.upsert before we poll the sidecar
+    setTimeout(handleImportContacts, 2_000);
+  }, [refresh, handleImportContacts]);
+
   return (
     <>
       <h3 className="settings-section-title">📱 WhatsApp</h3>
@@ -93,6 +124,34 @@ function WhatsAppSettingsSection({
           </button>
         )}
       </div>
+
+      {/* ── Import contacts row ── */}
+      {isManager && (
+        <div className="wa-import-row">
+          <div className="wa-import-info">
+            <span className="wa-import-label">Contact Import</span>
+            <span className="wa-import-hint">
+              Save all WhatsApp contacts directly into the POS customer list.
+            </span>
+          </div>
+          <button
+            className="btn-secondary btn-sm"
+            onClick={handleImportContacts}
+            disabled={importing}
+          >
+            {importing ? "Importing…" : "📥 Import Contacts"}
+          </button>
+        </div>
+      )}
+      {importResult !== null && (
+        <div className="wa-import-result wa-import-result-ok">
+          ✅ {importResult.imported} contact{importResult.imported !== 1 ? "s" : ""} imported
+          {importResult.skipped > 0 ? ` — ${importResult.skipped} already existed` : ""}
+        </div>
+      )}
+      {importError !== null && (
+        <div className="wa-import-result wa-import-result-err">⚠ {importError}</div>
+      )}
 
       <label className="bo-label">BenefitPay Number</label>
       <p className="settings-hint">Sent in delivery WhatsApp messages so customers can pay you.</p>
@@ -115,7 +174,7 @@ function WhatsAppSettingsSection({
       {showQR && (
         <WhatsAppQRModal
           onClose={() => setShowQR(false)}
-          onConnected={refresh}
+          onConnected={handleConnected}
         />
       )}
     </>
@@ -153,6 +212,7 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
   const [address, setAddress]             = useState("");
   const [phone, setPhone]                 = useState("");
   const [taxNumber, setTaxNumber]         = useState("");
+  const [crNumber, setCrNumber]           = useState("");
   const [receiptHeader, setReceiptHeader] = useState("");
   const [receiptFooter, setReceiptFooter] = useState("");
 
@@ -171,6 +231,8 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
   const [savedThermal, setSavedThermal]   = useState(false);
   const [testingPrint, setTestingPrint]   = useState(false);
   const [printTestMsg, setPrintTestMsg]   = useState<string | null>(null);
+  const [availablePorts, setAvailablePorts] = useState<import("../tauri/commands").PortEntry[]>([]);
+  const [portsLoading, setPortsLoading]     = useState(false);
 
   // Business flags
   const [flags, setFlags] = useState<BusinessFlags>({
@@ -182,11 +244,28 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
   const [savingFlags, setSavingFlags] = useState(false);
   const [savedFlags, setSavedFlags]   = useState(false);
 
+  // Tax rules
+  const [taxRules, setTaxRules]           = useState<TaxRuleRow[]>([]);
+  const [editingRule, setEditingRule]     = useState<Partial<TaxRuleRow> & { rate_percent?: number } | null>(null);
+  const [savingRule, setSavingRule]       = useState(false);
+  const [taxRuleError, setTaxRuleError]   = useState<string | null>(null);
+
   // Auto-updater
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updateMsg, setUpdateMsg]           = useState<string | null>(null);
 
+  const loadPorts = useCallback(async () => {
+    setPortsLoading(true);
+    try {
+      const ports = await thermalListPorts();
+      setAvailablePorts(ports);
+    } finally {
+      setPortsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
+    loadPorts();
     Promise.all([
       settingsGetBranch(),
       appConfigGetTimeout().catch(() => 5),
@@ -197,19 +276,22 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
         cashier_can_discount: false,
         auto_print_receipt: false,
       })),
+      adminListTaxRules().catch(() => [] as TaxRuleRow[]),
     ])
-      .then(([s, minutes, tc, bf]) => {
+      .then(([s, minutes, tc, bf, rules]) => {
         setSettings(s as BranchSettings);
         setName((s as BranchSettings).name);
         setTimezone((s as BranchSettings).timezone);
         setAddress((s as BranchSettings).address ?? "");
         setPhone((s as BranchSettings).phone ?? "");
         setTaxNumber((s as BranchSettings).tax_number ?? "");
+        setCrNumber((s as BranchSettings).cr_number ?? "");
         setReceiptHeader((s as BranchSettings).receipt_header ?? "");
         setReceiptFooter((s as BranchSettings).receipt_footer ?? "");
         setTimeoutMinutes(minutes as number);
         setThermal(tc as ThermalConfig);
         setFlags(bf as BusinessFlags);
+        setTaxRules(rules as TaxRuleRow[]);
       })
       .catch(() => setError("Failed to load settings"))
       .finally(() => setLoading(false));
@@ -227,6 +309,7 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
         address:        address.trim() || undefined,
         phone:          phone.trim() || undefined,
         tax_number:     taxNumber.trim() || undefined,
+        cr_number:      crNumber.trim() || undefined,
         receipt_header: receiptHeader.trim() || undefined,
         receipt_footer: receiptFooter.trim() || undefined,
         actor_user_id:  sessionUserId,
@@ -327,6 +410,36 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
     }
   };
 
+  const handleSaveTaxRule = async () => {
+    if (!editingRule) return;
+    const name = (editingRule.name ?? "").trim();
+    if (!name) { setTaxRuleError("Name is required"); return; }
+    const rate = editingRule.rate_percent ?? 0;
+    if (rate < 0 || rate > 100) { setTaxRuleError("Rate must be 0–100%"); return; }
+    setSavingRule(true);
+    setTaxRuleError(null);
+    try {
+      const saved = await adminSaveTaxRule({
+        tax_rule_id: editingRule.tax_rule_id,
+        name,
+        rate_percent: rate,
+        inclusive: editingRule.inclusive ?? false,
+        is_active: editingRule.is_active ?? true,
+        actor_user_id: sessionUserId,
+      });
+      setTaxRules(prev => {
+        const idx = prev.findIndex(r => r.tax_rule_id === saved.tax_rule_id);
+        if (idx >= 0) { const next = [...prev]; next[idx] = saved; return next; }
+        return [...prev, saved];
+      });
+      setEditingRule(null);
+    } catch (e: unknown) {
+      setTaxRuleError(typeof e === "string" ? e : "Failed to save tax rule");
+    } finally {
+      setSavingRule(false);
+    }
+  };
+
   const [activeSection, setActiveSection] = useState("s-business");
 
   const SUB_NAV = [
@@ -335,6 +448,7 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
     { id: "s-design",    label: "Receipt Design" },
     { id: "s-security",  label: "Security" },
     { id: "s-rules",     label: "Business Rules" },
+    { id: "s-tax",       label: "Tax Rules" },
     { id: "s-printer",   label: "Printers" },
     { id: "s-whatsapp",  label: "WhatsApp" },
     { id: "s-wa-format", label: "WA Message" },
@@ -395,6 +509,9 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
           <label className="bo-label">Tax / VAT Registration Number</label>
           <input className="bo-input" type="text" value={taxNumber} onChange={e => setTaxNumber(e.target.value)} placeholder="e.g. VAT-1234567890" />
 
+          <label className="bo-label">Commercial Register Number (CR No)</label>
+          <input className="bo-input" type="text" value={crNumber} onChange={e => setCrNumber(e.target.value)} placeholder="e.g. 12345-1" />
+
           {/* DB Backup */}
           <div className="settings-backup-row">
             <div>
@@ -447,6 +564,7 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
                 {address && <div className="receipt-mini-addr">{address}</div>}
                 {phone && <div className="receipt-mini-addr">{phone}</div>}
                 {taxNumber && <div className="receipt-mini-addr">TRN: {taxNumber}</div>}
+                {crNumber && <div className="receipt-mini-addr">CR No: {crNumber}</div>}
                 {receiptHeader && <div className="receipt-mini-header">{receiptHeader}</div>}
                 <div className="receipt-mini-divider">- - - - - - - - - -</div>
                 <div className="receipt-mini-item">Item name × 1 .............. 1.500</div>
@@ -470,6 +588,7 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
             storeAddress={address}
             storePhone={phone}
             taxNumber={taxNumber}
+            crNumber={crNumber}
             receiptHeader={receiptHeader}
             receiptFooter={receiptFooter}
           />
@@ -598,12 +717,131 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
           </div>
         </section>
 
+        {/* ── Tax Rules ── */}
+        <section id="s-tax" className="settings-section">
+          <h3 className="settings-section-title">Tax Rules</h3>
+          <p className="settings-hint">
+            Define tax rates applied to products. Each product can be assigned a rule.
+            <strong> Inclusive</strong> means the price already contains tax (tax extracted at checkout).
+            <strong> Exclusive</strong> means tax is added on top of the price.
+          </p>
+
+          <div className="tax-rules-list">
+            {taxRules.map(rule => (
+              <div key={rule.tax_rule_id} className={`tax-rule-row${!rule.is_active ? " tax-rule-inactive" : ""}`}>
+                <div className="tax-rule-info">
+                  <span className="tax-rule-name">{rule.name}</span>
+                  <span className="tax-rule-meta">
+                    {(rule.rate_basis_points / 100).toFixed(2)}%
+                    &nbsp;·&nbsp;
+                    <span className={`tax-rule-badge ${rule.inclusive ? "tax-badge-inc" : "tax-badge-exc"}`}>
+                      {rule.inclusive ? "Inclusive" : "Exclusive"}
+                    </span>
+                    {!rule.is_active && <span className="tax-rule-badge tax-badge-off">Inactive</span>}
+                  </span>
+                </div>
+                <button
+                  className="btn-secondary btn-sm"
+                  onClick={() => setEditingRule({
+                    ...rule,
+                    rate_percent: rule.rate_basis_points / 100,
+                  })}
+                >
+                  Edit
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <button
+            className="btn-secondary btn-sm"
+            style={{ marginTop: "12px" }}
+            onClick={() => setEditingRule({ name: "", rate_percent: 0, inclusive: false, is_active: true })}
+          >
+            + Add Tax Rule
+          </button>
+
+          {/* Inline editor */}
+          {editingRule && (
+            <div className="tax-rule-editor">
+              <h4 className="tax-rule-editor-title">
+                {editingRule.tax_rule_id ? "Edit Tax Rule" : "New Tax Rule"}
+              </h4>
+
+              <label className="bo-label">Name</label>
+              <input
+                className="bo-input"
+                value={editingRule.name ?? ""}
+                onChange={e => setEditingRule(r => r ? { ...r, name: e.target.value } : r)}
+                placeholder="e.g. VAT 10%"
+                maxLength={60}
+              />
+
+              <label className="bo-label">Rate (%)</label>
+              <input
+                className="bo-input"
+                type="number"
+                min={0}
+                max={100}
+                step={0.001}
+                value={editingRule.rate_percent ?? 0}
+                onChange={e => setEditingRule(r => r ? { ...r, rate_percent: parseFloat(e.target.value) || 0 } : r)}
+                placeholder="e.g. 10 for 10%"
+              />
+
+              <label className="bo-label">Tax Method</label>
+              <div className="tax-method-toggle">
+                <button
+                  className={`tax-method-btn${!editingRule.inclusive ? " active" : ""}`}
+                  onClick={() => setEditingRule(r => r ? { ...r, inclusive: false } : r)}
+                >
+                  Exclusive
+                  <span className="tax-method-hint">Tax added on top of price</span>
+                </button>
+                <button
+                  className={`tax-method-btn${editingRule.inclusive ? " active" : ""}`}
+                  onClick={() => setEditingRule(r => r ? { ...r, inclusive: true } : r)}
+                >
+                  Inclusive
+                  <span className="tax-method-hint">Price already includes tax</span>
+                </button>
+              </div>
+
+              <div className="biz-flag-row" style={{ marginTop: "12px" }}>
+                <div className="biz-flag-info">
+                  <div className="biz-flag-label">Active</div>
+                  <div className="biz-flag-hint">Inactive rules are hidden in the product editor.</div>
+                </div>
+                <label className="biz-toggle">
+                  <input
+                    type="checkbox"
+                    checked={editingRule.is_active ?? true}
+                    onChange={e => setEditingRule(r => r ? { ...r, is_active: e.target.checked } : r)}
+                  />
+                  <span className="biz-toggle-track" />
+                </label>
+              </div>
+
+              {taxRuleError && <div className="modal-error" style={{ marginTop: "8px" }}>{taxRuleError}</div>}
+
+              <div className="tax-rule-editor-actions">
+                <button className="btn-secondary btn-sm" onClick={() => { setEditingRule(null); setTaxRuleError(null); }}>
+                  Cancel
+                </button>
+                <button className="btn-primary btn-sm" onClick={handleSaveTaxRule} disabled={savingRule}>
+                  {savingRule ? "Saving…" : "Save Rule"}
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+
         {/* ── Thermal Printer ── */}
         <section id="s-printer" className="settings-section">
           <h3 className="settings-section-title">Receipt Printer (ESC/POS)</h3>
           <p className="settings-hint">
-            Requires <code>tauri-plugin-serialport</code> for full hardware integration.
-            Configure the port and baud rate, then use "Test Print" to verify.
+            Select a port from the list of printers detected on this device.
+            Click <strong>↺ Refresh</strong> if your printer isn't showing — make sure it's powered on and connected first.
           </p>
 
           <div className="thermal-row">
@@ -619,14 +857,41 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
 
           <div className="bo-row-two">
             <div>
-              <label className="bo-label">Serial Port</label>
-              <input
-                className="bo-input"
-                value={thermal.port}
-                onChange={e => setThermal(t => ({ ...t, port: e.target.value }))}
-                placeholder="COM3 or /dev/ttyUSB0"
-                disabled={!thermal.enabled}
-              />
+              <label className="bo-label">
+                Printer / Port
+                <button
+                  type="button"
+                  className="printer-refresh-btn"
+                  onClick={loadPorts}
+                  disabled={portsLoading}
+                  title="Scan for connected printers"
+                >
+                  {portsLoading ? "…" : "↺ Refresh"}
+                </button>
+              </label>
+              {availablePorts.length === 0 && !portsLoading ? (
+                <div className="printer-no-ports">
+                  No serial/USB printers detected.
+                  <br />
+                  <span className="rpt-dim">Connect your printer and click ↺ Refresh.</span>
+                </div>
+              ) : (
+                <select
+                  className="bo-select"
+                  value={thermal.port}
+                  onChange={e => setThermal(t => ({ ...t, port: e.target.value }))}
+                  disabled={!thermal.enabled || portsLoading}
+                >
+                  <option value="">— select printer —</option>
+                  {availablePorts.map(p => (
+                    <option key={p.port} value={p.port}>{p.label}</option>
+                  ))}
+                  {/* If saved port is not in the list, show it as a fallback option */}
+                  {thermal.port && !availablePorts.some(p => p.port === thermal.port) && (
+                    <option value={thermal.port}>{thermal.port} (saved — not detected)</option>
+                  )}
+                </select>
+              )}
             </div>
             <div>
               <label className="bo-label">Baud Rate</label>
@@ -644,18 +909,25 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
             </div>
           </div>
 
+          {thermal.port && (
+            <div className="printer-selected-badge">
+              ✓ Selected: <strong>{availablePorts.find(p => p.port === thermal.port)?.label ?? thermal.port}</strong>
+              <span className="rpt-dim" style={{ marginLeft: 8 }}>@ {thermal.baud} baud</span>
+            </div>
+          )}
+
           <div className="thermal-actions">
             <button
-              className="btn-secondary"
+              className="btn-primary"
               onClick={handleSaveThermal}
               disabled={savingThermal}
             >
-              {savingThermal ? "Saving…" : savedThermal ? "Saved ✓" : "Save Printer Settings"}
+              {savingThermal ? "Saving…" : savedThermal ? "Saved ✓" : "Set as Default Printer"}
             </button>
             <button
               className="btn-secondary"
               onClick={handleTestPrint}
-              disabled={testingPrint || !thermal.enabled}
+              disabled={testingPrint || !thermal.enabled || !thermal.port}
             >
               {testingPrint ? "Testing…" : "Test Print"}
             </button>

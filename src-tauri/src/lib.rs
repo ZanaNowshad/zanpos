@@ -61,41 +61,170 @@ pub fn run() {
             let wa_session_dir = app_data.join("wa-session");
             std::fs::create_dir_all(&wa_session_dir).ok();
 
+            // Resolve the sidecar executable — try every known location so it works
+            // in production (Tauri strips the triple-target suffix), dev (full suffix),
+            // and any edge-case install layout.
             let sidecar_exe = {
-                // Production: externalBin is placed next to the main exe, NOT in resources\
                 let exe_dir = std::env::current_exe()
                     .ok()
                     .and_then(|p| p.parent().map(|p| p.to_path_buf()))
                     .unwrap_or_default();
-                let prod_path = exe_dir.join("whatsapp-sidecar-x86_64-pc-windows-msvc.exe");
-                // Dev: sidecar lives in src-tauri/binaries/
-                let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("binaries")
-                    .join("whatsapp-sidecar-x86_64-pc-windows-msvc.exe");
-                if prod_path.exists() { prod_path } else { dev_path }
+
+                let candidates = [
+                    // ① Production install: Tauri strips the triple suffix
+                    exe_dir.join("whatsapp-sidecar.exe"),
+                    // ② Production install, alt name (in case triple is kept)
+                    exe_dir.join("whatsapp-sidecar-x86_64-pc-windows-msvc.exe"),
+                    // ③ Development: cargo manifest dir / binaries /
+                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("binaries")
+                        .join("whatsapp-sidecar-x86_64-pc-windows-msvc.exe"),
+                ];
+
+                // Return the first candidate that actually exists on disk.
+                // If none exist yet, return the production path so log messages are clear.
+                candidates.into_iter()
+                    .find(|p| p.exists())
+                    .unwrap_or_else(|| exe_dir.join("whatsapp-sidecar.exe"))
             };
 
-            let wa_child: Arc<std::sync::Mutex<Option<std::process::Child>>> = if sidecar_exe.exists() {
-                match std::process::Command::new(&sidecar_exe)
-                    .arg(format!("--session-dir={}", wa_session_dir.to_string_lossy()))
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()
-                {
-                    Ok(child) => {
-                        tracing::info!("WhatsApp sidecar started (pid {})", child.id());
-                        Arc::new(std::sync::Mutex::new(Some(child)))
+            /// Spawn the sidecar with up to `max_attempts` retries.
+            fn spawn_sidecar(
+                exe: &std::path::Path,
+                session_dir: &std::path::Path,
+                max_attempts: u32,
+            ) -> Option<std::process::Child> {
+                for attempt in 1..=max_attempts {
+                    // Build the command first so we can attach the Windows-only
+                    // CREATE_NO_WINDOW flag before spawning.  Without this flag
+                    // every spawn flashes a cmd.exe console window and steals
+                    // keyboard focus from the Tauri window.
+                    let mut cmd = std::process::Command::new(exe);
+                    cmd.arg(format!("--session-dir={}", session_dir.to_string_lossy()))
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null());
+
+                    #[cfg(target_os = "windows")]
+                    {
+                        use std::os::windows::process::CommandExt;
+                        // 0x0800_0000 = CREATE_NO_WINDOW
+                        // Prevents a console window from appearing when the
+                        // sidecar (a Node.js CLI) is spawned or restarted by
+                        // the watchdog, which would otherwise steal focus every
+                        // ~8 seconds.
+                        cmd.creation_flags(0x0800_0000);
                     }
-                    Err(e) => {
-                        tracing::warn!("WhatsApp sidecar failed to start: {}", e);
-                        Arc::new(std::sync::Mutex::new(None))
+
+                    match cmd.spawn() {
+                        Ok(child) => {
+                            tracing::info!(
+                                "WhatsApp sidecar started (pid {}, attempt {})",
+                                child.id(), attempt
+                            );
+                            return Some(child);
+                        }
+                        Err(e) if attempt < max_attempts => {
+                            tracing::warn!(
+                                "WhatsApp sidecar start attempt {}/{} failed: {} — retrying in 1 s",
+                                attempt, max_attempts, e
+                            );
+                            std::thread::sleep(std::time::Duration::from_secs(1));
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "WhatsApp sidecar failed to start after {} attempts: {}",
+                                max_attempts, e
+                            );
+                        }
                     }
                 }
+                None
+            }
+
+            let initial_child = if sidecar_exe.exists() {
+                spawn_sidecar(&sidecar_exe, &wa_session_dir, 3)
             } else {
-                tracing::info!("WhatsApp sidecar binary not found — WA features disabled");
-                Arc::new(std::sync::Mutex::new(None))
+                tracing::warn!(
+                    "WhatsApp sidecar binary not found at {:?} — watchdog will keep retrying",
+                    sidecar_exe
+                );
+                None
             };
 
+            let wa_child: Arc<std::sync::Mutex<Option<std::process::Child>>> =
+                Arc::new(std::sync::Mutex::new(initial_child));
+
+            // ── Watchdog: keeps the sidecar alive for the entire app lifetime ─────────
+            // Every 8 seconds, check if the process is still running.
+            // If it has exited (crash, OOM, killed by Windows) — restart it immediately.
+            {
+                let wa_child_watch  = Arc::clone(&wa_child);
+                let exe_watch       = sidecar_exe.clone();
+                let session_watch   = wa_session_dir.clone();
+
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        tokio::time::sleep(tokio::time::Duration::from_secs(8)).await;
+
+                        let needs_restart = {
+                            let mut guard = wa_child_watch
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner());
+
+                            match guard.as_mut() {
+                                // Process slot is empty — sidecar was never started or already
+                                // removed after a previous exit.  Try again if the exe is present.
+                                None => exe_watch.exists(),
+
+                                Some(child) => match child.try_wait() {
+                                    Ok(None) => false, // still running — do nothing
+                                    Ok(Some(status)) => {
+                                        tracing::warn!(
+                                            "WhatsApp sidecar exited (status {:?}) — watchdog restarting",
+                                            status
+                                        );
+                                        *guard = None;
+                                        true
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "WhatsApp sidecar status check error: {} — watchdog restarting",
+                                            e
+                                        );
+                                        *guard = None;
+                                        true
+                                    }
+                                },
+                            }
+                        };
+
+                        if needs_restart {
+                            if exe_watch.exists() {
+                                if let Some(child) =
+                                    spawn_sidecar(&exe_watch, &session_watch, 3)
+                                {
+                                    let mut guard = wa_child_watch
+                                        .lock()
+                                        .unwrap_or_else(|e| e.into_inner());
+                                    *guard = Some(child);
+                                }
+                            } else {
+                                tracing::warn!(
+                                    "WhatsApp sidecar watchdog: binary still not found at {:?}",
+                                    exe_watch
+                                );
+                            }
+                        }
+                    }
+                });
+            }
+
+            // ORDERING CONSTRAINT: app.manage() MUST be called before
+            // .invoke_handler() is registered.  tauri::generate_handler![] builds
+            // a static dispatch table at compile time, but the AppState value is
+            // resolved at runtime from the managed state map.  If manage() were
+            // called after invoke_handler(), any command that fires before manage()
+            // completes would panic with "state not managed".  Keep this order.
             app.manage(AppState { db, sync_worker, whatsapp_child: wa_child });
             Ok(())
         })
@@ -127,6 +256,7 @@ pub fn run() {
             commands::admin_commands::admin_update_product,
             commands::admin_commands::admin_list_categories,
             commands::admin_commands::admin_list_tax_rules,
+            commands::admin_commands::admin_save_tax_rule,
             commands::admin_commands::admin_save_category,
             commands::admin_commands::admin_list_users_all,
             commands::admin_commands::admin_list_roles,
@@ -155,6 +285,7 @@ pub fn run() {
             commands::report_commands::db_integrity_check,
             // Inventory
             commands::inventory_commands::inventory_get_levels,
+            commands::inventory_commands::inventory_get_levels_paged,
             commands::inventory_commands::inventory_get_low_stock,
             commands::inventory_commands::inventory_get_movements,
             commands::inventory_commands::inventory_receive_stock,
@@ -227,15 +358,18 @@ pub fn run() {
             commands::whatsapp_commands::whatsapp_payment_reminder,
             commands::whatsapp_commands::whatsapp_disconnect,
             commands::whatsapp_commands::whatsapp_save_config,
+            commands::whatsapp_commands::whatsapp_import_contacts,
             // Product image picker
             commands::updater_commands::product_pick_image,
             // Auto-updater
             commands::updater_commands::check_for_updates,
             // Thermal printer
+            commands::thermal_commands::thermal_list_ports,
             commands::thermal_commands::thermal_get_config,
             commands::thermal_commands::thermal_set_config,
             commands::thermal_commands::thermal_print_test,
             commands::thermal_commands::print_receipt_raw,
+            commands::thermal_commands::open_cash_drawer,
             // Cash events
             commands::cash_commands::cash_event_create,
             commands::cash_commands::cash_events_list,
@@ -246,10 +380,24 @@ pub fn run() {
             commands::admin_commands::product_barcode_add,
             commands::admin_commands::product_barcode_remove,
             commands::admin_commands::product_barcodes_list,
-            // Migration agent
+            // Bulk CSV import
+            commands::admin_commands::admin_bulk_import_categories,
+            commands::admin_commands::admin_bulk_import_products,
+            // Migration agent — core
             commands::migration_commands::migration_inspect_file,
             commands::migration_commands::migration_ai_map,
             commands::migration_commands::migration_execute,
+            // Migration agent — extended tools
+            commands::migration_commands::migration_connect_test,
+            commands::migration_commands::migration_list_tables,
+            commands::migration_commands::migration_query_remote,
+            commands::migration_commands::migration_list_processes,
+            commands::migration_commands::migration_find_db_files,
+            commands::migration_commands::migration_read_file,
+            commands::migration_commands::migration_decompress,
+            commands::migration_commands::migration_zanpos_stats,
+            commands::migration_commands::migration_rollback,
+            commands::migration_commands::migration_agent_chat,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

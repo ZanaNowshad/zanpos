@@ -28,7 +28,7 @@ import type {
   RefundResult,
   RoleRow,
   SaleForRefund,
-  SaleListRow,
+  SaleListPage,
   SaleResult,
   SessionUser,
   Shift,
@@ -53,10 +53,20 @@ import type {
   UpdateDeliveryStatusInput,
   CancelDeliveryInput,
   WhatsAppStatus,
+  ImportContactsResult,
   SendDeliveryInput,
   FileSchema,
   MappingConfig,
   MigrationProgress,
+  ConnectTestResult,
+  RemoteTableInfo,
+  QueryResult,
+  ProcessInfo,
+  DbFileInfo,
+  DecompressResult,
+  ZanposStats,
+  RollbackResult,
+  ChatMessage,
 } from "../types";
 
 // ─── Setup & Settings commands ────────────────────────────────────────────────
@@ -71,6 +81,7 @@ export const setupWizardComplete = (input: {
   receipt_header?: string;
   receipt_footer?: string;
   tax_number?: string;
+  cr_number?: string;
   currency: string;
   timezone: string;
   owner_display_name: string;
@@ -97,6 +108,7 @@ export const settingsUpdateBranch = (input: {
   receipt_header?: string;
   receipt_footer?: string;
   tax_number?: string;
+  cr_number?: string;
   timezone: string;
   actor_user_id: string;
 }): Promise<BranchSettings> =>
@@ -201,7 +213,12 @@ export const posAddCustomItem = (
 ): Promise<Cart> =>
   invoke("pos_add_custom_item", { input: { cart, name, price_minor, quantity } });
 
-export const posVoidSale = (sale_id: string, voided_by_user_id: string): Promise<void> =>
+export interface VoidSaleResult {
+  voided: boolean;
+  stock_warning: string | null;
+}
+
+export const posVoidSale = (sale_id: string, voided_by_user_id: string): Promise<VoidSaleResult> =>
   invoke("pos_void_sale", { saleId: sale_id, voidedByUserId: voided_by_user_id });
 
 export const posRecordVoid = (
@@ -255,8 +272,23 @@ export const reportDateRange = (branch_id: string, from_date: string, to_date: s
 export const reportTopProducts = (branch_id: string, from_date: string, to_date: string): Promise<TopProduct[]> =>
   invoke("report_top_products", { branchId: branch_id, fromDate: from_date, toDate: to_date });
 
-export const reportSalesList = (branch_id: string, from_date: string, to_date: string): Promise<SaleListRow[]> =>
-  invoke("report_sales_list", { branchId: branch_id, fromDate: from_date, toDate: to_date });
+/** Fetch paginated sales list. Returns total count alongside items so callers
+ *  can detect truncation and implement paging (F-BIZ-002 / F-INT-001).
+ *  Defaults: limit=200, offset=0 (backwards-compatible). */
+export const reportSalesList = (
+  branch_id: string,
+  from_date: string,
+  to_date: string,
+  offset?: number,
+  limit?: number,
+): Promise<SaleListPage> =>
+  invoke("report_sales_list", {
+    branchId: branch_id,
+    fromDate: from_date,
+    toDate: to_date,
+    offset: offset ?? 0,
+    limit: limit ?? 200,
+  });
 
 export const dbIntegrityCheck = (): Promise<string> =>
   invoke("db_integrity_check");
@@ -289,8 +321,8 @@ export const adminSetupSupabaseCredsOnly = (
 export const adminGetProviderConfig = (): Promise<ProviderConfig> =>
   invoke("admin_get_provider_config");
 
-export const adminSetAnthropic = (apiKey: string): Promise<void> =>
-  invoke("admin_set_anthropic", { apiKey });
+export const adminSetAnthropic = (actorUserId: string, apiKey: string): Promise<void> =>
+  invoke("admin_set_anthropic", { actorUserId, apiKey });
 
 export const adminValidateOpenai = (
   baseUrl: string,
@@ -299,18 +331,19 @@ export const adminValidateOpenai = (
   invoke("admin_validate_openai", { baseUrl, apiKey });
 
 export const adminSetOpenai = (
+  actorUserId: string,
   baseUrl: string,
   apiKey: string,
   model: string
 ): Promise<void> =>
-  invoke("admin_set_openai", { baseUrl, apiKey, model });
+  invoke("admin_set_openai", { actorUserId, baseUrl, apiKey, model });
 
 // Legacy — kept for compat
 export const adminGetApiKeySet = (): Promise<boolean> =>
   invoke("admin_get_api_key_set");
 
-export const adminSetApiKey = (key: string): Promise<void> =>
-  invoke("admin_set_api_key", { key });
+export const adminSetApiKey = (actorUserId: string, key: string): Promise<void> =>
+  invoke("admin_set_api_key", { actorUserId, key });
 
 export const aiChat = (input: AiChatInput): Promise<AiChatResponse> =>
   invoke("ai_chat", { input });
@@ -356,8 +389,22 @@ export const aiClearHistory = (
 
 // ─── Back-office admin commands ───────────────────────────────────────────────
 
-export const adminListProducts = (): Promise<AdminProduct[]> =>
-  invoke("admin_list_products");
+export interface AdminProductPage {
+  items: AdminProduct[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export const adminListProducts = (
+  opts?: { search?: string; categoryId?: string; offset?: number; limit?: number }
+): Promise<AdminProductPage> =>
+  invoke("admin_list_products", {
+    search: opts?.search ?? null,
+    categoryId: opts?.categoryId ?? null,
+    offset: opts?.offset ?? 0,
+    limit: opts?.limit ?? 100,
+  });
 
 export const adminCreateProduct = (input: {
   category_id: string; name: string; sku?: string; barcode?: string;
@@ -383,10 +430,38 @@ export const adminListCategories = (): Promise<CategoryRow[]> =>
 export const adminListTaxRules = (): Promise<TaxRuleRow[]> =>
   invoke("admin_list_tax_rules");
 
+export const adminSaveTaxRule = (input: {
+  tax_rule_id?: string;
+  name: string;
+  rate_percent: number;
+  inclusive: boolean;
+  is_active: boolean;
+  actor_user_id: string;
+}): Promise<TaxRuleRow> =>
+  invoke("admin_save_tax_rule", { input });
+
 export const adminSaveCategory = (input: {
   category_id?: string; name: string; sort_order: number; is_active: boolean; actor_user_id: string;
 }): Promise<CategoryRow> =>
   invoke("admin_save_category", { input });
+
+// Bulk CSV import
+export interface BulkCategoryRow { name: string; sort_order?: number; }
+export interface BulkProductRow {
+  name: string; category_name: string; price: string;
+  sku?: string; barcode?: string;
+  /** Pipe-separated barcodes, e.g. "12345|67890". Takes priority over `barcode`. */
+  barcodes?: string;
+  track_inventory?: boolean; tax_rule_name?: string;
+}
+export interface BulkRowError { row: number; name: string; reason: string; }
+export interface BulkImportResult { inserted: number; skipped: number; errors: BulkRowError[]; }
+
+export const adminBulkImportCategories = (rows: BulkCategoryRow[], actorUserId: string): Promise<BulkImportResult> =>
+  invoke("admin_bulk_import_categories", { rows, actorUserId });
+
+export const adminBulkImportProducts = (rows: BulkProductRow[], actorUserId: string): Promise<BulkImportResult> =>
+  invoke("admin_bulk_import_products", { rows, actorUserId });
 
 export const adminListUsersAll = (): Promise<AdminUserRow[]> =>
   invoke("admin_list_users_all");
@@ -406,8 +481,22 @@ export const adminUpdateUser = (input: {
 
 // ─── Inventory commands ───────────────────────────────────────────────────────
 
+export interface StockLevelPage {
+  items: StockLevel[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
 export const inventoryGetLevels = (): Promise<StockLevel[]> =>
   invoke("inventory_get_levels");
+
+export const inventoryGetLevelsPaged = (
+  search: string,
+  offset: number,
+  limit: number,
+): Promise<StockLevelPage> =>
+  invoke("inventory_get_levels_paged", { search: search || null, offset, limit });
 
 export const inventoryGetLowStock = (): Promise<StockLevel[]> =>
   invoke("inventory_get_low_stock");
@@ -484,8 +573,8 @@ export const customerUpdate = (input: {
 export const customerGet = (customerId: string): Promise<CustomerRow> =>
   invoke("customer_get", { customerId });
 
-export const customerAddLoyalty = (customerId: string, points: number): Promise<number> =>
-  invoke("customer_add_loyalty", { customerId, points });
+export const customerAddLoyalty = (actorUserId: string, customerId: string, points: number): Promise<number> =>
+  invoke("customer_add_loyalty", { actorUserId, customerId, points });
 
 // ─── Phase 10b — Devices ──────────────────────────────────────────────────────
 
@@ -512,6 +601,14 @@ export const checkForUpdates = (): Promise<string | null> =>
 
 // ─── Phase 10b — Thermal printer ─────────────────────────────────────────────
 
+export interface PortEntry {
+  port: string;
+  label: string;
+}
+
+export const thermalListPorts = (): Promise<PortEntry[]> =>
+  invoke("thermal_list_ports");
+
 export const thermalGetConfig = (): Promise<ThermalConfig> =>
   invoke("thermal_get_config");
 
@@ -523,6 +620,11 @@ export const thermalPrintTest = (): Promise<string> =>
 
 export const printReceiptRaw = (storeName: string, lines: string[]): Promise<string> =>
   invoke("print_receipt_raw", { storeName, lines });
+
+/** Open the cash drawer connected to the ESC/POS printer's RJ-11 port.
+ *  Returns "opened" on success, "no_printer" if thermal printing is disabled. */
+export const openCashDrawer = (): Promise<string> =>
+  invoke("open_cash_drawer");
 
 // ─── Cash events ──────────────────────────────────────────────────────────────
 
@@ -553,11 +655,11 @@ export const cashNoSale = (
 
 // ─── Product barcodes ─────────────────────────────────────────────────────────
 
-export const productBarcodeAdd = (product_id: string, barcode: string): Promise<ProductBarcodeRow> =>
-  invoke("product_barcode_add", { productId: product_id, barcode });
+export const productBarcodeAdd = (actorUserId: string, product_id: string, barcode: string): Promise<ProductBarcodeRow> =>
+  invoke("product_barcode_add", { actorUserId, productId: product_id, barcode });
 
-export const productBarcodeRemove = (barcode_id: string): Promise<void> =>
-  invoke("product_barcode_remove", { barcodeId: barcode_id });
+export const productBarcodeRemove = (actorUserId: string, barcode_id: string): Promise<void> =>
+  invoke("product_barcode_remove", { actorUserId, barcodeId: barcode_id });
 
 export const productBarcodesList = (product_id: string): Promise<ProductBarcodeRow[]> =>
   invoke("product_barcodes_list", { productId: product_id });
@@ -669,6 +771,10 @@ export function whatsappSaveConfig(benefitNumber: string, actorUserId: string): 
   return invoke("whatsapp_save_config", { benefitNumber, actorUserId });
 }
 
+export function whatsappImportContacts(actorUserId: string): Promise<ImportContactsResult> {
+  return invoke("whatsapp_import_contacts", { actorUserId });
+}
+
 export function setupSaveBenefitNumber(benefitNumber: string): Promise<void> {
   return invoke("setup_save_benefit_number", { benefitNumber });
 }
@@ -691,3 +797,61 @@ export const migrationExecute = (
   onEvent: Channel<MigrationProgress>,
 ): Promise<void> =>
   invoke("migration_execute", { path, mapping, currencyExponent, onEvent });
+
+// ── Migration extended tools ──────────────────────────────────────────────────
+
+export const migrationConnectTest = (
+  dbType: string,
+  connStr: string,
+): Promise<ConnectTestResult> =>
+  invoke("migration_connect_test", { dbType, connStr });
+
+export const migrationListTables = (
+  dbType: string,
+  connStr: string,
+): Promise<RemoteTableInfo[]> =>
+  invoke("migration_list_tables", { dbType, connStr });
+
+export const migrationQueryRemote = (
+  dbType: string,
+  connStr: string,
+  query: string,
+  maxRows?: number,
+): Promise<QueryResult> =>
+  invoke("migration_query_remote", { dbType, connStr, query, maxRows });
+
+export const migrationListProcesses = (
+  filter?: string,
+): Promise<ProcessInfo[]> =>
+  invoke("migration_list_processes", { filter });
+
+export const migrationFindDbFiles = (
+  extraPaths?: string[],
+): Promise<DbFileInfo[]> =>
+  invoke("migration_find_db_files", { extraPaths });
+
+export const migrationReadFile = (
+  path: string,
+  maxChars?: number,
+): Promise<string> =>
+  invoke("migration_read_file", { path, maxChars });
+
+export const migrationDecompress = (
+  archivePath: string,
+  destDir?: string,
+): Promise<DecompressResult> =>
+  invoke("migration_decompress", { archivePath, destDir });
+
+export const migrationZanposStats = (): Promise<ZanposStats> =>
+  invoke("migration_zanpos_stats");
+
+export const migrationRollback = (
+  sinceIso: string,
+): Promise<RollbackResult> =>
+  invoke("migration_rollback", { sinceIso });
+
+export const migrationAgentChat = (
+  history: ChatMessage[],
+  message: string,
+): Promise<string> =>
+  invoke("migration_agent_chat", { input: { history, message } });

@@ -2,6 +2,7 @@ use crate::errors::AppResult;
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use tauri::State;
+use ulid::Ulid;
 
 const SIDECAR_URL: &str = "http://127.0.0.1:3131";
 
@@ -30,15 +31,15 @@ pub struct SendDeliveryInput {
 // ─── Message builder ──────────────────────────────────────────────────────────
 
 pub struct WhatsAppDeliveryParams<'a> {
-    pub receipt_number:    &'a str,
-    pub net_total_minor:   i64,
+    pub receipt_number: &'a str,
+    pub net_total_minor: i64,
     pub currency_exponent: i32,
-    pub address_text:      &'a str,
-    pub house_number:      Option<&'a str>,
-    pub area:              Option<&'a str>,
-    pub store_name:        &'a str,
-    pub store_phone:       Option<&'a str>,
-    pub benefit_number:    Option<&'a str>,
+    pub address_text: &'a str,
+    pub house_number: Option<&'a str>,
+    pub area: Option<&'a str>,
+    pub store_name: &'a str,
+    pub store_phone: Option<&'a str>,
+    pub benefit_number: Option<&'a str>,
 }
 
 /// Format minor units to decimal string, e.g. 1500 with exp=3 → "1.500"
@@ -48,7 +49,7 @@ fn fmt_money(minor: i64, exp: i32) -> String {
     }
     let divisor = 10_i64.pow(exp as u32);
     let whole = minor / divisor;
-    let frac  = minor % divisor;
+    let frac = minor % divisor;
     format!("{}.{:0>width$}", whole, frac.abs(), width = exp as usize)
 }
 
@@ -89,8 +90,8 @@ pub fn build_delivery_whatsapp_message(p: &WhatsAppDeliveryParams) -> String {
 
     let footer = match (p.store_name, p.store_phone) {
         (n, Some(ph)) if !n.is_empty() => format!("\n_{}  •  {}_", n, ph),
-        (n, None) if !n.is_empty()     => format!("\n_{}_", n),
-        _                               => String::new(),
+        (n, None) if !n.is_empty() => format!("\n_{}_", n),
+        _ => String::new(),
     };
 
     format!(
@@ -108,14 +109,14 @@ pub fn build_delivery_whatsapp_message(p: &WhatsAppDeliveryParams) -> String {
          ---\
          {footer}\n\
          شكراً لطلبك — Thank you 🙏",
-        receipt    = p.receipt_number,
-        total      = total,
-        address    = p.address_text,
-        loc_en     = location_line_en,
+        receipt = p.receipt_number,
+        total = total,
+        address = p.address_text,
+        loc_en = location_line_en,
         benefit_en = benefit_section_en,
-        loc_ar     = location_line_ar,
+        loc_ar = location_line_ar,
         benefit_ar = benefit_section_ar,
-        footer     = footer,
+        footer = footer,
     )
 }
 
@@ -124,11 +125,17 @@ pub fn build_delivery_whatsapp_message(p: &WhatsAppDeliveryParams) -> String {
 #[tauri::command]
 pub async fn whatsapp_status(_state: State<'_, AppState>) -> AppResult<WhatsAppStatus> {
     match reqwest::get(format!("{}/status", SIDECAR_URL)).await {
-        Ok(resp) => Ok(resp.json::<WhatsAppStatus>().await.unwrap_or(WhatsAppStatus {
+        Ok(resp) => Ok(resp
+            .json::<WhatsAppStatus>()
+            .await
+            .unwrap_or(WhatsAppStatus {
+                connected: false,
+                qr: None,
+            })),
+        Err(_) => Ok(WhatsAppStatus {
             connected: false,
-            qr:        None,
-        })),
-        Err(_) => Ok(WhatsAppStatus { connected: false, qr: None }),
+            qr: None,
+        }),
     }
 }
 
@@ -137,12 +144,11 @@ pub async fn whatsapp_send_delivery(
     input: SendDeliveryInput,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    let benefit_number: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM app_config WHERE key = 'whatsapp_benefit_number'",
-    )
-    .fetch_optional(&state.db)
-    .await?
-    .flatten();
+    let benefit_number: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'whatsapp_benefit_number'")
+            .fetch_optional(&state.db)
+            .await?
+            .flatten();
 
     let store_name: Option<String> =
         sqlx::query_scalar("SELECT name FROM branches WHERE is_active = 1 LIMIT 1")
@@ -159,15 +165,15 @@ pub async fn whatsapp_send_delivery(
     // Use frontend-built message if provided, otherwise fall back to Rust builder
     let message = input.message_override.clone().unwrap_or_else(|| {
         build_delivery_whatsapp_message(&WhatsAppDeliveryParams {
-            receipt_number:    &input.receipt_number,
-            net_total_minor:   input.net_total_minor,
+            receipt_number: &input.receipt_number,
+            net_total_minor: input.net_total_minor,
             currency_exponent: input.currency_exponent,
-            address_text:      &input.address_text,
-            house_number:      input.house_number.as_deref(),
-            area:              input.area.as_deref(),
-            store_name:        store_name.as_deref().unwrap_or(""),
-            store_phone:       store_phone.as_deref(),
-            benefit_number:    benefit_number.as_deref(),
+            address_text: &input.address_text,
+            house_number: input.house_number.as_deref(),
+            area: input.area.as_deref(),
+            store_name: store_name.as_deref().unwrap_or(""),
+            store_phone: store_phone.as_deref(),
+            benefit_number: benefit_number.as_deref(),
         })
     });
 
@@ -250,12 +256,11 @@ pub async fn whatsapp_payment_reminder(
     input: PaymentReminderInput,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    let benefit_number: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM app_config WHERE key = 'whatsapp_benefit_number'",
-    )
-    .fetch_optional(&state.db)
-    .await?
-    .flatten();
+    let benefit_number: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'whatsapp_benefit_number'")
+            .fetch_optional(&state.db)
+            .await?
+            .flatten();
 
     let amount = fmt_money(input.amount_minor, input.currency_exponent);
 
@@ -272,7 +277,10 @@ pub async fn whatsapp_payment_reminder(
              يرجى إرسال المبلغ عبر BenefitPay إلى: {bn}\n\
              ثم أرسل لنا صورة من إيصال الدفع للتأكيد. 🧾\n\n\
              شكراً! 🙏",
-            r = input.receipt_number, cur = input.currency, amount = amount, bn = bn,
+            r = input.receipt_number,
+            cur = input.currency,
+            amount = amount,
+            bn = bn,
         ),
         None => format!(
             "💳 Payment Reminder — Order #{r}\n\
@@ -284,10 +292,113 @@ pub async fn whatsapp_payment_reminder(
              المبلغ المستحق: {amount} {cur}\n\n\
              يرجى إرسال لنا صورة من إيصال الدفع للتأكيد. 🧾\n\n\
              شكراً! 🙏",
-            r = input.receipt_number, cur = input.currency, amount = amount,
+            r = input.receipt_number,
+            cur = input.currency,
+            amount = amount,
         ),
     };
     send_raw(&input.to, &message).await
+}
+
+// ─── Contact import ──────────────────────────────────────────────────────────
+
+/// One contact entry returned by the sidecar GET /contacts endpoint.
+#[derive(Debug, Deserialize)]
+struct SidecarContact {
+    id: String,   // e.g. "97333050666@s.whatsapp.net"
+    name: String, // push name or address-book name
+}
+
+/// Result returned to the frontend after a contact import run.
+#[derive(Debug, Serialize)]
+pub struct ImportContactsResult {
+    pub imported: usize,
+    pub skipped: usize,
+    pub total: usize,
+}
+
+/// Fetch all WhatsApp contacts from the sidecar and import them into the
+/// `customers` table.  Duplicates (matched by phone number) are silently
+/// skipped via INSERT OR IGNORE on the UNIQUE index added in migration 0023.
+#[tauri::command]
+pub async fn whatsapp_import_contacts(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<ImportContactsResult> {
+    // Only managers and owners may import contacts.
+    crate::commands::rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+
+    // Fetch contacts from the Node sidecar.
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{}/contacts", SIDECAR_URL))
+        .send()
+        .await
+        .map_err(|e| crate::errors::AppError::Internal(format!("Sidecar unreachable: {e}")))?;
+
+    if !resp.status().is_success() {
+        return Err(crate::errors::AppError::Internal(
+            "Failed to fetch contacts from sidecar".into(),
+        ));
+    }
+
+    let contacts: Vec<SidecarContact> = resp
+        .json()
+        .await
+        .map_err(|e| crate::errors::AppError::Internal(format!("Bad contacts response: {e}")))?;
+
+    // Resolve the active branch.
+    let branch_id: String = sqlx::query_scalar(
+        "SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1",
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .flatten()
+    .ok_or_else(|| crate::errors::AppError::Internal("No active branch found".into()))?;
+
+    let total = contacts.len();
+    let mut imported = 0usize;
+
+    for contact in &contacts {
+        // Strip @s.whatsapp.net to get the bare phone number.
+        let bare = contact.id.split('@').next().unwrap_or("").trim();
+        if bare.is_empty() {
+            continue;
+        }
+        // Normalise: ensure the number is prefixed with '+'.
+        let phone = if bare.starts_with('+') {
+            bare.to_string()
+        } else {
+            format!("+{}", bare)
+        };
+
+        let customer_id = Ulid::new().to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let rows = sqlx::query(
+            "INSERT OR IGNORE INTO customers \
+             (customer_id, branch_id, name, phone, loyalty_points, created_at) \
+             VALUES (?, ?, ?, ?, 0, ?)",
+        )
+        .bind(&customer_id)
+        .bind(&branch_id)
+        .bind(&contact.name)
+        .bind(&phone)
+        .bind(&now)
+        .execute(&state.db)
+        .await?
+        .rows_affected();
+
+        if rows > 0 {
+            imported += 1;
+        }
+    }
+
+    Ok(ImportContactsResult {
+        imported,
+        skipped: total - imported,
+        total,
+    })
 }
 
 /// Internal helper: POST a raw message to the sidecar /send endpoint.
@@ -315,15 +426,15 @@ mod tests {
 
     fn base_params<'a>() -> WhatsAppDeliveryParams<'a> {
         WhatsAppDeliveryParams {
-            receipt_number:    "0042",
-            net_total_minor:   1500,
+            receipt_number: "0042",
+            net_total_minor: 1500,
             currency_exponent: 3,
-            address_text:      "Block 5, Road 123",
-            house_number:      Some("12"),
-            area:              Some("Riffa"),
-            store_name:        "ZAN Café",
-            store_phone:       Some("+97317001234"),
-            benefit_number:    Some("33050666"),
+            address_text: "Block 5, Road 123",
+            house_number: Some("12"),
+            area: Some("Riffa"),
+            store_name: "ZAN Café",
+            store_phone: Some("+97317001234"),
+            benefit_number: Some("33050666"),
         }
     }
 
@@ -336,7 +447,10 @@ mod tests {
     #[test]
     fn test_message_contains_formatted_total() {
         let msg = build_delivery_whatsapp_message(&base_params());
-        assert!(msg.contains("1.500"), "BHD with 3 decimals: 1500 minor → 1.500");
+        assert!(
+            msg.contains("1.500"),
+            "BHD with 3 decimals: 1500 minor → 1.500"
+        );
     }
 
     #[test]
@@ -348,7 +462,10 @@ mod tests {
     #[test]
     fn test_message_contains_arabic_section() {
         let msg = build_delivery_whatsapp_message(&base_params());
-        assert!(msg.contains("تم تأكيد"), "must contain Arabic confirmation text");
+        assert!(
+            msg.contains("تم تأكيد"),
+            "must contain Arabic confirmation text"
+        );
         assert!(msg.contains("BenefitPay"), "benefit section in Arabic too");
     }
 
@@ -356,11 +473,14 @@ mod tests {
     fn test_message_omits_location_when_empty() {
         let params = WhatsAppDeliveryParams {
             house_number: None,
-            area:         None,
+            area: None,
             ..base_params()
         };
         let msg = build_delivery_whatsapp_message(&params);
-        assert!(!msg.contains("🏠"), "no house emoji when house+area both absent");
+        assert!(
+            !msg.contains("🏠"),
+            "no house emoji when house+area both absent"
+        );
     }
 
     #[test]
@@ -370,14 +490,17 @@ mod tests {
             ..base_params()
         };
         let msg = build_delivery_whatsapp_message(&params);
-        assert!(!msg.contains("BenefitPay"), "benefit section absent when unconfigured");
+        assert!(
+            !msg.contains("BenefitPay"),
+            "benefit section absent when unconfigured"
+        );
     }
 
     #[test]
     fn test_fmt_money_3_decimals() {
         assert_eq!(fmt_money(1500, 3), "1.500");
         assert_eq!(fmt_money(1001, 3), "1.001");
-        assert_eq!(fmt_money(500,  3), "0.500");
+        assert_eq!(fmt_money(500, 3), "0.500");
     }
 
     #[test]

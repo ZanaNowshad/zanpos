@@ -380,6 +380,16 @@ export interface SaleListRow {
   payment_methods: string;
 }
 
+/** Paginated wrapper returned by report_sales_list (F-BIZ-002 / F-INT-001).
+ *  `total` is the full count of matching rows ignoring limit/offset,
+ *  allowing callers to detect truncation and implement pagination. */
+export interface SaleListPage {
+  items: SaleListRow[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
 // ─── Phase 6: Back-office admin types ────────────────────────────────────────
 
 export interface AdminProduct {
@@ -486,6 +496,7 @@ export interface TaxRuleRow {
   name: string;
   rate_basis_points: number;
   inclusive: boolean;
+  is_active: boolean;
 }
 
 export interface AdminUserRow {
@@ -528,6 +539,7 @@ export interface AppConfig {
   receipt_header: string | null;
   receipt_footer: string | null;
   tax_number: string | null;
+  cr_number: string | null;
   whatsapp_benefit_number: string | null;
 }
 
@@ -542,6 +554,7 @@ export interface BranchSettings {
   receipt_header: string | null;
   receipt_footer: string | null;
   tax_number: string | null;
+  cr_number: string | null;
 }
 
 export interface BusinessFlags {
@@ -716,6 +729,12 @@ export interface WhatsAppStatus {
   qr?: string; // base64 PNG data URL when QR is pending
 }
 
+export interface ImportContactsResult {
+  imported: number;
+  skipped: number;
+  total: number;
+}
+
 export interface SendDeliveryInput {
   to: string;
   receipt_number: string;
@@ -771,3 +790,59 @@ export type MigrationProgress =
   | { type: "sheet_done"; sheet: string; target: string; inserted: number; skipped: number }
   | { type: "done"; message: string }
   | { type: "error"; message: string };
+
+// ── Migration extended tools ──────────────────────────────────────────────────
+
+export interface ConnectTestResult {
+  success: boolean;
+  message: string;
+  server_version: string | null;
+  db_type: string;
+}
+
+export interface RemoteTableInfo {
+  name: string;
+  row_count: number;
+  columns: string[];
+}
+
+export interface QueryResult {
+  columns: string[];
+  rows: string[][];
+  row_count: number;
+  truncated: boolean;
+}
+
+export interface ProcessInfo {
+  name: string;
+  pid: string;
+  memory_kb: string;
+}
+
+export interface DbFileInfo {
+  path: string;
+  size_bytes: number;
+  file_type: string;
+  modified: string;
+}
+
+export interface DecompressResult {
+  extracted_files: string[];
+  db_files: string[];
+  dest_dir: string;
+  error: string | null;
+}
+
+export interface ZanposStats {
+  products: number;
+  categories: number;
+  customers: number;
+  sales: number;
+  sale_items: number;
+  stock_levels: number;
+}
+
+export interface RollbackResult {
+  deleted_counts: [string, number][];
+  total_deleted: number;
+}

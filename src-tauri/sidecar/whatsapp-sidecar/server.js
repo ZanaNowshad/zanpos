@@ -1,5 +1,15 @@
 "use strict";
 
+// ── Polyfill globalThis.crypto for pkg's bundled Node 18.5.0 ──────────────────
+// pkg bundles an old Node 18 runtime that doesn't expose WebCrypto on globalThis.
+// Baileys v6 uses `globalThis.crypto.subtle` directly, so we patch it first.
+if (!globalThis.crypto) {
+  const nodeCrypto = require("node:crypto");
+  if (nodeCrypto.webcrypto) {
+    globalThis.crypto = nodeCrypto.webcrypto;
+  }
+}
+
 const express = require("express");
 const QRCode  = require("qrcode");
 const {
@@ -19,10 +29,14 @@ const sessionDir = (() => {
 const PORT = 3131;
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let sock        = null;
-let qrDataUrl   = null;   // base64 PNG data URL, null when connected or idle
-let isConnected = false;
-let isStarting  = false;
+let sock           = null;
+let qrDataUrl      = null;   // base64 PNG data URL, null when connected or idle
+let isConnected    = false;
+let isStarting     = false;
+/** Contacts accumulated from Baileys contacts.upsert events.
+ *  Keyed by JID (e.g. "97333050666@s.whatsapp.net"), value { id, name }.
+ *  Persists across reconnects so contacts accumulate over the sidecar's lifetime. */
+let contactsMap    = {};
 
 const logger = pino({ level: "silent" }); // suppress Baileys noise
 
@@ -43,6 +57,15 @@ async function startBaileys() {
     });
 
     sock.ev.on("creds.update", saveCreds);
+
+    // Accumulate contacts from Baileys — fires with all contacts shortly after connect
+    sock.ev.on("contacts.upsert", (contacts) => {
+      for (const c of contacts) {
+        // Prefer the push name ("notify"), fall back to address-book name, then bare phone
+        const name = c.notify || c.name || c.id.split("@")[0] || c.id;
+        contactsMap[c.id] = { id: c.id, name };
+      }
+    });
 
     sock.ev.on("connection.update", async (update) => {
       const { connection, lastDisconnect, qr } = update;
@@ -109,6 +132,16 @@ app.post("/send", async (req, res) => {
     console.error("[wa-sidecar] Send failed:", err.message);
     res.json({ ok: false, error: err.message });
   }
+});
+
+/** GET /contacts → [{ id: string, name: string }]
+ *  Returns all contacts accumulated via contacts.upsert events.
+ *  Only individual-user JIDs (@s.whatsapp.net) are included — groups are excluded. */
+app.get("/contacts", (_req, res) => {
+  const individual = Object.values(contactsMap).filter(c =>
+    typeof c.id === "string" && c.id.endsWith("@s.whatsapp.net"),
+  );
+  res.json(individual);
 });
 
 /** POST /disconnect → { ok: bool } */

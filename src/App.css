@@ -4509,7 +4509,7 @@ textarea.field-input { resize: vertical; }
 }
 
 .bo-list-pane {
-  width: 460px;       /* widened from 380 to fit search + 3 action buttons */
+  width: 480px;       /* widened from 380 to fit search + 3 action buttons */
   min-width: 320px;
   display: flex;
   flex-direction: column;
@@ -4637,7 +4637,7 @@ textarea.field-input { resize: vertical; }
 
 .bo-label {
   display: block;
-  font-size: 0.78rem;
+  font-size: 0.875rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-dim);
@@ -7413,24 +7413,24 @@ label {
 .discount-mode-tab { padding: 12px; min-height: 56px; font-size: 0.95rem; }
 
 /* ── BO header + tabs ────────────────────────────────────────────────────── */
-.bo-header { height: 56px; }
+.bo-header { height: 60px; }
 .bo-tab {
-  padding: 0 18px;
-  font-size: 0.85rem;
-  /* height inherited from 56px header via align-items:stretch */
+  padding: 0 20px;
+  font-size: 0.94rem;
+  /* height inherited from 60px header via align-items:stretch */
 }
 
-/* ── BO list rows — 52 px minimum ────────────────────────────────────────── */
+/* ── BO list rows — 72 px minimum ────────────────────────────────────────── */
 .bo-list-row {
-  padding: 12px 12px;
-  min-height: 52px;
+  padding: 16px 14px;
+  min-height: 72px;
 }
 
-/* ── BO form inputs — 48 px ──────────────────────────────────────────────── */
-.bo-input  { padding: 12px 14px; font-size: 0.95rem; min-height: 48px; }
-.bo-select { padding: 12px 14px; font-size: 0.95rem; min-height: 48px; }
-.bo-search { padding: 10px 12px; font-size: 0.92rem; min-height: 44px; }
-.bo-add-btn { min-height: 44px; padding: 10px 18px; }
+/* ── BO form inputs — 56 px ──────────────────────────────────────────────── */
+.bo-input  { padding: 14px 16px; font-size: 1rem; min-height: 56px; }
+.bo-select { padding: 14px 16px; font-size: 1rem; min-height: 56px; }
+.bo-search { padding: 14px 14px; font-size: 1rem; min-height: 56px; }
+.bo-add-btn { min-height: 52px; padding: 12px 20px; font-size: 0.875rem; }
 
 /* ── Modal field inputs — 56 px ──────────────────────────────────────────── */
 .field-input {
@@ -7443,7 +7443,7 @@ label {
 .bo-close-btn { min-height: 40px; padding: 8px 14px; font-size: 0.82rem; }
 
 /* ── Settings subnav items ───────────────────────────────────────────────── */
-.settings-subnav-item { padding: 0 16px; font-size: 0.88rem; height: 48px; }
+.settings-subnav-item { padding: 0 18px; font-size: 0.9rem; height: 52px; }
 
 /* ── Report preset + section tabs ────────────────────────────────────────── */
 .rpt-preset-btn  { padding: 10px 18px; min-height: 44px; font-size: 0.88rem; }
@@ -7486,6 +7486,15 @@ label {
 /* ── Void / print label buttons in BO ───────────────────────────────────── */
 .rpt-void-btn { padding: 8px 14px; min-height: 40px; }
 .bo-label-btn { padding: 0 14px; min-height: 52px; }
+
+/* ── BO form action buttons — 56 px ─────────────────────────────────────── */
+.bo-form-actions .btn-primary,
+.bo-form-actions .btn-secondary,
+.bo-form-actions .btn-danger { min-height: 56px; }
+
+/* ── BO form pane section spacing ────────────────────────────────────────── */
+.bo-form-pane { gap: 24px; }
+.bo-label { margin-top: 20px; }
 
 /* ── User cards on login screen ──────────────────────────────────────────── */
 .user-card { padding: 28px 16px 24px; }
@@ -11206,7 +11215,8 @@ label {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px 16px;
+  padding: 16px 18px;
+  min-height: 64px;
   border-bottom: 1px solid var(--border2);
   background: var(--surface);
   transition: background 0.1s;
@@ -11233,8 +11243,8 @@ label {
 .biz-toggle {
   position: relative;
   flex-shrink: 0;
-  width: 44px;
-  height: 24px;
+  width: 52px;
+  height: 28px;
   cursor: pointer;
 }
 .biz-toggle input {
@@ -11256,8 +11266,8 @@ label {
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   background: var(--text-muted);
   border-radius: 50%;
   transition: transform 0.18s, background 0.18s;
@@ -11267,7 +11277,7 @@ label {
   border-color: var(--accent);
 }
 .biz-toggle input:checked + .biz-toggle-track::after {
-  transform: translateX(22px);
+  transform: translateX(24px);
   background: var(--bg);
 }
 

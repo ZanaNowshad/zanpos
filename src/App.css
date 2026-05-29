@@ -7304,13 +7304,11 @@ label {
   font-weight: 600;
 }
 
-/* ── Barcode input — taller ───────────────────────────────────────────────── */
-.barcode-input {
-  height: 64px;
-  padding: 0 52px 0 40px;
-  font-size: 1.1rem;
+.barcode-dropdown-item {
+  min-height: var(--touch-md);
+  font-size: 1rem;
+  padding: 14px 16px;
 }
-.barcode-dropdown-item { min-height: 56px; font-size: 1rem; padding: 14px 16px; }
 
 
 /* ── Cart qty ± bigger touch size ─────────────────────────────────────────── */
@@ -10793,7 +10791,7 @@ label {
   border: 1px solid #D0D5DD;
   border-radius: 14px;
   color: var(--text);
-  font-size: 17px;
+  font-size: 1.1rem;
   font-weight: 500;
 }
 .barcode-input:focus {
@@ -10824,7 +10822,7 @@ label {
 .category-tabs {
   min-height: 56px;
   padding: 0 12px;
-  gap: 8px;
+  gap: var(--space-2);
   align-items: center;
 }
 .cat-tab {

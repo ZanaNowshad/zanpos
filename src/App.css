@@ -1,19 +1,19 @@
 /* ── ZANPOS — Command Precision Design System ──────────────────────────────── */
-/* Typeface: Inter (UI) · IBM Plex Mono (numerics) · Syne (logo only) */
+/* Typeface: DM Sans (UI) · IBM Plex Mono (numerics) · Bricolage Grotesque (display) */
 
 /* Load fonts — Inter (UI), IBM Plex Mono (numerics), Syne (logo), Syncopate+JetBrains Mono (boot screen) */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Syne:wght@700;800&family=Syncopate:wght@700&family=JetBrains+Mono:wght@400;500&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800;1,9..40,400&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Syncopate:wght@700&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 /* ── Dark theme (default) — Command Precision Enterprise ── */
 :root {
   /* ── Surfaces ── */
-  --bg:       #0C0E13;
-  --surface:  #181B27;   /* was #161921 — lifted so cards pop off bg */
-  --surface2: #1F2335;   /* was #1D2130 */
-  --surface3: #262B42;   /* was #242840 */
-  --surface4: #2E3452;   /* was #2C3150 */
+  --bg:       #0E0C0A;   /* was #0C0E13 — amber-warmed black */
+  --surface:  #1A1713;   /* was #181B27 — warm charcoal */
+  --surface2: #221F1A;   /* was #1F2335 */
+  --surface3: #2C2822;   /* was #262B42 */
+  --surface4: #36322A;   /* was #2E3452 */
 
   /* ── Primary: Warm Gold — action, brand, money, CTAs ── */
   --accent:    #F0A500;
@@ -42,23 +42,24 @@
   --border2: rgba(255,255,255,0.06);  /* was 0.04 */
 
   /* ── Geometry: rounded enterprise cards ── */
-  --radius:    12px;
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 20px;
+  --radius:    14px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
   --radius-pill: 999px;
 
   /* ── Typography ── */
-  --font:         'Inter', 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, sans-serif;
-  --font-display: 'Syne', 'Segoe UI Variable Display', 'Segoe UI Variable', system-ui, sans-serif;
-  --font-mono:    'IBM Plex Mono', 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+  --font:         'DM Sans', 'Segoe UI Variable Text', system-ui, sans-serif;
+  --font-display: 'Bricolage Grotesque', 'Syne', system-ui, sans-serif;
+  --font-mono:    'IBM Plex Mono', 'Cascadia Code', monospace;
 
   /* ── Shadows ── */
   --shadow-sm: 0 1px 4px rgba(0,0,0,0.4);
   --shadow-md: 0 4px 24px rgba(0,0,0,0.5);
   --shadow-lg: 0 12px 48px rgba(0,0,0,0.65);
   --shadow-gold: 0 4px 24px rgba(240,165,0,0.25);
+  --shadow-gold-lg: 0 8px 32px rgba(240,165,0,0.35);
 
   /* ── Semantic focus / interactive ── */
   --color-focus:        #2563EB;
@@ -78,6 +79,9 @@
   --space-5: 20px;
   --space-6: 24px;
   --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
 
   /* ── Z-index layering system ─────────────────────────────────────────────
      Layer tokens enforce a strict visual stacking order.  Use ONLY these
@@ -106,7 +110,25 @@
   --z-lock:       9000;
   --z-top:        9999;
 
-  font-size: 14px;
+  /* ── Touch targets ── */
+  --touch-sm: 44px;
+  --touch-md: 56px;
+  --touch-lg: 72px;
+  --touch-xl: 80px;
+
+  /* ── Button heights ── */
+  --btn-sm:   44px;
+  --btn-md:   56px;
+  --btn-lg:   64px;
+  --btn-xl:   80px;
+
+  /* ── Input height ── */
+  --input-height: 56px;
+
+  /* ── Accent gradient (Charge button, primary CTAs) ── */
+  --accent-gradient: linear-gradient(135deg, #F5AD0A 0%, #D49200 100%);
+
+  font-size: 16px;
 }
 
 /* ── Light theme ── */

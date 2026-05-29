@@ -1,13 +1,20 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { AdminProduct, CategoryRow, ProductBarcodeRow, TaxRuleRow } from "../types";
+import type { AdminProduct, CategoryRow, GhostSummary, ProductBarcodeRow, ProductPrefill, TaxRuleRow } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney, parseMoney } from "../money";
 import * as cmd from "../tauri/commands";
 import BarcodesPrintModal from "./BarcodesPrintModal";
+import BulkImportModal from "./BulkImportModal";
+import GhostBarcodesPanel from "./GhostBarcodesPanel";
 
 interface Props {
   sessionUserId: string;
+  ghostSummary?: GhostSummary;
+  ghostPrefill?: ProductPrefill | null;
+  onGhostPrefillConsumed?: () => void;
+  onGhostCountChange?: () => void;
+  onCreateProductFromGhost?: (prefill: ProductPrefill) => void;
 }
 
 const EMPTY_FORM = {
@@ -20,8 +27,20 @@ const EMPTY_FORM = {
 // Pending barcodes for new products (stored locally, inserted after create)
 type PendingBarcode = { tempId: string; barcode: string };
 
-export default function ProductsTab({ sessionUserId }: Props) {
+const PAGE_SIZE = 100;
+
+export default function ProductsTab({
+  sessionUserId,
+  ghostSummary,
+  ghostPrefill,
+  onGhostPrefillConsumed,
+  onGhostCountChange,
+  onCreateProductFromGhost,
+}: Props) {
   const [products, setProducts]       = useState<AdminProduct[]>([]);
+  const [total, setTotal]             = useState(0);
+  const [offset, setOffset]           = useState(0);
+  const [loading, setLoading]         = useState(false);
   const [categories, setCategories]   = useState<CategoryRow[]>([]);
   const [taxRules, setTaxRules]       = useState<TaxRuleRow[]>([]);
   const [selected, setSelected]       = useState<AdminProduct | null>(null);
@@ -30,7 +49,13 @@ export default function ProductsTab({ sessionUserId }: Props) {
   const [saving, setSaving]           = useState(false);
   const [error, setError]             = useState<string | null>(null);
   const [search, setSearch]           = useState("");
+  const [searchInput, setSearchInput] = useState(""); // debounced into `search`
   const [printProducts, setPrintProducts] = useState<AdminProduct[] | null>(null);
+  const [showBulkImport, setShowBulkImport] = useState(false);
+
+  // Cost/markup helpers (UI-only — not persisted to backend)
+  const [costPrice, setCostPrice]     = useState("");
+  const [markupPct, setMarkupPct]     = useState("");
 
   // Additional barcodes
   const [extraBarcodes, setExtraBarcodes] = useState<ProductBarcodeRow[]>([]); // for editing existing
@@ -42,23 +67,54 @@ export default function ProductsTab({ sessionUserId }: Props) {
   const exp = DEVICE.currency_exponent;
   const cur = DEVICE.currency;
 
+  // Debounce search input → `search` state (300 ms)
   useEffect(() => {
-    Promise.all([
-      cmd.adminListProducts(),
-      cmd.adminListCategories(),
-      cmd.adminListTaxRules(),
-    ]).then(([prods, cats, taxes]) => {
-      setProducts(prods);
-      setCategories(cats.filter(c => c.is_active));
-      setTaxRules(taxes);
-    });
+    const t = setTimeout(() => { setSearch(searchInput); setOffset(0); }, 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  const fetchProducts = useCallback(async (q: string, off: number) => {
+    setLoading(true);
+    try {
+      const page = await cmd.adminListProducts({ search: q, offset: off, limit: PAGE_SIZE });
+      setProducts(page.items);
+      setTotal(page.total);
+      setOffset(off);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchProducts(search, offset);
+  }, [search, offset]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    Promise.all([cmd.adminListCategories(), cmd.adminListTaxRules()])
+      .then(([cats, taxes]) => {
+        setCategories(cats.filter(c => c.is_active));
+        setTaxRules(taxes);
+      });
+  }, []);
+
+  // Pre-fill product form when a ghost barcode "Create Product" is clicked
+  useEffect(() => {
+    if (!ghostPrefill) return;
+    setCreating(true);
+    setForm(prev => ({
+      ...prev,
+      name:    ghostPrefill.name,
+      barcode: ghostPrefill.barcode,
+    }));
+    onGhostPrefillConsumed?.();
+  }, [ghostPrefill]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function startCreate() {
     setSelected(null);
     setCreating(true);
     setForm({ ...EMPTY_FORM, category_id: categories[0]?.category_id ?? "" });
     setError(null);
+    setCostPrice(""); setMarkupPct("");
     setPendingBarcodes([]);
     setExtraBarcodes([]);
     setNewBarcodeInput("");
@@ -82,6 +138,7 @@ export default function ProductsTab({ sessionUserId }: Props) {
       image_path:             p.image_path ?? "",
     });
     setError(null);
+    setCostPrice(""); setMarkupPct("");
     setNewBarcodeInput("");
     setBarcodeError(null);
     // Load existing extra barcodes
@@ -101,7 +158,28 @@ export default function ProductsTab({ sessionUserId }: Props) {
 
   function cancelEdit() {
     setSelected(null); setCreating(false); setError(null);
+    setCostPrice(""); setMarkupPct("");
     setExtraBarcodes([]); setPendingBarcodes([]); setNewBarcodeInput(""); setBarcodeError(null);
+  }
+
+  function handleCostChange(val: string) {
+    setCostPrice(val);
+    const cost = parseMoney(val, exp);
+    const markup = parseFloat(markupPct);
+    if (cost > 0 && !isNaN(markup) && markup >= 0) {
+      const selling = cost * (1 + markup / 100);
+      set("price", formatMoney(Math.round(selling), exp));
+    }
+  }
+
+  function handleMarkupChange(val: string) {
+    setMarkupPct(val);
+    const cost = parseMoney(costPrice, exp);
+    const markup = parseFloat(val);
+    if (cost > 0 && !isNaN(markup) && markup >= 0) {
+      const selling = cost * (1 + markup / 100);
+      set("price", formatMoney(Math.round(selling), exp));
+    }
   }
 
   async function addBarcodeForEdit() {
@@ -110,7 +188,7 @@ export default function ProductsTab({ sessionUserId }: Props) {
     if (!selected) return;
     setBarcodeError(null);
     try {
-      const row = await cmd.productBarcodeAdd(selected.product_id, bc);
+      const row = await cmd.productBarcodeAdd(sessionUserId, selected.product_id, bc);
       setExtraBarcodes(prev => [...prev, row]);
       setNewBarcodeInput("");
       newBarcodeRef.current?.focus();
@@ -122,7 +200,7 @@ export default function ProductsTab({ sessionUserId }: Props) {
   async function removeBarcodeForEdit(barcodeId: string) {
     setBarcodeError(null);
     try {
-      await cmd.productBarcodeRemove(barcodeId);
+      await cmd.productBarcodeRemove(sessionUserId, barcodeId);
       setExtraBarcodes(prev => prev.filter(b => b.barcode_id !== barcodeId));
     } catch (e: unknown) {
       setBarcodeError(typeof e === "string" ? e : "Failed to remove barcode");
@@ -169,11 +247,11 @@ export default function ProductsTab({ sessionUserId }: Props) {
         });
         // Insert pending extra barcodes
         for (const pb of pendingBarcodes) {
-          try { await cmd.productBarcodeAdd(created.product_id, pb.barcode); } catch { /* skip dup */ }
+          try { await cmd.productBarcodeAdd(sessionUserId, created.product_id, pb.barcode); } catch { /* skip dup */ }
         }
-        setProducts(prev => [created, ...prev]);
+        await fetchProducts(search, offset);
       } else if (selected) {
-        const updated = await cmd.adminUpdateProduct({
+        await cmd.adminUpdateProduct({
           product_id: selected.product_id,
           category_id: form.category_id, name: form.name.trim(),
           sku: form.sku.trim() || undefined, barcode: form.barcode.trim() || undefined,
@@ -184,7 +262,7 @@ export default function ProductsTab({ sessionUserId }: Props) {
           updated_by_user_id: sessionUserId,
           image_path: form.image_path.trim() || undefined,
         });
-        setProducts(prev => prev.map(p => p.product_id === updated.product_id ? updated : p));
+        await fetchProducts(search, offset);
       }
       cancelEdit();
     } catch (e: unknown) {
@@ -195,38 +273,73 @@ export default function ProductsTab({ sessionUserId }: Props) {
   }
 
   const showingForm = creating || selected !== null;
-  const filtered = products.filter(p =>
-    !search || p.name.toLowerCase().includes(search.toLowerCase()) ||
-    p.sku?.toLowerCase().includes(search.toLowerCase()) ||
-    p.barcode?.includes(search)
-  );
+
+  async function refreshProducts() {
+    await fetchProducts(search, 0);
+    setOffset(0);
+  }
 
   return (
     <>
     {printProducts && (
       <BarcodesPrintModal products={printProducts} onClose={() => setPrintProducts(null)} />
     )}
+    {showBulkImport && (
+      <BulkImportModal
+        mode="products"
+        sessionUserId={sessionUserId}
+        onClose={() => setShowBulkImport(false)}
+        onDone={refreshProducts}
+      />
+    )}
     <div className="bo-tab-layout">
+      {ghostSummary && (ghostSummary.pending + ghostSummary.found + ghostSummary.not_found) > 0 && (
+        <GhostBarcodesPanel
+          sessionUserId={sessionUserId}
+          summary={ghostSummary}
+          onCreateProduct={(prefill) => onCreateProductFromGhost?.(prefill)}
+          onCountChange={() => onGhostCountChange?.()}
+        />
+      )}
       {/* ── List pane ── */}
       <div className="bo-list-pane">
         <div className="bo-list-header">
           <input
             className="bo-search"
             placeholder="Search products…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
+            value={searchInput}
+            onChange={e => setSearchInput(e.target.value)}
           />
           <button
             className="btn-secondary bo-print-labels-btn"
-            onClick={() => setPrintProducts(filtered.length > 0 ? filtered : products)}
+            onClick={() => setPrintProducts(products)}
             title="Print barcode labels"
           >
             Print Labels
           </button>
+          <button
+            className="btn-secondary bo-import-btn"
+            onClick={() => setShowBulkImport(true)}
+            title="Bulk import products from CSV"
+          >
+            Import CSV
+          </button>
           <button className="btn-primary bo-add-btn" onClick={startCreate}>+ New</button>
         </div>
+        {total > 0 && (
+          <div className="bo-pagination">
+            <span className="bo-pagination-info">
+              {loading ? "Loading…" : `${offset + 1}–${Math.min(offset + products.length, total)} of ${total.toLocaleString()}`}
+            </span>
+            <button className="bo-pagination-btn" disabled={offset === 0 || loading}
+              onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>‹ Prev</button>
+            <button className="bo-pagination-btn" disabled={offset + PAGE_SIZE >= total || loading}
+              onClick={() => setOffset(offset + PAGE_SIZE)}>Next ›</button>
+          </div>
+        )}
         <div className="bo-list">
-          {filtered.map(p => (
+          {loading && products.length === 0 && <div className="bo-empty">Loading…</div>}
+          {products.map(p => (
             <div key={p.product_id} className="bo-list-row-wrap">
               <button
                 className={`bo-list-row ${selected?.product_id === p.product_id ? "bo-list-row-active" : ""} ${!p.is_active ? "bo-list-row-inactive" : ""}`}
@@ -250,8 +363,12 @@ export default function ProductsTab({ sessionUserId }: Props) {
               </button>
             </div>
           ))}
-          {filtered.length === 0 && (
-            <div className="bo-empty">No products found.</div>
+          {!loading && products.length === 0 && (
+            <div className="bo-empty">
+              <div className="bo-empty-icon">📦</div>
+              <p className="bo-empty-title">No products found</p>
+              <p className="bo-empty-hint">Try a different search term, or add a new product.</p>
+            </div>
           )}
         </div>
       </div>
@@ -271,9 +388,29 @@ export default function ProductsTab({ sessionUserId }: Props) {
             {categories.map(c => <option key={c.category_id} value={c.category_id}>{c.name}</option>)}
           </select>
 
-          <label className="bo-label">Price ({cur}) *</label>
-          <input className="bo-input" type="number" min="0" step={Math.pow(10, -exp).toFixed(exp)}
+          <label className="bo-label">Selling Price ({cur}) *</label>
+          <input className="bo-input" type="number" inputMode="decimal" min="0" step={Math.pow(10, -exp).toFixed(exp)}
             value={form.price} onChange={e => set("price", e.target.value)} placeholder={`0.${"0".repeat(exp)}`} />
+
+          <div className="bo-cost-row">
+            <div>
+              <label className="bo-label">Cost Price ({cur})</label>
+              <input className="bo-input" type="number" inputMode="decimal" min="0" step={Math.pow(10, -exp).toFixed(exp)}
+                value={costPrice} onChange={e => handleCostChange(e.target.value)}
+                placeholder={`0.${"0".repeat(exp)}`} />
+            </div>
+            <div>
+              <label className="bo-label">Markup %</label>
+              <input className="bo-input" type="number" inputMode="decimal" min="0" step="0.1"
+                value={markupPct} onChange={e => handleMarkupChange(e.target.value)}
+                placeholder="0" />
+            </div>
+          </div>
+          {costPrice && markupPct && (
+            <p className="bo-cost-hint">
+              Cost {cur} {formatMoney(parseMoney(costPrice, exp), exp)} + {markupPct}% markup = {cur} {form.price}
+            </p>
+          )}
 
           <label className="bo-label">Tax Rule</label>
           <select className="bo-select" value={form.tax_rule_id} onChange={e => set("tax_rule_id", e.target.value)}>

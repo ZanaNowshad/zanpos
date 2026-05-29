@@ -7295,18 +7295,22 @@ label {
 
 /* ── Category tabs — 44 px tall ───────────────────────────────────────────── */
 .cat-tab {
-  padding: 10px 16px;
+  padding: 0 20px;
   min-height: 44px;
+  height: 44px;
   display: inline-flex;
   align-items: center;
-  font-size: 0.8rem;
+  font-size: 0.9rem;
+  font-weight: 600;
 }
 
 /* ── Barcode input — taller ───────────────────────────────────────────────── */
 .barcode-input {
-  padding: 14px 52px 14px 40px;
-  font-size: 1rem;
+  height: 64px;
+  padding: 0 52px 0 40px;
+  font-size: 1.1rem;
 }
+.barcode-dropdown-item { min-height: 56px; font-size: 1rem; padding: 14px 16px; }
 
 
 /* ── Cart qty ± bigger touch size ─────────────────────────────────────────── */
@@ -10779,6 +10783,8 @@ label {
   left: 32px;
   top: 30px;
   color: var(--text-dim);
+  width: 24px;
+  height: 24px;
 }
 .barcode-input {
   height: 64px;
@@ -10818,7 +10824,7 @@ label {
 .category-tabs {
   min-height: 56px;
   padding: 0 12px;
-  gap: 4px;
+  gap: 8px;
   align-items: center;
 }
 .cat-tab {

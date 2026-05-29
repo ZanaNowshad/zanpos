@@ -14,7 +14,6 @@ import EodCashupTab from "./EodCashupTab";
 import BulkStockTakeModal from "./BulkStockTakeModal";
 import SyncQueueModal from "./SyncQueueModal";
 import DeliveriesTab from "./DeliveriesTab";
-import GhostBarcodesPanel from "./GhostBarcodesPanel";
 import type { GhostSummary, ProductPrefill } from "../types";
 import { ghostSummary } from "../tauri/commands";
 

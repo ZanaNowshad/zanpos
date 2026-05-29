@@ -846,3 +846,37 @@ export interface RollbackResult {
   deleted_counts: [string, number][];
   total_deleted: number;
 }
+
+// ── Ghost Barcode types ───────────────────────────────────────────────────────
+
+export interface GhostBarcode {
+  id: string;
+  barcode: string;
+  scan_count: number;
+  first_seen_at: number;
+  last_seen_at: number;
+  status: 'pending' | 'found' | 'not_found' | 'dismissed';
+  product_name: string | null;
+  brand: string | null;
+  category: string | null;
+  image_url: string | null;
+}
+
+export interface GhostSummary {
+  pending: number;
+  found: number;
+  not_found: number;
+}
+
+export interface ProductPrefill {
+  name: string;
+  barcode: string;
+  brand: string | null;
+  category: string | null;
+  image_url: string | null;
+}
+
+export interface ResolveResult {
+  resolved: number;
+  not_found: number;
+}

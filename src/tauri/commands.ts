@@ -56,6 +56,8 @@ import type {
   ImportContactsResult,
   SendDeliveryInput,
   FileSchema,
+  GhostBarcode,
+  GhostSummary,
   MappingConfig,
   MigrationProgress,
   ConnectTestResult,
@@ -67,6 +69,8 @@ import type {
   ZanposStats,
   RollbackResult,
   ChatMessage,
+  ProductPrefill,
+  ResolveResult,
 } from "../types";
 
 // ─── Setup & Settings commands ────────────────────────────────────────────────
@@ -230,6 +234,15 @@ export const posRecordVoid = (
 ): Promise<void> =>
   invoke("pos_record_void", { cartId: cart_id, deviceId: device_id, cashierUserId: cashier_user_id, lineCount: line_count, netTotalMinor: net_total_minor });
 
+export const posCartSummary = (cart: Cart): Promise<{
+  gross_total_minor: number;
+  tax_total_minor: number;
+  discount_total_minor: number;
+  net_total_minor: number;
+  line_count: number;
+}> =>
+  invoke("pos_cart_summary", { cart });
+
 // ─── Held cart commands ───────────────────────────────────────────────────────
 
 export const heldCartSave = (cart: Cart, note?: string): Promise<HeldCartSummary> =>
@@ -254,9 +267,11 @@ export const refundCreate = (
   items: RefundItemInput[],
   reason: string,
   created_by_user_id: string,
-  return_reason_code: string = "other",
+  return_reason_code?: string,
 ): Promise<RefundResult> =>
-  invoke("refund_create", { input: { original_sale_id, items, reason, return_reason_code, created_by_user_id } });
+  invoke("refund_create", {
+    input: { original_sale_id, items, reason, return_reason_code: return_reason_code ?? null, created_by_user_id },
+  });
 
 export const receiptReprint = (receipt_number: string, requesting_user_id: string): Promise<SaleResult> =>
   invoke("receipt_reprint", { receiptNumber: receipt_number, requestingUserId: requesting_user_id });
@@ -528,9 +543,10 @@ export const dbBackup = (destPath: string, actorUserId: string): Promise<string>
 export const reportTaxByDay = (
   branch_id: string,
   from_date: string,
-  to_date: string
+  to_date: string,
+  actor_user_id: string
 ): Promise<Array<{ day: string; transaction_count: number; tax_minor: number; cumulative_minor: number }>> =>
-  invoke("report_tax_by_day", { branchId: branch_id, fromDate: from_date, toDate: to_date });
+  invoke("report_tax_by_day", { branchId: branch_id, fromDate: from_date, toDate: to_date, actorUserId: actor_user_id });
 
 export const auditLogList = (
   from: string,
@@ -857,3 +873,29 @@ export const migrationAgentChat = (
   message: string,
 ): Promise<string> =>
   invoke("migration_agent_chat", { input: { history, message } });
+
+// ── Ghost barcode lookup ──────────────────────────────────────────────────────
+
+/** Record a failed barcode scan. Fire-and-forget — never throws. */
+export const ghostRecord = (barcode: string): Promise<void> =>
+  invoke<void>("ghost_record", { barcode }).catch(() => {});
+
+/** Get counts of pending/found/not_found ghost barcodes. Manager+ only. */
+export const ghostSummary = (actorUserId: string): Promise<GhostSummary> =>
+  invoke("ghost_summary", { actorUserId });
+
+/** Full list of non-dismissed ghost barcodes. Manager+ only. */
+export const ghostList = (actorUserId: string): Promise<GhostBarcode[]> =>
+  invoke("ghost_list", { actorUserId });
+
+/** Run HTTP lookup chain for all pending barcodes. Manager+ only. */
+export const ghostResolve = (actorUserId: string): Promise<ResolveResult> =>
+  invoke("ghost_resolve", { actorUserId });
+
+/** Dismiss a ghost barcode (removes from panel). Manager+ only. */
+export const ghostDismiss = (id: string, actorUserId: string): Promise<void> =>
+  invoke("ghost_dismiss", { id, actorUserId });
+
+/** Get product form pre-fill data from a 'found' ghost barcode. Manager+ only. */
+export const ghostPrefill = (id: string, actorUserId: string): Promise<ProductPrefill> =>
+  invoke("ghost_prefill", { id, actorUserId });

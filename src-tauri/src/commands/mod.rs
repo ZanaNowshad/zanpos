@@ -6,6 +6,7 @@ pub mod cash_commands;
 pub mod customer_commands;
 pub mod delivery_commands;
 pub mod device_commands;
+pub mod ghost_barcode_commands;
 pub mod held_cart_commands;
 pub mod inventory_commands;
 pub mod phase10a_commands;

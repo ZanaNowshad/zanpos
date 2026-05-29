@@ -7396,11 +7396,11 @@ label {
   min-height: 40px;
 }
 
-/* ── Quick amount buttons — 48 px ────────────────────────────────────────── */
+/* ── Quick amount buttons — 64 px ────────────────────────────────────────── */
 .quick-amt-btn {
-  padding: 12px 18px;
-  min-height: 48px;
-  font-size: 0.88rem;
+  padding: 16px 20px;
+  min-height: 64px;
+  font-size: 0.95rem;
 }
 
 /* ── Payment method select + amount input ────────────────────────────────── */
@@ -7409,8 +7409,8 @@ label {
 .split-tendered-input{ padding: 10px 10px; font-size: 0.95rem; min-height: 44px; }
 
 /* ── Discount input — large for easy number entry ────────────────────────── */
-.discount-input { font-size: 1.8rem; padding: 14px 6px; }
-.discount-mode-tab { padding: 10px; min-height: 44px; font-size: 0.9rem; }
+.discount-input { font-size: 1.8rem; padding: 18px 6px; min-height: 64px; }
+.discount-mode-tab { padding: 12px; min-height: 56px; font-size: 0.95rem; }
 
 /* ── BO header + tabs ────────────────────────────────────────────────────── */
 .bo-header { height: 56px; }
@@ -7496,6 +7496,14 @@ label {
 
 /* ── Shift / cash event tabs ─────────────────────────────────────────────── */
 .cash-event-tab { padding: 14px; min-height: 52px; }
+
+/* ── Shift modal — primary button + field input ──────────────────────────── */
+.shift-modal .modal-btn-primary { min-height: 72px; }
+.shift-modal .field-input { min-height: 64px; }
+
+/* ── Confirm action modal — primary + danger buttons ─────────────────────── */
+.confirm-action-modal .modal-btn-primary,
+.confirm-action-modal .modal-btn-danger { min-height: 64px; font-size: 1rem; }
 
 /* ── High-contrast refinements for ALL light themes ───────────────────────── */
 :is([data-theme="light"],[data-theme="blossom"],[data-theme="sky"],[data-theme="sage"]) .pin-dot {
@@ -9963,6 +9971,8 @@ label {
 .dialpad-confirm-btn {
   width: 100%;
   padding: 16px 12px;
+  min-height: 80px;
+  font-size: 1.1rem;
   background: var(--accent);
   border: none;
   border-radius: 12px;

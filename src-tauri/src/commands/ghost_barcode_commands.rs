@@ -213,8 +213,8 @@ async fn lookup_upcitemdb(
     if name.is_empty() {
         return None;
     }
-    let brand     = item.get("brand").and_then(|v| v.as_str()).map(str::to_string);
-    let category  = item.get("category").and_then(|v| v.as_str()).map(str::to_string);
+    let brand     = item.get("brand").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_string);
+    let category  = item.get("category").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_string);
     let image_url = item
         .get("images")
         .and_then(|v| v.get(0))
@@ -263,7 +263,7 @@ async fn lookup_off(
     }
     let brand = product.get("brands").and_then(|v| v.as_str()).map(|s| {
         s.split(',').next().unwrap_or(s).trim().to_string()
-    });
+    }).filter(|s| !s.is_empty());
     let category = product
         .get("categories_tags")
         .and_then(|v| v.get(0))
@@ -291,14 +291,10 @@ async fn lookup_ai(
     barcode: &str,
     pool: &sqlx::SqlitePool,
 ) -> Option<(String, Option<String>, Option<String>)> {
-    let provider: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM app_config WHERE key = 'ai_provider'",
-    )
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
-    .flatten();
+    let provider = crate::db::repositories::ai_admin_repo::get_config(pool, "ai_provider")
+        .await
+        .ok()
+        .flatten();
 
     let prompt = format!(
         "The barcode {} was scanned at a retail POS but was not found in the product database. \
@@ -312,7 +308,16 @@ async fn lookup_ai(
 
     match provider.as_deref() {
         Some("anthropic") | None => {
-            let key = crate::secure_store::get_secret("anthropic_api_key")?;
+            // Prefer OS credential store; fall back to legacy plaintext SQLite key.
+            let key = {
+                let from_os = crate::secure_store::get_secret("anthropic_api_key").unwrap_or_default();
+                if !from_os.is_empty() {
+                    from_os
+                } else {
+                    crate::db::repositories::ai_admin_repo::get_config(pool, "anthropic_api_key")
+                        .await.ok().flatten().unwrap_or_default()
+                }
+            };
             if key.is_empty() {
                 return None;
             }
@@ -340,28 +345,23 @@ async fn lookup_ai(
             parse_ai_json(content)
         }
         Some("openai") => {
-            let key = crate::secure_store::get_secret("openai_api_key")?;
+            // Prefer OS credential store; fall back to legacy plaintext SQLite key.
+            let key = {
+                let from_os = crate::secure_store::get_secret("openai_api_key").unwrap_or_default();
+                if !from_os.is_empty() {
+                    from_os
+                } else {
+                    crate::db::repositories::ai_admin_repo::get_config(pool, "openai_api_key")
+                        .await.ok().flatten().unwrap_or_default()
+                }
+            };
             if key.is_empty() {
                 return None;
             }
-            let base_url: String = sqlx::query_scalar(
-                "SELECT value FROM app_config WHERE key = 'openai_base_url'",
-            )
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten()
-            .flatten()
-            .unwrap_or_else(|| "https://api.openai.com/v1".into());
-            let model: String = sqlx::query_scalar(
-                "SELECT value FROM app_config WHERE key = 'openai_model'",
-            )
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten()
-            .flatten()
-            .unwrap_or_else(|| "gpt-4o-mini".into());
+            let base_url = crate::db::repositories::ai_admin_repo::get_config(pool, "openai_base_url")
+                .await.ok().flatten().unwrap_or_else(|| "https://api.openai.com/v1".into());
+            let model = crate::db::repositories::ai_admin_repo::get_config(pool, "openai_model")
+                .await.ok().flatten().unwrap_or_else(|| "gpt-4o-mini".into());
 
             let body = serde_json::json!({
                 "model": model,
@@ -400,8 +400,9 @@ fn parse_ai_json(text: &str) -> Option<(String, Option<String>, Option<String>)>
     if name.is_empty() {
         return None;
     }
-    let brand    = json.get("brand").and_then(|v| v.as_str()).map(str::to_string);
-    let category = json.get("category").and_then(|v| v.as_str()).map(str::to_string);
+    // Filter out empty strings and literal "null" strings (some models reply with the word "null")
+    let brand    = json.get("brand").and_then(|v| v.as_str()).filter(|s| !s.is_empty() && *s != "null").map(str::to_string);
+    let category = json.get("category").and_then(|v| v.as_str()).filter(|s| !s.is_empty() && *s != "null").map(str::to_string);
     Some((name, brand, category))
 }
 

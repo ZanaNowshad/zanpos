@@ -1119,14 +1119,14 @@ kbd.kbd-primary {
 }
 
 .cart-qty-btn {
-  width: 44px;
-  height: 44px;
+  width: 52px;
+  height: 52px;
   border-radius: var(--radius-sm);
   border: 1.5px solid var(--border);
   background: var(--surface3);
   color: var(--text-dim);
   cursor: pointer;
-  font-size: 1.25rem;
+  font-size: 1.2rem;
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -1168,8 +1168,8 @@ kbd.kbd-primary {
 }
 
 .cart-line-del-btn {
-  width: 44px;
-  height: 44px;
+  width: 52px;
+  height: 52px;
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
   background: transparent;
@@ -6775,10 +6775,10 @@ textarea.field-input { resize: vertical; }
   border-radius: var(--radius-sm);
   color: var(--text-dim);
   cursor: pointer;
-  font-size: 0.9rem;
+  font-size: 1.2rem;
   font-weight: 700;
-  width: 28px;
-  height: 26px;
+  width: 52px;
+  height: 52px;
   display: flex;
   align-items: center;
   justify-content: center;

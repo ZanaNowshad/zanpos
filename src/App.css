@@ -4486,13 +4486,16 @@ textarea.field-input { resize: vertical; }
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--border);
-  overflow: hidden;
+  /* overflow: visible so the list-header buttons are never clipped;
+     the scrollable item list uses its own overflow-y: auto */
+  overflow: visible;
 }
 
 .bo-list-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;        /* buttons wrap to a second row when the pane is narrow */
   gap: 8px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
@@ -4503,6 +4506,7 @@ textarea.field-input { resize: vertical; }
 
 .bo-search {
   flex: 1;
+  min-width: 0;   /* allow shrinking below browser's intrinsic min-width for inputs */
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);

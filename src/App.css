@@ -4481,8 +4481,8 @@ textarea.field-input { resize: vertical; }
 }
 
 .bo-list-pane {
-  width: 380px;
-  min-width: 280px;
+  width: 460px;       /* widened from 380 to fit search + 3 action buttons */
+  min-width: 320px;
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--border);
@@ -4495,7 +4495,7 @@ textarea.field-input { resize: vertical; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;        /* buttons wrap to a second row when the pane is narrow */
+  flex-wrap: wrap;        /* fallback: items wrap instead of overflowing */
   gap: 8px;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
@@ -4506,7 +4506,7 @@ textarea.field-input { resize: vertical; }
 
 .bo-search {
   flex: 1;
-  min-width: 0;   /* allow shrinking below browser's intrinsic min-width for inputs */
+  min-width: 0;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);

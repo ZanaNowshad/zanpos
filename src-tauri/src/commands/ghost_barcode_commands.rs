@@ -68,6 +68,9 @@ pub async fn ghost_record(
     }
     let id = Ulid::new().to_string();
     let now = now_ms();
+    // The WHERE status = 'pending' guard is intentional: once a barcode is
+    // resolved ('found'/'not_found') or dismissed, re-scanning it should NOT
+    // reset its resolved data or increment a stale count. Silently no-op.
     sqlx::query(
         "INSERT INTO unknown_barcodes (id, barcode, scan_count, first_seen_at, last_seen_at)
          VALUES (?, ?, 1, ?, ?)
@@ -143,6 +146,9 @@ pub async fn ghost_dismiss(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    // Intentionally idempotent: if the row was already dismissed (or never
+    // existed), this is a no-op rather than an error.  The manager panel will
+    // have removed the card client-side already, so a 404 here is noise.
     sqlx::query("UPDATE unknown_barcodes SET status = 'dismissed' WHERE id = ?")
         .bind(&id)
         .execute(&state.db)

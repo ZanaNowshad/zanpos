@@ -531,14 +531,14 @@ body {
   align-items: center;
   gap: 4px;
   padding: 12px 4px 10px;
-  width: 72px;
-  min-height: 58px;
+  width: 88px;
+  min-height: 72px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 0.62rem;
+  font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.03em;
   text-transform: uppercase;
@@ -550,6 +550,8 @@ body {
 .pos-sidebar-item svg {
   flex-shrink: 0;
   stroke-width: 1.75;
+  width: 26px;
+  height: 26px;
 }
 
 .pos-sidebar-item:hover {
@@ -571,7 +573,7 @@ body {
   left: 0;
   top: 8px;
   bottom: 8px;
-  width: 3px;
+  width: 4px;
   background: var(--accent);
   border-radius: 0 3px 3px 0;
 }
@@ -7432,7 +7434,7 @@ label {
 .admin-sidebar-item { padding: 12px 12px; min-height: 44px; font-size: 0.85rem; }
 
 /* ── POS sidebar items ───────────────────────────────────────────────────── */
-.pos-sidebar-item { padding: 12px 6px; width: 68px; }
+.pos-sidebar-item { padding: 14px 6px; width: 88px; min-height: 72px; }
 
 /* ── Cust dropdown items ─────────────────────────────────────────────────── */
 .cust-dropdown-item { padding: 12px 14px; min-height: 48px; }

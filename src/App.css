@@ -861,7 +861,7 @@ kbd.kbd-primary {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: var(--space-3) var(--space-3) var(--space-2);
+  padding: 14px 14px 10px;
   cursor: pointer;
   text-align: left;
   display: flex;
@@ -929,7 +929,7 @@ kbd.kbd-primary {
 
 .product-card-sku {
   color: var(--text-muted);
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   letter-spacing: 0.04em;
   font-family: var(--font-mono);
   margin-top: 1px;
@@ -7267,22 +7267,22 @@ label {
 
 /* ── Product grid — tablet columns (4 col on 1024 px landscape) ──────────── */
 .product-grid {
-  grid-template-columns: repeat(auto-fill, minmax(178px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 8px;
 }
 
 /* ── Product card — touch overrides ───────────────────────────────────────── */
 .product-card {
-  min-height: 100px;
-  max-height: 116px;
+  min-height: 140px;
   cursor: pointer;
 }
 .product-card-img-wrap {
   width: 90px;
   min-width: 92px;
 }
-.product-card-name  { font-size: 0.92rem; }
-.product-card-price { font-size: 0.96rem; }
+.product-card-name  { font-size: 0.95rem; }
+.product-card-price { font-size: 1.25rem; }
+.stock-badge { height: 28px; font-size: 0.72rem; padding: 4px 7px; }
 
 /* Tap feedback — scale down on press */
 .product-card:active {

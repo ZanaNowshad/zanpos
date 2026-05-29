@@ -1251,13 +1251,13 @@ kbd.kbd-primary {
   flex-direction: column;
   align-items: flex-end;
   gap: 3px;
-  min-height: 58px;
+  min-height: 68px;
   justify-content: center;
   flex-shrink: 0;
 }
 
 .numpad-multiplier {
-  font-size: 2rem;
+  font-size: 2.25rem;
   font-weight: 900;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
@@ -1278,12 +1278,12 @@ kbd.kbd-primary {
 
 .numpad-custom-btn {
   width: 100%;
-  height: 44px;
+  height: var(--btn-md);
   border-radius: var(--radius-md);
   border: 1px solid rgba(240,165,0,0.35);
   background: var(--accent2);
   color: var(--accent);
-  font-size: 0.88rem;
+  font-size: 0.95rem;
   font-weight: 700;
   font-family: var(--font);
   cursor: pointer;
@@ -1310,9 +1310,9 @@ kbd.kbd-primary {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 0.92rem;
+  font-size: 1rem;
   font-weight: 600;
-  padding: 3px 0;
+  padding: 5px 0;
   color: var(--text-muted);
 }
 .np-total-row span:last-child {
@@ -1338,22 +1338,23 @@ kbd.kbd-primary {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  height: 60px;
+  height: var(--btn-xl);
   padding: 0 18px;
-  background: var(--accent);
+  background: var(--accent-gradient);
   color: var(--accent-t);
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   font-weight: 800;
-  font-size: 1.1rem;
+  font-size: 1.25rem;
   font-family: var(--font);
   cursor: pointer;
-  transition: opacity 0.12s, transform 0.1s;
+  transition: filter 0.12s, transform 0.1s;
   flex-shrink: 0;
   letter-spacing: 0.01em;
+  box-shadow: var(--shadow-gold-lg);
 }
 .np-fast-cash-btn:disabled { opacity: 0.38; cursor: not-allowed; }
-.np-fast-cash-btn:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
+.np-fast-cash-btn:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); }
 .np-fast-cash-btn:active:not(:disabled) { transform: translateY(0); }
 .np-fast-cash-btn kbd {
   font-size: 0.68rem;
@@ -1378,12 +1379,12 @@ kbd.kbd-primary {
   flex-shrink: 0;
 }
 .np-method-btn {
-  height: 52px;
+  height: var(--btn-lg);
   background: var(--surface2);
   border: 1.5px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   color: var(--text);
-  font-size: 0.92rem;
+  font-size: 1rem;
   font-weight: 700;
   font-family: var(--font);
   cursor: pointer;
@@ -1397,8 +1398,8 @@ kbd.kbd-primary {
 .numpad-panel .dialpad { gap: 5px; flex-shrink: 0; }
 .numpad-panel .dialpad-row { gap: 5px; }
 .numpad-panel .dialpad-key {
-  height: 48px;
-  font-size: 1.2rem;
+  height: 60px;
+  font-size: 1.35rem;
   font-weight: 700;
   border-radius: var(--radius-sm);
 }

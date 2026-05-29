@@ -16,6 +16,10 @@ pub struct AppState {
     pub db: SqlitePool,
     pub sync_worker: Arc<SyncWorker>,
     pub whatsapp_child: Arc<std::sync::Mutex<Option<std::process::Child>>>,
+    /// Path to the sidecar's shared-secret token file (.sidecar_token).
+    /// Written by the Node sidecar on startup; read by every HTTP command so
+    /// requests pass the required X-Sidecar-Token auth header.
+    pub wa_token_file: std::path::PathBuf,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -399,7 +403,8 @@ pub fn run() {
             // resolved at runtime from the managed state map.  If manage() were
             // called after invoke_handler(), any command that fires before manage()
             // completes would panic with "state not managed".  Keep this order.
-            app.manage(AppState { db, sync_worker, whatsapp_child: wa_child });
+            let wa_token_file = wa_session_dir.join(".sidecar_token");
+            app.manage(AppState { db, sync_worker, whatsapp_child: wa_child, wa_token_file });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

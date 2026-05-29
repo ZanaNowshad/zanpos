@@ -28,6 +28,18 @@ pub struct SendDeliveryInput {
     pub message_override: Option<String>,
 }
 
+// ─── Sidecar auth helper ──────────────────────────────────────────────────────
+
+/// Read the shared-secret token the Node sidecar writes to
+/// `<wa_session_dir>/.sidecar_token` on startup.  Returns an empty string
+/// if the file is not found (sidecar not yet started).
+fn read_sidecar_token(state: &AppState) -> String {
+    std::fs::read_to_string(&state.wa_token_file)
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
 // ─── Message builder ──────────────────────────────────────────────────────────
 
 pub struct WhatsAppDeliveryParams<'a> {
@@ -123,8 +135,15 @@ pub fn build_delivery_whatsapp_message(p: &WhatsAppDeliveryParams) -> String {
 // ─── Commands ─────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn whatsapp_status(_state: State<'_, AppState>) -> AppResult<WhatsAppStatus> {
-    match reqwest::get(format!("{}/status", SIDECAR_URL)).await {
+pub async fn whatsapp_status(state: State<'_, AppState>) -> AppResult<WhatsAppStatus> {
+    let token = read_sidecar_token(&state);
+    let client = reqwest::Client::new();
+    match client
+        .get(format!("{}/status", SIDECAR_URL))
+        .header("X-Sidecar-Token", &token)
+        .send()
+        .await
+    {
         Ok(resp) => Ok(resp
             .json::<WhatsAppStatus>()
             .await
@@ -177,7 +196,8 @@ pub async fn whatsapp_send_delivery(
         })
     });
 
-    send_raw(&input.to, &message).await
+    let token = read_sidecar_token(&state);
+    send_raw(&input.to, &message, &token).await
 }
 
 #[tauri::command]
@@ -186,9 +206,11 @@ pub async fn whatsapp_disconnect(
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
     crate::commands::rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let token = read_sidecar_token(&state);
     let client = reqwest::Client::new();
     Ok(client
         .post(format!("{}/disconnect", SIDECAR_URL))
+        .header("X-Sidecar-Token", &token)
         .send()
         .await
         .is_ok())
@@ -222,7 +244,7 @@ pub struct NotifyArrivalInput {
 #[tauri::command]
 pub async fn whatsapp_notify_arrival(
     input: NotifyArrivalInput,
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
 ) -> AppResult<bool> {
     let message = format!(
         "🚚 Your delivery is here!\n\
@@ -234,7 +256,8 @@ pub async fn whatsapp_notify_arrival(
          طلب #{r}",
         r = input.receipt_number,
     );
-    send_raw(&input.to, &message).await
+    let token = read_sidecar_token(&state);
+    send_raw(&input.to, &message, &token).await
 }
 
 // ─── Payment reminder ─────────────────────────────────────────────────────────
@@ -297,7 +320,8 @@ pub async fn whatsapp_payment_reminder(
             amount = amount,
         ),
     };
-    send_raw(&input.to, &message).await
+    let token = read_sidecar_token(&state);
+    send_raw(&input.to, &message, &token).await
 }
 
 // ─── Contact import ──────────────────────────────────────────────────────────
@@ -329,9 +353,11 @@ pub async fn whatsapp_import_contacts(
     crate::commands::rbac::manager_or_owner(&state.db, &actor_user_id).await?;
 
     // Fetch contacts from the Node sidecar.
+    let token = read_sidecar_token(&state);
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("{}/contacts", SIDECAR_URL))
+        .header("X-Sidecar-Token", &token)
         .send()
         .await
         .map_err(|e| crate::errors::AppError::Internal(format!("Sidecar unreachable: {e}")))?;
@@ -402,10 +428,11 @@ pub async fn whatsapp_import_contacts(
 }
 
 /// Internal helper: POST a raw message to the sidecar /send endpoint.
-async fn send_raw(to: &str, message: &str) -> AppResult<bool> {
+async fn send_raw(to: &str, message: &str, token: &str) -> AppResult<bool> {
     let client = reqwest::Client::new();
     match client
         .post(format!("{}/send", SIDECAR_URL))
+        .header("X-Sidecar-Token", token)
         .json(&serde_json::json!({ "to": to, "message": message }))
         .send()
         .await

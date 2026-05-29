@@ -7310,11 +7310,6 @@ label {
 }
 
 
-/* ── Cart line row — tablet height ───────────────────────────────────────── */
-.cart-line-wrap {
-  min-height: 92px;
-}
-
 /* ── Cart qty ± bigger touch size ─────────────────────────────────────────── */
 .cart-qty-btn {
   width: 52px;
@@ -10964,7 +10959,7 @@ label {
   display: flex;
   flex-direction: row;
   align-items: center;
-  min-height: 0;
+  min-height: 92px;
   border-bottom: 1px solid var(--border2);
   border-radius: 0;
 }

@@ -181,3 +181,323 @@ pub async fn ghost_prefill(
 
     Ok(ProductPrefill { name, barcode, brand, category, image_url })
 }
+
+// ── HTTP lookup helpers ───────────────────────────────────────────────────────
+
+/// Try UPCitemdb free tier.
+/// Returns Some((name, brand, category, image_url, raw_json)) on hit.
+async fn lookup_upcitemdb(
+    client: &reqwest::Client,
+    barcode: &str,
+) -> Option<(String, Option<String>, Option<String>, Option<String>, String)> {
+    let url = format!(
+        "https://api.upcitemdb.com/prod/trial/lookup?upc={}",
+        barcode
+    );
+    let resp = client
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .ok()?;
+
+    if !resp.status().is_success() {
+        return None;
+    }
+
+    let text = resp.text().await.ok()?;
+    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
+
+    let item = json.get("items")?.get(0)?;
+    let name = item.get("title")?.as_str()?.to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let brand     = item.get("brand").and_then(|v| v.as_str()).map(str::to_string);
+    let category  = item.get("category").and_then(|v| v.as_str()).map(str::to_string);
+    let image_url = item
+        .get("images")
+        .and_then(|v| v.get(0))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+
+    Some((name, brand, category, image_url, text))
+}
+
+/// Try Open Food Facts.
+/// Returns Some((name, brand, category, image_url, raw_json)) on hit.
+async fn lookup_off(
+    client: &reqwest::Client,
+    barcode: &str,
+) -> Option<(String, Option<String>, Option<String>, Option<String>, String)> {
+    let url = format!(
+        "https://world.openfoodfacts.org/api/v0/product/{}.json",
+        barcode
+    );
+    let resp = client
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(5))
+        .header("User-Agent", "ZANPOS/1.0 (contact@zanpos.app)")
+        .send()
+        .await
+        .ok()?;
+
+    if !resp.status().is_success() {
+        return None;
+    }
+
+    let text = resp.text().await.ok()?;
+    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
+
+    if json.get("status")?.as_i64()? != 1 {
+        return None;
+    }
+    let product = json.get("product")?;
+    let name = product
+        .get("product_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let brand = product.get("brands").and_then(|v| v.as_str()).map(|s| {
+        s.split(',').next().unwrap_or(s).trim().to_string()
+    });
+    let category = product
+        .get("categories_tags")
+        .and_then(|v| v.get(0))
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim_start_matches("en:").replace('-', " "))
+        .map(|s| {
+            let mut c = s.chars();
+            match c.next() {
+                None => String::new(),
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+            }
+        });
+    let image_url = product
+        .get("image_url")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+
+    Some((name, brand, category, image_url, text))
+}
+
+/// Try AI fallback (one-shot Anthropic or OpenAI call).
+/// Returns Some((name, brand, category)) on success.
+async fn lookup_ai(
+    client: &reqwest::Client,
+    barcode: &str,
+    pool: &sqlx::SqlitePool,
+) -> Option<(String, Option<String>, Option<String>)> {
+    let provider: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM app_config WHERE key = 'ai_provider'",
+    )
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .flatten();
+
+    let prompt = format!(
+        "The barcode {} was scanned at a retail POS but was not found in the product database. \
+         Based on this barcode number, identify the product if you can. \
+         Reply with ONLY valid JSON in this exact format: \
+         {{\"product_name\": \"\", \"brand\": \"\", \"category\": \"\"}} \
+         If you cannot identify the product, reply with: \
+         {{\"product_name\": null, \"brand\": null, \"category\": null}}",
+        barcode
+    );
+
+    match provider.as_deref() {
+        Some("anthropic") | None => {
+            let key = crate::secure_store::get_secret("anthropic_api_key")?;
+            if key.is_empty() {
+                return None;
+            }
+            let body = serde_json::json!({
+                "model": "claude-haiku-4-5",
+                "max_tokens": 128,
+                "messages": [{ "role": "user", "content": prompt }]
+            });
+            let resp = client
+                .post("https://api.anthropic.com/v1/messages")
+                .header("x-api-key", &key)
+                .header("anthropic-version", "2023-06-01")
+                .json(&body)
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await
+                .ok()?;
+            let text = resp.text().await.ok()?;
+            let json: serde_json::Value = serde_json::from_str(&text).ok()?;
+            let content = json
+                .get("content")?
+                .get(0)?
+                .get("text")?
+                .as_str()?;
+            parse_ai_json(content)
+        }
+        Some("openai") => {
+            let key = crate::secure_store::get_secret("openai_api_key")?;
+            if key.is_empty() {
+                return None;
+            }
+            let base_url: String = sqlx::query_scalar(
+                "SELECT value FROM app_config WHERE key = 'openai_base_url'",
+            )
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .flatten()
+            .unwrap_or_else(|| "https://api.openai.com/v1".into());
+            let model: String = sqlx::query_scalar(
+                "SELECT value FROM app_config WHERE key = 'openai_model'",
+            )
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .flatten()
+            .unwrap_or_else(|| "gpt-4o-mini".into());
+
+            let body = serde_json::json!({
+                "model": model,
+                "max_tokens": 128,
+                "messages": [{ "role": "user", "content": prompt }]
+            });
+            let resp = client
+                .post(format!("{}/chat/completions", base_url))
+                .bearer_auth(&key)
+                .json(&body)
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await
+                .ok()?;
+            let text = resp.text().await.ok()?;
+            let json: serde_json::Value = serde_json::from_str(&text).ok()?;
+            let content = json
+                .get("choices")?
+                .get(0)?
+                .get("message")?
+                .get("content")?
+                .as_str()?;
+            parse_ai_json(content)
+        }
+        _ => None,
+    }
+}
+
+/// Parse the JSON blob returned by the AI into (name, brand, category).
+/// Returns None if product_name is null or missing.
+fn parse_ai_json(text: &str) -> Option<(String, Option<String>, Option<String>)> {
+    let start = text.find('{')?;
+    let end   = text.rfind('}')?;
+    let json: serde_json::Value = serde_json::from_str(&text[start..=end]).ok()?;
+    let name = json.get("product_name")?.as_str()?.to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let brand    = json.get("brand").and_then(|v| v.as_str()).map(str::to_string);
+    let category = json.get("category").and_then(|v| v.as_str()).map(str::to_string);
+    Some((name, brand, category))
+}
+
+// ── Resolve command ───────────────────────────────────────────────────────────
+
+/// Runs the HTTP lookup chain for all 'pending' barcodes.
+/// Tier 1: UPCitemdb → Tier 2: Open Food Facts → Tier 3: AI fallback.
+/// Stops at the first tier that returns a result for each barcode.
+/// Updates rows in place and returns a summary.
+/// Manager/owner only.
+#[tauri::command]
+pub async fn ghost_resolve(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<ResolveResult> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+
+    let pending: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, barcode FROM unknown_barcodes WHERE status = 'pending'",
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    if pending.is_empty() {
+        return Ok(ResolveResult { resolved: 0, not_found: 0 });
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| AppError::Internal(format!("HTTP client build failed: {e}")))?;
+
+    let mut resolved  = 0i64;
+    let mut not_found = 0i64;
+
+    for (id, barcode) in &pending {
+        // Tier 1: UPCitemdb
+        if let Some((name, brand, category, image_url, raw_json)) =
+            lookup_upcitemdb(&client, barcode).await
+        {
+            sqlx::query(
+                "UPDATE unknown_barcodes
+                 SET status='found', product_name=?, brand=?, category=?, image_url=?, raw_json=?
+                 WHERE id=?",
+            )
+            .bind(&name).bind(&brand).bind(&category).bind(&image_url).bind(&raw_json).bind(id)
+            .execute(&state.db)
+            .await?;
+            resolved += 1;
+            continue;
+        }
+
+        // Tier 2: Open Food Facts
+        if let Some((name, brand, category, image_url, raw_json)) =
+            lookup_off(&client, barcode).await
+        {
+            sqlx::query(
+                "UPDATE unknown_barcodes
+                 SET status='found', product_name=?, brand=?, category=?, image_url=?, raw_json=?
+                 WHERE id=?",
+            )
+            .bind(&name).bind(&brand).bind(&category).bind(&image_url).bind(&raw_json).bind(id)
+            .execute(&state.db)
+            .await?;
+            resolved += 1;
+            continue;
+        }
+
+        // Tier 3: AI fallback
+        if let Some((name, brand, category)) = lookup_ai(&client, barcode, &state.db).await {
+            let raw_json = serde_json::json!({
+                "source": "ai_fallback",
+                "product_name": name,
+                "brand": brand,
+                "category": category
+            })
+            .to_string();
+            sqlx::query(
+                "UPDATE unknown_barcodes
+                 SET status='found', product_name=?, brand=?, category=?, raw_json=?
+                 WHERE id=?",
+            )
+            .bind(&name).bind(&brand).bind(&category).bind(&raw_json).bind(id)
+            .execute(&state.db)
+            .await?;
+            resolved += 1;
+            continue;
+        }
+
+        // All tiers exhausted
+        sqlx::query("UPDATE unknown_barcodes SET status='not_found' WHERE id=?")
+            .bind(id)
+            .execute(&state.db)
+            .await?;
+        not_found += 1;
+    }
+
+    Ok(ResolveResult { resolved, not_found })
+}

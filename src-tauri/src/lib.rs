@@ -57,6 +57,180 @@ pub fn run() {
             let sync_worker = SyncWorker::new(db.clone());
             SyncWorker::spawn(sync_worker.clone());
 
+            // ── One-time bootstrap: enqueue all existing customers + config flags ──────
+            // Runs once per install (guarded by app_config key 'sync_bootstrap_v1').
+            // Ensures that existing data on device 1 reaches Supabase so newly-joining
+            // terminals pull everything on their first sync.
+            {
+                let db_boot = db.clone();
+                tauri::async_runtime::spawn(async move {
+                    let done: Option<String> = sqlx::query_scalar(
+                        "SELECT value FROM app_config WHERE key='sync_bootstrap_v1'",
+                    )
+                    .fetch_optional(&db_boot)
+                    .await
+                    .ok()
+                    .flatten()
+                    .flatten();
+
+                    if done.as_deref() == Some("1") {
+                        return; // already ran
+                    }
+
+                    // Resolve device + branch ids
+                    let device_id: String = sqlx::query_scalar(
+                        "SELECT device_id FROM devices WHERE is_active=1 ORDER BY device_code LIMIT 1",
+                    )
+                    .fetch_optional(&db_boot)
+                    .await
+                    .ok()
+                    .flatten()
+                    .flatten()
+                    .unwrap_or_default();
+
+                    let branch_id: String = sqlx::query_scalar(
+                        "SELECT branch_id FROM branches WHERE is_active=1 ORDER BY created_at LIMIT 1",
+                    )
+                    .fetch_optional(&db_boot)
+                    .await
+                    .ok()
+                    .flatten()
+                    .flatten()
+                    .unwrap_or_default();
+
+                    if device_id.is_empty() || branch_id.is_empty() {
+                        return; // setup not done yet — skip
+                    }
+
+                    // Enqueue all existing customers
+                    if let Ok(rows) = sqlx::query(
+                        "SELECT customer_id, name, phone, email, loyalty_points, created_at, notes
+                         FROM customers WHERE branch_id = ?",
+                    )
+                    .bind(&branch_id)
+                    .fetch_all(&db_boot)
+                    .await
+                    {
+                        use sqlx::Row;
+                        for r in &rows {
+                            let _ = crate::sync::outbox::enqueue_customer(
+                                &db_boot,
+                                &device_id,
+                                &branch_id,
+                                r.get("customer_id"),
+                                r.get("name"),
+                                r.get("phone"),
+                                r.get("email"),
+                                r.get::<i64, _>("loyalty_points"),
+                                r.get("notes"),
+                                r.get("created_at"),
+                            )
+                            .await;
+                        }
+                        tracing::info!(
+                            "sync bootstrap: enqueued {} customers",
+                            rows.len()
+                        );
+                    }
+
+                    // Enqueue all store-wide app_config flags
+                    let syncable_keys = [
+                        "flag_allow_negative_stock",
+                        "flag_require_discount_reason",
+                        "flag_cashier_can_discount",
+                        "flag_auto_print_receipt",
+                        "whatsapp_benefit_number",
+                    ];
+                    for key in &syncable_keys {
+                        if let Ok(Some(value)) = sqlx::query_scalar::<_, String>(
+                            "SELECT value FROM app_config WHERE key = ?",
+                        )
+                        .bind(key)
+                        .fetch_optional(&db_boot)
+                        .await
+                        {
+                            let _ = crate::sync::outbox::enqueue_app_config(
+                                &db_boot,
+                                &device_id,
+                                &branch_id,
+                                key,
+                                &value,
+                            )
+                            .await;
+                        }
+                    }
+
+                    // Mark bootstrap done
+                    let _ = sqlx::query(
+                        "INSERT INTO app_config(key, value) VALUES('sync_bootstrap_v1','1')
+                         ON CONFLICT(key) DO UPDATE SET value='1'",
+                    )
+                    .execute(&db_boot)
+                    .await;
+
+                    tracing::info!("sync bootstrap v1 complete");
+                });
+            }
+
+            // ── Push branch record to Supabase so second terminals can join ──────────
+            // Runs on every startup (not guarded). Harmless no-op when no Supabase
+            // credentials are configured. Ensures Device 1's branch always exists in
+            // the central `branches` table so Device 2's join flow can find it.
+            {
+                let db_br = db.clone();
+                tauri::async_runtime::spawn(async move {
+                    // Only proceed when setup is complete
+                    let setup_done: Option<String> = sqlx::query_scalar(
+                        "SELECT value FROM app_config WHERE key='setup_complete'",
+                    )
+                    .fetch_optional(&db_br).await.ok().flatten().flatten();
+                    if setup_done.as_deref() != Some("1") { return; }
+
+                    let sb_url: Option<String> = sqlx::query_scalar(
+                        "SELECT value FROM app_config WHERE key='supabase_url'",
+                    ).fetch_optional(&db_br).await.ok().flatten().flatten();
+                    let sb_key = secure_store::get_secret("supabase_service_key");
+
+                    let (Some(url), Some(key)) = (sb_url, sb_key) else { return; };
+                    if url.is_empty() || key.is_empty() { return; }
+
+                    use sqlx::Row;
+                    let branch_row = sqlx::query(
+                        "SELECT branch_id, branch_code, name, currency, timezone,
+                                address, phone, receipt_header, receipt_footer, tax_number, cr_number,
+                                created_at
+                         FROM branches WHERE is_active=1 ORDER BY created_at LIMIT 1",
+                    ).fetch_optional(&db_br).await.ok().flatten();
+
+                    if let Some(br) = branch_row {
+                        use crate::sync::supabase_client::SupabaseClient;
+                        let client = SupabaseClient::new(url, key);
+                        let now = chrono::Utc::now().to_rfc3339();
+                        let branch_json = serde_json::json!({
+                            "branch_id":      br.get::<String, _>("branch_id"),
+                            "branch_code":    br.get::<String, _>("branch_code"),
+                            "name":           br.get::<String, _>("name"),
+                            "currency":       br.get::<String, _>("currency"),
+                            "timezone":       br.get::<String, _>("timezone"),
+                            "address":        br.get::<Option<String>, _>("address"),
+                            "phone":          br.get::<Option<String>, _>("phone"),
+                            "receipt_header": br.get::<Option<String>, _>("receipt_header"),
+                            "receipt_footer": br.get::<Option<String>, _>("receipt_footer"),
+                            "tax_number":     br.get::<Option<String>, _>("tax_number"),
+                            "cr_number":      br.get::<Option<String>, _>("cr_number"),
+                            "is_active":      true,
+                            "created_at":     br.get::<String, _>("created_at"),
+                            "updated_at":     now,
+                        });
+                        if let Err(e) = client.upsert_branch(&branch_json).await {
+                            tracing::warn!("startup branch upsert failed: {e:?}");
+                        } else {
+                            tracing::info!("startup: branch record pushed to Supabase");
+                        }
+                    }
+                });
+            }
+
             // ── Start WhatsApp sidecar ────────────────────────────────────────────────
             let wa_session_dir = app_data.join("wa-session");
             std::fs::create_dir_all(&wa_session_dir).ok();
@@ -398,6 +572,13 @@ pub fn run() {
             commands::migration_commands::migration_zanpos_stats,
             commands::migration_commands::migration_rollback,
             commands::migration_commands::migration_agent_chat,
+            // Ghost barcode lookup
+            commands::ghost_barcode_commands::ghost_record,
+            commands::ghost_barcode_commands::ghost_summary,
+            commands::ghost_barcode_commands::ghost_list,
+            commands::ghost_barcode_commands::ghost_resolve,
+            commands::ghost_barcode_commands::ghost_dismiss,
+            commands::ghost_barcode_commands::ghost_prefill,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

@@ -7282,7 +7282,6 @@ label {
 }
 .product-card-name  { font-size: 0.95rem; }
 .product-card-price { font-size: 1.25rem; }
-.stock-badge { height: 28px; font-size: 0.72rem; padding: 4px 7px; }
 
 /* Tap feedback — scale down on press */
 .product-card:active {
@@ -10883,10 +10882,11 @@ label {
 }
 .stock-badge {
   margin-top: auto;
+  height: 28px;
   min-height: 22px;
-  padding: 3px 8px;
+  padding: 4px 7px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0;
   text-transform: none;

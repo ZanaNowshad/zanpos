@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type { Cart, CartLine, PaymentInput, ProductWithPrice, SaleResult } from "../types";
 import { DEVICE } from "../types";
 import * as cmd from "../tauri/commands";
@@ -47,7 +47,7 @@ export function useCart(session: CartSession) {
   const [error, setError] = useState<string | null>(null);
   const [recentLineId, setRecentLineId] = useState<string | null>(null);
 
-  const clearError = () => setError(null);
+  const clearError = useCallback(() => setError(null), []);
 
   const addByBarcode = useCallback(async (barcode: string, qty?: number) => {
     setLoading(true);
@@ -70,6 +70,7 @@ export function useCart(session: CartSession) {
       setCart(updated);
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Barcode not found");
+      throw e; // re-throw so PosPage.handleBarcode can call ghostRecord
     } finally {
       setLoading(false);
     }
@@ -160,7 +161,7 @@ export function useCart(session: CartSession) {
     setLoading(true);
     setError(null);
     try {
-      const result = await cmd.posFinalizeSale(cart, payments, undefined, customerId, deliveryInput);
+      const result = await cmd.posFinalizeSale(cart, payments, cart.cart_id, customerId, deliveryInput);
       setCart(makeEmptyCart(session));
       setRecentLineId(null);
       return result;
@@ -223,12 +224,14 @@ export function useCart(session: CartSession) {
     await removeLine(recentLineId);
   }, [recentLineId, removeLine]);
 
-  const netTotal = Math.max(
-    0,
-    cart.lines.filter(l => !l.voided).reduce((s, l) => s + l.line_total_minor, 0) - cart.bill_discount_minor
-  );
-  const taxTotal = cart.lines.filter(l => !l.voided).reduce((s, l) => s + l.tax_amount_minor, 0);
-  const lineCount = cart.lines.filter(l => !l.voided).length;
+  // Memoised derivations — only recompute when cart reference changes,
+  // not on every PosPage render (clock tick, numpad key, modal open/close).
+  const activeLines = useMemo(() => cart.lines.filter(l => !l.voided), [cart]);
+  const netTotal = useMemo(() =>
+    Math.max(0, activeLines.reduce((s, l) => s + l.line_total_minor, 0) - cart.bill_discount_minor),
+    [activeLines, cart.bill_discount_minor]);
+  const taxTotal  = useMemo(() => activeLines.reduce((s, l) => s + l.tax_amount_minor, 0), [activeLines]);
+  const lineCount = useMemo(() => activeLines.length, [activeLines]);
 
   return {
     cart,

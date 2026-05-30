@@ -3933,20 +3933,20 @@ textarea.field-input { resize: vertical; }
   align-items: center;
 }
 .stickynotes-color-dot {
-  width: 18px;
-  height: 18px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   border: 2px solid transparent;
   cursor: pointer;
-  transition: transform 0.12s, border-color 0.12s;
+  transition: transform 0.12s, box-shadow 0.12s;
   padding: 0;
   flex-shrink: 0;
 }
-.stickynotes-color-dot:hover   { transform: scale(1.25); }
-.stickynotes-color-dot.active  { border-width: 2.5px; transform: scale(1.2); box-shadow: 0 0 0 2px rgba(255,255,255,0.5); }
+.stickynotes-color-dot:hover   { transform: scale(1.15); }
+.stickynotes-color-dot.active  { border-width: 3px; box-shadow: 0 0 0 3px rgba(255,255,255,0.6); }
 .stickynotes-color-dot-sm {
-  width: 13px;
-  height: 13px;
+  width: 28px;
+  height: 28px;
 }
 .stickynotes-add-btn {
   background: var(--accent);
@@ -4020,11 +4020,17 @@ textarea.field-input { resize: vertical; }
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: 1rem;
   opacity: 0.45;
-  padding: 2px 4px;
+  /* 44px touch target */
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   transition: opacity 0.12s;
   line-height: 1;
+  flex-shrink: 0;
 }
 .stickynote-delete-btn:hover { opacity: 1; }
 .stickynote-delete-confirm {
@@ -4079,53 +4085,89 @@ textarea.field-input { resize: vertical; }
   border-radius: 0 0 4px 4px;
 }
 .stickynote-save-btn {
-  align-self: flex-end;
-  margin: 0 8px 8px;
-  background: rgba(0,0,0,0.12);
+  align-self: stretch;
+  margin: 4px 8px 8px;
+  background: rgba(0,0,0,0.15);
   border: none;
-  border-radius: 4px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  /* 44px min height for touch */
+  min-height: 44px;
+  padding: 8px 14px;
   cursor: pointer;
   color: #1a1a1a;
   transition: background 0.12s;
+  letter-spacing: 0.01em;
 }
-.stickynote-save-btn:hover { background: rgba(0,0,0,0.2); }
+.stickynote-save-btn:hover { background: rgba(0,0,0,0.25); }
 
 /* ── Note reminder UI ── */
 .stickynote-reminder-section {
-  padding: 4px 10px 6px;
+  padding: 6px 8px 8px;
   border-top: 1px solid rgba(0,0,0,0.08);
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-.stickynote-reminder-toggle {
+/* Touch-friendly toggle button replacing the old checkbox label */
+.stickynote-reminder-toggle-btn {
+  border: 1.5px solid rgba(0,0,0,0.18);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.5);
+  color: #444;
+  font-size: 0.82rem;
+  font-weight: 700;
+  min-height: 44px;
+  padding: 8px 14px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s, border-color 0.12s;
+}
+.stickynote-reminder-toggle-btn:hover { background: rgba(255,255,255,0.75); }
+.stickynote-reminder-toggle-btn.active {
+  background: rgba(245,158,11,0.18);
+  border-color: rgba(245,158,11,0.55);
+  color: #92400e;
+}
+/* Preset quick-pick row */
+.stickynote-reminder-presets {
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
-  font-size: 0.78rem;
-  font-weight: 600;
+}
+.stickynote-preset-btn {
+  border: 1.5px solid rgba(0,0,0,0.2);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.55);
   color: #333;
+  font-size: 0.8rem;
+  font-weight: 600;
+  min-height: 44px;
+  padding: 8px 12px;
   cursor: pointer;
-  user-select: none;
+  flex: 1;
+  min-width: 60px;
+  transition: background 0.12s, border-color 0.12s;
 }
-.stickynote-reminder-toggle input[type="checkbox"] {
-  accent-color: #f59e0b;
-  width: 14px;
-  height: 14px;
-  cursor: pointer;
+.stickynote-preset-btn:hover   { background: rgba(255,255,255,0.8); }
+.stickynote-preset-btn.active  {
+  background: rgba(245,158,11,0.22);
+  border-color: rgba(245,158,11,0.6);
+  color: #92400e;
+  font-weight: 700;
 }
+/* datetime-local kept as fallback, full width */
 .stickynote-reminder-dt {
-  font-size: 0.75rem;
-  border: 1px solid rgba(0,0,0,0.2);
-  border-radius: 4px;
-  padding: 4px 6px;
+  font-size: 0.82rem;
+  border: 1.5px solid rgba(0,0,0,0.2);
+  border-radius: 8px;
+  padding: 10px 10px;
   background: rgba(255,255,255,0.7);
   color: #1a1a1a;
   width: 100%;
   box-sizing: border-box;
+  min-height: 44px;
 }
 .stickynote-reminder-badge {
   padding: 3px 10px 5px;
@@ -8421,7 +8463,8 @@ label {
   z-index: 2;
 }
 .dlv-td {
-  padding: 9px 10px;
+  padding: 10px 10px;
+  min-height: 56px;  /* touch-friendly row height */
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
@@ -8432,6 +8475,9 @@ label {
 .dlv-tr:hover .dlv-td { background: rgba(240,165,0,0.04); }
 .dlv-tr-expanded .dlv-td { background: rgba(240,165,0,0.06); border-bottom-color: transparent; }
 .dlv-tr-cancelled .dlv-td { opacity: 0.5; }
+/* Paid rows: light green tint */
+.dlv-tr-paid .dlv-td { background: rgba(34,197,94,0.06); }
+.dlv-tr-paid:hover .dlv-td { background: rgba(34,197,94,0.10); }
 
 /* Column widths */
 .dlv-col-id      { width: 80px; }
@@ -8444,7 +8490,7 @@ label {
 .dlv-col-method  { width: 80px; }
 .dlv-col-pay     { width: 80px; }
 .dlv-col-dlv     { width: 110px; }
-.dlv-col-actions { width: 32px; text-align: center; }
+.dlv-col-actions { width: 180px; text-align: right; padding-right: 6px !important; }
 
 .dlv-id-chip {
   font-size: 0.7rem;
@@ -8702,6 +8748,10 @@ label {
   cursor: pointer;
 }
 .dlv-paid-info {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   font-size: 0.78rem;
   color: var(--success);
   padding: 5px 10px;
@@ -8709,6 +8759,49 @@ label {
   border-radius: var(--radius);
   border: 1px solid rgba(34,197,94,0.2);
 }
+.dlv-action-revert {
+  margin-left: auto;
+  background: rgba(239,68,68,0.07);
+  border-color: rgba(239,68,68,0.2);
+  color: var(--error);
+  font-size: 0.75rem;
+  padding: 3px 10px;
+}
+.dlv-action-revert:hover { background: rgba(239,68,68,0.15); border-color: var(--error); color: var(--error); }
+
+/* ── Quick action buttons — visible on every row without expanding ── */
+.dlv-quick-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.dlv-quick-btn {
+  /* 44px minimum touch target */
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  font-size: 1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s, border-color 0.12s;
+  flex-shrink: 0;
+}
+.dlv-quick-btn:hover  { border-color: var(--accent); }
+.dlv-quick-btn:disabled { opacity: 0.4; cursor: default; }
+.dlv-quick-call  { background: rgba(99,102,241,0.08);  border-color: rgba(99,102,241,0.25); }
+.dlv-quick-call:hover  { background: rgba(99,102,241,0.18); }
+.dlv-quick-remind { background: rgba(240,165,0,0.08); border-color: rgba(240,165,0,0.25); }
+.dlv-quick-remind:hover { background: rgba(240,165,0,0.18); }
+.dlv-quick-pay   { background: rgba(34,197,94,0.1);  border-color: rgba(34,197,94,0.3); font-weight: 700; color: var(--success); }
+.dlv-quick-pay:hover   { background: rgba(34,197,94,0.2); }
+.dlv-quick-unpay { background: rgba(239,68,68,0.07); border-color: rgba(239,68,68,0.2); color: var(--text-dim); }
+.dlv-quick-unpay:hover { background: rgba(239,68,68,0.14); color: var(--error); border-color: var(--error); }
+.dlv-quick-sent  { background: rgba(34,197,94,0.12) !important; border-color: rgba(34,197,94,0.4) !important; }
 
 /* ── Deliveries full-screen modal (from POS sidebar) ───────────────────── */
 .dlv-modal-overlay {

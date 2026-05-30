@@ -518,6 +518,7 @@ pub fn run() {
             commands::delivery_commands::delivery_get,
             commands::delivery_commands::delivery_update_status,
             commands::delivery_commands::delivery_confirm_payment,
+            commands::delivery_commands::delivery_revert_payment,
             commands::delivery_commands::delivery_cancel,
             commands::delivery_commands::delivery_rider_suggestions,
             // Customers

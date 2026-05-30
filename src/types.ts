@@ -722,6 +722,12 @@ export interface CancelDeliveryInput {
   actor_user_id: string;
 }
 
+export interface RevertPaymentInput {
+  delivery_id: string;
+  actor_user_id: string;
+  reason?: string;
+}
+
 // ── WhatsApp ──────────────────────────────────────────────────────────────────
 
 export interface WhatsAppStatus {

@@ -52,6 +52,7 @@ import type {
   ConfirmDeliveryPaymentInput,
   UpdateDeliveryStatusInput,
   CancelDeliveryInput,
+  RevertPaymentInput,
   WhatsAppStatus,
   ImportContactsResult,
   SendDeliveryInput,
@@ -740,6 +741,11 @@ export const deliveryCancel = (
   input: CancelDeliveryInput,
 ): Promise<DeliveryRow> =>
   invoke("delivery_cancel", { input });
+
+export const deliveryRevertPayment = (
+  input: RevertPaymentInput,
+): Promise<DeliveryRow> =>
+  invoke("delivery_revert_payment", { input });
 
 export const deliveryRiderSuggestions = (
   branch_id: string,

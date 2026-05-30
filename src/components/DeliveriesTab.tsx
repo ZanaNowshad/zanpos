@@ -5,6 +5,7 @@ import type {
   SessionUser,
   ConfirmDeliveryPaymentInput,
   AdminUserRow,
+  RevertPaymentInput,
 } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney } from "../money";
@@ -99,6 +100,8 @@ export default function DeliveriesTab({ sessionUser }: Props) {
   const [confirmRef, setConfirmRef] = useState("");
   const [confirmNote, setConfirmNote] = useState("");
   const [confirmLoading, setConfirmLoading] = useState(false);
+  const [cancelConfirm, setCancelConfirm] = useState<DeliveryRow | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // WhatsApp contact actions (keyed by delivery_id)
   const [waLoading, setWaLoading] = useState<Record<string, "arrival" | "reminder">>({});
@@ -116,14 +119,16 @@ export default function DeliveriesTab({ sessionUser }: Props) {
 
   // ── Load rider suggestions ──
   useEffect(() => {
+    let cancelled = false;
     cmd.deliveryRiderSuggestions(DEVICE.branch_id, sessionUser.user_id)
-      .then(setRiderSuggestions)
+      .then(data => { if (!cancelled) setRiderSuggestions(data); })
       .catch(() => { /* non-critical */ });
+    return () => { cancelled = true; };
   }, [sessionUser.user_id]);
 
   // ── Build filter ──
   const buildFilter = useCallback((): DeliveryListFilter => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" });
     const filter: DeliveryListFilter = { limit: 200, offset: 0 };
 
     // Preset filters
@@ -168,6 +173,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
   // ── Actions ──
   const handleStatusChange = async (row: DeliveryRow, newStatus: string) => {
     try {
+      setActionError(null);
       const updated = await cmd.deliveryUpdateStatus({
         delivery_id: row.delivery_id,
         delivery_status: newStatus,
@@ -175,12 +181,13 @@ export default function DeliveriesTab({ sessionUser }: Props) {
       });
       setRows(prev => prev.map(r => r.delivery_id === updated.delivery_id ? updated : r));
     } catch (e: unknown) {
-      alert(typeof e === "string" ? e : "Failed to update status");
+      setActionError(typeof e === "string" ? e : "Failed to update status");
     }
   };
 
   const handleConfirmPayment = async (deliveryId: string) => {
     setConfirmLoading(true);
+    setActionError(null);
     try {
       const input: ConfirmDeliveryPaymentInput = {
         delivery_id: deliveryId,
@@ -194,14 +201,21 @@ export default function DeliveriesTab({ sessionUser }: Props) {
       setConfirmRef("");
       setConfirmNote("");
     } catch (e: unknown) {
-      alert(typeof e === "string" ? e : "Failed to confirm payment");
+      setActionError(typeof e === "string" ? e : "Failed to confirm payment");
     } finally {
       setConfirmLoading(false);
     }
   };
 
   const handleCancel = async (row: DeliveryRow) => {
-    if (!confirm(`Cancel delivery ${row.receipt_number}?`)) return;
+    setCancelConfirm(row);
+  };
+
+  const executeCancel = async () => {
+    const row = cancelConfirm;
+    if (!row) return;
+    setCancelConfirm(null);
+    setActionError(null);
     try {
       const updated = await cmd.deliveryCancel({
         delivery_id: row.delivery_id,
@@ -209,7 +223,22 @@ export default function DeliveriesTab({ sessionUser }: Props) {
       });
       setRows(prev => prev.map(r => r.delivery_id === updated.delivery_id ? updated : r));
     } catch (e: unknown) {
-      alert(typeof e === "string" ? e : "Failed to cancel delivery");
+      setActionError(typeof e === "string" ? e : "Failed to cancel delivery");
+    }
+  };
+
+  // ── Mark paid → unpaid (manager/owner only) ──────────────────────────────
+  const handleRevertPayment = async (row: DeliveryRow) => {
+    setActionError(null);
+    try {
+      const input: RevertPaymentInput = {
+        delivery_id: row.delivery_id,
+        actor_user_id: sessionUser.user_id,
+      };
+      const updated = await cmd.deliveryRevertPayment(input);
+      setRows(prev => prev.map(r => r.delivery_id === updated.delivery_id ? updated : r));
+    } catch (e: unknown) {
+      setActionError(typeof e === "string" ? e : "Failed to revert payment");
     }
   };
 
@@ -394,7 +423,8 @@ export default function DeliveriesTab({ sessionUser }: Props) {
       )}
 
       {/* ── Status ── */}
-      {error && <div className="dlv-error">{error}</div>}
+      {error && <div className="dlv-error" role="alert">{error}</div>}
+      {actionError && <div className="dlv-error" role="alert">⚠ {actionError}<button className="dlv-error-dismiss" onClick={() => setActionError(null)}>✕</button></div>}
       {loading && <div className="dlv-loading">Loading…</div>}
 
       {/* ── Empty state ── */}
@@ -428,7 +458,12 @@ export default function DeliveriesTab({ sessionUser }: Props) {
                 return (
                   <Fragment key={row.delivery_id}>
                     <tr
-                      className={`dlv-tr${isExpanded ? " dlv-tr-expanded" : ""}${row.delivery_status === "cancelled" ? " dlv-tr-cancelled" : ""}`}
+                      className={[
+                        "dlv-tr",
+                        isExpanded ? "dlv-tr-expanded" : "",
+                        row.delivery_status === "cancelled" ? "dlv-tr-cancelled" : "",
+                        row.payment_status === "paid" ? "dlv-tr-paid" : "",
+                      ].filter(Boolean).join(" ")}
                       onClick={() => setExpanded(isExpanded ? null : row.delivery_id)}
                     >
                       <td className="dlv-td dlv-col-id">
@@ -459,7 +494,51 @@ export default function DeliveriesTab({ sessionUser }: Props) {
                       <td className="dlv-td dlv-col-pay">{paymentBadge(row.payment_status)}</td>
                       <td className="dlv-td dlv-col-dlv">{deliveryBadge(row.delivery_status)}</td>
                       <td className="dlv-td dlv-col-actions" onClick={e => e.stopPropagation()}>
-                        <span className="dlv-expand-arrow">{isExpanded ? "▲" : "▼"}</span>
+                        <div className="dlv-quick-actions">
+                          {/* Call — always visible when contact exists */}
+                          {row.contact_number && (
+                            <button
+                              className={`dlv-quick-btn dlv-quick-call${waSent[row.delivery_id] === "arrival" ? " dlv-quick-sent" : ""}`}
+                              disabled={!!waLoading[row.delivery_id]}
+                              onClick={() => handleNotifyArrival(row)}
+                              title={`Call ${row.contact_number}`}
+                            >
+                              📞
+                            </button>
+                          )}
+                          {/* Reminder — unpaid only */}
+                          {row.contact_number && row.payment_status === "unpaid" && (
+                            <button
+                              className={`dlv-quick-btn dlv-quick-remind${waSent[row.delivery_id] === "reminder" ? " dlv-quick-sent" : ""}`}
+                              disabled={!!waLoading[row.delivery_id]}
+                              onClick={() => handlePaymentReminder(row)}
+                              title="Send payment reminder"
+                            >
+                              💳
+                            </button>
+                          )}
+                          {/* Mark Paid — unpaid + manager */}
+                          {isManager && row.payment_status === "unpaid" && row.delivery_status !== "cancelled" && (
+                            <button
+                              className="dlv-quick-btn dlv-quick-pay"
+                              onClick={() => setConfirmingId(row.delivery_id)}
+                              title="Mark as paid"
+                            >
+                              ✓
+                            </button>
+                          )}
+                          {/* Mark Unpaid — paid + manager */}
+                          {isManager && row.payment_status === "paid" && (
+                            <button
+                              className="dlv-quick-btn dlv-quick-unpay"
+                              onClick={() => handleRevertPayment(row)}
+                              title="Revert to unpaid"
+                            >
+                              ↺
+                            </button>
+                          )}
+                          <span className="dlv-expand-arrow">{isExpanded ? "▲" : "▼"}</span>
+                        </div>
                       </td>
                     </tr>
 
@@ -598,11 +677,21 @@ export default function DeliveriesTab({ sessionUser }: Props) {
                                 )
                               )}
 
-                              {/* Paid info */}
-                              {row.payment_status === "paid" && row.paid_confirmed_at && (
+                              {/* Paid info + revert */}
+                              {row.payment_status === "paid" && (
                                 <div className="dlv-paid-info">
-                                  ✓ Paid · {fmtDateTime(row.paid_confirmed_at)}
+                                  ✓ Paid
+                                  {row.paid_confirmed_at && ` · ${fmtDateTime(row.paid_confirmed_at)}`}
                                   {row.payment_reference && ` · Ref: ${row.payment_reference}`}
+                                  {isManager && (
+                                    <button
+                                      className="dlv-action-btn dlv-action-revert"
+                                      onClick={() => handleRevertPayment(row)}
+                                      title="Revert payment to unpaid"
+                                    >
+                                      ↺ Mark Unpaid
+                                    </button>
+                                  )}
                                 </div>
                               )}
 
@@ -625,6 +714,25 @@ export default function DeliveriesTab({ sessionUser }: Props) {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* ── Cancel confirm dialog ── */}
+      {cancelConfirm && (
+        <div className="settings-confirm-overlay" onClick={() => setCancelConfirm(null)}>
+          <div className="settings-confirm-dialog" onClick={e => e.stopPropagation()}>
+            <div className="settings-confirm-header">Cancel Delivery</div>
+            <p className="settings-confirm-msg">
+              Cancel delivery <strong>#{cancelConfirm.receipt_number}</strong>?<br />
+              This will release any assigned rider.
+            </p>
+            <div className="settings-confirm-buttons">
+              <button className="btn-primary" style={{ background: "var(--error, #ef4444)" }} onClick={executeCancel}>
+                Yes, Cancel Delivery
+              </button>
+              <button className="btn-secondary" onClick={() => setCancelConfirm(null)}>Go Back</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

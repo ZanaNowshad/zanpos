@@ -1,13 +1,15 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import type { CustomerRow, DeliveryInput, PaymentInput } from "../types";
 import { formatMoney, parseMoney } from "../money";
 import { DEVICE } from "../types";
 import * as cmd from "../tauri/commands";
 import DeliveryForm from "./DeliveryForm";
+import Dialpad, { applyDialpadKey } from "./Dialpad";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 interface Props {
   netTotal: number;
-  onConfirm: (payments: PaymentInput[], customerId?: string, delivery?: DeliveryInput) => void;
+  onConfirm: (payments: PaymentInput[], customerId?: string, delivery?: DeliveryInput, selectedCustomer?: CustomerRow) => void;
   onCancel: () => void;
   loading?: boolean;
   initialMethod?: PaymentInput["method"];
@@ -20,157 +22,173 @@ interface PaymentLine {
   method: PaymentInput["method"];
   amountStr: string;
   tenderedStr: string;
-  referenceStr: string;
 }
 
-type ActiveField = { lineId: number; field: "amount" | "tendered" } | null;
+// activeField covers ALL dialpad-targetable numeric fields
+type ActiveField =
+  | { kind: "amount";   lineId: number }
+  | { kind: "tendered"; lineId: number }
+  | { kind: "phone" }
+  | null;
 
-const METHOD_OPTIONS: { id: PaymentInput["method"]; icon: string; label: string }[] = [
+const METHODS: { id: PaymentInput["method"]; icon: string; label: string }[] = [
   { id: "cash",   icon: "💵", label: "Cash"   },
   { id: "card",   icon: "💳", label: "Card"   },
   { id: "wallet", icon: "📱", label: "Wallet" },
   { id: "other",  icon: "•••", label: "Other" },
 ];
 
-let lineIdCounter = 1;
+let _lineCounter = 200;
+const mkLine = (method: PaymentInput["method"] = "cash"): PaymentLine =>
+  ({ id: _lineCounter++, method, amountStr: "", tenderedStr: "" });
 
-function mkLine(method: PaymentInput["method"] = "cash"): PaymentLine {
-  return { id: lineIdCounter++, method, amountStr: "", tenderedStr: "", referenceStr: "" };
-}
-
-// ── Dialpad component ──────────────────────────────────────────────────────
-function Dialpad({ onKey }: { onKey: (k: string) => void }) {
-  const rows = [
-    ["7", "8", "9"],
-    ["4", "5", "6"],
-    ["1", "2", "3"],
-    ["C", "0", "⌫"],
-  ];
-  return (
-    <div className="dialpad">
-      {rows.map((row, ri) => (
-        <div key={ri} className="dialpad-row">
-          {row.map(k => (
-            <button
-              key={k}
-              className={`dialpad-key${k === "⌫" ? " dialpad-key-back" : ""}${k === "C" ? " dialpad-key-clear" : ""}`}
-              onMouseDown={e => { e.preventDefault(); onKey(k); }}
-            >
-              {k}
-            </button>
-          ))}
-        </div>
-      ))}
-      {/* Wide decimal key */}
-      <div className="dialpad-row">
-        <button className="dialpad-key dialpad-key-wide" onMouseDown={e => { e.preventDefault(); onKey("."); }}>.</button>
-        <button className="dialpad-key dialpad-key-wide" onMouseDown={e => { e.preventDefault(); onKey("00"); }}>00</button>
-      </div>
-    </div>
-  );
-}
-
-// ── Main component ─────────────────────────────────────────────────────────
-export default function PaymentModal({ netTotal, onConfirm, onCancel, loading, initialMethod, splitMode, sessionUserId }: Props) {
+export default function PaymentModal({
+  netTotal, onConfirm, onCancel, loading,
+  initialMethod, splitMode, sessionUserId,
+}: Props) {
   const EXP = DEVICE.currency_exponent;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  useFocusTrap(containerRef, onCancel);
+  const fmt = (n: number) => `${DEVICE.currency} ${formatMoney(n, EXP)}`;
+
+  // ── Payment lines ────────────────────────────────────────────────────
   const [lines, setLines] = useState<PaymentLine[]>(() => {
     const first = mkLine(initialMethod ?? "cash");
     if (!splitMode) {
-      if (!initialMethod || initialMethod === "cash") {
-        const exactStr = formatMoney(netTotal, DEVICE.currency_exponent);
-        first.amountStr = exactStr;
-        first.tenderedStr = exactStr;
-      } else {
-        first.amountStr = formatMoney(netTotal, DEVICE.currency_exponent);
-      }
+      const s = formatMoney(netTotal, EXP);
+      first.amountStr = s;
+      if (!initialMethod || initialMethod === "cash") first.tenderedStr = s;
     }
-    if (splitMode) return [first, mkLine("card")];
-    return [first];
+    return splitMode ? [first, mkLine("card")] : [first];
   });
 
-  const fmt = (n: number) => `${DEVICE.currency} ${formatMoney(n, EXP)}`;
-
-  // Active field for dialpad targeting
-  const [activeField, setActiveField] = useState<ActiveField>(() =>
-    ({ lineId: 1, field: "amount" })
+  const [activeField, setActiveField] = useState<ActiveField>(
+    () => ({ kind: "amount", lineId: lines[0].id })
   );
 
-  // Customer selection
+  // ── Customer accordion ───────────────────────────────────────────────
+  const [showCust, setShowCust]         = useState(false);
   const [custSearch, setCustSearch]     = useState("");
   const [custResults, setCustResults]   = useState<CustomerRow[]>([]);
   const [selectedCust, setSelectedCust] = useState<CustomerRow | null>(null);
   const [showCustDrop, setShowCustDrop] = useState(false);
-  const searchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Delivery state
-  const [isDelivery, setIsDelivery]     = useState(false);
+  // ── Delivery accordion ───────────────────────────────────────────────
+  const [showDelivery, setShowDelivery] = useState(false);
   const [deliveryData, setDeliveryData] = useState<Partial<DeliveryInput>>({});
+  // phone state is LIFTED here so the dialpad can control it
+  const [phoneRaw, setPhoneRaw]       = useState("");
+  const [phoneError, setPhoneError]   = useState<string | null>(null);
 
+  // ── Split accordion ──────────────────────────────────────────────────
+  const [showSplit, setShowSplit] = useState(splitMode ?? false);
+
+  // Customer search debounce
   useEffect(() => {
-    if (custSearch.trim().length === 0) { setCustResults([]); return; }
-    if (searchRef.current) clearTimeout(searchRef.current);
-    searchRef.current = setTimeout(async () => {
-      try {
-        const rows = await cmd.customerList(custSearch.trim());
-        setCustResults(rows.slice(0, 8));
-        setShowCustDrop(true);
-      } catch { /* ignore */ }
+    if (!custSearch.trim()) { setCustResults([]); return; }
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(async () => {
+      const rows = await cmd.customerList(custSearch.trim()).catch(() => [] as CustomerRow[]);
+      setCustResults(rows.slice(0, 6));
+      setShowCustDrop(true);
     }, 250);
-    return () => { if (searchRef.current) clearTimeout(searchRef.current); };
+    return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
   }, [custSearch]);
-
-  const allocatedMinor = lines.reduce((sum, l) => {
-    const amt = parseMoney(l.amountStr, EXP);
-    return sum + (amt > 0 ? amt : 0);
-  }, 0);
-  const remainingMinor = netTotal - allocatedMinor;
 
   const updateLine = (id: number, patch: Partial<PaymentLine>) =>
     setLines(prev => prev.map(l => l.id === id ? { ...l, ...patch } : l));
-  const removeLine = (id: number) => setLines(prev => prev.filter(l => l.id !== id));
-  const addLine    = () => setLines(prev => [...prev, mkLine("cash")]);
+  const removeLine = (id: number) =>
+    setLines(prev => prev.filter(l => l.id !== id));
 
-  // ── Dialpad key handler ────────────────────────────────────────────────
-  const handleDialpadKey = (key: string) => {
-    const target = activeField ?? { lineId: lines[0]?.id, field: "amount" as const };
-    if (!target) return;
-    const line = lines.find(l => l.id === target.lineId);
-    if (!line) return;
+  const allocatedMinor = lines.reduce(
+    (s, l) => s + Math.max(parseMoney(l.amountStr, EXP), 0), 0
+  );
+  const remainingMinor = netTotal - allocatedMinor;
 
-    const current = target.field === "amount" ? line.amountStr : line.tenderedStr;
+  // ── Dialpad handler — covers amount, tendered, AND phone ────────────
+  const handleDialpadKey = useCallback((key: string) => {
+    if (!activeField) return;
 
-    let next: string;
-    if (key === "⌫") {
-      next = current.slice(0, -1);
-    } else if (key === "C") {
-      next = "";
-    } else if (key === ".") {
-      if (current.includes(".")) return;
-      next = (current || "0") + ".";
-    } else if (key === "00") {
-      next = current.includes(".") ? current : current + "00";
-    } else {
-      // digit
-      if (current === "0") next = key;
-      else next = current + key;
+    if (activeField.kind === "amount" || activeField.kind === "tendered") {
+      const line = lines.find(l => l.id === activeField.lineId);
+      if (!line) return;
+      const cur = activeField.kind === "amount" ? line.amountStr : line.tenderedStr;
+      const next = applyDialpadKey(cur, key);
+      if (activeField.kind === "amount") updateLine(activeField.lineId, { amountStr: next });
+      else updateLine(activeField.lineId, { tenderedStr: next });
+
+    } else if (activeField.kind === "phone") {
+      // Digits only, max 8, no decimal/00 for phone numbers
+      setPhoneRaw(prev => {
+        if (key === "⌫") return prev.slice(0, -1);
+        if (key === "C")  return "";
+        if (key === "." || key === "00") return prev; // ignore
+        if (prev.length >= 8) return prev;            // max 8 digits
+        return prev + key;
+      });
     }
+  }, [activeField, lines]);
 
-    if (target.field === "amount") {
-      updateLine(target.lineId, { amountStr: next });
-    } else {
-      updateLine(target.lineId, { tenderedStr: next });
-    }
+  // Physical keyboard → dialpad (digits/backspace work while modal is open)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      // Let text inputs handle their own typing
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+
+      if (e.key >= "0" && e.key <= "9") { e.preventDefault(); handleDialpadKey(e.key); }
+      else if (e.key === "Backspace")   { e.preventDefault(); handleDialpadKey("⌫"); }
+      else if (e.key === "Delete")      { e.preventDefault(); handleDialpadKey("C"); }
+      else if (e.key === ".")           { e.preventDefault(); handleDialpadKey("."); }
+      else if (e.key === "F1") { e.preventDefault(); setLines(p => p.map((l, i) => i === 0 ? { ...l, method: "cash" }   : l)); }
+      else if (e.key === "F2") {
+        e.preventDefault();
+        setLines(p => p.map((l, i) => i === 0 ? { ...l, method: "card" } : l));
+        // card has no tendered — keep dialpad on amount
+        setActiveField(prev => (prev?.kind === "tendered" ? { kind: "amount", lineId: lines[0].id } : prev));
+      }
+      else if (e.key === "F3") {
+        e.preventDefault();
+        setLines(p => p.map((l, i) => i === 0 ? { ...l, method: "wallet" } : l));
+        setActiveField(prev => (prev?.kind === "tendered" ? { kind: "amount", lineId: lines[0].id } : prev));
+      }
+      else if (e.key === "Escape")      { e.preventDefault(); onCancel(); }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [activeField, handleDialpadKey, onCancel]);
+
+  // Quick amount suggestions (round notes above total)
+  const quickAmts = (() => {
+    const unit = Math.pow(10, EXP);
+    return [5, 10, 20, 50]
+      .map(n => Math.round(n * unit))
+      .filter(n => n > netTotal);
+  })();
+
+  const applyQuick = (minor: number) => {
+    const cashLine = lines.find(l => l.method === "cash");
+    if (!cashLine) return;
+    const s = formatMoney(minor, EXP);
+    updateLine(cashLine.id, { amountStr: s, tenderedStr: s });
   };
 
+  // Validation
   const canConfirm = (() => {
-    if (lines.length === 0) return false;
+    if (!lines.length) return false;
     for (const l of lines) {
       if (parseMoney(l.amountStr, EXP) <= 0) return false;
-      if (l.method === "cash" && parseMoney(l.tenderedStr || l.amountStr, EXP) < parseMoney(l.amountStr, EXP)) return false;
+      if (l.method === "cash") {
+        const t = parseMoney(l.tenderedStr || l.amountStr, EXP);
+        if (t < parseMoney(l.amountStr, EXP)) return false;
+      }
     }
-    if (allocatedMinor < netTotal) return false;
-    if (isDelivery) {
+    if (Math.abs(allocatedMinor - netTotal) > 1) return false; // 1-fil tolerance for BHD rounding
+    if (showDelivery) {
       if (!deliveryData.contact_number) return false;
+      if (!deliveryData.house_number?.trim()) return false;
       if (!deliveryData.address_text?.trim()) return false;
     }
     return true;
@@ -180,211 +198,243 @@ export default function PaymentModal({ netTotal, onConfirm, onCancel, loading, i
     const payments: PaymentInput[] = lines.map(l => {
       const amount = parseMoney(l.amountStr, EXP);
       if (l.method === "cash") {
-        const tendered = parseMoney(l.tenderedStr || l.amountStr, EXP);
-        return { method: l.method, amount_minor: amount, tendered_minor: Math.max(tendered, amount) };
+        const tendered = Math.max(parseMoney(l.tenderedStr || l.amountStr, EXP), amount);
+        return { method: l.method, amount_minor: amount, tendered_minor: tendered };
       }
       return { method: l.method, amount_minor: amount };
     });
-    let deliveryInput: DeliveryInput | undefined;
-    if (isDelivery) {
-      deliveryInput = {
-        ...(deliveryData as DeliveryInput),
-        expected_payment_method: lines[0]?.method ?? "cash",
-      };
-    }
-    onConfirm(payments, selectedCust?.customer_id, deliveryInput);
+    const delivery: DeliveryInput | undefined = showDelivery
+      ? { ...(deliveryData as DeliveryInput), expected_payment_method: lines[0]?.method ?? "cash" }
+      : undefined;
+    onConfirm(payments, selectedCust?.customer_id, delivery, selectedCust ?? undefined);
   };
 
-  // Quick-amount suggestions
-  const quickAmounts: number[] = (() => {
-    const unit = Math.pow(10, EXP);
-    return [5, 10, 30]
-      .map(major => Math.round(major * unit))
-      .filter(minor => minor > netTotal);
-  })();
+  // Remaining / change display
+  const remainingText =
+    remainingMinor > 0 ? `Still owed: ${fmt(remainingMinor)}` :
+    remainingMinor < 0 ? `Change: ${fmt(-remainingMinor)}` :
+    "✓ Fully paid";
+  const remainingCls =
+    `pm-remaining${remainingMinor < 0 ? " pm-remaining-change" : remainingMinor === 0 ? " pm-remaining-ok" : ""}`;
 
-  const applyQuickAmount = (minor: number) => {
-    const cashLine = lines.find(l => l.method === "cash");
-    if (!cashLine) return;
-    const majorStr = formatMoney(minor, EXP);
-    updateLine(cashLine.id, { amountStr: majorStr, tenderedStr: majorStr });
-  };
-
-  // ── Remaining display ──────────────────────────────────────────────────
-  const remainingCls = `split-remaining ${
-    remainingMinor < 0 ? "split-remaining-change" :
-    remainingMinor === 0 ? "split-remaining-ok" : ""
-  }`;
-  const remainingText = remainingMinor > 0
-    ? `Still owed: ${fmt(remainingMinor)}`
-    : remainingMinor < 0 ? `Change due: ${fmt(-remainingMinor)}`
-    : "✓ Fully paid";
+  // Field label for dialpad indicator
+  const fieldLabel =
+    activeField?.kind === "tendered" ? "Tendered" :
+    activeField?.kind === "phone"    ? "Phone No." : "Amount";
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onCancel()}>
-      <div className="payment-shell">
+      <div className="pm-shell" role="dialog" aria-modal="true" aria-labelledby="pm-dialog-title" ref={containerRef}>
 
-        {/* ── Left: Payment form ────────────────────────────────────── */}
-        <div className="modal payment-modal payment-modal-touch">
-          <div className="modal-header">
-            <span className="modal-title">Payment</span>
+        {/* ── LEFT: payment form ───────────────────────────────────────── */}
+        <div className="pm-left">
+
+          {/* Header: title + total */}
+          <div className="pm-header">
+            <span className="pm-title" id="pm-dialog-title">Checkout</span>
+            <span className="pm-total-badge">{fmt(netTotal)}</span>
           </div>
 
-          {/* Customer picker */}
-          <div className="cust-picker-section">
-            <label className="cust-picker-label">Customer (optional)</label>
-            {selectedCust ? (
-              <div className="cust-chip">
-                <span>{selectedCust.name}{selectedCust.phone ? ` · ${selectedCust.phone}` : ""}</span>
-                <span className="cust-chip-pts">{selectedCust.loyalty_points} pts</span>
-                <button className="cust-chip-remove" onClick={() => { setSelectedCust(null); setCustSearch(""); }}>×</button>
-              </div>
-            ) : (
-              <div className="cust-search-wrap">
-                <input
-                  className="cust-search-input"
-                  placeholder="Search by name or phone…"
-                  value={custSearch}
-                  onChange={e => { setCustSearch(e.target.value); if (!e.target.value) setShowCustDrop(false); }}
-                  onBlur={() => setTimeout(() => setShowCustDrop(false), 180)}
-                />
-                {showCustDrop && custResults.length > 0 && (
-                  <div className="cust-dropdown">
-                    {custResults.map(c => (
-                      <button key={c.customer_id} className="cust-dropdown-item"
-                        onMouseDown={() => { setSelectedCust(c); setCustSearch(""); setShowCustDrop(false); }}>
-                        <span className="cust-dd-name">{c.name}</span>
-                        {c.phone && <span className="cust-dd-phone">{c.phone}</span>}
-                      </button>
-                    ))}
+          {/* Payment line(s) */}
+          {lines.map((line, idx) => {
+            const amt      = parseMoney(line.amountStr, EXP);
+            const tendered = parseMoney(line.tenderedStr || line.amountStr, EXP);
+            const change   = line.method === "cash" && tendered > amt ? tendered - amt : 0;
+            const isActiveAmt = activeField?.kind === "amount"   && activeField.lineId === line.id;
+            const isActiveTen = activeField?.kind === "tendered" && activeField.lineId === line.id;
+
+            return (
+              <div key={line.id} className={`pm-line${lines.length > 1 ? " pm-line-split" : ""}`}>
+
+                {/* Method pills — compact single row */}
+                <div className="pm-methods">
+                  {METHODS.map(m => (
+                    <button
+                      key={m.id}
+                      className={`pm-method${line.method === m.id ? " pm-method-active" : ""}`}
+                      onClick={() => {
+                        updateLine(line.id, { method: m.id });
+                        // If switching away from cash, tendered field disappears —
+                        // reset activeField so dialpad stays connected to amount
+                        if (m.id !== "cash" && activeField?.kind === "tendered" && activeField.lineId === line.id) {
+                          setActiveField({ kind: "amount", lineId: line.id });
+                        }
+                        // Never steal focus away to confirm button — let the user keep typing
+                      }}
+                    >
+                      <span className="pm-method-icon">{m.icon}</span>
+                      <span className="pm-method-label">{m.label}</span>
+                    </button>
+                  ))}
+                  {lines.length > 1 && (
+                    <button className="pm-remove-line" onClick={() => removeLine(line.id)} title="Remove">×</button>
+                  )}
+                </div>
+
+                {/* Amount — tappable field, dialpad-connected */}
+                <div
+                  className={`pm-field${isActiveAmt ? " pm-field-active" : ""}`}
+                  onClick={() => setActiveField({ kind: "amount", lineId: line.id })}
+                >
+                  <span className="pm-field-label">Amount</span>
+                  <span className="pm-field-value">
+                    {line.amountStr || (
+                      <span className="pm-field-ph">
+                        {idx === 0 && lines.length === 1 ? formatMoney(netTotal, EXP) : "0.000"}
+                      </span>
+                    )}
+                  </span>
+                  {isActiveAmt && <span className="pm-cursor">|</span>}
+                </div>
+
+                {/* Tendered — cash only, dialpad-connected */}
+                {line.method === "cash" && (
+                  <div
+                    className={`pm-field${isActiveTen ? " pm-field-active" : ""}`}
+                    onClick={() => setActiveField({ kind: "tendered", lineId: line.id })}
+                  >
+                    <span className="pm-field-label">Tendered</span>
+                    <span className="pm-field-value">
+                      {line.tenderedStr || (
+                        <span className="pm-field-ph">{line.amountStr || "0.000"}</span>
+                      )}
+                    </span>
+                    {isActiveTen && <span className="pm-cursor">|</span>}
+                    {change > 0 && <span className="pm-change">Change {fmt(change)}</span>}
                   </div>
                 )}
               </div>
-            )}
-          </div>
+            );
+          })}
 
-          {/* Total */}
-          <div className="payment-total">
-            <span className="payment-total-label">Total Due</span>
-            <span className="payment-total-amount">{fmt(netTotal)}</span>
-          </div>
-
-          {/* Quick amounts */}
-          {lines.length === 1 && lines[0].method === "cash" && quickAmounts.length > 0 && (
-            <div className="quick-amounts">
-              {quickAmounts.map(minor => (
-                <button key={minor} className="quick-amt-btn"
-                  onClick={() => applyQuickAmount(minor)}>
-                  {fmt(minor)}
+          {/* Quick amounts — cash only, only when useful */}
+          {lines.length === 1 && lines[0].method === "cash" && quickAmts.length > 0 && (
+            <div className="pm-quick">
+              {quickAmts.slice(0, 3).map(a => (
+                <button key={a} className="pm-quick-btn" onClick={() => applyQuick(a)}>
+                  {fmt(a)}
                 </button>
               ))}
             </div>
           )}
 
-          {/* Payment lines */}
-          <div className="split-lines">
-            {lines.map((line, idx) => {
-              const amt     = parseMoney(line.amountStr, EXP);
-              const tendered = parseMoney(line.tenderedStr || line.amountStr, EXP);
-              const change  = line.method === "cash" && tendered > amt ? tendered - amt : 0;
-              const isActiveAmt = activeField?.lineId === line.id && activeField.field === "amount";
-              const isActiveTen = activeField?.lineId === line.id && activeField.field === "tendered";
-              return (
-                <div key={line.id} className="split-line">
-                  {/* Method cards */}
-                  <div className="method-cards">
-                    {METHOD_OPTIONS.map(m => (
-                      <button
-                        key={m.id}
-                        className={`method-card${line.method === m.id ? " method-card-active" : ""}`}
-                        onClick={() => updateLine(line.id, { method: m.id })}
-                      >
-                        <span className="method-card-icon">{m.icon}</span>
-                        <span className="method-card-label">{m.label}</span>
-                      </button>
-                    ))}
-                    {lines.length > 1 && (
-                      <button className="split-remove-btn" onClick={() => removeLine(line.id)} title="Remove">×</button>
-                    )}
-                  </div>
-
-                  {/* Amount input */}
-                  <div className={`touch-input-row${isActiveAmt ? " touch-input-active" : ""}`}
-                    onClick={() => setActiveField({ lineId: line.id, field: "amount" })}>
-                    <span className="touch-input-label">Amount</span>
-                    <span className="touch-input-value">
-                      {line.amountStr || <span className="touch-input-placeholder">{idx === 0 && lines.length === 1 ? formatMoney(netTotal, EXP) : "0.000"}</span>}
-                    </span>
-                    {isActiveAmt && <span className="touch-cursor">|</span>}
-                  </div>
-
-                  {/* Tendered (cash only) */}
-                  {line.method === "cash" && (
-                    <div className={`touch-input-row${isActiveTen ? " touch-input-active" : ""}`}
-                      onClick={() => setActiveField({ lineId: line.id, field: "tendered" })}>
-                      <span className="touch-input-label">Tendered</span>
-                      <span className="touch-input-value">
-                        {line.tenderedStr || <span className="touch-input-placeholder">{line.amountStr || "0.000"}</span>}
-                      </span>
-                      {isActiveTen && <span className="touch-cursor">|</span>}
-                      {change > 0 && <span className="split-change">Change {fmt(change)}</span>}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Remaining */}
+          {/* Remaining / change */}
           <div className={remainingCls}>{remainingText}</div>
 
-          <button className="split-add-btn" onClick={addLine}>+ Add payment method</button>
+          {/* Optional sections — collapsed by default ──────────────── */}
+          <div className="pm-accordions">
 
-          {/* Delivery toggle */}
-          <div className="delivery-toggle-row">
-            <label className="delivery-toggle-label">
-              <input type="checkbox" className="delivery-toggle-cb"
-                checked={isDelivery} onChange={e => setIsDelivery(e.target.checked)} />
-              <span>🛵 Mark as Delivery</span>
-            </label>
-            {isDelivery && <span className="delivery-toggle-hint">Payment will be pending until confirmed by manager</span>}
+            {/* Split payment */}
+            {!showSplit ? (
+              <button
+                className="pm-accord-toggle pm-accord-add"
+                onClick={() => { setShowSplit(true); setLines(p => [...p, mkLine("card")]); }}
+              >
+                + Split payment
+              </button>
+            ) : (
+              <button
+                className="pm-accord-toggle"
+                onClick={() => { setShowSplit(false); setLines(p => p.slice(0, 1)); }}
+              >
+                − Remove split
+              </button>
+            )}
+
+            {/* Customer */}
+            <button
+              className={`pm-accord-toggle${selectedCust ? " pm-accord-filled" : ""}`}
+              onClick={() => setShowCust(v => !v)}
+            >
+              <span>👤 {selectedCust ? selectedCust.name : "Customer"}</span>
+              <span className="pm-accord-arrow">{showCust ? "▲" : "▼"}</span>
+            </button>
+            {showCust && (
+              <div className="pm-accord-body">
+                {selectedCust ? (
+                  <div className="cust-chip">
+                    <span>{selectedCust.name}{selectedCust.phone ? ` · ${selectedCust.phone}` : ""}</span>
+                    <span className="cust-chip-pts">{selectedCust.loyalty_points} pts</span>
+                    <button className="cust-chip-remove"
+                      onClick={() => { setSelectedCust(null); setCustSearch(""); }}>×</button>
+                  </div>
+                ) : (
+                  <div className="cust-search-wrap">
+                    <input
+                      className="cust-search-input"
+                      placeholder="Search name or phone…"
+                      value={custSearch}
+                      onChange={e => { setCustSearch(e.target.value); if (!e.target.value) setShowCustDrop(false); }}
+                      onBlur={() => setTimeout(() => setShowCustDrop(false), 180)}
+                    />
+                    {showCustDrop && custResults.length > 0 && (
+                      <div className="cust-dropdown">
+                        {custResults.map(c => (
+                          <button key={c.customer_id} className="cust-dropdown-item"
+                            onMouseDown={() => { setSelectedCust(c); setCustSearch(""); setShowCustDrop(false); }}>
+                            <span className="cust-dd-name">{c.name}</span>
+                            {c.phone && <span className="cust-dd-phone">{c.phone}</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Delivery */}
+            <button
+              className={`pm-accord-toggle${showDelivery ? " pm-accord-filled" : ""}`}
+              onClick={() => setShowDelivery(v => !v)}
+            >
+              <span>🛵 Delivery</span>
+              <span className="pm-accord-arrow">{showDelivery ? "▲" : "▼"}</span>
+            </button>
+            {showDelivery && (
+              <div className="pm-accord-body">
+                <DeliveryForm
+                  value={deliveryData}
+                  onChange={setDeliveryData}
+                  selectedCustomer={selectedCust}
+                  expectedPaymentMethod={lines[0]?.method ?? "cash"}
+                  actorUserId={sessionUserId ?? DEVICE.device_id}
+                  phoneRaw={phoneRaw}
+                  phoneError={phoneError}
+                  onPhoneChange={(raw, normalized, err) => {
+                    setPhoneRaw(raw);
+                    setPhoneError(err);
+                    setDeliveryData(prev => ({ ...prev, contact_number: normalized ?? "" }));
+                  }}
+                  onPhoneFocus={() => setActiveField({ kind: "phone" })}
+                />
+              </div>
+            )}
           </div>
-
-          {isDelivery && (
-            <DeliveryForm
-              value={deliveryData}
-              onChange={setDeliveryData}
-              selectedCustomer={selectedCust}
-              expectedPaymentMethod={lines[0]?.method ?? "cash"}
-              actorUserId={sessionUserId ?? DEVICE.device_id}
-            />
-          )}
         </div>
 
-        {/* ── Right: Dialpad panel ──────────────────────────────────── */}
-        <div className="payment-dialpad-panel">
-          {/* Active field indicator */}
-          <div className="dialpad-field-indicator">
-            {activeField?.field === "tendered" ? "Entering: Tendered" : "Entering: Amount"}
-          </div>
+        {/* ── RIGHT: dialpad ───────────────────────────────────────────── */}
+        <div className="pm-right">
+          <div className="pm-field-indicator">{fieldLabel}</div>
 
           <Dialpad onKey={handleDialpadKey} />
 
-          <div className="dialpad-actions">
+          <div className="pm-actions">
             <button
-              className="dialpad-confirm-btn"
+              ref={confirmRef}
+              className="pm-confirm-btn"
               onClick={handleConfirm}
               disabled={!canConfirm || loading}
             >
               {loading ? "Processing…" : (
                 <>
-                  <span className="dialpad-confirm-icon">✓</span>
-                  <span className="dialpad-confirm-label">Confirm</span>
-                  <span className="dialpad-confirm-total">{fmt(netTotal)}</span>
+                  <span className="pm-confirm-check">✓</span>
+                  <span className="pm-confirm-label">Confirm Payment</span>
+                  <span className="pm-confirm-total">{fmt(netTotal)}</span>
                 </>
               )}
             </button>
-            <button className="dialpad-cancel-btn" onClick={onCancel} disabled={loading}>
+            <button className="pm-cancel-btn" onClick={onCancel} disabled={loading}>
               ✕ Cancel
             </button>
           </div>

@@ -3545,8 +3545,9 @@ textarea.field-input { resize: vertical; }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   color: var(--text);
-  padding: 10px 14px;
-  font-size: 0.95rem;
+  padding: 14px 16px;
+  font-size: 1rem;
+  min-height: var(--input-height);
   width: 100%;
 }
 .setup-input:focus { outline: 2px solid var(--accent); border-color: transparent; }
@@ -3563,9 +3564,10 @@ textarea.field-input { resize: vertical; }
   border: 1px solid var(--border);
   color: var(--text-dim);
   border-radius: var(--radius);
-  padding: 8px 16px;
+  padding: 14px 24px;
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: 0.95rem;
+  min-height: 64px;
   text-align: center;
 }
 .setup-skip-btn:hover { border-color: var(--accent); color: var(--text); }

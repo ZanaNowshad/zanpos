@@ -517,11 +517,14 @@ export default function DeliveriesTab({ sessionUser }: Props) {
                               💳
                             </button>
                           )}
-                          {/* Mark Paid — unpaid + manager */}
+                          {/* Mark Paid — unpaid + manager: expand row + show confirm form */}
                           {isManager && row.payment_status === "unpaid" && row.delivery_status !== "cancelled" && (
                             <button
                               className="dlv-quick-btn dlv-quick-pay"
-                              onClick={() => setConfirmingId(row.delivery_id)}
+                              onClick={() => {
+                                setExpanded(row.delivery_id);   // ensure detail panel is visible
+                                setConfirmingId(row.delivery_id);
+                              }}
                               title="Mark as paid"
                             >
                               ✓

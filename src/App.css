@@ -7427,9 +7427,9 @@ label {
 }
 
 /* ── BO form inputs — 56 px ──────────────────────────────────────────────── */
-.bo-input  { padding: 14px 16px; font-size: 1rem; min-height: 56px; }
-.bo-select { padding: 14px 16px; font-size: 1rem; min-height: 56px; }
-.bo-search { padding: 14px 14px; font-size: 1rem; min-height: 56px; }
+.bo-input  { padding: 14px 16px; font-size: 1rem; min-height: var(--input-height); }
+.bo-select { padding: 14px 16px; font-size: 1rem; min-height: var(--input-height); }
+.bo-search { padding: 14px 14px; font-size: 1rem; min-height: var(--input-height); }
 .bo-add-btn { min-height: 52px; padding: 12px 20px; font-size: 0.875rem; }
 
 /* ── Modal field inputs — 56 px ──────────────────────────────────────────── */
@@ -7490,7 +7490,7 @@ label {
 /* ── BO form action buttons — 56 px ─────────────────────────────────────── */
 .bo-form-actions .btn-primary,
 .bo-form-actions .btn-secondary,
-.bo-form-actions .btn-danger { min-height: 56px; }
+.bo-form-actions .btn-danger { min-height: var(--btn-md); }
 
 /* ── BO form pane section spacing ────────────────────────────────────────── */
 .bo-form-pane { gap: 24px; }

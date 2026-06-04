@@ -1,4 +1,5 @@
-use crate::errors::AppResult;
+use crate::commands::rbac;
+use crate::errors::{AppError, AppResult};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -8,10 +9,16 @@ const SIDECAR_URL: &str = "http://127.0.0.1:3131";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+/// M23: Extended status so the frontend can distinguish three states:
+///   sidecar_running=false → sidecar process is dead / not started
+///   sidecar_running=true, connected=false → sidecar alive but not paired
+///   sidecar_running=true, connected=true → paired and ready
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WhatsAppStatus {
     pub connected: bool,
     pub qr: Option<String>, // base64 PNG data URL: "data:image/png;base64,..."
+    #[serde(default)]
+    pub sidecar_running: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -38,6 +45,39 @@ fn read_sidecar_token(state: &AppState) -> String {
         .unwrap_or_default()
         .trim()
         .to_string()
+}
+
+// ─── Phone normalisation ──────────────────────────────────────────────────────
+
+/// Normalize a phone number: strip spaces/hyphens, ensure single '+' prefix,
+/// remove any doubled country code (e.g. +973973... → +973...).
+fn normalize_phone(raw: &str) -> String {
+    let stripped: String = raw
+        .chars()
+        .filter(|c| c.is_ascii_digit() || *c == '+')
+        .collect();
+    let digits_only: String = stripped.trim_start_matches('+').to_string();
+    // Check for doubled Gulf country codes
+    for cc in &["973", "966", "971", "965", "968", "974", "967"] {
+        let double = format!("{}{}", cc, cc);
+        if digits_only.starts_with(&double) {
+            return format!("+{}", &digits_only[cc.len()..]);
+        }
+    }
+    format!("+{}", digits_only)
+}
+
+// ─── Network guard ────────────────────────────────────────────────────────────
+
+/// Quick connectivity probe — tries a TCP connect to Google DNS on port 53.
+/// Times out after 2 seconds; returns false when the device has no WAN link.
+async fn is_network_available() -> bool {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        tokio::net::TcpStream::connect("8.8.8.8:53"),
+    )
+    .await
+    .is_ok()
 }
 
 // ─── Message builder ──────────────────────────────────────────────────────────
@@ -144,60 +184,56 @@ pub async fn whatsapp_status(state: State<'_, AppState>) -> AppResult<WhatsAppSt
         .send()
         .await
     {
-        Ok(resp) => Ok(resp
-            .json::<WhatsAppStatus>()
-            .await
-            .unwrap_or(WhatsAppStatus {
+        Ok(resp) => {
+            // M23: Sidecar is reachable — it's running; parse its response
+            let mut status = resp.json::<WhatsAppStatus>().await.unwrap_or(WhatsAppStatus {
                 connected: false,
                 qr: None,
-            })),
-        Err(_) => Ok(WhatsAppStatus {
-            connected: false,
-            qr: None,
-        }),
+                sidecar_running: true,
+            });
+            status.sidecar_running = true;
+            Ok(status)
+        }
+        Err(e) => {
+            // M23: Sidecar unreachable — distinguish from "not paired"
+            tracing::debug!("whatsapp_status: sidecar unreachable — {}", e);
+            Ok(WhatsAppStatus {
+                connected: false,
+                qr: None,
+                sidecar_running: false,
+            })
+        }
     }
 }
 
 #[tauri::command]
 pub async fn whatsapp_send_delivery(
     input: SendDeliveryInput,
+    actor_user_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    let benefit_number: Option<String> =
-        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'whatsapp_benefit_number'")
-            .fetch_optional(&state.db)
-            .await?
-            .flatten();
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
 
-    let store_name: Option<String> =
-        sqlx::query_scalar("SELECT name FROM branches WHERE is_active = 1 LIMIT 1")
-            .fetch_optional(&state.db)
-            .await?
-            .flatten();
+    if !is_network_available().await {
+        return Err(AppError::Internal("WhatsApp: device is offline".into()));
+    }
 
-    let store_phone: Option<String> =
-        sqlx::query_scalar("SELECT phone FROM branches WHERE is_active = 1 LIMIT 1")
-            .fetch_optional(&state.db)
-            .await?
-            .flatten();
+    let phone = normalize_phone(&input.to);
 
-    // Use frontend-built message if provided, otherwise fall back to Rust builder
-    let message = input.message_override.clone().unwrap_or_else(|| {
-        build_delivery_whatsapp_message(&WhatsAppDeliveryParams {
-            receipt_number: &input.receipt_number,
-            net_total_minor: input.net_total_minor,
-            currency_exponent: input.currency_exponent,
-            address_text: &input.address_text,
-            house_number: input.house_number.as_deref(),
-            area: input.area.as_deref(),
-            store_name: store_name.as_deref().unwrap_or(""),
-            store_phone: store_phone.as_deref(),
-            benefit_number: benefit_number.as_deref(),
-        })
-    });
+    whatsapp_send_delivery_impl(
+        &state,
+        &phone,
+        &input.receipt_number,
+        input.net_total_minor,
+        input.currency_exponent,
+        &input.address_text,
+        input.house_number.as_deref(),
+        input.area.as_deref(),
+        input.message_override.as_deref(),
+    )
+    .await?;
 
-    let token = read_sidecar_token(&state);
-    send_raw(&input.to, &message, &token).await
+    Ok(true)
 }
 
 #[tauri::command]
@@ -244,20 +280,20 @@ pub struct NotifyArrivalInput {
 #[tauri::command]
 pub async fn whatsapp_notify_arrival(
     input: NotifyArrivalInput,
+    actor_user_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    let message = format!(
-        "🚚 Your delivery is here!\n\
-         The delivery man is outside. Please come out to collect your order.\n\n\
-         Order #{r}\n\
-         ─────────────────\n\
-         🚚 طلبك وصل!\n\
-         عامل التوصيل في الخارج. من فضلك انزل لاستلام طلبك.\n\n\
-         طلب #{r}",
-        r = input.receipt_number,
-    );
-    let token = read_sidecar_token(&state);
-    send_raw(&input.to, &message, &token).await
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
+
+    if !is_network_available().await {
+        return Err(AppError::Internal("WhatsApp: device is offline".into()));
+    }
+
+    let phone = normalize_phone(&input.to);
+
+    whatsapp_notify_arrival_impl(&state, &phone, &input.receipt_number).await?;
+
+    Ok(true)
 }
 
 // ─── Payment reminder ─────────────────────────────────────────────────────────
@@ -277,51 +313,28 @@ pub struct PaymentReminderInput {
 #[tauri::command]
 pub async fn whatsapp_payment_reminder(
     input: PaymentReminderInput,
+    actor_user_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    let benefit_number: Option<String> =
-        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'whatsapp_benefit_number'")
-            .fetch_optional(&state.db)
-            .await?
-            .flatten();
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
 
-    let amount = fmt_money(input.amount_minor, input.currency_exponent);
+    if !is_network_available().await {
+        return Err(AppError::Internal("WhatsApp: device is offline".into()));
+    }
 
-    let message = match benefit_number.as_deref() {
-        Some(bn) => format!(
-            "💳 Payment Reminder — Order #{r}\n\
-             Amount due: {cur} {amount}\n\n\
-             Please send payment via BenefitPay to: {bn}\n\
-             Then reply with a screenshot of your payment receipt to confirm. 🧾\n\n\
-             Thank you! 🙏\n\
-             ─────────────────\n\
-             💳 تذكير بالدفع — طلب #{r}\n\
-             المبلغ المستحق: {amount} {cur}\n\n\
-             يرجى إرسال المبلغ عبر BenefitPay إلى: {bn}\n\
-             ثم أرسل لنا صورة من إيصال الدفع للتأكيد. 🧾\n\n\
-             شكراً! 🙏",
-            r = input.receipt_number,
-            cur = input.currency,
-            amount = amount,
-            bn = bn,
-        ),
-        None => format!(
-            "💳 Payment Reminder — Order #{r}\n\
-             Amount due: {cur} {amount}\n\n\
-             Please reply with a screenshot of your payment receipt to confirm. 🧾\n\n\
-             Thank you! 🙏\n\
-             ─────────────────\n\
-             💳 تذكير بالدفع — طلب #{r}\n\
-             المبلغ المستحق: {amount} {cur}\n\n\
-             يرجى إرسال لنا صورة من إيصال الدفع للتأكيد. 🧾\n\n\
-             شكراً! 🙏",
-            r = input.receipt_number,
-            cur = input.currency,
-            amount = amount,
-        ),
-    };
-    let token = read_sidecar_token(&state);
-    send_raw(&input.to, &message, &token).await
+    let phone = normalize_phone(&input.to);
+
+    whatsapp_payment_reminder_impl(
+        &state,
+        &phone,
+        &input.receipt_number,
+        input.amount_minor,
+        input.currency_exponent,
+        &input.currency,
+    )
+    .await?;
+
+    Ok(true)
 }
 
 // ─── Contact import ──────────────────────────────────────────────────────────
@@ -391,12 +404,8 @@ pub async fn whatsapp_import_contacts(
         if bare.is_empty() {
             continue;
         }
-        // Normalise: ensure the number is prefixed with '+'.
-        let phone = if bare.starts_with('+') {
-            bare.to_string()
-        } else {
-            format!("+{}", bare)
-        };
+        // Normalise: ensure the number is prefixed with '+', strip double country codes.
+        let phone = normalize_phone(bare);
 
         let customer_id = Ulid::new().to_string();
         let now = chrono::Utc::now().to_rfc3339();
@@ -427,9 +436,165 @@ pub async fn whatsapp_import_contacts(
     })
 }
 
+// ─── Impl helpers (pub(crate), for delivery-triggered calls) ──────────────────
+
+/// Best-effort delivery notification — callable from delivery_commands.
+/// Silently returns Ok(()) when offline so delivery status updates are not blocked.
+pub(crate) async fn whatsapp_send_delivery_impl(
+    state: &AppState,
+    phone: &str,
+    receipt_number: &str,
+    net_total_minor: i64,
+    currency_exponent: i32,
+    address_text: &str,
+    house_number: Option<&str>,
+    area: Option<&str>,
+    message_override: Option<&str>,
+) -> AppResult<()> {
+    if !is_network_available().await {
+        tracing::debug!("whatsapp_send_delivery_impl: offline, skipping");
+        return Ok(()); // Best-effort — don't fail the delivery status update
+    }
+    let phone = normalize_phone(phone);
+
+    let benefit_number: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'whatsapp_benefit_number'")
+            .fetch_optional(&state.db)
+            .await?
+            .flatten();
+
+    let store_name: Option<String> =
+        sqlx::query_scalar("SELECT name FROM branches WHERE is_active = 1 LIMIT 1")
+            .fetch_optional(&state.db)
+            .await?
+            .flatten();
+
+    let store_phone: Option<String> =
+        sqlx::query_scalar("SELECT phone FROM branches WHERE is_active = 1 LIMIT 1")
+            .fetch_optional(&state.db)
+            .await?
+            .flatten();
+
+    // Use frontend-built message if provided, otherwise fall back to Rust builder
+    let message = message_override.map(|s| s.to_string()).unwrap_or_else(|| {
+        build_delivery_whatsapp_message(&WhatsAppDeliveryParams {
+            receipt_number,
+            net_total_minor,
+            currency_exponent,
+            address_text,
+            house_number,
+            area,
+            store_name: store_name.as_deref().unwrap_or(""),
+            store_phone: store_phone.as_deref(),
+            benefit_number: benefit_number.as_deref(),
+        })
+    });
+
+    let token = read_sidecar_token(state);
+    send_raw(&phone, &message, &token).await?;
+    Ok(())
+}
+
+/// Best-effort arrival notification — callable from delivery_commands.
+/// Silently returns Ok(()) when offline.
+pub(crate) async fn whatsapp_notify_arrival_impl(
+    state: &AppState,
+    phone: &str,
+    receipt_number: &str,
+) -> AppResult<()> {
+    if !is_network_available().await {
+        tracing::debug!("whatsapp_notify_arrival_impl: offline, skipping");
+        return Ok(());
+    }
+    let phone = normalize_phone(phone);
+
+    let message = format!(
+        "🚚 Your delivery is here!\n\
+         The delivery man is outside. Please come out to collect your order.\n\n\
+         Order #{r}\n\
+         ─────────────────\n\
+         🚚 طلبك وصل!\n\
+         عامل التوصيل في الخارج. من فضلك انزل لاستلام طلبك.\n\n\
+         طلب #{r}",
+        r = receipt_number,
+    );
+    let token = read_sidecar_token(state);
+    send_raw(&phone, &message, &token).await?;
+    Ok(())
+}
+
+/// Best-effort payment reminder — callable from delivery_commands.
+/// Silently returns Ok(()) when offline.
+pub(crate) async fn whatsapp_payment_reminder_impl(
+    state: &AppState,
+    phone: &str,
+    receipt_number: &str,
+    amount_minor: i64,
+    currency_exponent: i32,
+    currency: &str,
+) -> AppResult<()> {
+    if !is_network_available().await {
+        tracing::debug!("whatsapp_payment_reminder_impl: offline, skipping");
+        return Ok(());
+    }
+    let phone = normalize_phone(phone);
+
+    let benefit_number: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'whatsapp_benefit_number'")
+            .fetch_optional(&state.db)
+            .await?
+            .flatten();
+
+    let amount = fmt_money(amount_minor, currency_exponent);
+
+    let message = match benefit_number.as_deref() {
+        Some(bn) => format!(
+            "💳 Payment Reminder — Order #{r}\n\
+             Amount due: {cur} {amount}\n\n\
+             Please send payment via BenefitPay to: {bn}\n\
+             Then reply with a screenshot of your payment receipt to confirm. 🧾\n\n\
+             Thank you! 🙏\n\
+             ─────────────────\n\
+             💳 تذكير بالدفع — طلب #{r}\n\
+             المبلغ المستحق: {amount} {cur}\n\n\
+             يرجى إرسال المبلغ عبر BenefitPay إلى: {bn}\n\
+             ثم أرسل لنا صورة من إيصال الدفع للتأكيد. 🧾\n\n\
+             شكراً! 🙏",
+            r = receipt_number,
+            cur = currency,
+            amount = amount,
+            bn = bn,
+        ),
+        None => format!(
+            "💳 Payment Reminder — Order #{r}\n\
+             Amount due: {cur} {amount}\n\n\
+             Please reply with a screenshot of your payment receipt to confirm. 🧾\n\n\
+             Thank you! 🙏\n\
+             ─────────────────\n\
+             💳 تذكير بالدفع — طلب #{r}\n\
+             المبلغ المستحق: {amount} {cur}\n\n\
+             يرجى إرسال لنا صورة من إصمال الدفع للتأكيد. 🧾\n\n\
+             شكراً! 🙏",
+            r = receipt_number,
+            cur = currency,
+            amount = amount,
+        ),
+    };
+    let token = read_sidecar_token(state);
+    send_raw(&phone, &message, &token).await?;
+    Ok(())
+}
+
 /// Internal helper: POST a raw message to the sidecar /send endpoint.
+/// Returns Ok(true) on confirmed send, Ok(false) otherwise. R-15: the underlying
+/// cause (sidecar unreachable vs. invalid number rejected by WhatsApp) is logged
+/// so a returned `false` is always diagnosable from the logs.
 async fn send_raw(to: &str, message: &str, token: &str) -> AppResult<bool> {
-    let client = reqwest::Client::new();
+    // Apply a bounded timeout so a stuck sidecar can't hang the caller.
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .unwrap_or_default();
     match client
         .post(format!("{}/send", SIDECAR_URL))
         .header("X-Sidecar-Token", token)
@@ -439,9 +604,20 @@ async fn send_raw(to: &str, message: &str, token: &str) -> AppResult<bool> {
     {
         Ok(resp) => {
             let body: serde_json::Value = resp.json().await.unwrap_or_default();
-            Ok(body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false))
+            let ok = body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+            if !ok {
+                tracing::warn!(
+                    "WhatsApp send to '{}' rejected by sidecar: {}",
+                    to,
+                    body.get("error").and_then(|v| v.as_str()).unwrap_or("unknown reason")
+                );
+            }
+            Ok(ok)
         }
-        Err(_) => Ok(false),
+        Err(e) => {
+            tracing::warn!("WhatsApp send to '{}' failed — sidecar unreachable: {}", to, e);
+            Ok(false)
+        }
     }
 }
 
@@ -534,5 +710,34 @@ mod tests {
     fn test_fmt_money_2_decimals() {
         assert_eq!(fmt_money(199, 2), "1.99");
         assert_eq!(fmt_money(100, 2), "1.00");
+    }
+
+    #[test]
+    fn test_normalize_phone_strips_spaces_and_hyphens() {
+        assert_eq!(normalize_phone("+973 3305 0666"), "+97333050666");
+        assert_eq!(normalize_phone("973-3305-0666"), "+97333050666");
+    }
+
+    #[test]
+    fn test_normalize_phone_double_country_code() {
+        // +97397333050666 → +97333050666
+        assert_eq!(normalize_phone("+97397333050666"), "+97333050666");
+        // +966966501234567 → +966501234567
+        assert_eq!(normalize_phone("+966966501234567"), "+966501234567");
+    }
+
+    #[test]
+    fn test_normalize_phone_already_normal() {
+        assert_eq!(normalize_phone("+97333050666"), "+97333050666");
+    }
+
+    #[test]
+    fn test_normalize_phone_no_plus() {
+        assert_eq!(normalize_phone("97333050666"), "+97333050666");
+    }
+
+    #[test]
+    fn test_normalize_phone_empty() {
+        assert_eq!(normalize_phone(""), "+");
     }
 }

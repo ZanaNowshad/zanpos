@@ -190,21 +190,25 @@ pub async fn inventory_receive_stock(
     .await?;
 
     // Enqueue movement and level inside the transaction (C-2)
-    let _ = outbox::enqueue_stock_movement_in_tx(
+    if let Err(e) = outbox::enqueue_stock_movement_in_tx(
         &mut tx, &device_id, &branch_id, &movement_id, &input.product_id,
         "receive", &delta_str, &new_qty_str, "receive", "",
         input.notes.as_deref(), Some(&input.received_by_user_id), &now,
-    ).await;
-    let _ = outbox::enqueue_stock_level_in_tx(
+    ).await {
+        tracing::warn!("Failed to enqueue stock movement: {}", e);
+    }
+    if let Err(e) = outbox::enqueue_stock_level_in_tx(
         &mut tx, &device_id, &branch_id, &input.product_id, &new_qty_str, &now, &now,
-    ).await;
+    ).await {
+        tracing::warn!("Failed to enqueue stock level: {}", e);
+    }
 
     tx.commit().await?;
 
     // ── Audit log AFTER commit (H-29) ──
     let after_json =
         serde_json::json!({"quantity_on_hand": new_qty_str}).to_string();
-    let _ = audit_hash::insert_audit_entry(
+    if let Err(e) = audit_hash::insert_audit_entry(
         &state.db,
         "STOCK_RECEIVED",
         "stock_level",
@@ -216,7 +220,9 @@ pub async fn inventory_receive_stock(
         Some(&before_json),
         Some(&after_json),
         input.notes.as_deref(),
-    ).await;
+    ).await {
+        tracing::warn!("Failed to write audit entry: {}", e);
+    }
 
     // Return updated level
     let levels = stock_repo::get_all_levels(&state.db, &branch_id).await?;
@@ -328,21 +334,25 @@ pub async fn inventory_adjust_stock(
     .await?;
 
     // Enqueue inside transaction
-    let _ = outbox::enqueue_stock_movement_in_tx(
+    if let Err(e) = outbox::enqueue_stock_movement_in_tx(
         &mut tx, &device_id, &branch_id, &movement_id, &input.product_id,
         "manual_adjust", &delta_str, &new_qty_str, "manual_adjust", "",
         input.notes.as_deref(), Some(&input.adjusted_by_user_id), &now,
-    ).await;
-    let _ = outbox::enqueue_stock_level_in_tx(
+    ).await {
+        tracing::warn!("Failed to enqueue stock movement: {}", e);
+    }
+    if let Err(e) = outbox::enqueue_stock_level_in_tx(
         &mut tx, &device_id, &branch_id, &input.product_id, &new_qty_str, &now, &now,
-    ).await;
+    ).await {
+        tracing::warn!("Failed to enqueue stock level: {}", e);
+    }
 
     tx.commit().await?;
 
     // ── Audit log AFTER commit (H-29) ──
     let after_json =
         serde_json::json!({"quantity_on_hand": new_qty_str}).to_string();
-    let _ = audit_hash::insert_audit_entry(
+    if let Err(e) = audit_hash::insert_audit_entry(
         &state.db,
         "STOCK_ADJUSTED",
         "stock_level",
@@ -354,7 +364,9 @@ pub async fn inventory_adjust_stock(
         Some(&before_json),
         Some(&after_json),
         input.notes.as_deref(),
-    ).await;
+    ).await {
+        tracing::warn!("Failed to write audit entry: {}", e);
+    }
 
     let levels = stock_repo::get_all_levels(&state.db, &branch_id).await?;
     levels
@@ -510,14 +522,18 @@ pub async fn inventory_bulk_stock_take(
         }
 
         // Enqueue inside transaction
-        let _ = outbox::enqueue_stock_movement_in_tx(
+        if let Err(e) = outbox::enqueue_stock_movement_in_tx(
             &mut tx, &device_id, &branch_id, &movement_id, &entry.product_id,
             "stock_take", &delta_str, &new_qty_str, "stock_take", "",
             entry.notes.as_deref(), Some(actor_user_id.as_str()), &now,
-        ).await;
-        let _ = outbox::enqueue_stock_level_in_tx(
+        ).await {
+            tracing::warn!("Failed to enqueue stock movement: {}", e);
+        }
+        if let Err(e) = outbox::enqueue_stock_level_in_tx(
             &mut tx, &device_id, &branch_id, &entry.product_id, &new_qty_str, &now, &now,
-        ).await;
+        ).await {
+            tracing::warn!("Failed to enqueue stock level: {}", e);
+        }
 
         if let Err(e) = tx.commit().await {
             errors.push(format!("Product {}: {e}", entry.product_id));
@@ -527,7 +543,7 @@ pub async fn inventory_bulk_stock_take(
         // ── Audit log AFTER commit (H-29) ──
         let after_json =
             serde_json::json!({"quantity_on_hand": new_qty_str}).to_string();
-        let _ = audit_hash::insert_audit_entry(
+        if let Err(e) = audit_hash::insert_audit_entry(
             &state.db,
             "STOCK_TAKE",
             "stock_level",
@@ -539,7 +555,9 @@ pub async fn inventory_bulk_stock_take(
             Some(&before_json),
             Some(&after_json),
             entry.notes.as_deref(),
-        ).await;
+        ).await {
+            tracing::warn!("Failed to write audit entry: {}", e);
+        }
 
         updated += 1;
     }

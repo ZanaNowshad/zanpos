@@ -1,9 +1,28 @@
+use crate::commands::rbac;
 use crate::errors::{AppError, AppResult};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 /// Thermal/ESC-POS printer configuration and printing.
 /// Uses the `serialport` crate directly (synchronous I/O on a blocking thread).
 use tauri::State;
+
+// ─── M7: Printer list cache (30s TTL) ────────────────────────────────────────
+// list_windows_printers() spawns PowerShell (500ms-2s per call). Cache with
+// a 30-second TTL so repeated calls from the settings UI are instant.
+
+struct PrinterCache {
+    entries: Vec<PortEntry>,
+    refreshed_at: Instant,
+}
+
+static PRINTER_CACHE: OnceLock<Mutex<Option<PrinterCache>>> = OnceLock::new();
+const PRINTER_CACHE_TTL: Duration = Duration::from_secs(30);
+
+fn get_printer_cache() -> &'static Mutex<Option<PrinterCache>> {
+    PRINTER_CACHE.get_or_init(|| Mutex::new(None))
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -96,7 +115,7 @@ fn build_test_bytes(port: &str, baud: &str) -> Vec<u8> {
     let mut buf = esc_init();
     buf.extend_from_slice(&esc_align(1));
     buf.extend_from_slice(&esc_bold(true));
-    buf.extend_from_slice(b"ZANPOS");
+    buf.extend_from_slice(b"TEST PRINT");
     buf.push(LF);
     buf.extend_from_slice(&esc_bold(false));
     buf.push(LF);
@@ -116,7 +135,7 @@ fn build_test_bytes(port: &str, baud: &str) -> Vec<u8> {
 ///   • Anything else → Windows print spooler RAW job
 ///
 /// On non-Windows platforms only serial is supported.
-fn write_to_port(port_name: &str, baud: u32, payload: Vec<u8>) -> AppResult<()> {
+pub fn write_to_port(port_name: &str, baud: u32, payload: Vec<u8>) -> AppResult<()> {
     #[cfg(windows)]
     {
         if !port_name.trim().to_uppercase().starts_with("COM") {
@@ -126,9 +145,10 @@ fn write_to_port(port_name: &str, baud: u32, payload: Vec<u8>) -> AppResult<()> 
     }
 
     // Serial / COM port path
-    use std::time::Duration;
+    // M25: 5s was too short for busy USB printers; 15s accommodates thermal printers
+    // that need extra time to respond when their buffer is almost full.
     let mut port = serialport::new(port_name, baud)
-        .timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(15))
         .open()
         .map_err(|e| AppError::Internal(format!("Cannot open port '{}': {}", port_name, e)))?;
 
@@ -149,7 +169,7 @@ fn write_to_port(port_name: &str, baud: u32, payload: Vec<u8>) -> AppResult<()> 
 fn write_to_windows_printer(printer_name: &str, payload: &[u8]) -> AppResult<()> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
-    use winapi::shared::minwindef::{DWORD, LPBYTE};
+    use winapi::shared::minwindef::DWORD;
     use winapi::um::winspool::{
         ClosePrinter, EndDocPrinter, EndPagePrinter, OpenPrinterW, StartDocPrinterW,
         StartPagePrinter, WritePrinter, DOC_INFO_1W,
@@ -189,7 +209,11 @@ fn write_to_windows_printer(printer_name: &str, payload: &[u8]) -> AppResult<()>
             pOutputFile: std::ptr::null_mut(),
             pDatatype: wide_raw.as_ptr() as *mut _,
         };
-        let job_id = StartDocPrinterW(h_printer, 1, &mut doc_info as *mut DOC_INFO_1W as LPBYTE);
+        let job_id = StartDocPrinterW(
+            h_printer,
+            1,
+            &mut doc_info as *mut DOC_INFO_1W as *mut u8,
+        );
         if job_id == 0 {
             ClosePrinter(h_printer);
             return Err(AppError::Internal(format!(
@@ -206,12 +230,23 @@ fn write_to_windows_printer(printer_name: &str, payload: &[u8]) -> AppResult<()>
         }
 
         let mut written: DWORD = 0;
-        WritePrinter(
+        let ret = WritePrinter(
             h_printer,
-            payload.as_ptr() as LPBYTE,
+            payload.as_ptr() as *mut winapi::ctypes::c_void,
             payload.len() as DWORD,
             &mut written,
         );
+        if ret == 0 || written != payload.len() as DWORD {
+            let err_msg = format!(
+                "WritePrinter: returned={} written={} expected={}",
+                ret, written, payload.len()
+            );
+            tracing::error!("{}", err_msg);
+            EndPagePrinter(h_printer);
+            EndDocPrinter(h_printer);
+            ClosePrinter(h_printer);
+            return Err(AppError::Internal(err_msg));
+        }
 
         EndPagePrinter(h_printer);
         EndDocPrinter(h_printer);
@@ -251,7 +286,7 @@ async fn config_set(state: &AppState, key: &str, value: &str) -> AppResult<()> {
 // ─── Commands ─────────────────────────────────────────────────────────────────
 
 /// A printer entry shown in the printer picker dropdown.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct PortEntry {
     /// Identifier used for printing — either a COM port ("COM3") or a Windows printer name ("EPSON TM-T88V")
     pub port: String,
@@ -274,9 +309,32 @@ pub fn thermal_list_ports() -> Vec<PortEntry> {
     // ── 1. Windows system printers via PowerShell / WMI ──────────────────────
     //   Uses Win32_Printer (WMI class) which exposes the real printer name and
     //   which one is the current default.  Works on Windows 7 – 11.
+    //   M7: Results are cached for 30 seconds (TTL) to avoid spawning PowerShell
+    //   on every settings-page render (PowerShell takes 500ms-2s each call).
     #[cfg(windows)]
     {
-        entries.extend(list_windows_printers());
+        let cached = {
+            let guard = get_printer_cache().lock().unwrap_or_else(|p| p.into_inner());
+            guard.as_ref().and_then(|c| {
+                if c.refreshed_at.elapsed() < PRINTER_CACHE_TTL {
+                    Some(c.entries.clone())
+                } else {
+                    None
+                }
+            })
+        };
+
+        let printers = cached.unwrap_or_else(|| {
+            let fresh = list_windows_printers();
+            if let Ok(mut guard) = get_printer_cache().lock() {
+                *guard = Some(PrinterCache {
+                    entries: fresh.clone(),
+                    refreshed_at: Instant::now(),
+                });
+            }
+            fresh
+        });
+        entries.extend(printers);
     }
 
     // ── 2. Serial / COM ports via the serialport crate ────────────────────────
@@ -411,8 +469,10 @@ pub async fn thermal_get_config(state: State<'_, AppState>) -> Result<ThermalCon
 #[tauri::command]
 pub async fn thermal_set_config(
     input: ThermalConfigInput,
+    actor_user_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     config_set(
         &state,
         "thermal_printer_enabled",

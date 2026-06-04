@@ -67,6 +67,11 @@ pub async fn pos_add_item(
             "Invalid quantity: {qty_str}"
         )));
     }
+    if qty_to_add.fract() != 0.0 && !product.product.allow_decimal_quantity {
+        return Err(AppError::Validation(
+            "This product does not allow decimal quantities".into()
+        ));
+    }
     let mut cart = input.cart;
 
     // Merge with an existing active line for the same product rather than duplicating.
@@ -106,9 +111,19 @@ pub async fn pos_add_item_by_barcode(
     input: AddItemByBarcodeInput,
     state: State<'_, AppState>,
 ) -> Result<Cart, AppError> {
-    let product = product_repo::get_product_by_barcode(&state.db, &input.barcode)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("Barcode {} not found", input.barcode)))?;
+    let product = match product_repo::get_product_by_barcode(&state.db, &input.barcode).await? {
+        Some(p) => p,
+        None => {
+            // Record unknown barcode for ghost resolution workflow
+            let _ = crate::commands::ghost_barcode_commands::ghost_record(
+                input.barcode.clone(),
+                input.cart.cashier_user_id.clone(),
+                state.clone(),
+            )
+            .await;
+            return Err(AppError::GhostBarcode(input.barcode));
+        }
+    };
 
     let mut cart = input.cart;
 
@@ -146,7 +161,10 @@ pub struct UpdateQuantityInput {
 }
 
 #[tauri::command]
-pub async fn pos_update_quantity(input: UpdateQuantityInput) -> Result<Cart, AppError> {
+pub async fn pos_update_quantity(
+    input: UpdateQuantityInput,
+    state: State<'_, AppState>,
+) -> Result<Cart, AppError> {
     let qty: f64 = input
         .quantity
         .parse()
@@ -155,6 +173,30 @@ pub async fn pos_update_quantity(input: UpdateQuantityInput) -> Result<Cart, App
         return Err(AppError::Validation(format!(
             "Quantity must be between 0 and 1,000,000 (got {qty})"
         )));
+    }
+    // Guard: reject decimal quantities for products that don't allow them.
+    if qty.fract() != 0.0 {
+        let product_id = input
+            .cart
+            .lines
+            .iter()
+            .find(|l| l.cart_line_id == input.cart_line_id)
+            .and_then(|l| l.product_id.as_deref());
+        if let Some(pid) = product_id {
+            let allow_decimal: bool = sqlx::query_scalar(
+                "SELECT allow_decimal_quantity FROM products WHERE product_id = ?",
+            )
+            .bind(pid)
+            .fetch_optional(&state.db)
+            .await?
+            .flatten()
+            .unwrap_or(false);
+            if !allow_decimal {
+                return Err(AppError::Validation(
+                    "This product does not allow decimal quantities".into()
+                ));
+            }
+        }
     }
     let mut cart = input.cart;
     if let Some(line) = cart
@@ -173,10 +215,16 @@ pub struct SetLinePriceInput {
     pub cart: Cart,
     pub cart_line_id: String,
     pub price_minor: i64,
+    /// User authorizing the price override — must be manager or owner.
+    pub authorized_by_user_id: String,
 }
 
 #[tauri::command]
-pub async fn pos_set_line_price(input: SetLinePriceInput) -> Result<Cart, AppError> {
+pub async fn pos_set_line_price(
+    input: SetLinePriceInput,
+    state: State<'_, AppState>,
+) -> Result<Cart, AppError> {
+    rbac::manager_or_owner(&state.db, &input.authorized_by_user_id).await?;
     if input.price_minor <= 0 {
         return Err(AppError::Validation("Price must be positive".into()));
     }
@@ -261,7 +309,7 @@ pub async fn pos_finalize_sale(
     .flatten();
     let allow_negative_stock = flag_val.as_deref() == Some("1");
 
-    sale_repo::finalize_sale(
+    let result = sale_repo::finalize_sale(
         &state.db,
         &input.cart,
         input.payments,
@@ -271,7 +319,91 @@ pub async fn pos_finalize_sale(
         input.delivery,
         allow_negative_stock,
     )
+    .await?;
+
+    // Auto-print receipt if the business flag is enabled.
+    let auto_print: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM app_config WHERE key = 'flag_auto_print_receipt'",
+    )
+    .fetch_optional(&state.db)
     .await
+    .ok()
+    .flatten()
+    .flatten();
+    if auto_print.as_deref() == Some("1") {
+        let enabled: String = sqlx::query_scalar(
+            "SELECT value FROM app_config WHERE key = 'thermal_printer_enabled'",
+        )
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .flatten()
+        .unwrap_or_default();
+        let port: String = sqlx::query_scalar(
+            "SELECT value FROM app_config WHERE key = 'thermal_printer_port'",
+        )
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .flatten()
+        .unwrap_or_default();
+        let baud_str: String = sqlx::query_scalar(
+            "SELECT value FROM app_config WHERE key = 'thermal_printer_baud'",
+        )
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .flatten()
+        .unwrap_or_else(|| "9600".into());
+        if enabled == "1" && !port.trim().is_empty() {
+            let store_name: String = sqlx::query_scalar(
+                "SELECT value FROM app_config WHERE key = 'store_name'",
+            )
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .flatten()
+            .unwrap_or_default();
+            let mut lines: Vec<String> = Vec::new();
+            lines.push(format!("Receipt: {}", result.receipt_number));
+            lines.push(format!("Date: {}", result.business_date));
+            lines.push(format!("Cashier: {}", result.cashier_name));
+            lines.push(String::new());
+            for item in &result.items {
+                lines.push(format!(
+                    "{} x{} @ {:.3} = {:.3}",
+                    item.product_name,
+                    item.quantity,
+                    item.unit_price_minor as f64 / 1000.0,
+                    item.line_total_minor as f64 / 1000.0,
+                ));
+            }
+            lines.push(String::new());
+            lines.push(format!(
+                "TOTAL: {:.3} {}",
+                result.net_total_minor as f64 / 1000.0,
+                result.currency,
+            ));
+            let payload =
+                crate::commands::thermal_commands::build_receipt_bytes(&store_name, &lines);
+            let baud: u32 = baud_str.parse().unwrap_or(9600);
+            let port_clone = port.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                crate::commands::thermal_commands::write_to_port(
+                    &port_clone,
+                    baud,
+                    payload,
+                )
+            })
+            .await;
+        }
+    }
+
+    Ok(result)
 }
 
 // ─── Discount commands ────────────────────────────────────────────────────────

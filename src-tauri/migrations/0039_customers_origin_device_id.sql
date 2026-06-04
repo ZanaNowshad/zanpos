@@ -2,7 +2,7 @@
 -- The customers table was missed in migration 0032. Add origin_device_id with
 -- backfill and triggers matching the pattern on other transactional tables.
 
-ALTER TABLE customers ADD COLUMN IF NOT EXISTS origin_device_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE customers ADD COLUMN origin_device_id TEXT NOT NULL DEFAULT '';
 UPDATE customers SET origin_device_id = (SELECT value FROM app_config WHERE key = 'device_id')
   WHERE origin_device_id = '' OR origin_device_id IS NULL;
 CREATE TRIGGER IF NOT EXISTS chk_customers_origin_nn_insert

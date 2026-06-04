@@ -22,7 +22,7 @@ pub async fn create_delivery_in_tx(
     now: &str,
 ) -> AppResult<DeliveryRow> {
     // Validate expected_payment_method
-    if !["cash", "card", "wallet"].contains(&input.expected_payment_method.as_str()) {
+    if !["cash", "card"].contains(&input.expected_payment_method.as_str()) {
         return Err(AppError::Validation(format!(
             "Invalid expected_payment_method: {}",
             input.expected_payment_method
@@ -37,6 +37,12 @@ pub async fn create_delivery_in_tx(
     if input.address_text.trim().is_empty() {
         return Err(AppError::Validation(
             "address_text is required for delivery".into(),
+        ));
+    }
+    // customer_id is required for delivery orders
+    if input.customer_id.as_deref().map(|s| s.trim()).unwrap_or("").is_empty() {
+        return Err(AppError::Validation(
+            "customer_id is required for delivery orders".into(),
         ));
     }
 
@@ -128,13 +134,14 @@ pub async fn get_delivery(pool: &SqlitePool, delivery_id: &str) -> AppResult<Del
     .ok_or_else(|| AppError::NotFound(format!("Delivery {} not found", delivery_id)))
 }
 
-/// List deliveries with optional filters.
+/// List deliveries for a specific branch with optional filters.
 pub async fn list_deliveries(
     pool: &SqlitePool,
+    branch_id: &str,
     filter: &DeliveryListFilter,
 ) -> AppResult<Vec<DeliveryRow>> {
-    // Build dynamic query
-    let mut conditions: Vec<&str> = Vec::new();
+    // Build dynamic query — branch_id is always the first filter
+    let mut conditions: Vec<&str> = vec!["d.branch_id = ?"];
     if filter.payment_status.is_some() {
         conditions.push("payment_status = ?");
     }
@@ -154,11 +161,7 @@ pub async fn list_deliveries(
         conditions.push("(contact_number LIKE ? OR customer_name LIKE ?)");
     }
 
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", conditions.join(" AND "))
-    };
+    let where_clause = format!("WHERE {}", conditions.join(" AND "));
 
     let limit = filter.limit.unwrap_or(50);
     let offset = filter.offset.unwrap_or(0);
@@ -171,12 +174,13 @@ pub async fn list_deliveries(
                 paid_confirmed_by_user_id, paid_confirmed_at,
                 payment_reference, payment_note,
                 created_by_user_id, branch_id, device_id, created_at, updated_at
-         FROM delivery_orders
+         FROM delivery_orders d
          {} ORDER BY created_at DESC LIMIT ? OFFSET ?",
         where_clause
     );
 
     let mut q = sqlx::query_as::<_, DeliveryRow>(&sql);
+    q = q.bind(branch_id);
     if let Some(v) = &filter.payment_status {
         q = q.bind(v);
     }
@@ -207,7 +211,7 @@ pub async fn update_delivery_status(
     pool: &SqlitePool,
     input: &UpdateDeliveryStatusInput,
 ) -> AppResult<DeliveryRow> {
-    let valid = ["pending", "out_for_delivery", "delivered", "cancelled"];
+    let valid = ["pending", "dispatched", "delivered", "cancelled"];
     if !valid.contains(&input.delivery_status.as_str()) {
         return Err(AppError::Validation(format!(
             "Invalid delivery_status: {}",

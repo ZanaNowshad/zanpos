@@ -70,7 +70,7 @@ pub struct ConfirmPaymentInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateDeliveryStatusInput {
     pub delivery_id: String,
-    pub delivery_status: String,  // pending | out_for_delivery | delivered | cancelled
+    pub delivery_status: String,  // pending | dispatched | delivered | cancelled
     pub actor_user_id: String,
 }
 

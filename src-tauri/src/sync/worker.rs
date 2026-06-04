@@ -157,22 +157,33 @@ impl SyncWorker {
             .await;
 
         // 4. Audit logs older than log_days (append-only; safe to prune from local cache)
-        let _ = sqlx::query("DELETE FROM audit_logs WHERE created_at < ?")
-            .bind(&log_cutoff)
-            .execute(&self.pool)
-            .await;
+        let _ = sqlx::query(
+            "DELETE FROM audit_logs WHERE created_at < ? AND sync_status = 'synced'",
+        )
+        .bind(&log_cutoff)
+        .execute(&self.pool)
+        .await;
 
         // 5. Stock movements older than log_days (Supabase holds the full ledger)
-        let _ = sqlx::query("DELETE FROM stock_movements WHERE created_at < ?")
-            .bind(&log_cutoff)
-            .execute(&self.pool)
-            .await;
+        let _ = sqlx::query(
+            "DELETE FROM stock_movements WHERE created_at < ? AND sync_status = 'synced'",
+        )
+        .bind(&log_cutoff)
+        .execute(&self.pool)
+        .await;
 
-        // 6. WAL checkpoint + VACUUM to reclaim disk space
-        let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        // 6. WAL checkpoint + VACUUM to reclaim disk space.
+        // R-06: log failures here — a failing checkpoint/VACUUM usually means the
+        // disk is full or the DB is locked, which silently retains stale data.
+        if let Err(e) = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
             .execute(&self.pool)
-            .await;
-        let _ = sqlx::query("VACUUM").execute(&self.pool).await;
+            .await
+        {
+            tracing::warn!("prune: WAL checkpoint failed (disk full or DB locked?): {e}");
+        }
+        if let Err(e) = sqlx::query("VACUUM").execute(&self.pool).await {
+            tracing::warn!("prune: VACUUM failed (disk full or DB locked?): {e}");
+        }
 
         // Record prune timestamp
         let now = chrono::Utc::now().to_rfc3339();
@@ -210,20 +221,54 @@ impl SyncWorker {
         let push_result = self.push_pending(&client, &device_id).await;
         let pull_result = self.pull_new(&client, &device_id).await;
 
+        // Detect events that exhausted their per-event handling and are stuck in
+        // 'failed' (e.g. the central RPC rejected the payload). push_pending returns
+        // Ok even when individual non-transient events fail, so we surface the most
+        // recent failure here — otherwise the worker would report "online" while
+        // data silently never reaches the cloud. (Multi-terminal diagnostics.)
+        let stuck_error: Option<String> = sqlx::query_scalar(
+            "SELECT last_error FROM sync_queue
+             WHERE device_id = ? AND status = 'failed'
+             ORDER BY last_attempt_at DESC LIMIT 1",
+        )
+        .bind(&device_id)
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten();
+
         let mut state = self.state.lock().await;
         match (push_result, pull_result) {
             (Ok(_), Ok(_)) => {
-                state.online = true;
-                state.last_error = None;
-                // Update last_successful_sync_at
+                // Connection works, but if events are stuck in 'failed' (server
+                // rejected them), the operator must see a degraded/warning state,
+                // not a false "all good" while data silently never lands.
+                if stuck_error.is_some() {
+                    state.online = false;
+                    state.last_error = stuck_error;
+                } else {
+                    state.online = true;
+                    state.last_error = None;
+                }
+                // UPSERT last_successful_sync_at so it works for new devices too
                 let now = chrono::Utc::now().to_rfc3339();
-                let _ = sqlx::query(
-                    "UPDATE sync_state SET last_successful_sync_at = ? WHERE device_id = ?",
+                let ss_id = ulid::Ulid::new().to_string();
+                // I-02: log if this write fails — silently dropping it would let the
+                // "last successful sync" timestamp drift from reality.
+                if let Err(e) = sqlx::query(
+                    "INSERT INTO sync_state (sync_state_id, device_id, last_successful_sync_at)
+                     VALUES (?, ?, ?)
+                     ON CONFLICT(device_id) DO UPDATE SET
+                       last_successful_sync_at = excluded.last_successful_sync_at",
                 )
-                .bind(&now)
+                .bind(&ss_id)
                 .bind(&device_id)
+                .bind(&now)
                 .execute(&self.pool)
-                .await;
+                .await
+                {
+                    tracing::warn!("Sync: failed to record last_successful_sync_at: {e}");
+                }
             }
             (Err(e), _) | (_, Err(e)) => {
                 state.online = false;
@@ -240,16 +285,26 @@ impl SyncWorker {
     // ── Load client from app_config ────────────────────────────────────────────
 
     async fn load_client(&self) -> Option<SupabaseClient> {
-        let url = ai_admin_repo::get_config(&self.pool, "supabase_url")
-            .await
-            .ok()??;
-        // Two-phase key lookup: OS credential store first, DB fallback.
-        // This mirrors the pattern used for AI API keys (ai/provider.rs) and
-        // ensures sync keeps working even when the Windows keyring silently
-        // fails to persist the entry.
+        // I-01: distinguish a genuine DB read error (log it) from "not configured"
+        // (normal — sync simply skips). Previously both collapsed to a silent None.
+        let url = match ai_admin_repo::get_config(&self.pool, "supabase_url").await {
+            Ok(Some(u)) => u,
+            Ok(None) => return None, // not configured yet — expected, skip quietly
+            Err(e) => {
+                tracing::error!("Sync: failed to read supabase_url from config: {e}");
+                return None;
+            }
+        };
+        // HIGH #3: OS credential store is the PRIMARY home for the service role key
+        // (it bypasses RLS, so it must not sit in plaintext SQLite long-term). But a
+        // keyring read can transiently fail on Windows, which previously made sync die
+        // SILENTLY — the single worst failure mode (events stay "pending" forever with
+        // no signal). We now: (a) try the keyring, (b) fall back to a DB-stored key if
+        // present (legacy/older installs), and (c) if a URL is configured but NO key is
+        // readable from either source, LOUDLY surface it so the honest sync status and
+        // the log file show exactly why nothing is syncing.
         let key = {
-            let from_os = secure_store::get_secret("supabase_service_key")
-                .unwrap_or_default();
+            let from_os = secure_store::get_secret("supabase_service_key").unwrap_or_default();
             if !from_os.is_empty() {
                 from_os
             } else {
@@ -260,7 +315,21 @@ impl SyncWorker {
                     .unwrap_or_default()
             }
         };
-        if url.is_empty() || key.is_empty() {
+        if url.is_empty() {
+            return None;
+        }
+        if key.is_empty() {
+            tracing::error!(
+                "Sync: Supabase URL is configured but the service key could not be read \
+                 from the OS credential store OR the DB fallback. Sync is HALTED until \
+                 the key is re-entered in Back Office → Sync. (This is why events stay pending.)"
+            );
+            // Surface to the worker state so the UI stops showing a misleading "Online".
+            let mut st = self.state.lock().await;
+            st.online = false;
+            st.last_error = Some(
+                "Supabase key unreadable — re-enter it in Back Office → Sync.".into(),
+            );
             return None;
         }
         Some(SupabaseClient::new(url, key))
@@ -270,7 +339,8 @@ impl SyncWorker {
 
     async fn push_pending(&self, client: &SupabaseClient, device_id: &str) -> AppResult<u32> {
         let rows = sqlx::query(
-            "SELECT sync_event_id, entity_type, operation, payload_json, idempotency_key, attempt_count
+            "SELECT sync_event_id, entity_type, operation, payload_json,
+                    payload_hash, local_sequence, idempotency_key, attempt_count
              FROM sync_queue
              WHERE device_id = ? AND status IN ('pending', 'failed') AND attempt_count < ?
              ORDER BY local_sequence ASC
@@ -289,6 +359,8 @@ impl SyncWorker {
             let entity_type: String = row.get("entity_type");
             let operation: String = row.get("operation");
             let payload_str: String = row.get("payload_json");
+            let payload_hash: String = row.get("payload_hash");
+            let local_sequence: i64 = row.get("local_sequence");
             let idem_key: String = row.get("idempotency_key");
             let attempts: i64 = row.get("attempt_count");
 
@@ -307,6 +379,8 @@ impl SyncWorker {
                 operation,
                 payload_json,
                 idempotency_key: idem_key,
+                payload_hash,
+                local_sequence,
             };
 
             match client.push_event(&event).await {
@@ -341,8 +415,10 @@ impl SyncWorker {
                     .execute(&self.pool)
                     .await?;
 
-                    // Stop on first network error — remaining will retry next cycle
-                    if e.to_string().contains("connect") || e.to_string().contains("timeout") {
+                    // R-05: Stop on first TRANSIENT error (network/5xx/429) — the
+                    // remaining queue retries next cycle. Permanent errors (4xx,
+                    // bad payload) fall through so one poison row can't block the batch.
+                    if e.to_string().contains(crate::sync::supabase_client::TRANSIENT_TAG.trim()) {
                         return Err(e);
                     }
                 }
@@ -370,7 +446,12 @@ impl SyncWorker {
 
         if let Some(id) = payload.get(id_col).and_then(|v| v.as_str()) {
             let sql = format!("UPDATE {table} SET sync_status = 'synced' WHERE {id_col} = ?");
-            let _ = sqlx::query(&sql).bind(id).execute(&self.pool).await;
+            // I-02: log failure — if this UPDATE fails the row stays 'pending' and
+            // will be re-pushed next cycle (server dedups via idempotency key), but
+            // a persistent failure here needs to be visible, not silent.
+            if let Err(e) = sqlx::query(&sql).bind(id).execute(&self.pool).await {
+                tracing::warn!("Sync: failed to mark {table} {id} as synced: {e}");
+            }
         }
     }
 
@@ -408,37 +489,62 @@ impl SyncWorker {
                 break;
             }
 
-            let mut last_seq = watermark;
+            // CRITICAL (multi-terminal correctness): the watermark may ONLY advance
+            // past events that applied successfully. Previously it advanced to the
+            // last sequence regardless of apply errors, so any row that failed to
+            // apply locally (e.g. a transient FK/constraint issue) was permanently
+            // skipped and never retried — leaving a joining terminal missing users,
+            // products, etc. forever. We now stop advancing at the first failure;
+            // the same range is re-pulled next cycle until it applies.
+            let mut applied_through = watermark;
+            let mut hit_failure = false;
+            let mut applied_this_batch = 0u32;
             for event in &events {
-                if let Err(e) = inbox::apply_event(&self.pool, event).await {
-                    tracing::warn!(
-                        "inbox apply_event error ({}:{}): {e}",
-                        event.entity_type,
-                        event.entity_id
-                    );
-                    // Continue — a single bad event should not block the rest
-                }
-                if event.global_sequence > last_seq {
-                    last_seq = event.global_sequence;
+                match inbox::apply_event(&self.pool, event).await {
+                    Ok(()) => {
+                        if event.global_sequence > applied_through {
+                            applied_through = event.global_sequence;
+                        }
+                        applied_this_batch += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "inbox apply_event error ({}:{} seq {}): {e} — halting watermark here; will retry next cycle",
+                            event.entity_type,
+                            event.entity_id,
+                            event.global_sequence
+                        );
+                        hit_failure = true;
+                        break; // do NOT advance past the failed event
+                    }
                 }
             }
 
-            total_count += events.len() as u32;
-            watermark = last_seq;
+            total_count += applied_this_batch;
+            watermark = applied_through;
 
-            // If we got fewer events than the page size the server is likely exhausted
-            // (Supabase REST default limit is 100). Stop early to avoid an extra round-trip.
-            if events.len() < 100 {
+            // Stop this cycle if we hit a failure (retry the failed event next cycle)
+            // or if the server returned a partial page (exhausted).
+            if hit_failure || events.len() < 100 {
                 break;
             }
         }
 
-        // Persist the final watermark only once, outside the loop
-        sqlx::query("UPDATE sync_state SET last_pulled_central_sequence = ? WHERE device_id = ?")
-            .bind(watermark)
-            .bind(device_id)
-            .execute(&self.pool)
-            .await?;
+        // Bug B fix: UPSERT instead of UPDATE so the watermark is always persisted,
+        // even for a brand-new device (POS 2) that has no sync_state row yet.
+        // Without this, pull_new starts from sequence 0 on every sync cycle.
+        let new_sync_state_id = ulid::Ulid::new().to_string();
+        sqlx::query(
+            "INSERT INTO sync_state (sync_state_id, device_id, last_pulled_central_sequence)
+             VALUES (?, ?, ?)
+             ON CONFLICT(device_id) DO UPDATE SET
+               last_pulled_central_sequence = excluded.last_pulled_central_sequence",
+        )
+        .bind(&new_sync_state_id)
+        .bind(device_id)
+        .bind(watermark)
+        .execute(&self.pool)
+        .await?;
 
         Ok(total_count)
     }

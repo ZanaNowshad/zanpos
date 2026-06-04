@@ -685,6 +685,7 @@ pub fn run() {
             commands::report_commands::report_sales_list,
             commands::report_commands::report_by_cashier,
             commands::report_commands::report_eod_cashup,
+            commands::report_commands::report_z_report,
             commands::report_commands::reports_config_load,
             commands::report_commands::reports_config_save,
             commands::report_commands::db_integrity_check,

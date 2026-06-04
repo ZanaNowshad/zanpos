@@ -1,6 +1,9 @@
+use crate::db::repositories::audit_hash;
 use crate::db::repositories::report_repo;
 use crate::domain::report::TodaySummary;
 use crate::errors::{AppError, AppResult};
+use crate::sync::scope::report_scope;
+use crate::sync::outbox;
 use crate::AppState;
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
@@ -45,6 +48,17 @@ pub struct SaleListRow {
     pub payment_methods: String,
 }
 
+/// Paginated wrapper for the sales list.
+/// `total` is the count of ALL matching rows (ignoring limit/offset) so the
+/// caller can display page counts and detect truncation — fixes F-BIZ-002 / F-INT-001.
+#[derive(Debug, Serialize)]
+pub struct SaleListPage {
+    pub items: Vec<SaleListRow>,
+    pub total: i64,
+    pub offset: i64,
+    pub limit: i64,
+}
+
 #[tauri::command]
 pub async fn report_today(
     branch_id: String,
@@ -63,85 +77,82 @@ pub async fn report_date_range(
     to_date: String,
     state: State<'_, AppState>,
 ) -> Result<RangeSummary, AppError> {
-    let sales_row = sqlx::query(
-        "SELECT COUNT(*) AS cnt,
-                COALESCE(SUM(s.gross_total_minor),    0) AS gross,
-                COALESCE(SUM(s.discount_total_minor), 0) AS discount,
-                COALESCE(SUM(s.tax_total_minor),      0) AS tax,
-                COALESCE(SUM(s.net_total_minor),      0) AS net
-         FROM sales s
-         WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
-           AND s.status != 'voided'
-           AND (s.is_delivery = 0 OR EXISTS (
-               SELECT 1 FROM delivery_orders d WHERE d.sale_id = s.sale_id AND d.payment_status = 'paid'
-           ))",
-    )
-    .bind(&branch_id)
-    .bind(&from_date)
-    .bind(&to_date)
-    .fetch_one(&state.db)
-    .await?;
-
-    let cash: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(p.amount_minor), 0)
-         FROM payments p JOIN sales s ON s.sale_id = p.sale_id
-         WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
-           AND p.payment_method = 'cash'
-           AND (s.is_delivery = 0 OR EXISTS (
-               SELECT 1 FROM delivery_orders d WHERE d.sale_id = s.sale_id AND d.payment_status = 'paid'
-           ))",
-    )
-    .bind(&branch_id)
-    .bind(&from_date)
-    .bind(&to_date)
-    .fetch_one(&state.db)
-    .await?;
-
-    let card: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(p.amount_minor), 0)
-         FROM payments p JOIN sales s ON s.sale_id = p.sale_id
-         WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
-           AND p.payment_method = 'card'
-           AND (s.is_delivery = 0 OR EXISTS (
-               SELECT 1 FROM delivery_orders d WHERE d.sale_id = s.sale_id AND d.payment_status = 'paid'
-           ))",
-    )
-    .bind(&branch_id)
-    .bind(&from_date)
-    .bind(&to_date)
-    .fetch_one(&state.db)
-    .await?;
-
-    let (pending_count, pending_minor): (i64, i64) = {
-        let row = sqlx::query(
-            "SELECT COUNT(*) AS cnt, COALESCE(SUM(s.net_total_minor), 0) AS total
+    // M6: Run the 5 independent range aggregation queries concurrently.
+    // E: apply the device-scope filter uniformly: scope='all' short-circuits
+    // the OR; scope='origin' requires origin_device_id to match this device.
+    let pool = &state.db;
+    let (scope, origin_device_id) = report_scope(pool).await;
+    let scope_str = scope.as_str();
+    let (sales_row, cash, card, pending_row, refund_row) = tokio::try_join!(
+        sqlx::query(
+            "SELECT COUNT(*) AS cnt,
+                    COALESCE(SUM(s.gross_total_minor),    0) AS gross,
+                    COALESCE(SUM(s.discount_total_minor), 0) AS discount,
+                    COALESCE(SUM(s.tax_total_minor),      0) AS tax,
+                    COALESCE(SUM(s.net_total_minor),      0) AS net
              FROM sales s
              WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
                AND s.status != 'voided'
-               AND s.is_delivery = 1
+               AND (s.is_delivery = 0 OR EXISTS (
+                   SELECT 1 FROM delivery_orders d WHERE d.sale_id = s.sale_id AND d.payment_status = 'paid'
+               ))
+               AND (? = 'all' OR s.origin_device_id = ?)",
+        )
+        .bind(&branch_id).bind(&from_date).bind(&to_date)
+        .bind(scope_str).bind(&origin_device_id)
+        .fetch_one(pool),
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COALESCE(SUM(p.amount_minor), 0)
+             FROM payments p JOIN sales s ON s.sale_id = p.sale_id
+             WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
+               AND s.status != 'voided' AND p.payment_method = 'cash'
+               AND (s.is_delivery = 0 OR EXISTS (
+                   SELECT 1 FROM delivery_orders d WHERE d.sale_id = s.sale_id AND d.payment_status = 'paid'
+               ))
+               AND (? = 'all' OR s.origin_device_id = ?)",
+        )
+        .bind(&branch_id).bind(&from_date).bind(&to_date)
+        .bind(scope_str).bind(&origin_device_id)
+        .fetch_one(pool),
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COALESCE(SUM(p.amount_minor), 0)
+             FROM payments p JOIN sales s ON s.sale_id = p.sale_id
+             WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
+               AND s.status != 'voided' AND p.payment_method = 'card'
+               AND (s.is_delivery = 0 OR EXISTS (
+                   SELECT 1 FROM delivery_orders d WHERE d.sale_id = s.sale_id AND d.payment_status = 'paid'
+               ))
+               AND (? = 'all' OR s.origin_device_id = ?)",
+        )
+        .bind(&branch_id).bind(&from_date).bind(&to_date)
+        .bind(scope_str).bind(&origin_device_id)
+        .fetch_one(pool),
+        sqlx::query(
+            "SELECT COUNT(*) AS cnt, COALESCE(SUM(s.net_total_minor), 0) AS total
+             FROM sales s
+             WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
+               AND s.status != 'voided' AND s.is_delivery = 1
                AND NOT EXISTS (
                    SELECT 1 FROM delivery_orders d
                    WHERE d.sale_id = s.sale_id AND d.payment_status = 'paid'
-               )",
+               )
+               AND (? = 'all' OR s.origin_device_id = ?)",
         )
-        .bind(&branch_id)
-        .bind(&from_date)
-        .bind(&to_date)
-        .fetch_one(&state.db)
-        .await?;
-        (row.get("cnt"), row.get("total"))
-    };
+        .bind(&branch_id).bind(&from_date).bind(&to_date)
+        .bind(scope_str).bind(&origin_device_id)
+        .fetch_one(pool),
+        sqlx::query(
+            "SELECT COUNT(*) AS cnt, COALESCE(SUM(r.refund_total_minor), 0) AS total
+             FROM refunds r JOIN sales s ON s.sale_id = r.original_sale_id
+             WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
+               AND (? = 'all' OR r.origin_device_id = ?)",
+        )
+        .bind(&branch_id).bind(&from_date).bind(&to_date)
+        .bind(scope_str).bind(&origin_device_id)
+        .fetch_one(pool),
+    )?;
 
-    let refund_row = sqlx::query(
-        "SELECT COUNT(*) AS cnt, COALESCE(SUM(r.refund_total_minor), 0) AS total
-         FROM refunds r JOIN sales s ON s.sale_id = r.original_sale_id
-         WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?",
-    )
-    .bind(&branch_id)
-    .bind(&from_date)
-    .bind(&to_date)
-    .fetch_one(&state.db)
-    .await?;
+    let (pending_count, pending_minor): (i64, i64) = (pending_row.get("cnt"), pending_row.get("total"));
 
     Ok(RangeSummary {
         from_date,
@@ -167,6 +178,8 @@ pub async fn report_top_products(
     to_date: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<TopProduct>, AppError> {
+    let pool = &state.db;
+    let (scope, origin_device_id) = report_scope(pool).await;
     let rows = sqlx::query(
         "SELECT si.product_name_snapshot AS product_name,
                 CAST(SUM(CAST(si.quantity AS REAL)) AS TEXT) AS total_quantity,
@@ -176,6 +189,7 @@ pub async fn report_top_products(
          JOIN sales s ON s.sale_id = si.sale_id
          WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
            AND s.status != 'voided' AND si.voided = 0
+           AND (? = 'all' OR s.origin_device_id = ?)
          GROUP BY si.product_name_snapshot
          ORDER BY revenue_minor DESC
          LIMIT 15",
@@ -183,7 +197,9 @@ pub async fn report_top_products(
     .bind(&branch_id)
     .bind(&from_date)
     .bind(&to_date)
-    .fetch_all(&state.db)
+    .bind(scope.as_str())
+    .bind(&origin_device_id)
+    .fetch_all(pool)
     .await?;
 
     Ok(rows
@@ -202,28 +218,59 @@ pub async fn report_sales_list(
     branch_id: String,
     from_date: String,
     to_date: String,
+    offset: Option<i64>,
+    limit: Option<i64>,
     state: State<'_, AppState>,
-) -> Result<Vec<SaleListRow>, AppError> {
-    let rows = sqlx::query(
-        "SELECT s.sale_id, s.receipt_number, s.sold_at,
-                s.net_total_minor, s.discount_total_minor, s.status,
-                u.display_name AS cashier_name,
-                GROUP_CONCAT(DISTINCT p.payment_method) AS payment_methods
+) -> Result<SaleListPage, AppError> {
+    let limit = limit.unwrap_or(200).clamp(1, 500);
+    let offset = offset.unwrap_or(0).max(0);
+
+    let pool = &state.db;
+    let (scope, origin_device_id) = report_scope(pool).await;
+
+    // M13: COUNT must use identical JOINs/WHERE as the data query to avoid
+    // pagination totals diverging from actual row counts. Use LEFT JOIN users
+    // in both to count even if the cashier account was later deleted.
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(DISTINCT s.sale_id)
          FROM sales s
-         JOIN users u ON u.user_id = s.cashier_user_id
-         LEFT JOIN payments p ON p.sale_id = s.sale_id
+         LEFT JOIN users u ON u.user_id = s.cashier_user_id
          WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
-         GROUP BY s.sale_id
-         ORDER BY s.sold_at DESC
-         LIMIT 200",
+           AND (? = 'all' OR s.origin_device_id = ?)",
     )
     .bind(&branch_id)
     .bind(&from_date)
     .bind(&to_date)
-    .fetch_all(&state.db)
+    .bind(scope.as_str())
+    .bind(&origin_device_id)
+    .fetch_one(pool)
     .await?;
 
-    Ok(rows
+    let rows = sqlx::query(
+        "SELECT s.sale_id, s.receipt_number, s.sold_at,
+                s.net_total_minor, s.discount_total_minor, s.status,
+                COALESCE(u.display_name, '(deleted)') AS cashier_name,
+                GROUP_CONCAT(DISTINCT p.payment_method) AS payment_methods
+         FROM sales s
+         LEFT JOIN users u ON u.user_id = s.cashier_user_id
+         LEFT JOIN payments p ON p.sale_id = s.sale_id
+         WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
+           AND (? = 'all' OR s.origin_device_id = ?)
+         GROUP BY s.sale_id
+         ORDER BY s.sold_at DESC
+         LIMIT ? OFFSET ?",
+    )
+    .bind(&branch_id)
+    .bind(&from_date)
+    .bind(&to_date)
+    .bind(scope.as_str())
+    .bind(&origin_device_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    let items = rows
         .iter()
         .map(|r| {
             let methods: Option<String> = r.get("payment_methods");
@@ -238,7 +285,9 @@ pub async fn report_sales_list(
                 payment_methods: methods.unwrap_or_default(),
             }
         })
-        .collect())
+        .collect();
+
+    Ok(SaleListPage { items, total, offset, limit })
 }
 
 // ─── Sales by cashier ─────────────────────────────────────────────────────────
@@ -265,6 +314,9 @@ pub async fn report_by_cashier(
     to_date: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<CashierSummaryRow>, AppError> {
+    let pool = &state.db;
+    let (scope, origin_device_id) = report_scope(pool).await;
+    let scope_str = scope.as_str();
     // payment_totals: cash and card per cashier, pre-aggregated before joining
     // to avoid inflating sale-level sums when a sale has multiple payment rows.
     // refund_totals: similarly pre-aggregated to avoid double-counting on sales
@@ -279,6 +331,7 @@ pub async fn report_by_cashier(
              WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
                AND s.status != 'voided'
                AND (s.is_delivery = 0 OR EXISTS (SELECT 1 FROM delivery_orders d WHERE d.sale_id = s.sale_id AND d.payment_status = 'paid'))
+               AND (? = 'all' OR s.origin_device_id = ?)
              GROUP BY s.cashier_user_id
          ),
          refund_totals AS (
@@ -288,6 +341,7 @@ pub async fn report_by_cashier(
              FROM sales s
              JOIN refunds r ON r.original_sale_id = s.sale_id
              WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
+               AND (? = 'all' OR r.origin_device_id = ?)
              GROUP BY s.cashier_user_id
          )
          SELECT s.cashier_user_id,
@@ -306,19 +360,26 @@ pub async fn report_by_cashier(
          WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
            AND s.status != 'voided'
            AND (s.is_delivery = 0 OR EXISTS (SELECT 1 FROM delivery_orders d WHERE d.sale_id = s.sale_id AND d.payment_status = 'paid'))
+           AND (? = 'all' OR s.origin_device_id = ?)
          GROUP BY s.cashier_user_id
          ORDER BY net_total_minor DESC",
     )
-    .bind(&branch_id) // payment_totals
+    .bind(&branch_id) // payment_totals WHERE
     .bind(&from_date)
     .bind(&to_date)
-    .bind(&branch_id) // refund_totals
+    .bind(scope_str)
+    .bind(&origin_device_id)
+    .bind(&branch_id) // refund_totals WHERE
     .bind(&from_date)
     .bind(&to_date)
+    .bind(scope_str)
+    .bind(&origin_device_id)
     .bind(&branch_id) // main WHERE
     .bind(&from_date)
     .bind(&to_date)
-    .fetch_all(&state.db)
+    .bind(scope_str)
+    .bind(&origin_device_id)
+    .fetch_all(pool)
     .await?;
 
     Ok(rows
@@ -373,17 +434,27 @@ pub(crate) async fn report_eod_cashup_inner(
     date: &str,
     _date_to: &str,
 ) -> AppResult<EodCashupReport> {
+    // Use business_date (local date populated at shift-open time) rather than
+    // DATE(opened_at) which is UTC and misattributes Bahrain late-night shifts
+    // (opened between midnight and 03:00 local / 21:00–00:00 UTC) to the wrong day.
+    // Fallback: DATE(opened_at, '+3 hours') covers rows backfilled from 0021.
+    let (scope, origin_device_id) = report_scope(pool).await;
+    let scope_str = scope.as_str();
     let shifts = sqlx::query(
         "SELECT s.shift_id, COALESCE(u.display_name,'Unknown') AS cashier_name,
                 s.opened_at, s.closed_at,
                 s.opening_cash_minor, s.counted_cash_minor
          FROM shifts s
          LEFT JOIN users u ON u.user_id = s.cashier_user_id
-         WHERE s.branch_id = ? AND DATE(s.opened_at) = ?
+         WHERE s.branch_id = ?
+           AND COALESCE(s.business_date, DATE(s.opened_at, '+3 hours')) = ?
+           AND (? = 'all' OR s.origin_device_id = ?)
          ORDER BY s.opened_at ASC",
     )
     .bind(branch_id)
     .bind(date)
+    .bind(scope_str)
+    .bind(&origin_device_id)
     .fetch_all(pool)
     .await?;
 
@@ -430,9 +501,16 @@ pub(crate) async fn report_eod_cashup_inner(
             "SELECT COALESCE(SUM(amount_minor),0) FROM cash_events WHERE shift_id=? AND event_type='paid_out'"
         ).bind(&shift_id).fetch_one(pool).await?;
 
+        // Only deduct refunds that were paid in cash — card refunds don't reduce
+        // the physical cash in the drawer.
         let cash_refunds: i64 = sqlx::query_scalar(
             "SELECT COALESCE(SUM(r.refund_total_minor),0) FROM refunds r
-             JOIN sales s ON s.sale_id=r.original_sale_id WHERE s.shift_id=?",
+             JOIN sales s ON s.sale_id=r.original_sale_id
+             WHERE s.shift_id=?
+               AND EXISTS (
+                   SELECT 1 FROM payments p
+                   WHERE p.sale_id = s.sale_id AND p.payment_method = 'cash'
+               )",
         )
         .bind(&shift_id)
         .fetch_one(pool)
@@ -497,6 +575,54 @@ pub async fn report_eod_cashup(
     report_eod_cashup_inner(&state.db, &branch_id, &date, &date).await
 }
 
+/// Z-report: end-of-day cash-up summary with audit trail.
+/// Wraps the EOD cashup logic and records a Z_REPORT_ISSUED audit entry
+/// so every Z-report issuance is tamper-evident and traceable.
+#[tauri::command]
+pub async fn report_z_report(
+    date: String,
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> Result<EodCashupReport, AppError> {
+    // Resolve active branch — Z-report always targets the current store.
+    let branch_id: String = sqlx::query_scalar(
+        "SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1",
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .flatten()
+    .unwrap_or_default();
+
+    let report = report_eod_cashup_inner(&state.db, &branch_id, &date, &date).await?;
+
+    // Resolve device for audit trail.
+    let device_id: String = sqlx::query_scalar(
+        "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1",
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .flatten()
+    .unwrap_or_default();
+
+    // Record Z-report issuance in the audit hash-chain.
+    let _ = audit_hash::insert_audit_entry(
+        &state.db,
+        "Z_REPORT_ISSUED",
+        "report",
+        &date,
+        &actor_user_id,
+        "user",
+        &device_id,
+        &branch_id,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    Ok(report)
+}
+
 // ─── Integrity check ──────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -505,6 +631,90 @@ pub async fn db_integrity_check(state: State<'_, AppState>) -> Result<String, Ap
         .fetch_one(&state.db)
         .await?;
     Ok(result)
+}
+
+// ─── Reports device-scope config (Phase E) ───────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct ReportsConfig {
+    /// 'origin' = this device only; 'all' = every device in the branch.
+    pub device_scope: String,
+    /// Echoed back so the UI can display "Showing all 3 devices" or
+    /// "Showing this device only" without a second roundtrip.
+    pub device_count: i64,
+    /// Local device id (when scope='origin' this is the filter value).
+    pub local_device_id: String,
+}
+
+#[tauri::command]
+pub async fn reports_config_load(state: State<'_, AppState>) -> Result<ReportsConfig, AppError> {
+    let (scope, local_device_id) = report_scope(&state.db).await;
+    let device_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM devices WHERE is_active = 1",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
+    Ok(ReportsConfig {
+        device_scope: scope.as_str().to_string(),
+        device_count,
+        local_device_id,
+    })
+}
+
+#[derive(serde::Deserialize)]
+pub struct SaveReportsConfigInput {
+    /// 'origin' or 'all' — anything else is coerced to 'origin'.
+    pub device_scope: String,
+    pub actor_user_id: String,
+}
+
+#[tauri::command]
+pub async fn reports_config_save(
+    input: SaveReportsConfigInput,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    // Only managers and owners can change report scope — it determines
+    // whether cashiers see the whole store's takings or just their own.
+    crate::commands::rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
+
+    let normalized = match input.device_scope.to_ascii_lowercase().as_str() {
+        "all" => "all",
+        _     => "origin",
+    };
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO app_config (key, value, updated_at) VALUES ('reports_device_scope', ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+    )
+    .bind(normalized)
+    .bind(&now)
+    .execute(&state.db)
+    .await?;
+
+    // Propagate to other devices via the existing app_config sync path.
+    let device_id: String = sqlx::query_scalar(
+        "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1",
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .flatten()
+    .unwrap_or_default();
+    let branch_id: String = sqlx::query_scalar(
+        "SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1",
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .flatten()
+    .unwrap_or_default();
+
+    if !device_id.is_empty() && !branch_id.is_empty() {
+        let _ = outbox::enqueue_app_config(
+            &state.db, &device_id, &branch_id,
+            "reports_device_scope", normalized,
+        ).await;
+    }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -553,11 +763,12 @@ mod tests {
     async fn insert_shift(pool: &SqlitePool) -> String {
         let shift_id = ulid::Ulid::new().to_string();
         sqlx::query(
-            "INSERT INTO shifts (shift_id, branch_id, device_id, cashier_user_id, opened_at, status)
-             VALUES (?, ?, ?, ?, datetime('now'), 'open')",
+            "INSERT INTO shifts (shift_id, branch_id, device_id, origin_device_id, cashier_user_id, opened_at, status)
+             VALUES (?, ?, ?, ?, ?, datetime('now'), 'open')",
         )
         .bind(&shift_id)
         .bind(BRANCH)
+        .bind(DEVICE)
         .bind(DEVICE)
         .bind(CASHIER)
         .execute(pool)
@@ -647,15 +858,16 @@ mod tests {
         let sale_id = ulid::Ulid::new().to_string();
         sqlx::query(
             "INSERT INTO sales
-             (sale_id, receipt_number, branch_id, device_id, shift_id,
+             (sale_id, receipt_number, branch_id, device_id, origin_device_id, shift_id,
               cashier_user_id, status, gross_total_minor, discount_total_minor,
               tax_total_minor, net_total_minor, currency, business_date,
               sold_at, created_offline, idempotency_key, sync_status)
-             VALUES (?,'MAIN-POS01-T11',?,?,?,?,'completed',100,0,0,100,'BHD',
+             VALUES (?,'MAIN-POS01-T11',?,?,?,?,?,'completed',100,0,0,100,'BHD',
                      '2026-01-01',datetime('now'),0,'idem-t11','pending')",
         )
         .bind(&sale_id)
         .bind(BRANCH)
+        .bind(DEVICE)
         .bind(DEVICE)
         .bind(&shift_id)
         .bind(CASHIER)
@@ -666,12 +878,13 @@ mod tests {
         // Try inserting a payment with an invalid method — must fail CHECK constraint
         let err = sqlx::query(
             "INSERT INTO payments
-             (payment_id, sale_id, payment_method, amount_minor, currency,
+             (payment_id, sale_id, origin_device_id, payment_method, amount_minor, currency,
               recorded_by_user_id, recorded_at, sync_status)
-             VALUES (?,?,'bribe',100,'BHD',?,datetime('now'),'pending')",
+             VALUES (?,?,?,'bribe',100,'BHD',?,datetime('now'),'pending')",
         )
         .bind(ulid::Ulid::new().to_string())
         .bind(&sale_id)
+        .bind(DEVICE)
         .bind(CASHIER)
         .execute(&pool)
         .await;

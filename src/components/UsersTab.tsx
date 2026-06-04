@@ -17,8 +17,10 @@ export default function UsersTab({ sessionUserId }: Props) {
   const [showPin, setShowPin]   = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     Promise.all([cmd.adminListUsersAll(), cmd.adminListRoles()])
-      .then(([u, r]) => { setUsers(u); setRoles(r); });
+      .then(([u, r]) => { if (!cancelled) { setUsers(u); setRoles(r); } });
+    return () => { cancelled = true; };
   }, []);
 
   function startCreate() {

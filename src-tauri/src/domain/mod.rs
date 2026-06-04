@@ -1,6 +1,7 @@
 pub mod ai_admin;
 pub mod auth;
 pub mod cart;
+pub mod delivery;
 pub mod money;
 pub mod product;
 pub mod refund;

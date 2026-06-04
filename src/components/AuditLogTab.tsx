@@ -10,7 +10,7 @@ interface AuditRow {
   created_at: string;
 }
 
-function isoDate(d: Date) { return d.toISOString().slice(0, 10); }
+function isoDate(d: Date) { return d.toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" }); }
 
 function defaultDates() {
   const now = new Date();
@@ -30,21 +30,23 @@ export default function AuditLogTab({ sessionUserId }: Props) {
   const [rows, setRows]     = useState<AuditRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (p: number = 0) => {
     if (!from || !to) return;
     setLoading(true);
+    setError(null);
     try {
       const result = await auditLogList(from, to, p, sessionUserId);
       setRows(result as AuditRow[]);
       setPage(p);
       setLoaded(true);
     } catch (e: unknown) {
-      alert(typeof e === "string" ? e : "Failed to load audit log");
+      setError(typeof e === "string" ? e : "Failed to load audit log");
     } finally {
       setLoading(false);
     }
-  }, [from, to]);
+  }, [from, to, sessionUserId]);
 
   return (
     <div className="audit-layout">
@@ -67,6 +69,9 @@ export default function AuditLogTab({ sessionUserId }: Props) {
           {loading ? "…" : "Load"}
         </button>
       </div>
+
+      {error && <div className="dlv-error" role="alert">⚠ {error}<button className="dlv-error-dismiss" onClick={() => setError(null)}>✕</button></div>}
+      {loading && <div className="dlv-loading">Loading…</div>}
 
       {!loaded ? (
         <div className="bo-empty">Set a date range and click Load.</div>

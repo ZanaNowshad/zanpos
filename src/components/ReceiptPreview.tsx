@@ -3,75 +3,34 @@ import type { BranchSettings, SaleResult } from "../types";
 import { formatMoney } from "../money";
 import { DEVICE } from "../types";
 import { settingsGetBranch, printReceiptRaw, thermalGetConfig } from "../tauri/commands";
+import { buildReceiptLines } from "../utils/receiptLines";
 
 interface Props {
   sale: SaleResult;
   onNewSale: () => void;
+  isReprint?: boolean;
 }
 
-export default function ReceiptPreview({ sale, onNewSale }: Props) {
+export default function ReceiptPreview({ sale, onNewSale, isReprint = false }: Props) {
   const [settings, setSettings]       = useState<BranchSettings | null>(null);
   const [thermalEnabled, setThermalEnabled] = useState(false);
   const [printing, setPrinting]       = useState(false);
   const [printMsg, setPrintMsg]       = useState<string | null>(null);
 
   useEffect(() => {
-    settingsGetBranch().then(setSettings).catch(() => {});
-    thermalGetConfig().then(c => setThermalEnabled(c.enabled)).catch(() => {});
+    let cancelled = false;
+    settingsGetBranch().then(data => { if (!cancelled) setSettings(data); }).catch(() => {});
+    thermalGetConfig().then(c => { if (!cancelled) setThermalEnabled(c.enabled); }).catch(() => {});
+    return () => { cancelled = true; };
   }, []);
 
   const fmt = (n: number) => formatMoney(n, DEVICE.currency_exponent);
-
-  /** Build plain-text receipt lines for ESC/POS (48-char width). */
-  const buildTextLines = (): string[] => {
-    const W = 48;
-    const divider = "-".repeat(W);
-    const pad = (l: string, r: string) => {
-      const space = W - l.length - r.length;
-      return l + " ".repeat(Math.max(1, space)) + r;
-    };
-
-    const lines: string[] = [];
-    if (settings?.address)      lines.push(settings.address);
-    if (settings?.phone)        lines.push(settings.phone);
-    if (settings?.tax_number)   lines.push(`Tax Reg: ${settings.tax_number}`);
-    if (settings?.receipt_header) lines.push(settings.receipt_header);
-    lines.push(divider);
-    lines.push(`Receipt: #${sale.receipt_number}`);
-    lines.push(new Date(sale.sold_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" }));
-    lines.push(`Cashier: ${sale.cashier_name}`);
-    lines.push(divider);
-
-    for (const item of sale.items) {
-      const left  = `${item.product_name} x${item.quantity}`;
-      const right = `${DEVICE.currency} ${fmt(item.line_total_minor)}`;
-      lines.push(pad(left, right));
-    }
-
-    lines.push(divider);
-    if (sale.discount_total_minor > 0)
-      lines.push(pad("Discount", `- ${DEVICE.currency} ${fmt(sale.discount_total_minor)}`));
-    if (sale.tax_total_minor > 0)
-      lines.push(pad("Tax", `${DEVICE.currency} ${fmt(sale.tax_total_minor)}`));
-    lines.push(pad("TOTAL", `${DEVICE.currency} ${fmt(sale.net_total_minor)}`));
-    lines.push(divider);
-
-    for (const p of sale.payments) {
-      const method = p.method.charAt(0).toUpperCase() + p.method.slice(1);
-      lines.push(pad(method, `${DEVICE.currency} ${fmt(p.amount_minor)}`));
-      if (p.change_minor && p.change_minor > 0)
-        lines.push(pad("Change", `${DEVICE.currency} ${fmt(p.change_minor)}`));
-    }
-
-    if (settings?.receipt_footer) { lines.push(divider); lines.push(settings.receipt_footer); }
-    return lines;
-  };
 
   const handleHardwarePrint = async () => {
     setPrinting(true);
     setPrintMsg(null);
     try {
-      const msg = await printReceiptRaw(sale.branch_name, buildTextLines());
+      const msg = await printReceiptRaw(sale.branch_name, buildReceiptLines(sale, settings, isReprint));
       setPrintMsg(msg);
     } catch (e: unknown) {
       setPrintMsg(typeof e === "string" ? e : "Print failed");
@@ -79,7 +38,8 @@ export default function ReceiptPreview({ sale, onNewSale }: Props) {
       setPrinting(false);
     }
   };
-  const soldAt = new Date(sale.sold_at).toLocaleString([], {
+  const soldAt = new Date(sale.sold_at).toLocaleString("en-BH", {
+    timeZone: "Asia/Bahrain",
     year: "numeric", month: "short", day: "numeric",
     hour: "2-digit", minute: "2-digit",
   });
@@ -88,6 +48,9 @@ export default function ReceiptPreview({ sale, onNewSale }: Props) {
     <div className="modal-overlay">
       <div className="modal receipt-modal">
         <div className="receipt">
+          {isReprint && (
+            <div className="receipt-reprint-banner">*** DUPLICATE — NOT ORIGINAL ***</div>
+          )}
           {/* ── Store header ── */}
           <div className="receipt-header">
             <div className="receipt-biz">{sale.branch_name}</div>
@@ -98,7 +61,7 @@ export default function ReceiptPreview({ sale, onNewSale }: Props) {
               <div className="receipt-addr">📞 {settings.phone}</div>
             )}
             {settings?.tax_number && (
-              <div className="receipt-addr">Tax Reg: {settings.tax_number}</div>
+              <div className="receipt-addr">TRN: {settings.tax_number}</div>
             )}
             {settings?.receipt_header && (
               <div className="receipt-custom-header">{settings.receipt_header}</div>
@@ -131,10 +94,16 @@ export default function ReceiptPreview({ sale, onNewSale }: Props) {
               </div>
             )}
             {sale.tax_total_minor > 0 && (
-              <div className="receipt-row">
-                <span>Tax</span>
-                <span>{DEVICE.currency} {fmt(sale.tax_total_minor)}</span>
-              </div>
+              <>
+                <div className="receipt-row">
+                  <span>Subtotal (excl. VAT)</span>
+                  <span>{DEVICE.currency} {fmt(sale.net_total_minor - sale.tax_total_minor)}</span>
+                </div>
+                <div className="receipt-row">
+                  <span>VAT</span>
+                  <span>{DEVICE.currency} {fmt(sale.tax_total_minor)}</span>
+                </div>
+              </>
             )}
             <div className="receipt-row receipt-total">
               <span>Total</span>
@@ -150,13 +119,42 @@ export default function ReceiptPreview({ sale, onNewSale }: Props) {
                 <span>{DEVICE.currency} {fmt(p.amount_minor)}</span>
               </div>
             ))}
-            {sale.payments.find(p => p.change_minor && p.change_minor > 0) && (
-              <div className="receipt-row receipt-change">
-                <span>Change</span>
-                <span>{DEVICE.currency} {fmt(sale.payments.find(p => p.change_minor)!.change_minor!)}</span>
-              </div>
-            )}
+            {(() => {
+              const changePmt = sale.payments.find(p => p.change_minor != null && p.change_minor > 0);
+              return changePmt ? (
+                <div className="receipt-row receipt-change">
+                  <span>Change</span>
+                  <span>{DEVICE.currency} {fmt(changePmt.change_minor ?? 0)}</span>
+                </div>
+              ) : null;
+            })()}
           </div>
+
+          {/* ── Delivery section ── */}
+          {sale.delivery && (() => {
+            const d = sale.delivery!;
+            const isPaid = d.payment_status === "paid";
+            return (
+              <div className="receipt-delivery-section">
+                <div className={`receipt-delivery-banner${isPaid ? " receipt-delivery-banner-paid" : ""}`}>
+                  {isPaid ? "✓ DELIVERY — PAID" : "⚠ DELIVERY — PAYMENT PENDING"}
+                </div>
+                {d.customer_name && <div className="receipt-delivery-row"><span>Customer</span><span>{d.customer_name}</span></div>}
+                <div className="receipt-delivery-row"><span>Contact</span><span>{d.contact_number}</span></div>
+                <div className="receipt-delivery-row"><span>Address</span><span>{[d.house_number, d.area, d.address_text].filter(Boolean).join(", ")}</span></div>
+                {d.delivery_staff_name && <div className="receipt-delivery-row"><span>Rider</span><span>{d.delivery_staff_name}</span></div>}
+                <div className="receipt-delivery-row">
+                  <span>Expected</span>
+                  <span>{d.expected_payment_method === "wallet" ? "BenefitPay" : d.expected_payment_method.charAt(0).toUpperCase() + d.expected_payment_method.slice(1)}</span>
+                </div>
+                {isPaid && d.paid_confirmed_at && (
+                  <div className="receipt-delivery-row receipt-delivery-paid-at">
+                    <span>Paid at</span><span>{new Date(d.paid_confirmed_at).toLocaleString()}</span>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* ── Footer ── */}
           {settings?.receipt_footer && (

@@ -31,16 +31,15 @@ type ActiveField =
   | { kind: "phone" }
   | null;
 
-const METHODS: { id: PaymentInput["method"]; icon: string; label: string }[] = [
-  { id: "cash",   icon: "💵", label: "Cash"   },
-  { id: "card",   icon: "💳", label: "Card"   },
-  { id: "wallet", icon: "📱", label: "Wallet" },
+const METHODS: { id: PaymentInput["method"]; icon: string; label: string; key?: string }[] = [
+  { id: "cash",   icon: "💵", label: "Cash",   key: "C" },
+  { id: "card",   icon: "💳", label: "Card",   key: "A" },
+  { id: "wallet", icon: "📱", label: "Wallet", key: "W" },
   { id: "other",  icon: "•••", label: "Other" },
 ];
 
-let _lineCounter = 200;
-const mkLine = (method: PaymentInput["method"] = "cash"): PaymentLine =>
-  ({ id: _lineCounter++, method, amountStr: "", tenderedStr: "" });
+// H12: _lineCounter was a module-level mutable — it survived HMR, never reset, and
+// was a concurrent-risk across multiple cart instances. Moved inside component as useRef.
 
 export default function PaymentModal({
   netTotal, onConfirm, onCancel, loading,
@@ -49,6 +48,10 @@ export default function PaymentModal({
   const EXP = DEVICE.currency_exponent;
   const containerRef = useRef<HTMLDivElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
+  // Stable per-instance line ID counter (replaces the former module-level mutable)
+  const _lineCounterRef = useRef(200);
+  const mkLine = (method: PaymentInput["method"] = "cash"): PaymentLine =>
+    ({ id: _lineCounterRef.current++, method, amountStr: "", tenderedStr: "" });
   useFocusTrap(containerRef, onCancel);
   const fmt = (n: number) => `${DEVICE.currency} ${formatMoney(n, EXP)}`;
 
@@ -86,15 +89,21 @@ export default function PaymentModal({
   const [showSplit, setShowSplit] = useState(splitMode ?? false);
 
   // Customer search debounce
+  // L8: Add mounted guard so async setState cannot fire on an unmounted component
   useEffect(() => {
     if (!custSearch.trim()) { setCustResults([]); return; }
+    let mounted = true;
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(async () => {
-      const rows = await cmd.customerList(custSearch.trim()).catch(() => [] as CustomerRow[]);
+      const rows = await cmd.customerList(sessionUserId ?? "", custSearch.trim()).catch(() => [] as CustomerRow[]);
+      if (!mounted) return;
       setCustResults(rows.slice(0, 6));
       setShowCustDrop(true);
     }, 250);
-    return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
+    return () => {
+      mounted = false;
+      if (searchTimer.current) clearTimeout(searchTimer.current);
+    };
   }, [custSearch]);
 
   const updateLine = (id: number, patch: Partial<PaymentLine>) =>
@@ -138,27 +147,41 @@ export default function PaymentModal({
       // Let text inputs handle their own typing
       if (tag === "INPUT" || tag === "TEXTAREA") return;
 
+      const setMethod = (m: PaymentLine["method"]) => {
+        setLines(p => p.map((l, i) => i === 0 ? { ...l, method: m } : l));
+        // non-cash methods have no tendered — keep dialpad on amount
+        if (m !== "cash") {
+          setActiveField(prev => (prev?.kind === "tendered" ? { kind: "amount", lineId: lines[0].id } : prev));
+        }
+      };
+      const k = e.key.toLowerCase();
+
       if (e.key >= "0" && e.key <= "9") { e.preventDefault(); handleDialpadKey(e.key); }
       else if (e.key === "Backspace")   { e.preventDefault(); handleDialpadKey("⌫"); }
       else if (e.key === "Delete")      { e.preventDefault(); handleDialpadKey("C"); }
       else if (e.key === ".")           { e.preventDefault(); handleDialpadKey("."); }
-      else if (e.key === "F1") { e.preventDefault(); setLines(p => p.map((l, i) => i === 0 ? { ...l, method: "cash" }   : l)); }
-      else if (e.key === "F2") {
+      // Single-key method switch (C/A/W) + legacy F1/F2/F3 aliases.
+      else if (k === "c" || e.key === "F1") { e.preventDefault(); setMethod("cash"); }
+      else if (k === "a" || e.key === "F2") { e.preventDefault(); setMethod("card"); }
+      else if (k === "w" || e.key === "F3") { e.preventDefault(); setMethod("wallet"); }
+      // "E" = Exact: snap cash tendered to the amount due (most common cash path).
+      else if (k === "e") {
         e.preventDefault();
-        setLines(p => p.map((l, i) => i === 0 ? { ...l, method: "card" } : l));
-        // card has no tendered — keep dialpad on amount
-        setActiveField(prev => (prev?.kind === "tendered" ? { kind: "amount", lineId: lines[0].id } : prev));
-      }
-      else if (e.key === "F3") {
-        e.preventDefault();
-        setLines(p => p.map((l, i) => i === 0 ? { ...l, method: "wallet" } : l));
-        setActiveField(prev => (prev?.kind === "tendered" ? { kind: "amount", lineId: lines[0].id } : prev));
+        const due = formatMoney(netTotal, EXP);
+        setLines(p => p.map((l, i) => i === 0 ? { ...l, amountStr: due, tenderedStr: due } : l));
       }
       else if (e.key === "Escape")      { e.preventDefault(); onCancel(); }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [activeField, handleDialpadKey, onCancel]);
+  }, [activeField, handleDialpadKey, onCancel, lines, netTotal, EXP]);
+
+  // Fast checkout: focus the Confirm button on open so the cashier can press
+  // Enter immediately after F9 to complete the sale (cash amount is pre-filled).
+  useEffect(() => {
+    const t = setTimeout(() => confirmRef.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, []);
 
   // Quick amount suggestions (round notes above total)
   const quickAmts = (() => {
@@ -264,6 +287,7 @@ export default function PaymentModal({
                     >
                       <span className="pm-method-icon">{m.icon}</span>
                       <span className="pm-method-label">{m.label}</span>
+                      {m.key && <kbd className="pm-method-key">{m.key}</kbd>}
                     </button>
                   ))}
                   {lines.length > 1 && (
@@ -307,9 +331,12 @@ export default function PaymentModal({
             );
           })}
 
-          {/* Quick amounts — cash only, only when useful */}
-          {lines.length === 1 && lines[0].method === "cash" && quickAmts.length > 0 && (
+          {/* Quick amounts — cash only, only when useful. "E" key = exact amount. */}
+          {lines.length === 1 && lines[0].method === "cash" && (
             <div className="pm-quick">
+              <button className="pm-quick-btn pm-quick-exact" onClick={() => applyQuick(netTotal)} title="Exact amount (press E)">
+                Exact <kbd className="pm-quick-key">E</kbd>
+              </button>
               {quickAmts.slice(0, 3).map(a => (
                 <button key={a} className="pm-quick-btn" onClick={() => applyQuick(a)}>
                   {fmt(a)}

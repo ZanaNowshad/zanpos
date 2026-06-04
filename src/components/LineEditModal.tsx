@@ -1,18 +1,19 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { CartLine } from "../types";
 import { formatMoney, parseMoney } from "../money";
 import { DEVICE } from "../types";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 interface Props {
   line: CartLine;
   onUpdateQty: (id: string, qty: string) => void;
-  onApplyLineDiscount: (id: string, discount_minor: number) => void;
+  onApplyLineDiscount: (id: string, discount_minor: number, reason: string) => void;
   onSetLineNote: (id: string, note: string | null) => void;
   onRemove: (id: string) => void;
   onClose: () => void;
 }
 
-type DiscountMode = "pct" | "flat";
+type DiscountMode = "pct" | "flat" | "price";
 
 export default function LineEditModal({
   line,
@@ -22,42 +23,54 @@ export default function LineEditModal({
   onRemove,
   onClose,
 }: Props) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(modalRef, onClose);
+
   const exp = DEVICE.currency_exponent;
   const cur = DEVICE.currency;
   const fmt = (n: number) => `${cur} ${formatMoney(n, exp)}`;
 
   const [qty, setQty] = useState(line.quantity);
-  const [discountMode, setDiscountMode] = useState<DiscountMode>("pct");
+  const [discountMode, setDiscountMode] = useState<DiscountMode>("price");
   const [discountValue, setDiscountValue] = useState(
     line.line_discount_minor > 0 ? "" : ""
   );
+  const [discountReason, setDiscountReason] = useState(line.line_discount_reason ?? "");
   const [note, setNote] = useState(line.note ?? "");
 
-  const parsedQty = parseFloat(qty);
-  const qtyValid = !isNaN(parsedQty) && parsedQty > 0;
+  const qtyNum = parseFloat(qty);
+  const qtyValid = !isNaN(qtyNum) && qtyNum > 0;
+  // Display-only preview: integer math avoids float rounding in subtotal
   const lineSubtotal = qtyValid
-    ? Math.round(line.unit_price_minor * parsedQty)
+    ? Math.round(line.unit_price_minor * qtyNum)
     : line.unit_price_minor;
 
   function computeDiscountMinor(): number {
-    const num = parseFloat(discountValue);
-    if (isNaN(num) || num <= 0) return 0;
     if (discountMode === "pct") {
-      return Math.round(lineSubtotal * Math.min(num, 100) / 100);
-    } else {
+      const bp = Math.round(parseFloat(discountValue || "0") * 100);
+      if (isNaN(bp) || bp <= 0) return 0;
+      return Math.round(lineSubtotal * Math.min(bp, 10000) / 10000);
+    } else if (discountMode === "flat") {
       return Math.min(parseMoney(discountValue, exp), lineSubtotal);
+    } else {
+      // price override: discount = (unit_price - new_price) × qty
+      const newPriceMinor = parseMoney(discountValue, exp);
+      if (newPriceMinor >= line.unit_price_minor) return 0;
+      return Math.round((line.unit_price_minor - newPriceMinor) * (qtyNum || 1));
     }
   }
 
   const discountPreview = computeDiscountMinor();
+  const reasonTrimmed = discountReason.trim();
+  const discountNeedsReason = discountPreview > 0 && reasonTrimmed.length === 0;
 
   function handleApply() {
-    if (!qtyValid) return;
+    if (!qtyValid || discountNeedsReason) return;
     if (qty !== line.quantity) {
       onUpdateQty(line.cart_line_id, qty);
     }
     if (discountPreview !== line.line_discount_minor) {
-      onApplyLineDiscount(line.cart_line_id, discountPreview);
+      onApplyLineDiscount(line.cart_line_id, discountPreview, reasonTrimmed);
     }
     const noteVal = note.trim() || null;
     if (noteVal !== (line.note ?? null)) {
@@ -73,12 +86,19 @@ export default function LineEditModal({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal line-edit-modal" onClick={e => e.stopPropagation()}>
+      <div
+        ref={modalRef}
+        className="modal line-edit-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Edit ${line.product_name}`}
+        onClick={e => e.stopPropagation()}
+      >
         <h2 className="modal-title">{line.product_name}</h2>
         <p className="line-edit-unit-price">Unit price: {fmt(line.unit_price_minor)}</p>
 
         {/* ── Quantity ── */}
-        <label className="line-edit-label">Quantity</label>
+        <label className="line-edit-label" htmlFor="line-edit-qty">Quantity</label>
         <div className="line-edit-qty-row">
           <button
             className="qty-btn"
@@ -88,8 +108,10 @@ export default function LineEditModal({
             }}
           >−</button>
           <input
+            id="line-edit-qty"
             className="line-edit-qty-input"
             type="number"
+            inputMode="decimal"
             min="0.001"
             step="1"
             value={qty}
@@ -102,30 +124,30 @@ export default function LineEditModal({
         </div>
 
         {/* ── Line discount ── */}
-        <label className="line-edit-label">Line Discount</label>
+        <label className="line-edit-label" htmlFor="line-edit-discount">Line Discount</label>
         <div className="discount-mode-tabs">
           <button
             className={`discount-mode-tab ${discountMode === "pct" ? "discount-mode-tab-active" : ""}`}
             onClick={() => { setDiscountMode("pct"); setDiscountValue(""); }}
-          >
-            %
-          </button>
+          >%</button>
           <button
             className={`discount-mode-tab ${discountMode === "flat" ? "discount-mode-tab-active" : ""}`}
             onClick={() => { setDiscountMode("flat"); setDiscountValue(""); }}
-          >
-            Flat
-          </button>
+          >Flat</button>
+          <button
+            className={`discount-mode-tab ${discountMode === "price" ? "discount-mode-tab-active" : ""}`}
+            onClick={() => { setDiscountMode("price"); setDiscountValue(""); }}
+          >Price</button>
         </div>
         <div className="discount-input-row">
           {discountMode === "pct" ? (
             <>
               <input
+                id="line-edit-discount"
                 className="discount-input"
                 type="number"
-                min="0"
-                max="100"
-                step="1"
+                inputMode="numeric"
+                min="0" max="100" step="1"
                 placeholder="0"
                 value={discountValue}
                 onChange={e => setDiscountValue(e.target.value)}
@@ -138,9 +160,12 @@ export default function LineEditModal({
               <input
                 className="discount-input"
                 type="number"
+                inputMode="decimal"
                 min="0"
                 step={Math.pow(10, -exp).toFixed(exp)}
-                placeholder={`0.${"0".repeat(exp)}`}
+                placeholder={discountMode === "price"
+                  ? formatMoney(line.unit_price_minor, exp)
+                  : `0.${"0".repeat(exp)}`}
                 value={discountValue}
                 onChange={e => setDiscountValue(e.target.value)}
               />
@@ -154,9 +179,25 @@ export default function LineEditModal({
           </p>
         )}
 
+        {discountPreview > 0 && (
+            <>
+              <label className="line-edit-label" htmlFor="line-edit-discount-reason">Discount reason (required)</label>
+              <input
+                id="line-edit-discount-reason"
+              className={`line-edit-note-input${discountNeedsReason ? " input-error" : ""}`}
+              type="text"
+              maxLength={120}
+              placeholder="e.g. Manager approved, loyalty reward…"
+              value={discountReason}
+              onChange={e => setDiscountReason(e.target.value)}
+            />
+          </>
+        )}
+
         {/* ── Note ── */}
-        <label className="line-edit-label">Note (optional)</label>
+        <label className="line-edit-label" htmlFor="line-edit-note">Note (optional)</label>
         <input
+          id="line-edit-note"
           className="line-edit-note-input"
           type="text"
           maxLength={120}
@@ -168,7 +209,7 @@ export default function LineEditModal({
         <div className="modal-actions line-edit-actions">
           <button className="btn-danger" onClick={handleRemove}>Remove</button>
           <button className="btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" onClick={handleApply} disabled={!qtyValid}>
+          <button className="btn-primary" onClick={handleApply} disabled={!qtyValid || discountNeedsReason}>
             Apply
           </button>
         </div>

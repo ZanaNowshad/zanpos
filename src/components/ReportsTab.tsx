@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { RangeSummary, SaleListRow, TopProduct } from "../types";
+import type { RangeSummary, SaleListRow, SaleListPage, TopProduct } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney } from "../money";
 import * as cmd from "../tauri/commands";
@@ -10,7 +10,7 @@ const CUR       = DEVICE.currency;
 
 function fmt(n: number) { return `${CUR} ${formatMoney(n, EXP)}`; }
 
-function isoDate(d: Date) { return d.toISOString().slice(0, 10); }
+function isoDate(d: Date) { return d.toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" }); }
 
 function defaultRange() {
   const to   = new Date();
@@ -38,11 +38,15 @@ export default function ReportsTab({ sessionUserId }: Props) {
   const [to, setTo]                 = useState(defaultRange().to);
   const [summary, setSummary]       = useState<RangeSummary | null>(null);
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
-  const [sales, setSales]           = useState<SaleListRow[]>([]);
+  const [salesPage, setSalesPage]   = useState<SaleListPage>({ items: [], total: 0, offset: 0, limit: 200 });
+  const sales = salesPage.items;
   const [taxRows, setTaxRows]       = useState<TaxRow[]>([]);
   const [loading, setLoading]       = useState(false);
+  const [loadError, setLoadError]   = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<"summary" | "products" | "sales" | "tax">("summary");
   const [voidingId, setVoidingId]   = useState<string | null>(null);
+  const [voidConfirm, setVoidConfirm] = useState<SaleListRow | null>(null);
+  const [stockWarning, setStockWarning] = useState<string | null>(null);
 
   const applyPreset = useCallback((p: Preset) => {
     const today = new Date();
@@ -63,62 +67,117 @@ export default function ReportsTab({ sessionUserId }: Props) {
   const load = useCallback(async () => {
     if (!from || !to || from > to) return;
     setLoading(true);
+    setLoadError(null);
     try {
       const [s, tp, sl, tx] = await Promise.all([
         cmd.reportDateRange(BRANCH_ID, from, to),
         cmd.reportTopProducts(BRANCH_ID, from, to),
         cmd.reportSalesList(BRANCH_ID, from, to),
-        cmd.reportTaxByDay(BRANCH_ID, from, to),
+        cmd.reportTaxByDay(BRANCH_ID, from, to, sessionUserId),
       ]);
-      setSummary(s); setTopProducts(tp); setSales(sl); setTaxRows(tx as TaxRow[]);
+      setSummary(s); setTopProducts(tp); setSalesPage(sl); setTaxRows(tx as TaxRow[]);
+    } catch (e: unknown) {
+      setLoadError(typeof e === "string" ? e : "Failed to load report. Check dates and try again.");
     } finally {
       setLoading(false);
     }
-  }, [from, to]);
+  }, [from, to, sessionUserId]);
 
   useEffect(() => { load(); }, [load]);
 
   const handlePreset = (p: Preset) => { applyPreset(p); };
 
   const handleVoid = async (sale: SaleListRow) => {
-    if (!confirm(`Void sale #${sale.receipt_number} (${fmt(sale.net_total_minor)})? This cannot be undone.`)) return;
+    setVoidConfirm(sale);
+  };
+
+  const executeVoid = async () => {
+    const sale = voidConfirm;
+    if (!sale) return;
+    setVoidConfirm(null);
+    setStockWarning(null);
     setVoidingId(sale.sale_id);
     try {
-      await cmd.posVoidSale(sale.sale_id, sessionUserId);
-      setSales(prev => prev.map(s => s.sale_id === sale.sale_id ? { ...s, status: "voided" } : s));
+      const result = await cmd.posVoidSale(sale.sale_id, sessionUserId);
+      setSalesPage(prev => ({ ...prev, items: prev.items.map(s => s.sale_id === sale.sale_id ? { ...s, status: "voided" } : s) }));
+      if (result.stock_warning) {
+        setStockWarning(result.stock_warning);
+      }
     } catch (e: unknown) {
       const msg = typeof e === "string" ? e : "Failed to void sale";
       const display = msg.toLowerCase().includes("not permitted") || msg.toLowerCase().includes("permission")
         ? "Only managers and owners can void sales."
         : msg;
-      alert(display);
+      setLoadError(display);
     } finally {
       setVoidingId(null);
     }
   };
 
+  function downloadCSV(filename: string, rows: (string | number)[][]) {
+    const csv = rows
+      .map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  }
+
   const handleExportCSV = () => {
-    const header = ["Receipt#","Date","Cashier","Method","Discount","Tax","Total","Status"];
+    const header = ["Receipt#","Date","Cashier","Method","Discount","Total","Status"];
     const rows = sales.map(s => [
       `#${s.receipt_number}`,
       new Date(s.sold_at).toLocaleString(),
       s.cashier_name,
       s.payment_methods,
       formatMoney(s.discount_total_minor, EXP),
-      "", // no tax in SaleListRow — placeholder
       formatMoney(s.net_total_minor, EXP),
       s.status,
     ]);
-    const csv = [header, ...rows]
-      .map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `zanpos-sales-${from}-${to}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadCSV(`zanpos-sales-${from}-${to}.csv`, [header, ...rows]);
+  };
+
+  const handleExportProductsCSV = () => {
+    const header = ["Rank","Product","Qty Sold","Transactions","Revenue"];
+    const rows = topProducts.map((p, i) => [
+      i + 1,
+      p.product_name,
+      parseFloat(p.total_quantity),
+      p.transaction_count,
+      formatMoney(p.revenue_minor, EXP),
+    ]);
+    downloadCSV(`zanpos-top-products-${from}-${to}.csv`, [header, ...rows]);
+  };
+
+  const handleExportTaxCSV = () => {
+    const header = ["Date","Transactions","VAT Collected","Cumulative VAT"];
+    const rows = taxRows.map(r => [
+      r.day,
+      r.transaction_count,
+      formatMoney(r.tax_minor, EXP),
+      formatMoney(r.cumulative_minor, EXP),
+    ]);
+    const totalRow = ["Total", taxTxCount, formatMoney(taxTotal, EXP), ""];
+    downloadCSV(`zanpos-tax-${from}-${to}.csv`, [header, ...rows, totalRow]);
+  };
+
+  const handleExportSummaryCSV = () => {
+    if (!summary) return;
+    const rows: (string | number)[][] = [
+      ["Metric", "Value"],
+      ["Period", `${from} to ${to}`],
+      ["Transactions", summary.transaction_count],
+      ["Gross Sales", formatMoney(summary.gross_total_minor, EXP)],
+      ["Discounts", formatMoney(summary.discount_total_minor, EXP)],
+      ["Tax", formatMoney(summary.tax_total_minor, EXP)],
+      ["Net Revenue", formatMoney(summary.net_total_minor, EXP)],
+      ["Cash", formatMoney(summary.cash_total_minor, EXP)],
+      ["Card", formatMoney(summary.card_total_minor, EXP)],
+      ["Refunds", `${summary.refund_count} (${formatMoney(summary.refund_total_minor, EXP)})`],
+    ];
+    downloadCSV(`zanpos-summary-${from}-${to}.csv`, rows);
   };
 
   const taxTotal = taxRows.reduce((s, r) => s + r.tax_minor, 0);
@@ -149,9 +208,16 @@ export default function ReportsTab({ sessionUserId }: Props) {
             {loading ? "Loading…" : "▶ Run"}
           </button>
           {activeSection === "sales" && sales.length > 0 && (
-            <button className="btn-secondary rpt-export-btn2" onClick={handleExportCSV}>
-              ↓ CSV
-            </button>
+            <button className="btn-secondary rpt-export-btn2" onClick={handleExportCSV}>↓ CSV</button>
+          )}
+          {activeSection === "products" && topProducts.length > 0 && (
+            <button className="btn-secondary rpt-export-btn2" onClick={handleExportProductsCSV}>↓ CSV</button>
+          )}
+          {activeSection === "tax" && taxRows.length > 0 && (
+            <button className="btn-secondary rpt-export-btn2" onClick={handleExportTaxCSV}>↓ CSV</button>
+          )}
+          {activeSection === "summary" && summary && (
+            <button className="btn-secondary rpt-export-btn2" onClick={handleExportSummaryCSV}>↓ CSV</button>
           )}
         </div>
       </div>
@@ -175,6 +241,19 @@ export default function ReportsTab({ sessionUserId }: Props) {
       </div>
 
       <div className="rpt-body">
+        {/* ── Load error banner ── */}
+        {loadError && (
+          <div className="rpt-error-banner" role="alert">
+            ⚠ {loadError}
+            <button className="rpt-error-retry" onClick={load}>Retry</button>
+          </div>
+        )}
+        {stockWarning && (
+          <div className="rpt-error-banner" role="alert" style={{ background: "var(--warning-bg, #fef3c7)" }}>
+            ⚠ {stockWarning}
+            <button className="rpt-error-retry" onClick={() => setStockWarning(null)}>Dismiss</button>
+          </div>
+        )}
         {/* ── Summary cards ── */}
         {activeSection === "summary" && summary && (
           <div className="rpt-summary2">
@@ -289,6 +368,11 @@ export default function ReportsTab({ sessionUserId }: Props) {
                 </tbody>
               </table>
             )}
+            {salesPage.total > salesPage.items.length && (
+              <p className="rpt-row-limit-notice">
+                ⚠ Showing {salesPage.items.length} of {salesPage.total} sales. Use <strong>↓ CSV</strong> to export the full list, or narrow your date range.
+              </p>
+            )}
           </div>
         )}
 
@@ -332,6 +416,25 @@ export default function ReportsTab({ sessionUserId }: Props) {
           </div>
         )}
       </div>
+
+      {/* ── Void confirm dialog ── */}
+      {voidConfirm && (
+        <div className="settings-confirm-overlay" onClick={() => setVoidConfirm(null)}>
+          <div className="settings-confirm-dialog" onClick={e => e.stopPropagation()}>
+            <div className="settings-confirm-header">Confirm Void</div>
+            <p className="settings-confirm-msg">
+              Void sale #{voidConfirm.receipt_number} ({fmt(voidConfirm.net_total_minor)})?
+              <br /><strong>This cannot be undone.</strong>
+            </p>
+            <div className="settings-confirm-buttons">
+              <button className="btn-primary" style={{ background: "var(--error, #ef4444)" }} onClick={executeVoid} disabled={voidingId !== null}>
+                {voidingId ? "Voiding…" : "Yes, Void Sale"}
+              </button>
+              <button className="btn-secondary" onClick={() => setVoidConfirm(null)} disabled={voidingId !== null}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

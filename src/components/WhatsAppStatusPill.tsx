@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { memo, useEffect, useState, useCallback } from "react";
 import type { WhatsAppStatus } from "../types";
 import { whatsappStatus } from "../tauri/commands";
 
@@ -7,7 +7,7 @@ interface Props {
   onOpenQR: () => void;
 }
 
-export default function WhatsAppStatusPill({ sessionRole, onOpenQR }: Props) {
+const WhatsAppStatusPill = memo(function WhatsAppStatusPill({ sessionRole, onOpenQR }: Props) {
   const [status, setStatus] = useState<WhatsAppStatus>({ connected: false });
 
   const poll = useCallback(async () => {
@@ -47,4 +47,6 @@ export default function WhatsAppStatusPill({ sessionRole, onOpenQR }: Props) {
       {label}
     </button>
   );
-}
+});
+
+export default WhatsAppStatusPill;

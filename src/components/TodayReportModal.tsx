@@ -16,10 +16,12 @@ export default function TodayReportModal({ onClose }: Props) {
   const today = new Date().toISOString().split("T")[0];
 
   useEffect(() => {
+    let cancelled = false;
     reportToday(DEVICE.branch_id, today)
-      .then(setSummary)
-      .catch(() => setError("Failed to load report"))
-      .finally(() => setLoading(false));
+      .then(data => { if (!cancelled) setSummary(data); })
+      .catch(() => { if (!cancelled) setError("Failed to load report"); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [today]);
 
   const fmt = (minor: number) =>
@@ -72,6 +74,21 @@ export default function TodayReportModal({ onClose }: Props) {
                 <strong>{fmt(summary.card_total_minor)}</strong>
               </div>
             </div>
+
+            {summary.pending_delivery_count > 0 && (
+              <div className="report-section report-section-warning">
+                <div className="report-section-title">⏳ Pending Deliveries (Unpaid)</div>
+                <div className="report-row">
+                  <span>Pending Orders</span>
+                  <strong>{summary.pending_delivery_count}</strong>
+                </div>
+                <div className="report-row">
+                  <span>Pending Revenue</span>
+                  <strong className="report-warning">{fmt(summary.pending_delivery_minor)}</strong>
+                </div>
+                <div className="report-hint">These sales are excluded from totals above until payment is confirmed.</div>
+              </div>
+            )}
 
             {summary.refund_count > 0 && (
               <div className="report-section">

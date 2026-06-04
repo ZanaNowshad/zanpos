@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { CategoryRow } from "../types";
 import * as cmd from "../tauri/commands";
+import BulkImportModal from "./BulkImportModal";
 
 const EMPTY_FORM = { name: "", sort_order: 0, is_active: true };
 
@@ -13,9 +14,12 @@ export default function CategoriesTab({ sessionUserId }: Props) {
   const [form, setForm]             = useState(EMPTY_FORM);
   const [saving, setSaving]         = useState(false);
   const [error, setError]           = useState<string | null>(null);
+  const [showBulkImport, setShowBulkImport] = useState(false);
 
   useEffect(() => {
-    cmd.adminListCategories().then(setCategories);
+    let cancelled = false;
+    cmd.adminListCategories().then(data => { if (!cancelled) setCategories(data); });
+    return () => { cancelled = true; };
   }, []);
 
   function startCreate() {
@@ -60,11 +64,32 @@ export default function CategoriesTab({ sessionUserId }: Props) {
 
   const showingForm = creating || selected !== null;
 
+  async function refreshCategories() {
+    const cats = await cmd.adminListCategories();
+    setCategories(cats);
+  }
+
   return (
+    <>
+    {showBulkImport && (
+      <BulkImportModal
+        mode="categories"
+        sessionUserId={sessionUserId}
+        onClose={() => setShowBulkImport(false)}
+        onDone={refreshCategories}
+      />
+    )}
     <div className="bo-tab-layout">
       <div className="bo-list-pane">
         <div className="bo-list-header">
           <span className="bo-list-title">Categories</span>
+          <button
+            className="btn-secondary bo-import-btn"
+            onClick={() => setShowBulkImport(true)}
+            title="Bulk import categories from CSV"
+          >
+            Import CSV
+          </button>
           <button className="btn-primary bo-add-btn" onClick={startCreate}>+ New</button>
         </div>
         <div className="bo-list">
@@ -117,5 +142,6 @@ export default function CategoriesTab({ sessionUserId }: Props) {
         </div>
       )}
     </div>
+    </>
   );
 }

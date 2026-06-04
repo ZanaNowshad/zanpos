@@ -19,6 +19,7 @@ pub struct Product {
     pub updated_at: String,
     pub reorder_point: i64,
     pub image_path: Option<String>,
+    pub default_supplier_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

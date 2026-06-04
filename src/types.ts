@@ -197,6 +197,7 @@ export interface SaleForRefund {
   sold_at: string;
   cashier_name: string;
   status: string;
+  origin_device_id: string;
   items: SaleItemForRefund[];
 }
 
@@ -242,11 +243,13 @@ export interface TodaySummary {
 // ─── Phase 2: AI Provider config ─────────────────────────────────────────────
 
 export interface ProviderConfig {
-  provider: string; // "anthropic" | "openai" | ""
+  provider: string; // "anthropic" | "openai" | "gemini" | ""
   anthropic_key_set: boolean;
   openai_base_url: string;
   openai_key_set: boolean;
   openai_model: string;
+  gemini_key_set: boolean;
+  gemini_model: string;
 }
 
 export interface ModelInfo {
@@ -489,6 +492,7 @@ export interface CategoryRow {
   name: string;
   sort_order: number;
   is_active: boolean;
+  parent_category_id?: string;
 }
 
 export interface TaxRuleRow {
@@ -518,6 +522,9 @@ export interface RoleRow {
 
 export interface SupabaseStatus {
   configured: boolean;
+  /** Supabase project URL. Surfaced for the "change connection / re-migrate" flow.
+   *  The service role key is never returned here — it stays in the OS credential store. */
+  url: string;
 }
 
 // ─── App configuration (loaded from DB at startup) ────────────────────────────
@@ -630,13 +637,16 @@ export interface SyncQueueItem {
   created_at: string;
 }
 
-// ─── Device constants — mutable, populated from DB at startup ─────────────────
-// These defaults are used only as fallback; app_config_load() overwrites them.
+// ─── Device constants — populated from DB at startup before any UI renders ─────
+// F-CRIT-03: Default to empty string ("") instead of seed IDs so any pre-init
+// use fails FK validation at the DB layer rather than silently writing fake IDs.
+// App.tsx calls init() before any authenticated UI is shown; if init() hasn't run,
+// DB calls will return "no active branch/device" errors instead of corrupting data.
 export const DEVICE = {
-  device_id:         "01JDEVICE0000000000000001",
-  branch_id:         "01JBRANCH0000000000000001",
-  branch_name:       "Main Branch",
-  branch_code:       "MAIN",
+  device_id:         "",   // empty = not initialized; seed ID removed
+  branch_id:         "",   // empty = not initialized; seed ID removed
+  branch_name:       "Loading…",
+  branch_code:       "",
   currency:          "BHD",
   currency_exponent: 3,
 

@@ -1,5 +1,6 @@
 pub mod admin_commands;
 pub mod migration_commands;
+pub mod override_token;
 pub mod ai_admin_commands;
 pub mod auth_commands;
 pub mod cash_commands;

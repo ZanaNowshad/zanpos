@@ -10,4 +10,6 @@ pub struct TodaySummary {
     pub card_total_minor: i64,
     pub refund_count: i64,
     pub refund_total_minor: i64,
+    pub pending_delivery_count: i64,
+    pub pending_delivery_minor: i64,
 }

@@ -108,16 +108,52 @@ pub struct UndoActionResult {
     pub followup: String,
 }
 
+// ── Persisted chat message ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiChatMessage {
+    pub id: i64,
+    pub session_id: String,
+    pub branch_id: String,
+    pub user_id: String,
+    pub role: String,          // "user" | "assistant" | "system_event"
+    pub content: String,
+    pub message_type: String,  // "text" | "action_card" | "error"
+    pub created_at: String,
+}
+
+// ── Streaming events (sent over Tauri Channel) ─────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StreamEvent {
+    Token { text: String },
+    ToolStart { name: String },
+    ToolDone { name: String },
+    MutationPending {
+        action_id: String,
+        tool_name: String,
+        preview: ToolPreview,
+        expires_at: String,
+        assistant_text: String,
+    },
+    Done,
+    Error { message: String },
+}
+
 // ── Provider config ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
-    /// "anthropic" | "openai" | ""
+    /// "anthropic" | "openai" | "gemini" | ""
     pub provider: String,
     pub anthropic_key_set: bool,
     pub openai_base_url: String,
     pub openai_key_set: bool,
     pub openai_model: String,
+    // Google Gemini (OpenAI-compatible endpoint)
+    pub gemini_key_set: bool,
+    pub gemini_model: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

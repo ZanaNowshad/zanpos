@@ -1,19 +1,24 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import type { AppConfig, SessionUser, Shift } from "./types";
 import { DEVICE } from "./types";
 import { appConfigLoad, appConfigGetTimeout, shiftGetActive } from "./tauri/commands";
 import LoginScreen from "./pages/LoginScreen";
 import PosPage from "./pages/PosPage";
-import AdminChatPage from "./pages/AdminChatPage";
-import SetupWizard from "./pages/SetupWizard";
-import MigrationAgentPage from "./pages/MigrationAgentPage";
 import ShiftModal from "./components/ShiftModal";
 import LockScreen from "./components/LockScreen";
+import WindowControls from "./components/WindowControls";
 import ErrorBoundary from "./components/ErrorBoundary";
+import ReminderPopup from "./components/ReminderPopup";
 import { useIdleTimer } from "./hooks/useIdleTimer";
+import { useReminderChecker } from "./hooks/useReminderChecker";
 import { useTheme } from "./hooks/useTheme";
+import type { StickyNote } from "./utils/stickyNotes";
 import "./App.css";
 import "./setup-styles.css";
+
+const AdminChatPage = lazy(() => import("./pages/AdminChatPage"));
+const SetupWizard = lazy(() => import("./pages/SetupWizard"));
+const MigrationAgentPage = lazy(() => import("./pages/MigrationAgentPage"));
 
 type View = "login" | "shift_check" | "shift_open" | "pos" | "admin_chat";
 
@@ -81,13 +86,33 @@ export default function App() {
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
   const [shift, setShift]             = useState<Shift | null>(null);
   const [locked, setLocked]           = useState(false);
+  const [idleWarning, setIdleWarning] = useState(false);
 
   // Idle timer — only when session is active
   const isSessionActive = sessionUser !== null && view !== "login";
   const handleIdle = useCallback(() => {
-    if (isSessionActive) setLocked(true);
+    if (isSessionActive) { setIdleWarning(false); setLocked(true); }
   }, [isSessionActive]);
-  useIdleTimer(isSessionActive ? idleTimeoutMs : 0, handleIdle);
+  const handleIdleWarn   = useCallback(() => { if (isSessionActive) setIdleWarning(true); }, [isSessionActive]);
+  const handleIdleResume = useCallback(() => setIdleWarning(false), []);
+  useIdleTimer(
+    isSessionActive ? idleTimeoutMs : 0,
+    handleIdle,
+    handleIdleWarn,
+    handleIdleResume,
+  );
+
+  // ── Reminder queue ─────────────────────────────────────────────────────────
+  // Reminders fire globally — they appear on top of whichever page is active.
+  const [reminderQueue, setReminderQueue] = useState<StickyNote[]>([]);
+
+  useReminderChecker(useCallback((due: StickyNote[]) => {
+    setReminderQueue(prev => {
+      const existingIds = new Set(prev.map(n => n.id));
+      const fresh = due.filter(n => !existingIds.has(n.id));
+      return fresh.length > 0 ? [...prev, ...fresh] : prev;
+    });
+  }, []));
 
   const handleLogin = async (user: SessionUser) => {
     setLocked(false);
@@ -158,14 +183,16 @@ export default function App() {
   if (!appConfig.setup_complete) {
     return (
       <ErrorBoundary>
-        <SetupWizard
-          onComplete={handleSetupComplete}
-          onMigrate={(cfg) => {
-            DEVICE.init(cfg);
-            setAppConfig(cfg);
-            setMigrationMode(true);
-          }}
-        />
+        <Suspense fallback={<div className="app-splash"><div className="app-splash-spinner" /></div>}>
+          <SetupWizard
+            onComplete={handleSetupComplete}
+            onMigrate={(cfg: AppConfig) => {
+              DEVICE.init(cfg);
+              setAppConfig(cfg);
+              setMigrationMode(true);
+            }}
+          />
+        </Suspense>
       </ErrorBoundary>
     );
   }
@@ -174,9 +201,12 @@ export default function App() {
   if (migrationMode) {
     return (
       <ErrorBoundary>
-        <MigrationAgentPage
-          onDone={() => setMigrationMode(false)}
-        />
+        <Suspense fallback={<div className="app-splash"><div className="app-splash-spinner" /></div>}>
+          <MigrationAgentPage
+            onDone={() => setMigrationMode(false)}
+            sessionUserId={sessionUser?.user_id ?? ""}
+          />
+        </Suspense>
       </ErrorBoundary>
     );
   }
@@ -198,9 +228,18 @@ export default function App() {
   // ── Normal POS flow ────────────────────────────────────────────────────────
   return (
     <ErrorBoundary>
+      <WindowControls />
+
       {cloudBanner.level !== "none" && (
         <div className={`cloud-banner cloud-banner-${cloudBanner.level}`}>
           {cloudBanner.level === "danger" ? "🔴" : "🟡"} {cloudBanner.message}
+        </div>
+      )}
+
+      {idleWarning && (
+        <div className="idle-warning-banner" onClick={() => setIdleWarning(false)}>
+          ⏱ Session locking in 60 seconds — tap anywhere to stay active
+          <button className="idle-warning-dismiss" onClick={e => { e.stopPropagation(); setIdleWarning(false); }}>✕</button>
         </div>
       )}
 
@@ -248,15 +287,25 @@ export default function App() {
 
       {view === "admin_chat" && sessionUser &&
        (sessionUser.role_name === "owner" || sessionUser.role_name === "manager") && (
-        <AdminChatPage
-          sessionUser={sessionUser}
-          onBackToPOS={() => setView("pos")}
-        />
+        <Suspense fallback={<div className="app-splash"><div className="app-splash-spinner" /></div>}>
+          <AdminChatPage
+            sessionUser={sessionUser}
+            onBackToPOS={() => setView("pos")}
+          />
+        </Suspense>
       )}
 
       {/* Fallback: if none of the above matched, go to login */}
       {!["login", "shift_check", "shift_open", "pos", "admin_chat"].includes(view) && (
         <LoginScreen onLogin={handleLogin} />
+      )}
+
+      {/* ── Reminder popup — rendered above everything ── */}
+      {reminderQueue.length > 0 && (
+        <ReminderPopup
+          note={reminderQueue[0]}
+          onClose={() => setReminderQueue(prev => prev.slice(1))}
+        />
       )}
     </ErrorBoundary>
   );

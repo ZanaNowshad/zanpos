@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { Cart, CartLine } from "../types";
 import { formatMoney } from "../money";
 import { DEVICE } from "../types";
@@ -23,7 +23,10 @@ interface Props {
   compact?: boolean;
 }
 
-export default function CartPanel({
+// L6: Wrap in memo() — every keystroke in the barcode field previously
+// triggered a full CartPanel re-render.  memo() prevents that when
+// cart/callbacks haven't changed.
+export default memo(function CartPanel({
   cart, netTotal, taxTotal,
   onUpdateQty, onRemove, onApplyLineDiscount, onSetLineNote,
   onPaySplit, onPayFast, onPayDirect, payFastLoading,
@@ -54,7 +57,8 @@ export default function CartPanel({
             <div className="cart-empty-hint">Scan an item, tap a product, or press <kbd>F2</kbd>.</div>
           </div>
         )}
-        {activeLines.map(line => (
+        {/* Most-recently-scanned item always at top — reverse chronological order */}
+        {[...activeLines].reverse().map(line => (
           <CartLineRow
             key={line.cart_line_id}
             line={line}
@@ -153,9 +157,9 @@ export default function CartPanel({
       )}
     </div>
   );
-}
+});
 
-function CartLineRow({
+const CartLineRow = memo(function CartLineRow({
   line,
   isRecent,
   disabled,
@@ -205,4 +209,4 @@ function CartLineRow({
       </div>
     </div>
   );
-}
+});

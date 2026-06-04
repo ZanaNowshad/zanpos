@@ -17,10 +17,12 @@ export default function XReportModal({ shiftId, actorUserId, onClose }: Props) {
   const [printedAt]           = useState(() => new Date().toLocaleString([], { dateStyle: "medium", timeStyle: "short" }));
 
   useEffect(() => {
+    let cancelled = false;
     cashXReport(shiftId, actorUserId)
-      .then(setSummary)
-      .catch(e => setError(typeof e === "string" ? e : "Failed to load X-Report"))
-      .finally(() => setLoading(false));
+      .then(data => { if (!cancelled) setSummary(data); })
+      .catch(e => { if (!cancelled) setError(typeof e === "string" ? e : "Failed to load X-Report"); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [shiftId, actorUserId]);
 
   const fmt = (n: number) => `${DEVICE.currency} ${formatMoney(n, DEVICE.currency_exponent)}`;
@@ -44,6 +46,12 @@ export default function XReportModal({ shiftId, actorUserId, onClose }: Props) {
               <tbody>
                 <tr><td>Opening Float</td><td className="xreport-val">{fmt(summary.opening_minor)}</td></tr>
                 <tr className="xreport-plus"><td>+ Cash Sales</td><td className="xreport-val">{fmt(summary.cash_sales_minor)}</td></tr>
+                {summary.pending_delivery_cash_minor > 0 && (
+                  <tr className="xreport-pending-delivery">
+                    <td>⏳ Pending Delivery Cash</td>
+                    <td className="xreport-val xreport-warning">{fmt(summary.pending_delivery_cash_minor)}</td>
+                  </tr>
+                )}
                 <tr className="xreport-minus"><td>− Cash Refunds</td><td className="xreport-val">{fmt(summary.cash_refunds_minor)}</td></tr>
                 <tr className="xreport-plus"><td>+ Paid In</td><td className="xreport-val">{fmt(summary.paid_in_minor)}</td></tr>
                 <tr className="xreport-minus"><td>− Paid Out</td><td className="xreport-val">{fmt(summary.paid_out_minor)}</td></tr>

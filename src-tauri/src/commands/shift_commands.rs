@@ -1,11 +1,16 @@
-use tauri::State;
-use crate::domain::shift::Shift;
+use crate::commands::rbac;
 use crate::db::repositories::shift_repo;
+use crate::domain::shift::Shift;
 use crate::errors::AppError;
 use crate::AppState;
+use sqlx::Row;
+use tauri::State;
 
 #[tauri::command]
-pub async fn shift_get_active(device_id: String, state: State<'_, AppState>) -> Result<Option<Shift>, AppError> {
+pub async fn shift_get_active(
+    device_id: String,
+    state: State<'_, AppState>,
+) -> Result<Option<Shift>, AppError> {
     shift_repo::get_active_shift(&state.db, &device_id).await
 }
 
@@ -18,7 +23,17 @@ pub struct OpenShiftInput {
 }
 
 #[tauri::command]
-pub async fn shift_open(input: OpenShiftInput, state: State<'_, AppState>) -> Result<Shift, AppError> {
+pub async fn shift_open(
+    input: OpenShiftInput,
+    state: State<'_, AppState>,
+) -> Result<Shift, AppError> {
+    // Any authenticated user (cashier and above) may open a shift for themselves.
+    rbac::require_any_role(&state.db, &input.cashier_user_id).await?;
+    if input.opening_cash_minor < 0 {
+        return Err(AppError::Validation(
+            "Opening cash float cannot be negative".into(),
+        ));
+    }
     shift_repo::open_shift(
         &state.db,
         &input.branch_id,
@@ -32,11 +47,54 @@ pub async fn shift_open(input: OpenShiftInput, state: State<'_, AppState>) -> Re
 #[derive(serde::Deserialize)]
 pub struct CloseShiftInput {
     pub shift_id: String,
+    pub actor_user_id: String,
     pub counted_cash_minor: Option<i64>,
     pub notes: Option<String>,
 }
 
 #[tauri::command]
-pub async fn shift_close(input: CloseShiftInput, state: State<'_, AppState>) -> Result<Shift, AppError> {
-    shift_repo::close_shift(&state.db, &input.shift_id, input.counted_cash_minor, input.notes).await
+pub async fn shift_close(
+    input: CloseShiftInput,
+    state: State<'_, AppState>,
+) -> Result<Shift, AppError> {
+    // A cashier may only close their own shift on their own device.
+    // A manager may close any shift on the current device.
+    // An owner may close any shift on any device.
+    let row = sqlx::query(
+        "SELECT cashier_user_id, device_id FROM shifts WHERE shift_id = ? AND status = 'open'",
+    )
+    .bind(&input.shift_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let row = row.ok_or_else(|| AppError::NotFound("Shift not found or already closed".into()))?;
+    let owner_id: String = row.get("cashier_user_id");
+    let shift_device_id: String = row.get("device_id");
+
+    // Resolve the active device_id for this terminal.
+    let active_device: String = sqlx::query_scalar(
+        "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1",
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .flatten()
+    .unwrap_or_default();
+
+    if owner_id != input.actor_user_id {
+        // Not the owning cashier — must be manager or owner.
+        rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
+    }
+
+    if shift_device_id != active_device {
+        // Cross-device shift close requires owner-only permission.
+        rbac::owner_only(&state.db, &input.actor_user_id).await?;
+    }
+
+    shift_repo::close_shift(
+        &state.db,
+        &input.shift_id,
+        input.counted_cash_minor,
+        input.notes,
+    )
+    .await
 }

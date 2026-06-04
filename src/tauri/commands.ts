@@ -161,14 +161,14 @@ export const shiftClose = (
 
 // ─── Product commands ─────────────────────────────────────────────────────────
 
-export const productSearch = (query: string): Promise<ProductWithPrice[]> =>
-  invoke("product_search", { query });
+export const productSearch = (actorUserId: string, query: string): Promise<ProductWithPrice[]> =>
+  invoke("product_search", { actorUserId, query });
 
-export const productGetByBarcode = (barcode: string): Promise<ProductWithPrice | null> =>
-  invoke("product_get_by_barcode", { barcode });
+export const productGetByBarcode = (actorUserId: string, barcode: string): Promise<ProductWithPrice | null> =>
+  invoke("product_get_by_barcode", { actorUserId, barcode });
 
-export const productListAll = (): Promise<ProductWithPrice[]> =>
-  invoke("product_list_all");
+export const productListAll = (actorUserId: string): Promise<ProductWithPrice[]> =>
+  invoke("product_list_all", { actorUserId });
 
 // ─── POS commands ─────────────────────────────────────────────────────────────
 
@@ -188,6 +188,9 @@ export const posAddItemByBarcode = (cart: Cart, barcode: string): Promise<Cart> 
 
 export const posUpdateQuantity = (cart: Cart, cart_line_id: string, quantity: string): Promise<Cart> =>
   invoke("pos_update_quantity", { input: { cart, cart_line_id, quantity } });
+
+export const posSetLinePrice = (cart: Cart, cart_line_id: string, price_minor: number): Promise<Cart> =>
+  invoke("pos_set_line_price", { input: { cart, cart_line_id, price_minor } });
 
 export const posRemoveLine = (cart: Cart, cart_line_id: string): Promise<Cart> =>
   invoke("pos_remove_line", { input: { cart, cart_line_id } });
@@ -246,17 +249,17 @@ export const posCartSummary = (cart: Cart): Promise<{
 
 // ─── Held cart commands ───────────────────────────────────────────────────────
 
-export const heldCartSave = (cart: Cart, note?: string): Promise<HeldCartSummary> =>
-  invoke("held_cart_save", { input: { cart, note } });
+export const heldCartSave = (actorUserId: string, cart: Cart, note?: string): Promise<HeldCartSummary> =>
+  invoke("held_cart_save", { input: { cart, note, actor_user_id: actorUserId } });
 
-export const heldCartList = (device_id: string): Promise<HeldCartSummary[]> =>
-  invoke("held_cart_list", { deviceId: device_id });
+export const heldCartList = (actorUserId: string, device_id: string): Promise<HeldCartSummary[]> =>
+  invoke("held_cart_list", { actorUserId, deviceId: device_id });
 
-export const heldCartResume = (held_cart_id: string, shift_id: string): Promise<Cart> =>
-  invoke("held_cart_resume", { input: { held_cart_id, shift_id } });
+export const heldCartResume = (actorUserId: string, held_cart_id: string, shift_id: string): Promise<Cart> =>
+  invoke("held_cart_resume", { input: { held_cart_id, shift_id, actor_user_id: actorUserId } });
 
-export const heldCartDelete = (held_cart_id: string): Promise<void> =>
-  invoke("held_cart_delete", { heldCartId: held_cart_id });
+export const heldCartDelete = (actorUserId: string, held_cart_id: string): Promise<void> =>
+  invoke("held_cart_delete", { actorUserId, heldCartId: held_cart_id });
 
 // ─── Refund commands ──────────────────────────────────────────────────────────
 
@@ -269,9 +272,17 @@ export const refundCreate = (
   reason: string,
   created_by_user_id: string,
   return_reason_code?: string,
+  manager_override_token?: string,
 ): Promise<RefundResult> =>
   invoke("refund_create", {
-    input: { original_sale_id, items, reason, return_reason_code: return_reason_code ?? null, created_by_user_id },
+    input: {
+      original_sale_id,
+      items,
+      reason,
+      return_reason_code: return_reason_code ?? null,
+      created_by_user_id,
+      manager_override_token: manager_override_token ?? null,
+    },
   });
 
 export const receiptReprint = (receipt_number: string, requesting_user_id: string): Promise<SaleResult> =>
@@ -314,6 +325,11 @@ export const dbIntegrityCheck = (): Promise<string> =>
 export const syncStatus = (): Promise<SyncStatus> => invoke("sync_status");
 export const syncTriggerNow = (): Promise<string> => invoke("sync_trigger_now");
 
+/// Recovery: re-enqueue the full catalog and push immediately. For terminals whose
+/// data never reached the cloud (outbox looks empty but cloud is empty).
+export const syncForceFullResync = (actorUserId: string): Promise<string> =>
+  invoke("sync_force_full_resync", { actorUserId });
+
 // ─── Supabase setup ───────────────────────────────────────────────────────────
 
 export const adminSetupSupabase = (
@@ -327,10 +343,11 @@ export const adminGetSupabaseStatus = (): Promise<SupabaseStatus> =>
   invoke("admin_get_supabase_status");
 
 export const adminSetupSupabaseCredsOnly = (
+  actorUserId: string,
   url: string,
   serviceKey: string,
 ): Promise<void> =>
-  invoke("admin_setup_supabase_creds_only", { url, serviceKey });
+  invoke("admin_setup_supabase_creds_only", { actorUserId, url, serviceKey });
 
 // ─── AI Admin — provider management ──────────────────────────────────────────
 
@@ -353,6 +370,17 @@ export const adminSetOpenai = (
   model: string
 ): Promise<void> =>
   invoke("admin_set_openai", { actorUserId, baseUrl, apiKey, model });
+
+// Google Gemini (OpenAI-compatible endpoint; base URL is fixed server-side)
+export const adminValidateGemini = (apiKey: string): Promise<ValidateProviderResult> =>
+  invoke("admin_validate_gemini", { apiKey });
+
+export const adminSetGemini = (
+  actorUserId: string,
+  apiKey: string,
+  model: string
+): Promise<void> =>
+  invoke("admin_set_gemini", { actorUserId, apiKey, model });
 
 // Legacy — kept for compat
 export const adminGetApiKeySet = (): Promise<boolean> =>
@@ -449,7 +477,7 @@ export const adminListTaxRules = (): Promise<TaxRuleRow[]> =>
 export const adminSaveTaxRule = (input: {
   tax_rule_id?: string;
   name: string;
-  rate_percent: number;
+  rate_basis_points: number;
   inclusive: boolean;
   is_active: boolean;
   actor_user_id: string;
@@ -457,7 +485,7 @@ export const adminSaveTaxRule = (input: {
   invoke("admin_save_tax_rule", { input });
 
 export const adminSaveCategory = (input: {
-  category_id?: string; name: string; sort_order: number; is_active: boolean; actor_user_id: string;
+  category_id?: string; name: string; sort_order: number; is_active: boolean; parent_category_id?: string; actor_user_id: string;
 }): Promise<CategoryRow> =>
   invoke("admin_save_category", { input });
 
@@ -538,6 +566,22 @@ export const appConfigGetTimeout = (): Promise<number> =>
 export const appConfigSetTimeout = (minutes: number, actorUserId: string): Promise<void> =>
   invoke("app_config_set_timeout", { minutes, actorUserId });
 
+// ─── Reports device-scope (Phase E) ───────────────────────────────────────────
+export type ReportsConfig = {
+  device_scope: "origin" | "all";
+  device_count: number;
+  local_device_id: string;
+};
+
+export const reportsConfigLoad = (): Promise<ReportsConfig> =>
+  invoke("reports_config_load");
+
+export const reportsConfigSave = (
+  device_scope: "origin" | "all",
+  actor_user_id: string
+): Promise<void> =>
+  invoke("reports_config_save", { input: { device_scope, actor_user_id } });
+
 export const dbBackup = (destPath: string, actorUserId: string): Promise<string> =>
   invoke("db_backup", { destPath, actorUserId });
 
@@ -574,21 +618,21 @@ export const inventoryAdjustStock = (
 
 // ─── Phase 10b — Customers ────────────────────────────────────────────────────
 
-export const customerList = (search: string): Promise<CustomerRow[]> =>
-  invoke("customer_list", { search });
+export const customerList = (actorUserId: string, search: string): Promise<CustomerRow[]> =>
+  invoke("customer_list", { actorUserId, search });
 
 export const customerCreate = (input: {
-  name: string; phone?: string; email?: string; notes?: string;
+  name: string; phone?: string; email?: string; notes?: string; actor_user_id: string;
 }): Promise<CustomerRow> =>
   invoke("customer_create", { input });
 
 export const customerUpdate = (input: {
-  customer_id: string; name: string; phone?: string; email?: string; notes?: string;
+  customer_id: string; name: string; phone?: string; email?: string; notes?: string; actor_user_id: string;
 }): Promise<CustomerRow> =>
   invoke("customer_update", { input });
 
-export const customerGet = (customerId: string): Promise<CustomerRow> =>
-  invoke("customer_get", { customerId });
+export const customerGet = (actorUserId: string, customerId: string): Promise<CustomerRow> =>
+  invoke("customer_get", { actorUserId, customerId });
 
 export const customerAddLoyalty = (actorUserId: string, customerId: string, points: number): Promise<number> =>
   invoke("customer_add_loyalty", { actorUserId, customerId, points });
@@ -598,13 +642,13 @@ export const customerAddLoyalty = (actorUserId: string, customerId: string, poin
 export const deviceList = (): Promise<DeviceRow[]> =>
   invoke("device_list");
 
-export const deviceCreate = (input: {
+export const deviceCreate = (actorUserId: string, input: {
   device_code: string; device_name: string;
 }): Promise<DeviceRow> =>
-  invoke("device_create", { input });
+  invoke("device_create", { input, actorUserId });
 
-export const deviceToggleActive = (deviceId: string, isActive: boolean): Promise<void> =>
-  invoke("device_toggle_active", { deviceId, isActive });
+export const deviceToggleActive = (actorUserId: string, deviceId: string, isActive: boolean): Promise<void> =>
+  invoke("device_toggle_active", { deviceId, isActive, actorUserId });
 
 // ─── Phase 10b — Product image picker ────────────────────────────────────────
 
@@ -615,6 +659,19 @@ export const productPickImage = (): Promise<string | null> =>
 
 export const checkForUpdates = (): Promise<string | null> =>
   invoke("check_for_updates");
+
+/// Download + install the available update, then restart. Resolves false if none.
+/// On success the app restarts, so the promise typically does not resolve.
+export const downloadAndInstallUpdate = (actorUserId: string): Promise<boolean> =>
+  invoke("download_and_install_update", { actorUserId });
+
+// ─── Maintenance page gate — verify an owner PIN ──────────────────────────────
+export const authVerifyOwnerPin = (pin: string): Promise<boolean> =>
+  invoke("auth_verify_owner_pin", { pin });
+
+// ─── Cross-device refund — validate a manager PIN, get override token ──────────
+export const authValidateManagerPin = (pin: string): Promise<string> =>
+  invoke("auth_validate_manager_pin", { pin });
 
 // ─── Phase 10b — Thermal printer ─────────────────────────────────────────────
 
@@ -631,8 +688,8 @@ export const thermalListPorts = (): Promise<PortEntry[]> =>
 export const thermalGetConfig = (): Promise<ThermalConfig> =>
   invoke("thermal_get_config");
 
-export const thermalSetConfig = (input: ThermalConfig): Promise<void> =>
-  invoke("thermal_set_config", { input });
+export const thermalSetConfig = (actorUserId: string, input: ThermalConfig): Promise<void> =>
+  invoke("thermal_set_config", { input, actorUserId });
 
 export const thermalPrintTest = (): Promise<string> =>
   invoke("thermal_print_test");
@@ -707,11 +764,11 @@ export const inventoryBulkStockTake = (
 export const syncQueueList = (): Promise<SyncQueueItem[]> =>
   invoke("sync_queue_list");
 
-export const syncQueueRetry = (syncEventId: string): Promise<void> =>
-  invoke("sync_queue_retry", { syncEventId });
+export const syncQueueRetry = (actorUserId: string, syncEventId: string): Promise<void> =>
+  invoke("sync_queue_retry", { syncEventId, actorUserId });
 
-export const syncQueueDismiss = (syncEventId: string): Promise<void> =>
-  invoke("sync_queue_dismiss", { syncEventId });
+export const syncQueueDismiss = (actorUserId: string, syncEventId: string): Promise<void> =>
+  invoke("sync_queue_dismiss", { syncEventId, actorUserId });
 
 // ─── Delivery commands ────────────────────────────────────────────────────────
 
@@ -759,17 +816,19 @@ export function whatsappStatus(): Promise<WhatsAppStatus> {
   return invoke("whatsapp_status");
 }
 
-export function whatsappSendDelivery(input: SendDeliveryInput): Promise<boolean> {
-  return invoke("whatsapp_send_delivery", { input });
+export function whatsappSendDelivery(actorUserId: string, input: SendDeliveryInput): Promise<boolean> {
+  return invoke("whatsapp_send_delivery", { input, actorUserId });
 }
 
-export function whatsappNotifyArrival(to: string, receiptNumber: string): Promise<boolean> {
+export function whatsappNotifyArrival(actorUserId: string, to: string, receiptNumber: string): Promise<boolean> {
   return invoke("whatsapp_notify_arrival", {
     input: { to, receipt_number: receiptNumber },
+    actorUserId,
   });
 }
 
 export function whatsappPaymentReminder(
+  actorUserId: string,
   to: string,
   receiptNumber: string,
   amountMinor: number,
@@ -784,6 +843,7 @@ export function whatsappPaymentReminder(
       currency_exponent: currencyExponent,
       currency,
     },
+    actorUserId,
   });
 }
 
@@ -818,9 +878,10 @@ export const migrationExecute = (
   path: string,
   mapping: MappingConfig,
   currencyExponent: number,
+  actorUserId: string,
   onEvent: Channel<MigrationProgress>,
 ): Promise<void> =>
-  invoke("migration_execute", { path, mapping, currencyExponent, onEvent });
+  invoke("migration_execute", { path, mapping, currencyExponent, actorUserId, onEvent });
 
 // ── Migration extended tools ──────────────────────────────────────────────────
 
@@ -883,8 +944,8 @@ export const migrationAgentChat = (
 // ── Ghost barcode lookup ──────────────────────────────────────────────────────
 
 /** Record a failed barcode scan. Fire-and-forget — never throws. */
-export const ghostRecord = (barcode: string): Promise<void> =>
-  invoke<void>("ghost_record", { barcode }).catch(() => {});
+export const ghostRecord = (actorUserId: string, barcode: string): Promise<void> =>
+  invoke<void>("ghost_record", { barcode, actorUserId }).catch(() => {});
 
 /** Get counts of pending/found/not_found ghost barcodes. Manager+ only. */
 export const ghostSummary = (actorUserId: string): Promise<GhostSummary> =>

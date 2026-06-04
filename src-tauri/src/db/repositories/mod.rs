@@ -1,6 +1,8 @@
 pub mod ai_admin_repo;
+pub mod ai_chat_history_repo;
 pub mod audit_hash;
 pub mod auth_repo;
+pub mod delivery_repo;
 pub mod held_cart_repo;
 pub mod product_repo;
 pub mod refund_repo;

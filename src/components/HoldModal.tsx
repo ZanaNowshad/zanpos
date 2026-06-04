@@ -11,16 +11,19 @@ interface Props {
   onHeld: () => void;
   onResume: (cart: Cart) => void;
   onClose: () => void;
+  actorUserId: string;
 }
 
-export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume, onClose }: Props) {
+export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume, onClose, actorUserId }: Props) {
   const [note, setNote] = useState("");
   const [heldCarts, setHeldCarts] = useState<HeldCartSummary[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    heldCartList(DEVICE.device_id).then(setHeldCarts).catch(() => {});
+    let cancelled = false;
+    heldCartList(actorUserId, DEVICE.device_id).then(data => { if (!cancelled) setHeldCarts(data); }).catch(() => {});
+    return () => { cancelled = true; };
   }, []);
 
   const handleHold = async () => {
@@ -28,7 +31,7 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
     setSaving(true);
     setError(null);
     try {
-      await heldCartSave(cart, note || undefined);
+      await heldCartSave(actorUserId, cart, note || undefined);
       onHeld();
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to hold cart");
@@ -39,7 +42,10 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
 
   const handleResume = async (held_cart_id: string) => {
     try {
-      const resumed = await heldCartResume(held_cart_id, cart.shift_id);
+      const resumed = await heldCartResume(actorUserId, held_cart_id, cart.shift_id);
+      // Remove the resumed cart from the list so it cannot be resumed a second time
+      await heldCartDelete(actorUserId, held_cart_id).catch(() => {}); // best-effort cleanup
+      setHeldCarts(prev => prev.filter(h => h.held_cart_id !== held_cart_id));
       onResume(resumed);
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to resume cart");
@@ -48,7 +54,7 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
 
   const handleDelete = async (held_cart_id: string) => {
     try {
-      await heldCartDelete(held_cart_id);
+      await heldCartDelete(actorUserId, held_cart_id);
       setHeldCarts(prev => prev.filter(h => h.held_cart_id !== held_cart_id));
     } catch {
       // ignore
@@ -57,9 +63,9 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal hold-modal" onClick={e => e.stopPropagation()}>
+      <div className="modal hold-modal" role="dialog" aria-modal="true" aria-labelledby="hold-dialog-title" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h2 className="modal-title">Hold Order</h2>
+          <h2 className="modal-title" id="hold-dialog-title">Hold Order</h2>
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
 

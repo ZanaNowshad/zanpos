@@ -10,6 +10,8 @@ if (!globalThis.crypto) {
   }
 }
 
+const fs      = require("fs");
+const path    = require("path");
 const express = require("express");
 const QRCode  = require("qrcode");
 const {
@@ -17,8 +19,11 @@ const {
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
+  Browsers,
 } = require("@whiskeysockets/baileys");
 const pino = require("pino");
+
+const crypto = require("node:crypto");
 
 // ── Parse CLI args ─────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
@@ -28,6 +33,18 @@ const sessionDir = (() => {
 })();
 const PORT = 3131;
 
+// ── Shared-secret authentication ───────────────────────────────────────────────
+const SIDECAR_TOKEN = crypto.randomBytes(32).toString("hex");
+const TOKEN_FILE = path.join(sessionDir, ".sidecar_token");
+try {
+  fs.mkdirSync(sessionDir, { recursive: true });
+  fs.writeFileSync(TOKEN_FILE, SIDECAR_TOKEN);
+} catch (e) {
+  console.error("[wa-sidecar] Failed to write sidecar token:", e.message);
+  process.exit(1);
+}
+console.log(`[wa-sidecar] Auth token written to ${TOKEN_FILE}`);
+
 // ── State ─────────────────────────────────────────────────────────────────────
 let sock           = null;
 let qrDataUrl      = null;   // base64 PNG data URL, null when connected or idle
@@ -35,8 +52,31 @@ let isConnected    = false;
 let isStarting     = false;
 /** Contacts accumulated from Baileys contacts.upsert events.
  *  Keyed by JID (e.g. "97333050666@s.whatsapp.net"), value { id, name }.
- *  Persists across reconnects so contacts accumulate over the sidecar's lifetime. */
+ *  Persisted to sessionDir/contacts.json so contacts survive sidecar restarts.
+ *  Without persistence, re-connects with saved auth skip contacts.upsert and
+ *  the import endpoint would return 0 contacts. */
 let contactsMap    = {};
+
+const contactsFile = path.join(sessionDir, "contacts.json");
+
+// ── Load persisted contacts on startup ───────────────────────────────────────
+try {
+  if (fs.existsSync(contactsFile)) {
+    contactsMap = JSON.parse(fs.readFileSync(contactsFile, "utf8"));
+    console.log(`[wa-sidecar] Loaded ${Object.keys(contactsMap).length} contacts from cache`);
+  }
+} catch (e) {
+  console.warn("[wa-sidecar] Could not load contacts cache:", e.message);
+  contactsMap = {};
+}
+
+function saveContacts() {
+  try {
+    fs.writeFileSync(contactsFile, JSON.stringify(contactsMap));
+  } catch (e) {
+    console.warn("[wa-sidecar] Could not save contacts cache:", e.message);
+  }
+}
 
 const logger = pino({ level: "silent" }); // suppress Baileys noise
 
@@ -53,18 +93,52 @@ async function startBaileys() {
       auth:               state,
       printQRInTerminal:  false,
       logger,
-      browser:            ["ZANPOS", "Chrome", "126.0"],
+      // Per Baileys docs: contacts arrive inside the history sync, which WhatsApp
+      // only sends to a *desktop* client with syncFullHistory enabled. The previous
+      // ["ZANPOS","Chrome",...] (web) browser + no syncFullHistory meant
+      // messaging-history.set carried no contacts → Import Contacts returned empty.
+      browser:            Browsers.macOS("Desktop"),
+      syncFullHistory:    true,
     });
 
     sock.ev.on("creds.update", saveCreds);
 
-    // Accumulate contacts from Baileys — fires with all contacts shortly after connect
-    sock.ev.on("contacts.upsert", (contacts) => {
-      for (const c of contacts) {
-        // Prefer the push name ("notify"), fall back to address-book name, then bare phone
+    // messaging-history.set — the correct event per the Baileys docs.
+    // Fires after every successful connect carrying the initial bulk sync:
+    // { chats, contacts, messages, syncType }.  This is the ONLY reliable
+    // way to receive the full contact list; contacts.set is an internal
+    // store event and is not part of the public Baileys API.
+    sock.ev.on("messaging-history.set", ({ contacts: histContacts }) => {
+      if (!histContacts || histContacts.length === 0) return;
+      for (const c of histContacts) {
+        if (!c.id) continue;
         const name = c.notify || c.name || c.id.split("@")[0] || c.id;
         contactsMap[c.id] = { id: c.id, name };
       }
+      saveContacts();
+      console.log(`[wa-sidecar] messaging-history.set: ${histContacts.length} contacts received, total=${Object.keys(contactsMap).length}`);
+    });
+
+    // contacts.upsert — fires when a new contact is added to the address book in real time.
+    sock.ev.on("contacts.upsert", (contacts) => {
+      for (const c of contacts) {
+        if (!c.id) continue;
+        const name = c.notify || c.name || c.id.split("@")[0] || c.id;
+        contactsMap[c.id] = { id: c.id, name };
+      }
+      saveContacts();
+      console.log(`[wa-sidecar] contacts.upsert: ${contacts.length} added, total=${Object.keys(contactsMap).length}`);
+    });
+
+    // contacts.update — fires when an existing contact's name/details change.
+    sock.ev.on("contacts.update", (updates) => {
+      for (const u of updates) {
+        if (!u.id) continue;
+        const existing = contactsMap[u.id];
+        const name = u.notify || u.name || (existing && existing.name) || u.id.split("@")[0] || u.id;
+        contactsMap[u.id] = { id: u.id, name };
+      }
+      saveContacts();
     });
 
     sock.ev.on("connection.update", async (update) => {
@@ -105,6 +179,15 @@ async function startBaileys() {
 // ── Express endpoints ─────────────────────────────────────────────────────────
 const app = express();
 app.use(express.json());
+
+// Auth middleware: require X-Sidecar-Token for all endpoints
+app.use((req, res, next) => {
+  const token = req.headers["x-sidecar-token"];
+  if (!token || token !== SIDECAR_TOKEN) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+  next();
+});
 
 /** GET /status → { connected: bool, qr?: string } */
 app.get("/status", (_req, res) => {
@@ -152,6 +235,9 @@ app.post("/disconnect", (_req, res) => {
     isConnected = false;
     qrDataUrl   = null;
   }
+  // Clear in-memory and persisted contacts — user is logging out
+  contactsMap = {};
+  try { fs.unlinkSync(contactsFile); } catch (_) { /* may not exist */ }
   res.json({ ok: true });
 });
 

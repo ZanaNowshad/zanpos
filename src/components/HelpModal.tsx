@@ -57,9 +57,9 @@ const SECTIONS: { heading: string; rows: { keys: string; action: string }[] }[] 
 export default function HelpModal({ onClose }: Props) {
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal help-modal" onClick={e => e.stopPropagation()}>
+      <div className="modal help-modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="help-title">
         <div className="modal-header">
-          <span className="modal-title">⌨ Keyboard Shortcuts</span>
+          <span className="modal-title" id="help-title">⌨ Keyboard Shortcuts</span>
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
 

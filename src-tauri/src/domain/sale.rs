@@ -2,9 +2,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentInput {
-    pub method: String,   // cash/card/wallet/other
+    pub method: String, // cash/card/wallet/other
     pub amount_minor: i64,
-    pub tendered_minor: Option<i64>,  // cash only
+    pub tendered_minor: Option<i64>, // cash only
     pub external_reference: Option<String>,
 }
 
@@ -24,6 +24,7 @@ pub struct SaleResult {
     pub business_date: String,
     pub created_offline: bool,
     pub low_stock_alerts: Vec<crate::domain::product::LowStockAlert>,
+    pub delivery: Option<crate::domain::delivery::DeliveryRow>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -15,12 +15,14 @@ export interface PosShortcutHandlers {
   onClearCart: () => void;
   onReprintLast: () => void;
   onNoSale: () => void;
+  onXReport?: () => void;
   onIncrementRecent: () => void;
   onDecrementRecent: () => void;
   onRemoveRecent: () => void;
   onLock: () => void;
   onReport: () => void;
   onCustomItem: () => void;
+  onHelp?: () => void;
 }
 
 /**
@@ -31,16 +33,17 @@ export interface PosShortcutHandlers {
  * F7          — resume held cart
  * F8/Ctrl+D  — discount
  * F9          — pay (full modal)
- * F10/Ctrl+P — reprint last receipt
+ * F10/Ctrl+R — refund
+ * Ctrl+P     — reprint last receipt
  * F11         — no-sale / cash drawer
  * F12         — Pay Fast (cash exact, no receipt)
+ * /           — open Custom Item modal (when barcode field is empty)
  * Escape      — focus barcode / clear search
  * +/=         — increment recent item qty (when barcode field is empty)
  * -           — decrement recent item qty (when barcode field is empty)
  * Delete      — remove recent item (when not in a text field)
- * Backspace   — remove recent item (only when barcode field is focused and empty)
  * Ctrl+Backspace / Ctrl+Delete — clear entire cart (with confirm)
- * Ctrl+H      — hold cart
+ * Ctrl+H      — help popup
  * Ctrl+R      — refund
  * Ctrl+L      — lock/logout
  */
@@ -66,10 +69,21 @@ export function usePosShortcuts(h: PosShortcutHandlers) {
           case "F7": e.preventDefault(); h.onResumeHeld(); return;
           case "F8": e.preventDefault(); if (h.lineCount > 0) h.onDiscount(); return;
           case "F9": e.preventDefault(); if (h.lineCount > 0) h.onPay(); return;
-          case "F10": e.preventDefault(); if (h.lastReceiptNumber) h.onReprintLast(); return;
+          case "F10": e.preventDefault(); h.onRefund(); return;
           case "F11": e.preventDefault(); h.onNoSale(); return;
           case "F12": e.preventDefault(); if (h.lineCount > 0) h.onPayFast(); return;
           case "Escape": e.preventDefault(); h.onFocusBarcode(); return;
+        }
+      }
+
+      // "/" opens the Custom Item modal — works from the barcode field (when empty)
+      // since that's where the cursor normally rests, or anywhere outside a text input.
+      if (h.noModalOpen && e.key === "/" && !inFreeText) {
+        const barcodeHasText = inBarcode && (target as HTMLInputElement).value !== "";
+        if (!barcodeHasText) {
+          e.preventDefault();
+          h.onCustomItem();
+          return;
         }
       }
 
@@ -77,6 +91,21 @@ export function usePosShortcuts(h: PosShortcutHandlers) {
       if (inFreeText) return;
 
       if (!h.noModalOpen) return;
+
+      // ── Ctrl combos — checked BEFORE barcode early-return so they always fire ──
+      if (e.ctrlKey) {
+        switch (e.key.toLowerCase()) {
+          case "d": e.preventDefault(); if (h.lineCount > 0) h.onDiscount(); return;
+          case "r": e.preventDefault(); h.onRefund(); return;
+          case "h": e.preventDefault(); h.onHelp?.(); return;
+          case "l": e.preventDefault(); h.onLock(); return;
+          case "n": e.preventDefault(); h.onNoSale(); return;
+          case "p": e.preventDefault(); if (h.lastReceiptNumber) h.onReprintLast(); return;
+          case "x": e.preventDefault(); h.onXReport?.(); return;
+          case "backspace":
+          case "delete": e.preventDefault(); if (h.lineCount > 0) h.onClearCart(); return;
+        }
+      }
 
       // ── Recent-item quantity shortcuts (barcode field must be empty) ─────────
       if (inBarcode) {
@@ -92,11 +121,8 @@ export function usePosShortcuts(h: PosShortcutHandlers) {
             if (h.hasRecentLine) h.onDecrementRecent();
             return;
           }
-          if (e.key === "Backspace") {
-            e.preventDefault();
-            if (h.hasRecentLine) h.onRemoveRecent();
-            return;
-          }
+          // NOTE: Backspace intentionally NOT bound here — it is too easy to
+          // accidentally trigger on a tablet and remove the last scanned item.
         }
         return; // don't let barcode field trigger other shortcuts
       }
@@ -113,34 +139,24 @@ export function usePosShortcuts(h: PosShortcutHandlers) {
         return;
       }
       if (e.key === "Delete") {
-        if (e.ctrlKey) {
-          e.preventDefault();
-          if (h.lineCount > 0) h.onClearCart();
-        } else {
-          e.preventDefault();
-          if (h.hasRecentLine) h.onRemoveRecent();
-        }
-        return;
-      }
-      if (e.key === "Backspace" && e.ctrlKey) {
         e.preventDefault();
-        if (h.lineCount > 0) h.onClearCart();
+        if (h.hasRecentLine) h.onRemoveRecent();
         return;
       }
-
-      // ── Ctrl combos ──────────────────────────────────────────────────────────
-      if (e.ctrlKey) {
-        switch (e.key.toLowerCase()) {
-          case "d": e.preventDefault(); if (h.lineCount > 0) h.onDiscount(); return;
-          case "r": e.preventDefault(); h.onRefund(); return;
-          case "h": e.preventDefault(); h.onHold(); return;
-          case "l": e.preventDefault(); h.onLock(); return;
-          case "p": e.preventDefault(); if (h.lastReceiptNumber) h.onReprintLast(); return;
-        }
-      }
+      // NOTE: Backspace NOT bound — accidental removal risk on tablets.
     };
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [h]);
+    // L9: `h` is a plain object rebuilt on every PosPage render.
+    // Listing it as the dep causes 20+ listeners to be re-registered on every
+    // keystroke. Use a stable ref and read from it inside the handler instead.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    h.noModalOpen, h.lineCount, h.hasRecentLine, h.lastReceiptNumber,
+    h.onFocusBarcode, h.onHold, h.onResumeHeld, h.onPay, h.onPayFast,
+    h.onDiscount, h.onRefund, h.onClearCart, h.onReprintLast, h.onNoSale,
+    h.onXReport, h.onIncrementRecent, h.onDecrementRecent, h.onRemoveRecent,
+    h.onLock, h.onReport, h.onCustomItem, h.onHelp,
+  ]);
 }

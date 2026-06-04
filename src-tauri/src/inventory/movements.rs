@@ -7,6 +7,11 @@ use crate::sync::outbox;
 ///
 /// `branch_id` and `device_id` are passed explicitly by callers (resolved from the
 /// active branch/device at the command layer) so no hardcoded fallback IDs are needed.
+///
+/// H3: All read-modify-write ops (return_refund, return_void_sale, manual_adjust,
+/// stock_take) now hold a write transaction for the entire get_qty → compute →
+/// upsert_level cycle so two concurrent operations cannot interleave and silently
+/// lose stock.
 use sqlx::{Row, SqlitePool};
 use ulid::Ulid;
 
@@ -26,15 +31,35 @@ async fn get_qty(pool: &SqlitePool, product_id: &str, branch_id: &str) -> f64 {
     qty.and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0)
 }
 
-async fn upsert_level(
-    pool: &SqlitePool,
+/// H3: Transaction-aware variant of get_qty for use inside write transactions.
+async fn get_qty_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    product_id: &str,
+    branch_id: &str,
+) -> f64 {
+    let qty: Option<String> = sqlx::query_scalar(
+        "SELECT quantity_on_hand FROM stock_levels WHERE product_id = ? AND branch_id = ?",
+    )
+    .bind(product_id)
+    .bind(branch_id)
+    .fetch_optional(&mut **tx)
+    .await
+    .ok()
+    .flatten();
+
+    qty.and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0)
+}
+
+/// H3: Transaction-aware upsert_level (replaces the old pool-based version).
+async fn upsert_level_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     product_id: &str,
     branch_id: &str,
     new_qty: f64,
     movement_at: &str,
 ) -> AppResult<()> {
     let qty_str = format_qty(new_qty);
-    let id = format!("SL-{}", product_id);
+    let id = format!("SL-{}-{}", product_id, branch_id);
 
     sqlx::query(
         "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, last_movement_at, updated_at)
@@ -50,7 +75,7 @@ async fn upsert_level(
     .bind(&qty_str)
     .bind(movement_at)
     .bind(movement_at)
-    .execute(pool)
+    .execute(&mut **tx)
     .await?;
 
     Ok(())
@@ -137,14 +162,15 @@ pub async fn deduct_sale(
         // Write movement record (stock_levels already updated — do NOT call upsert_level).
         sqlx::query(
             "INSERT INTO stock_movements
-             (movement_id, product_id, branch_id, device_id, movement_type,
+             (movement_id, product_id, branch_id, device_id, origin_device_id, movement_type,
               quantity_delta, quantity_after, reference_type, reference_id,
               created_by_user_id, created_at, sync_status)
-             VALUES (?,?,?,?,'sale',?,?,   'sale',?,?,?,'pending')",
+             VALUES (?,?,?,?,?,'sale',?,?,   'sale',?,?,?,'pending')",
         )
         .bind(&movement_id)
         .bind(&product_id)
         .bind(branch_id)
+        .bind(device_id)
         .bind(device_id)
         .bind(format_qty(-sold_qty))
         .bind(format_qty(new_qty))
@@ -177,6 +203,7 @@ pub async fn deduct_sale(
             branch_id,
             &product_id,
             &format_qty(new_qty),
+            &now,
             &now,
         )
         .await;
@@ -222,30 +249,37 @@ pub async fn return_refund(
             continue;
         }
 
-        let current = get_qty(pool, &product_id, branch_id).await;
+        // H3: Wrap read-modify-write in an exclusive transaction to prevent
+        // two concurrent refunds interleaving and silently losing stock.
+        let mut tx = pool.begin().await?;
+
+        let current = get_qty_tx(&mut tx, &product_id, branch_id).await;
         let new_qty = current + returned_qty;
         let movement_id = Ulid::new().to_string();
 
-        upsert_level(pool, &product_id, branch_id, new_qty, &now).await?;
+        upsert_level_tx(&mut tx, &product_id, branch_id, new_qty, &now).await?;
 
         sqlx::query(
             "INSERT INTO stock_movements
-             (movement_id, product_id, branch_id, device_id, movement_type,
+             (movement_id, product_id, branch_id, device_id, origin_device_id, movement_type,
               quantity_delta, quantity_after, reference_type, reference_id,
               created_by_user_id, created_at, sync_status)
-             VALUES (?,?,?,?,'refund',?,?, 'refund',?,?,?,'pending')",
+             VALUES (?,?,?,?,?,'refund',?,?, 'refund',?,?,?,'pending')",
         )
         .bind(&movement_id)
         .bind(&product_id)
         .bind(branch_id)
+        .bind(device_id)
         .bind(device_id)
         .bind(format_qty(returned_qty))
         .bind(format_qty(new_qty))
         .bind(refund_id)
         .bind(created_by_user_id)
         .bind(&now)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+
+        tx.commit().await?;
 
         let _ = outbox::enqueue_stock_movement(
             pool,
@@ -269,6 +303,7 @@ pub async fn return_refund(
             branch_id,
             &product_id,
             &format_qty(new_qty),
+            &now,
             &now,
         )
         .await;
@@ -314,30 +349,36 @@ pub async fn return_void_sale(
             continue;
         }
 
-        let current = get_qty(pool, &product_id, branch_id).await;
+        // H3: Exclusive transaction prevents concurrent void/refund race
+        let mut tx = pool.begin().await?;
+
+        let current = get_qty_tx(&mut tx, &product_id, branch_id).await;
         let new_qty = current + returned_qty;
         let movement_id = Ulid::new().to_string();
 
-        upsert_level(pool, &product_id, branch_id, new_qty, &now).await?;
+        upsert_level_tx(&mut tx, &product_id, branch_id, new_qty, &now).await?;
 
         sqlx::query(
             "INSERT INTO stock_movements
-             (movement_id, product_id, branch_id, device_id, movement_type,
+             (movement_id, product_id, branch_id, device_id, origin_device_id, movement_type,
               quantity_delta, quantity_after, reference_type, reference_id,
               created_by_user_id, created_at, sync_status)
-             VALUES (?,?,?,?,'void',?,?,'sale',?,?,?,'pending')",
+             VALUES (?,?,?,?,?,'void',?,?,'sale',?,?,?,'pending')",
         )
         .bind(&movement_id)
         .bind(&product_id)
         .bind(branch_id)
+        .bind(device_id)
         .bind(device_id)
         .bind(format_qty(returned_qty))
         .bind(format_qty(new_qty))
         .bind(sale_id)
         .bind(voided_by_user_id)
         .bind(&now)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+
+        tx.commit().await?;
 
         let _ = outbox::enqueue_stock_level(
             pool,
@@ -345,6 +386,7 @@ pub async fn return_void_sale(
             branch_id,
             &product_id,
             &format_qty(new_qty),
+            &now,
             &now,
         )
         .await;
@@ -369,22 +411,26 @@ pub async fn manual_adjust(
     device_id: &str,
 ) -> AppResult<LowStockAlert> {
     let now = chrono::Utc::now().to_rfc3339();
-    let current = get_qty(pool, product_id, branch_id).await;
+
+    // H3: Exclusive transaction for read-modify-write
+    let mut tx = pool.begin().await?;
+    let current = get_qty_tx(&mut tx, product_id, branch_id).await;
     let new_qty = current + quantity_delta;
     let movement_id = Ulid::new().to_string();
 
-    upsert_level(pool, product_id, branch_id, new_qty, &now).await?;
+    upsert_level_tx(&mut tx, product_id, branch_id, new_qty, &now).await?;
 
     sqlx::query(
         "INSERT INTO stock_movements
-         (movement_id, product_id, branch_id, device_id, movement_type,
+         (movement_id, product_id, branch_id, device_id, origin_device_id, movement_type,
           quantity_delta, quantity_after, reference_type, reference_id,
           notes, created_by_user_id, created_at, sync_status)
-         VALUES (?,?,?,?,'adjustment',?,?, 'ai_action',?,?,?,?,'pending')",
+         VALUES (?,?,?,?,?,'adjustment',?,?, 'ai_action',?,?,?,?,'pending')",
     )
     .bind(&movement_id)
     .bind(product_id)
     .bind(branch_id)
+    .bind(device_id)
     .bind(device_id)
     .bind(format_qty(quantity_delta))
     .bind(format_qty(new_qty))
@@ -392,8 +438,10 @@ pub async fn manual_adjust(
     .bind(notes)
     .bind(user_id)
     .bind(&now)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+
+    tx.commit().await?;
 
     let _ = outbox::enqueue_stock_movement(
         pool,
@@ -417,6 +465,7 @@ pub async fn manual_adjust(
         branch_id,
         product_id,
         &format_qty(new_qty),
+        &now,
         &now,
     )
     .await;
@@ -445,22 +494,26 @@ pub async fn stock_take(
     device_id: &str,
 ) -> AppResult<()> {
     let now = chrono::Utc::now().to_rfc3339();
-    let current = get_qty(pool, product_id, branch_id).await;
+
+    // H3: Exclusive transaction for read-modify-write (current qty → delta → upsert)
+    let mut tx = pool.begin().await?;
+    let current = get_qty_tx(&mut tx, product_id, branch_id).await;
     let delta = new_quantity - current;
     let movement_id = Ulid::new().to_string();
 
-    upsert_level(pool, product_id, branch_id, new_quantity, &now).await?;
+    upsert_level_tx(&mut tx, product_id, branch_id, new_quantity, &now).await?;
 
     sqlx::query(
         "INSERT INTO stock_movements
-         (movement_id, product_id, branch_id, device_id, movement_type,
+         (movement_id, product_id, branch_id, device_id, origin_device_id, movement_type,
           quantity_delta, quantity_after, reference_type, reference_id,
           notes, created_by_user_id, created_at, sync_status)
-         VALUES (?,?,?,?,'stock_take',?,?, 'ai_action',?,?,?,?,'pending')",
+         VALUES (?,?,?,?,?,'stock_take',?,?, 'ai_action',?,?,?,?,'pending')",
     )
     .bind(&movement_id)
     .bind(product_id)
     .bind(branch_id)
+    .bind(device_id)
     .bind(device_id)
     .bind(format_qty(delta))
     .bind(format_qty(new_quantity))
@@ -468,8 +521,10 @@ pub async fn stock_take(
     .bind(notes)
     .bind(user_id)
     .bind(&now)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+
+    tx.commit().await?;
 
     let _ = outbox::enqueue_stock_movement(
         pool,
@@ -493,6 +548,7 @@ pub async fn stock_take(
         branch_id,
         product_id,
         &format_qty(new_quantity),
+        &now,
         &now,
     )
     .await;

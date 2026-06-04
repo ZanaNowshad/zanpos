@@ -8,46 +8,61 @@ interface Props {
 
 type Mode = "levels" | "receive" | "adjust" | "movements";
 
+const PAGE_SIZE = 100;
+
 export default function InventoryTab({ sessionUserId }: Props) {
-  const [levels, setLevels] = useState<StockLevel[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const [mode, setMode] = useState<Mode>("levels");
-  const [selected, setSelected] = useState<StockLevel | null>(null);
-  const [movements, setMovements] = useState<StockMovementRow[]>([]);
-  const [movLoading, setMovLoading] = useState(false);
+  // ── Paginated list state ──────────────────────────────────────────────────
+  const [levels, setLevels]           = useState<StockLevel[]>([]);
+  const [total, setTotal]             = useState(0);
+  const [offset, setOffset]           = useState(0);
+  const [loading, setLoading]         = useState(true);
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch]           = useState("");
+
+  const [mode, setMode]               = useState<Mode>("levels");
+  const [selected, setSelected]       = useState<StockLevel | null>(null);
+  const [movements, setMovements]     = useState<StockMovementRow[]>([]);
+  const [movLoading, setMovLoading]   = useState(false);
 
   // Receive stock form
-  const [recvQty, setRecvQty] = useState("");
-  const [recvNotes, setRecvNotes] = useState("");
+  const [recvQty, setRecvQty]       = useState("");
+  const [recvNotes, setRecvNotes]   = useState("");
   const [recvLoading, setRecvLoading] = useState(false);
-  const [recvError, setRecvError] = useState<string | null>(null);
+  const [recvError, setRecvError]   = useState<string | null>(null);
 
   // Adjust stock form
-  const [adjQty, setAdjQty] = useState("");
-  const [adjNotes, setAdjNotes] = useState("");
+  const [adjQty, setAdjQty]         = useState("");
+  const [adjNotes, setAdjNotes]     = useState("");
   const [adjLoading, setAdjLoading] = useState(false);
-  const [adjError, setAdjError] = useState<string | null>(null);
+  const [adjError, setAdjError]     = useState<string | null>(null);
 
   const recvRef = useRef<HTMLInputElement>(null);
   const adjRef  = useRef<HTMLInputElement>(null);
 
-  const reload = useCallback(async () => {
+  // Debounce search input → `search` (300 ms), reset to page 0
+  useEffect(() => {
+    const t = setTimeout(() => { setSearch(searchInput); setOffset(0); }, 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  const fetchPage = useCallback(async (q: string, off: number) => {
     setLoading(true);
     try {
-      const data = await cmd.inventoryGetLevels();
-      setLevels(data);
+      const page = await cmd.inventoryGetLevelsPaged(q, off, PAGE_SIZE);
+      setLevels(page.items);
+      setTotal(page.total);
+      setOffset(off);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { reload(); }, [reload]);
+  // Reload when search or offset changes
+  useEffect(() => {
+    fetchPage(search, offset);
+  }, [search, offset]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const filtered = levels.filter(l => {
-    const q = search.toLowerCase();
-    return !q || l.product_name.toLowerCase().includes(q) || (l.sku?.toLowerCase().includes(q) ?? false);
-  });
+  // ── Detail views ─────────────────────────────────────────────────────────
 
   const openMovements = async (level: StockLevel) => {
     setSelected(level);
@@ -115,6 +130,8 @@ export default function InventoryTab({ sessionUserId }: Props) {
     }
   };
 
+  // ── Sub-views ─────────────────────────────────────────────────────────────
+
   if (mode === "receive" && selected) {
     return (
       <div className="inv-form-pane">
@@ -161,7 +178,7 @@ export default function InventoryTab({ sessionUserId }: Props) {
   if (mode === "adjust" && selected) {
     const newQty = parseFloat(adjQty) || 0;
     const oldQty = parseFloat(selected.quantity_on_hand) || 0;
-    const delta = newQty - oldQty;
+    const delta  = newQty - oldQty;
     return (
       <div className="inv-form-pane">
         <button className="bo-back-btn" onClick={() => setMode("levels")}>← Back to Inventory</button>
@@ -251,7 +268,7 @@ export default function InventoryTab({ sessionUserId }: Props) {
     );
   }
 
-  // ── Main stock levels list ────────────────────────────────────────────────────
+  // ── Main stock levels list ────────────────────────────────────────────────
   return (
     <div className="inv-layout">
       <div className="inv-toolbar">
@@ -259,17 +276,38 @@ export default function InventoryTab({ sessionUserId }: Props) {
           className="bo-input inv-search"
           type="text"
           placeholder="Search products…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
+          value={searchInput}
+          onChange={e => setSearchInput(e.target.value)}
         />
-        <button className="btn-secondary" onClick={reload} disabled={loading}>
+        <button className="btn-secondary" onClick={() => fetchPage(search, offset)} disabled={loading}>
           {loading ? "…" : "↺ Refresh"}
         </button>
       </div>
 
-      {loading ? (
+      {/* Pagination bar */}
+      {total > 0 && (
+        <div className="bo-pagination">
+          <span className="bo-pagination-info">
+            {loading
+              ? "Loading…"
+              : `${offset + 1}–${Math.min(offset + levels.length, total)} of ${total.toLocaleString()}`}
+          </span>
+          <button
+            className="bo-pagination-btn"
+            disabled={offset === 0 || loading}
+            onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+          >‹ Prev</button>
+          <button
+            className="bo-pagination-btn"
+            disabled={offset + PAGE_SIZE >= total || loading}
+            onClick={() => setOffset(offset + PAGE_SIZE)}
+          >Next ›</button>
+        </div>
+      )}
+
+      {loading && levels.length === 0 ? (
         <div className="bo-empty">Loading inventory…</div>
-      ) : filtered.length === 0 ? (
+      ) : levels.length === 0 ? (
         <div className="bo-empty">
           {search ? "No products match your search." : "No tracked products found."}
         </div>
@@ -286,7 +324,7 @@ export default function InventoryTab({ sessionUserId }: Props) {
             </tr>
           </thead>
           <tbody>
-            {filtered.map(l => (
+            {levels.map(l => (
               <tr key={l.product_id} className={l.is_out_of_stock ? "inv-row-oos" : l.is_low_stock ? "inv-row-low" : ""}>
                 <td className="inv-name">{l.product_name}</td>
                 <td className="rpt-dim">{l.sku ?? "—"}</td>

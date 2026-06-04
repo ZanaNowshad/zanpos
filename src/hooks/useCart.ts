@@ -49,7 +49,7 @@ export function useCart(session: CartSession) {
 
   const clearError = useCallback(() => setError(null), []);
 
-  const addByBarcode = useCallback(async (barcode: string, qty?: number) => {
+  const addByBarcode = useCallback(async (barcode: string, qty?: number): Promise<Cart> => {
     setLoading(true);
     setError(null);
     try {
@@ -68,6 +68,7 @@ export function useCart(session: CartSession) {
 
       setRecentLineId(findChangedLineId(cart, updated));
       setCart(updated);
+      return updated;
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Barcode not found");
       throw e; // re-throw so PosPage.handleBarcode can call ghostRecord
@@ -76,15 +77,17 @@ export function useCart(session: CartSession) {
     }
   }, [cart]);
 
-  const addProduct = useCallback(async (product: ProductWithPrice, qty?: string) => {
+  const addProduct = useCallback(async (product: ProductWithPrice, qty?: string): Promise<Cart> => {
     setLoading(true);
     setError(null);
     try {
       const updated = await cmd.posAddItem(cart, product.product_id, qty);
       setRecentLineId(findChangedLineId(cart, updated));
       setCart(updated);
+      return updated;
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to add item");
+      throw e;
     } finally {
       setLoading(false);
     }
@@ -133,7 +136,9 @@ export function useCart(session: CartSession) {
     setLoading(true);
     setError(null);
     try {
-      const priceMinor = Math.round(parseFloat(priceMajor) * Math.pow(10, DEVICE.currency_exponent));
+      // Dynamic import to avoid circular dependency; parseMoney is in ../money
+      const { parseMoney } = await import("../money");
+      const priceMinor = parseMoney(priceMajor, DEVICE.currency_exponent);
       const updated = await cmd.posAddCustomItem(cart, name, priceMinor, quantity);
       setRecentLineId(findChangedLineId(cart, updated));
       setCart(updated);
@@ -141,6 +146,16 @@ export function useCart(session: CartSession) {
       setError(typeof e === "string" ? e : "Failed to add custom item");
     } finally {
       setLoading(false);
+    }
+  }, [cart]);
+
+  const setLinePrice = useCallback(async (cart_line_id: string, priceMinor: number) => {
+    try {
+      const updated = await cmd.posSetLinePrice(cart, cart_line_id, priceMinor);
+      setCart(updated);
+    } catch (e: unknown) {
+      setError(typeof e === "string" ? e : "Failed to set price");
+      throw e;
     }
   }, [cart]);
 
@@ -180,8 +195,11 @@ export function useCart(session: CartSession) {
       const total = Math.max(0,
         activeLines.reduce((s, l) => s + l.line_total_minor, 0) - cart.bill_discount_minor
       );
+      // F-HIGH-05: This void record is an audit-trail entry for an abandoned cart.
+      // It's intentionally fire-and-forget (clearing the cart must never block on it),
+      // but we surface the error so a persistent audit failure isn't silently hidden.
       posRecordVoid(cart.cart_id, session.device_id, session.cashier_user_id, activeLines.length, total)
-        .catch(() => {});
+        .catch((e: unknown) => setError(typeof e === "string" ? e : "Cart void audit failed (cart cleared)"));
     }
     setCart(makeEmptyCart(session));
     setRecentLineId(null);
@@ -249,6 +267,7 @@ export function useCart(session: CartSession) {
     bumpRecentQty,
     applyBillDiscount,
     applyLineDiscount,
+    setLinePrice,
     setLineNote,
     finalizeSale,
     clearCart,
@@ -256,5 +275,6 @@ export function useCart(session: CartSession) {
     netTotal,
     taxTotal,
     lineCount,
+    setError,  // M-20: exposed so PosPage can show non-cart errors in the same banner
   };
 }

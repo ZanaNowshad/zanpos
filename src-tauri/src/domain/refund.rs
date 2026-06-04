@@ -16,6 +16,7 @@ pub struct SaleForRefund {
     pub sold_at: String,
     pub cashier_name: String,
     pub status: String,
+    pub origin_device_id: String,
     pub items: Vec<SaleItemForRefund>,
 }
 

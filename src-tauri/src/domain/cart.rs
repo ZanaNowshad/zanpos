@@ -1,5 +1,11 @@
+use crate::domain::money::{apply_discount_bp, calc_tax_exclusive, mul_minor_by_qty, qty_in_range};
+use crate::errors::AppError;
 use serde::{Deserialize, Serialize};
-use crate::domain::money::{apply_discount_bp, calc_tax_exclusive};
+
+/// Maximum quantity allowed per cart line (1 million units).
+const MAX_QTY: i64 = 1_000_000;
+/// Maximum line total / cart total in minor units (~1 billion BHD, far above any real POS value).
+const MAX_MINOR: i64 = 1_000_000_000_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CartLine {
@@ -12,6 +18,8 @@ pub struct CartLine {
     pub quantity: String,
     pub unit_price_minor: i64,
     pub line_discount_minor: i64,
+    /// Required non-empty reason when line_discount_minor > 0; flows to audit log.
+    pub line_discount_reason: Option<String>,
     /// Tax rule snapshot
     pub tax_rule_id: String,
     pub tax_rate_basis_points: i64,
@@ -35,11 +43,12 @@ impl CartLine {
         tax_rate_basis_points: i64,
         tax_inclusive: bool,
     ) -> Self {
-        let qty: f64 = quantity.parse().unwrap_or(1.0);
-        let subtotal = (unit_price_minor as f64 * qty) as i64;
+        let subtotal = mul_minor_by_qty(unit_price_minor, quantity);
         let tax_amount = if tax_inclusive {
-            // Extract tax from inclusive price: tax = price * rate / (10000 + rate)
-            subtotal * tax_rate_basis_points / (10_000 + tax_rate_basis_points)
+            // Extract tax with half-up rounding to match exclusive-tax direction:
+            // tax = price * rate / (10000 + rate)  rounded half-up
+            let divisor = 10_000 + tax_rate_basis_points;
+            (subtotal * tax_rate_basis_points + divisor / 2) / divisor
         } else {
             calc_tax_exclusive(subtotal, tax_rate_basis_points)
         };
@@ -54,6 +63,7 @@ impl CartLine {
             quantity: quantity.to_string(),
             unit_price_minor,
             line_discount_minor: 0,
+            line_discount_reason: None,
             tax_rule_id,
             tax_rate_basis_points,
             tax_inclusive,
@@ -65,11 +75,11 @@ impl CartLine {
     }
 
     pub fn recalculate(&mut self) {
-        let qty: f64 = self.quantity.parse().unwrap_or(1.0);
-        let subtotal = (self.unit_price_minor as f64 * qty) as i64;
+        let subtotal = mul_minor_by_qty(self.unit_price_minor, &self.quantity);
         let discounted = subtotal - self.line_discount_minor;
         let tax_amount = if self.tax_inclusive {
-            discounted * self.tax_rate_basis_points / (10_000 + self.tax_rate_basis_points)
+            let divisor = 10_000 + self.tax_rate_basis_points;
+            (discounted * self.tax_rate_basis_points + divisor / 2) / divisor
         } else {
             calc_tax_exclusive(discounted, self.tax_rate_basis_points)
         };
@@ -78,11 +88,10 @@ impl CartLine {
     }
 
     /// Apply a percentage discount (in basis points) to this line.
-    /// Used by the batch-discount AI tool; not called from the UI command layer directly.
+    /// Used by the AI batch-discount tool flow.
     #[allow(dead_code)]
     pub fn apply_discount_percent(&mut self, discount_basis_points: i64) {
-        let qty: f64 = self.quantity.parse().unwrap_or(1.0);
-        let subtotal = (self.unit_price_minor as f64 * qty) as i64;
+        let subtotal = mul_minor_by_qty(self.unit_price_minor, &self.quantity);
         self.line_discount_minor = apply_discount_bp(subtotal, discount_basis_points);
         self.recalculate();
     }
@@ -94,8 +103,15 @@ mod tests {
 
     fn make_line(unit_price_minor: i64, qty: &str, tax_bp: i64, inclusive: bool) -> CartLine {
         CartLine::new(
-            None, "Test Item".into(), None, None,
-            qty, unit_price_minor, String::new(), tax_bp, inclusive,
+            None,
+            "Test Item".into(),
+            None,
+            None,
+            qty,
+            unit_price_minor,
+            String::new(),
+            tax_bp,
+            inclusive,
         )
     }
 
@@ -165,7 +181,10 @@ mod tests {
         // Simulate the check in sale_repo::finalize_sale without DB
         let net_total: i64 = 2_000;
         let total_paid: i64 = 1_500;
-        assert!(total_paid < net_total, "Under-payment must be caught before writing to DB");
+        assert!(
+            total_paid < net_total,
+            "Under-payment must be caught before writing to DB"
+        );
     }
 
     // ── Test 8: Split payment sum covers net total ────────────────────────────
@@ -189,11 +208,11 @@ mod tests {
     // ── Test 10: X-report expected cash = opening + sales - refunds + in - out ─
     #[test]
     fn xreport_expected_cash_formula() {
-        let opening_float:   i64 = 5_000;
-        let cash_sales:      i64 = 20_000;
-        let cash_refunds:    i64 = 1_000;
-        let paid_in:         i64 = 500;
-        let paid_out:        i64 = 300;
+        let opening_float: i64 = 5_000;
+        let cash_sales: i64 = 20_000;
+        let cash_refunds: i64 = 1_000;
+        let paid_in: i64 = 500;
+        let paid_out: i64 = 300;
         let expected = opening_float + cash_sales - cash_refunds + paid_in - paid_out;
         assert_eq!(expected, 24_200);
     }
@@ -208,10 +227,17 @@ pub struct Cart {
     pub cashier_user_id: String,
     pub lines: Vec<CartLine>,
     pub bill_discount_minor: i64,
+    /// Required non-empty reason when bill_discount_minor > 0; flows to audit log.
+    pub bill_discount_reason: Option<String>,
 }
 
 impl Cart {
-    pub fn new(branch_id: String, device_id: String, shift_id: String, cashier_user_id: String) -> Self {
+    pub fn new(
+        branch_id: String,
+        device_id: String,
+        shift_id: String,
+        cashier_user_id: String,
+    ) -> Self {
         Self {
             cart_id: ulid::Ulid::new().to_string(),
             branch_id,
@@ -220,23 +246,76 @@ impl Cart {
             cashier_user_id,
             lines: Vec::new(),
             bill_discount_minor: 0,
+            bill_discount_reason: None,
         }
     }
 
     pub fn gross_total(&self) -> i64 {
-        self.lines.iter().filter(|l| !l.voided).map(|l| l.line_total_minor).sum()
+        self.lines
+            .iter()
+            .filter(|l| !l.voided)
+            .map(|l| l.line_total_minor)
+            .sum()
     }
 
     pub fn tax_total(&self) -> i64 {
-        self.lines.iter().filter(|l| !l.voided).map(|l| l.tax_amount_minor).sum()
+        self.lines
+            .iter()
+            .filter(|l| !l.voided)
+            .map(|l| l.tax_amount_minor)
+            .sum()
     }
 
     pub fn discount_total(&self) -> i64 {
-        let item_discounts: i64 = self.lines.iter().filter(|l| !l.voided).map(|l| l.line_discount_minor).sum();
+        let item_discounts: i64 = self
+            .lines
+            .iter()
+            .filter(|l| !l.voided)
+            .map(|l| l.line_discount_minor)
+            .sum();
         item_discounts + self.bill_discount_minor
     }
 
     pub fn net_total(&self) -> i64 {
         (self.gross_total() - self.bill_discount_minor).max(0)
+    }
+
+    /// Validate all quantities and monetary totals are within safe ranges.
+    /// Call this before persisting a sale to catch overflow / malicious input.
+    pub fn validate(&self) -> Result<(), AppError> {
+        for line in self.lines.iter().filter(|l| !l.voided) {
+            if !qty_in_range(&line.quantity, MAX_QTY) {
+                return Err(AppError::Validation(format!(
+                    "Invalid quantity for '{}': {}",
+                    line.product_name, line.quantity
+                )));
+            }
+            let subtotal = mul_minor_by_qty(line.unit_price_minor, &line.quantity);
+            if subtotal > MAX_MINOR {
+                return Err(AppError::Validation(format!(
+                    "Line total for '{}' is out of valid range.",
+                    line.product_name
+                )));
+            }
+            if line.line_total_minor < 0 || line.line_total_minor > MAX_MINOR {
+                return Err(AppError::Validation(format!(
+                    "Line total for '{}' is out of valid range ({}). Please re-add the item.",
+                    line.product_name, line.line_total_minor
+                )));
+            }
+        }
+        let gross = self.gross_total();
+        if gross < 0 || gross > MAX_MINOR {
+            return Err(AppError::Validation(format!(
+                "Cart gross total is out of valid range ({gross})."
+            )));
+        }
+        let net = self.net_total();
+        if net < 0 || net > MAX_MINOR {
+            return Err(AppError::Validation(format!(
+                "Cart net total is out of valid range ({net})."
+            )));
+        }
+        Ok(())
     }
 }

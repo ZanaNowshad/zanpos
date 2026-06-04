@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import type {
   SessionUser,
   ChatMessage,
@@ -9,6 +9,7 @@ import type {
   TodaySummary,
   StockLevel,
   SyncStatus,
+  SupabaseStatus,
 } from "../types";
 import { DEVICE } from "../types";
 import { Channel } from "@tauri-apps/api/core";
@@ -17,8 +18,11 @@ import {
   adminSetAnthropic,
   adminValidateOpenai,
   adminSetOpenai,
+  adminValidateGemini,
+  adminSetGemini,
   adminSetupSupabase,
   adminGetSupabaseStatus,
+  syncForceFullResync,
   aiChatStream,
   aiExecuteAction,
   aiCancelAction,
@@ -107,6 +111,27 @@ const TOOL_META: Record<string, { icon: string; label: string; color: string }> 
   get_exchange_rates:      { icon: "💱", label: "Exchange Rates",          color: "#0ea5e9" },
   get_prayer_times:        { icon: "🕌", label: "Prayer Times",            color: "#0ea5e9" },
   get_bahrain_holidays:    { icon: "🇧🇭", label: "Bahrain Holidays",       color: "#0ea5e9" },
+  list_roles:               { icon: "👥", label: "Roles",                    color: "#8b5cf6" },
+  list_tax_rules:           { icon: "🧾", label: "Tax Rules",                color: "#6366f1" },
+  get_store_settings:       { icon: "🏪", label: "Store Settings",           color: "#6366f1" },
+  get_business_rules:       { icon: "⚙", label: "Business Rules",           color: "#6366f1" },
+  list_devices:             { icon: "🖥", label: "Devices",                  color: "#0ea5e9" },
+  get_session_timeout:      { icon: "🕐", label: "Session Timeout",          color: "#8b5cf6" },
+  create_category:          { icon: "📂", label: "Creating Category",        color: "#f59e0b" },
+  update_category:          { icon: "📂", label: "Updating Category",        color: "#f59e0b" },
+  create_user:              { icon: "👤", label: "Creating User",            color: "#f59e0b" },
+  update_user:              { icon: "👤", label: "Updating User",            color: "#f59e0b" },
+  create_tax_rule:          { icon: "🧾", label: "Creating Tax Rule",        color: "#f59e0b" },
+  update_tax_rule:          { icon: "🧾", label: "Updating Tax Rule",        color: "#f59e0b" },
+  update_product_full:      { icon: "🏷", label: "Updating Product",         color: "#f59e0b" },
+  update_store_settings:    { icon: "🏪", label: "Updating Store",           color: "#f59e0b" },
+  update_business_rules:    { icon: "⚙", label: "Updating Business Rules",  color: "#f59e0b" },
+  confirm_delivery_payment: { icon: "🚚", label: "Confirming Payment",       color: "#f59e0b" },
+  cancel_delivery:          { icon: "🚚", label: "Cancelling Delivery",      color: "#ef4444" },
+  backup_database:          { icon: "💾", label: "Database Backup",          color: "#f59e0b" },
+  smart_barcode_lookup:      { icon: "📷", label: "Scanning Barcode",          color: "#0ea5e9" },
+  compare_store_prices:      { icon: "🏬", label: "Price Comparison",          color: "#0ea5e9" },
+  bahrain_market_price_check:{ icon: "🛒", label: "Market Check",              color: "#0ea5e9" },
 };
 
 function toolMeta(name: string) {
@@ -192,15 +217,15 @@ function LiveActivityBar({
     return () => clearInterval(id);
   }, [chatState]);
 
+  const { elapsed, runningTool, phase } = useMemo(() => {
+    // eslint-disable-next-line react-hooks/purity
+    const e = streamStartTime ? Date.now() - streamStartTime : 0;
+    const rt = liveToolCalls.find(t => t.status === "running");
+    const p: ActivityPhase = rt ? "tool" : tokenCount > 0 ? "streaming" : "thinking";
+    return { elapsed: e, runningTool: rt, phase: p };
+  }, [streamStartTime, liveToolCalls, tokenCount]);
+
   if (chatState === "idle") return null;
-
-  const elapsed     = streamStartTime ? Date.now() - streamStartTime : 0;
-  const runningTool = liveToolCalls.find(t => t.status === "running");
-
-  const phase: ActivityPhase =
-    runningTool   ? "tool"      :
-    tokenCount > 0 ? "streaming" :
-    "thinking";
 
   const meta = runningTool ? toolMeta(runningTool.name) : null;
 
@@ -266,6 +291,9 @@ type SetupStep =
   | "openai_url_key"
   | "openai_validating"
   | "openai_pick_model"
+  | "gemini_key"
+  | "gemini_validating"
+  | "gemini_pick_model"
   | "done";
 
 interface KpiSnapshot {
@@ -599,24 +627,59 @@ function KpiSidebar({ kpi, currencyExp, onRefresh }: {
         </div>
       )}
 
-      {kpi.sync && (
-        <div className={`kpi-card ${kpi.sync.supabase_configured ? "kpi-card-ok" : "kpi-card-neutral"}`}>
-          <div className="kpi-card-label">Sync</div>
-          <div className="kpi-card-value">
-            {kpi.sync.supabase_configured
-              ? <>☁ <span className="kpi-value-ok">Connected</span></>
-              : <span className="kpi-value-dim">Not configured</span>}
-          </div>
-          {kpi.sync.pending_events > 0 && (
-            <div className="kpi-card-sub">{kpi.sync.pending_events} pending</div>
-          )}
-          {kpi.sync.last_successful_sync_at && (
-            <div className="kpi-card-sub">
-              Last: {kpi.sync.last_successful_sync_at.slice(0, 16).replace("T", " ")}
+      {kpi.sync && (() => {
+        const s = kpi.sync;
+        // Four explicit states, not a binary "configured / not configured".
+        // The previous render collapsed "configured but failing" into "Connected"
+        // (green) which made sync outages invisible from the AI page.
+        const state: "not_configured" | "online" | "syncing" | "offline" =
+          !s.supabase_configured ? "not_configured"
+          : s.online              ? (s.pending_events > 0 ? "syncing" : "online")
+          :                          "offline";
+
+        const cardClass =
+          state === "online"        ? "kpi-card-ok"
+        : state === "syncing"       ? "kpi-card-info"
+        : state === "offline"       ? (s.last_error ? "kpi-card-warn" : "kpi-card-neutral")
+        :                              "kpi-card-neutral";
+
+        const valueClass =
+          state === "online"        ? "kpi-value-ok"
+        : state === "syncing"       ? "kpi-value-info"
+        :                              "kpi-value-dim";
+
+        const titleParts: string[] = [];
+        if (s.last_error) titleParts.push(`Last error: ${s.last_error}`);
+        if (s.days_since_last_sync != null && s.days_since_last_sync > 0) {
+          titleParts.push(`Last successful sync: ${s.days_since_last_sync}d ago`);
+        }
+        if (s.pending_events > 0) titleParts.push(`${s.pending_events} pending events`);
+
+        return (
+          <div className={`kpi-card ${cardClass}`} title={titleParts.join(" — ") || "Sync status"}>
+            <div className="kpi-card-label">Sync</div>
+            <div className="kpi-card-value">
+              {state === "not_configured" && <span className={valueClass}>Not configured</span>}
+              {state === "online" && <>☁ <span className={valueClass}>Online</span></>}
+              {state === "syncing" && <>⟳ <span className={valueClass}>Syncing ({s.pending_events})</span></>}
+              {state === "offline" && <>○ <span className={valueClass}>Offline</span>{s.last_error && <span className="kpi-card-warn-dot" title={s.last_error}>!</span>}</>}
             </div>
-          )}
-        </div>
-      )}
+            {s.last_successful_sync_at && state !== "offline" && (
+              <div className="kpi-card-sub">
+                Last: {s.last_successful_sync_at.slice(0, 16).replace("T", " ")}
+              </div>
+            )}
+            {state === "offline" && s.days_since_last_sync != null && s.days_since_last_sync > 0 && (
+              <div className="kpi-card-sub">{s.days_since_last_sync}d since last sync</div>
+            )}
+            {state === "offline" && s.last_error && (
+              <div className="kpi-card-sub kpi-card-sub-warn" title={s.last_error}>
+                {s.last_error.length > 60 ? `${s.last_error.slice(0, 60)}…` : s.last_error}
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </aside>
   );
 }
@@ -764,6 +827,15 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
   const [supabasePat, setSupabasePat]     = useState("");
   const [supabaseError, setSupabaseError] = useState("");
   const [supabaseMigrating, setSupabaseMigrating] = useState(false);
+  // True once Supabase is connected. While true, the change-keys form is hidden
+  // everywhere (hard lock) — credentials can only be entered when NOT connected.
+  const [supabaseConfigured, setSupabaseConfigured] = useState(false);
+  const [resyncing, setResyncing] = useState(false);
+  const [resyncMsg, setResyncMsg] = useState<string | null>(null);
+  // Cached project URL for the "change connection / re-migrate" flow. Loaded
+  // once from adminGetSupabaseStatus so the form can pre-fill it. The service
+  // role key is never cached here — it stays in the OS credential store.
+  const [supabaseUrlCached, setSupabaseUrlCached] = useState("");
   const [settingsTab, setSettingsTab]     = useState<"sync" | "ai">("sync");
 
   // Anthropic setup
@@ -779,6 +851,11 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
   const [modelList, setModelList]         = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
   const [savingOpenai, setSavingOpenai]   = useState(false);
+
+  // Gemini setup (OpenAI-compatible; base URL fixed server-side)
+  const [geminiKey, setGeminiKey]           = useState("");
+  const [geminiModel, setGeminiModel]       = useState("gemini-2.0-flash");
+  const [savingGemini, setSavingGemini]     = useState(false);
 
   // Session tracking for history persistence
   const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID());
@@ -821,13 +898,15 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
   // ── Initial load ────────────────────────────────────────────────────────────
   useEffect(() => {
     Promise.all([
-      adminGetSupabaseStatus().catch(() => ({ configured: false } as { configured: boolean })),
+      adminGetSupabaseStatus().catch(() => ({ configured: false, url: "" }) as SupabaseStatus),
       adminGetProviderConfig().catch(() => null),
     ]).then(([supaStatus, cfg]) => {
       if (cfg) {
         setConfig(cfg);
         if (cfg.openai_base_url) setOpenaiBaseUrl(cfg.openai_base_url);
       }
+      setSupabaseConfigured(supaStatus.configured);
+      setSupabaseUrlCached(supaStatus.url ?? "");
       if (!supaStatus.configured) {
         setSetupStep("sync_setup");
       } else if (!cfg?.provider) {
@@ -873,7 +952,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
   const fetchKpi = useCallback(async () => {
     setKpi(prev => ({ ...prev, loading: true, error: null }));
     try {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" });
       const todaySummary = await reportToday(DEVICE.branch_id, today).catch(() => null);
       const levels = await inventoryGetLevels().catch(() => [] as StockLevel[]);
       const syncStat = await syncStatus().catch(() => null);
@@ -919,7 +998,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
     setSavingAnthropic(true);
     setAnthropicError("");
     try {
-      await adminSetAnthropic(anthropicKey.trim());
+      await adminSetAnthropic(sessionUser.user_id, anthropicKey.trim());
       const cfg = await adminGetProviderConfig();
       setConfig(cfg);
       setSetupStep("done");
@@ -963,7 +1042,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
     if (!selectedModel.trim()) return;
     setSavingOpenai(true);
     try {
-      await adminSetOpenai(openaiBaseUrl.trim(), openaiKey.trim(), selectedModel.trim());
+      await adminSetOpenai(sessionUser.user_id, openaiBaseUrl.trim(), openaiKey.trim(), selectedModel.trim());
       const cfg = await adminGetProviderConfig();
       setConfig(cfg);
       setSetupStep("done");
@@ -974,18 +1053,74 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
     }
   };
 
+  // ── Gemini validate (lists gemini-* models from the OpenAI-compatible endpoint) ──
+  const handleValidateGemini = async () => {
+    if (!geminiKey.trim()) return;
+    setValidating(true);
+    setValidateError("");
+    setModelList([]);
+    setSetupStep("gemini_validating");
+    try {
+      const result = await adminValidateGemini(geminiKey.trim());
+      if (result.success) {
+        setModelList(result.models);
+        if (result.models.length > 0 && !result.models.some(m => m.id === geminiModel)) {
+          setGeminiModel(result.models[0].id);
+        }
+        setSetupStep("gemini_pick_model");
+      } else {
+        setValidateError(result.error ?? "Could not reach Gemini. Check the API key.");
+        setSetupStep("gemini_key");
+      }
+    } catch (e) {
+      setValidateError(String(e));
+      setSetupStep("gemini_key");
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  // ── Gemini save ─────────────────────────────────────────────────────────────
+  const handleSaveGemini = async () => {
+    if (!geminiModel.trim()) return;
+    setSavingGemini(true);
+    try {
+      await adminSetGemini(sessionUser.user_id, geminiKey.trim(), geminiModel.trim());
+      const cfg = await adminGetProviderConfig();
+      setConfig(cfg);
+      setSetupStep("done");
+    } catch (e) {
+      setValidateError(String(e));
+    } finally {
+      setSavingGemini(false);
+    }
+  };
+
   // ── Supabase setup ──────────────────────────────────────────────────────────
   const handleSetupSupabase = async () => {
     if (!supabaseUrl.trim() || !supabaseKey.trim() || !supabasePat.trim()) return;
     setSupabaseError("");
     setSupabaseMigrating(true);
     setSetupStep("sync_migrating");
+    // Capture whether we entered this form from the connected state. If so,
+    // success means "stay in settings" rather than "go to the AI page".
+    const wasRemigrate = supabaseConfigured;
     try {
       await adminSetupSupabase(supabaseUrl.trim(), supabaseKey.trim(), supabasePat.trim());
+      setSupabaseConfigured(true); // connection established — lock the keys form
+      setSupabaseUrlCached(supabaseUrl.trim());
       setSupabasePat("");
+      setSupabaseKey("");
       const cfg = await adminGetProviderConfig().catch(() => null);
       if (cfg) setConfig(cfg);
-      setSetupStep(cfg?.provider ? "done" : "pick_provider");
+      // After re-migration, return to the settings hub so the operator can
+      // see the success and (if they want) re-run again. On first-time setup,
+      // continue to the provider picker / AI page as before.
+      if (wasRemigrate) {
+        setSetupStep("done");
+      } else {
+        setSetupStep(cfg?.provider ? "done" : "pick_provider");
+      }
     } catch (e) {
       setSupabaseError(String(e));
       setSetupStep("sync_setup");
@@ -1195,6 +1330,8 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
     ? "◆ Claude"
     : config?.provider === "openai"
     ? `⬡ ${config.openai_model}`
+    : config?.provider === "gemini"
+    ? `✦ ${config.gemini_model}`
     : "";
 
   // ── Render: initial loading ─────────────────────────────────────────────────
@@ -1213,15 +1350,36 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
 
   // ── Render: sync setup ──────────────────────────────────────────────────────
   if (setupStep === "sync_setup" || setupStep === "sync_migrating") {
+    // Distinguish first-time setup from the "change connection" recovery flow.
+    // When supabaseConfigured is true we are re-entering the form to re-run
+    // migration — the URL is pre-filled, the title and helper text should
+    // reflect that, and "Skip for now" should be hidden (you cannot skip a
+    // re-migration that's already in progress).
+    const isRemigrate = supabaseConfigured;
     return (
       <div className="admin-chat-page">
-        <SetupTopBar label="Store Setup — Sync" user={sessionUser.display_name} onBack={onBackToPOS} />
+        <SetupTopBar label={isRemigrate ? "Settings — Re-migrate" : "Store Setup — Sync"} user={sessionUser.display_name} onBack={isRemigrate ? () => setSetupStep("done") : onBackToPOS} />
         <div className="setup-center">
           <div className="setup-card setup-card-wide">
-            <h2>Connect to Supabase</h2>
+            <h2>{isRemigrate ? "Re-run cloud schema migration" : "Connect to Supabase"}</h2>
             <p className="setup-subtitle">
-              ZanPOS uses <strong>Supabase</strong> to sync data across devices.
-              Credentials are stored locally. The PAT is used once and discarded.
+              {isRemigrate ? (
+                <>
+                  Saving will re-run the schema migration against{" "}
+                  <code>{supabaseUrl || supabaseUrlCached}</code> and re-push your
+                  full catalog (products, users, devices, prices, customers). Use
+                  this when a previously-installed build left the cloud DB missing
+                  tables — for example, an older build that didn't include the
+                  POS Terminals table will fail to register new devices, and the
+                  AI page will show "Offline" with a `device` error in the tooltip.
+                  The PAT is used once and discarded.
+                </>
+              ) : (
+                <>
+                  ZanPOS uses <strong>Supabase</strong> to sync data across devices.
+                  Credentials are stored locally. The PAT is used once and discarded.
+                </>
+              )}
             </p>
             <label className="setup-label">Supabase Project URL
               <input type="text" className="setup-input"
@@ -1253,11 +1411,13 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
             {supabaseError && <p className="setup-error">{supabaseError}</p>}
             {supabaseMigrating && <p className="setup-migrating">Creating central tables…</p>}
             <div className="setup-actions">
-              <button className="btn-secondary" onClick={() => setSetupStep("pick_provider")} disabled={supabaseMigrating}>Skip for now</button>
+              <button className="btn-secondary" onClick={() => setSetupStep(isRemigrate ? "done" : "pick_provider")} disabled={supabaseMigrating}>
+                {isRemigrate ? "Cancel" : "Skip for now"}
+              </button>
               <button className="btn-primary"
                 onClick={handleSetupSupabase}
                 disabled={supabaseMigrating || !supabaseUrl.trim() || !supabaseKey.trim() || !supabasePat.trim()}
-              >{supabaseMigrating ? "Migrating…" : "Connect & Set Up"}</button>
+              >{supabaseMigrating ? "Migrating…" : isRemigrate ? "Re-migrate now" : "Connect & Set Up"}</button>
             </div>
           </div>
         </div>
@@ -1279,22 +1439,92 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
             {settingsTab === "sync" && (
               <div>
                 <h2>Supabase Sync</h2>
-                <p className="setup-subtitle">Update credentials. Re-running migration is safe (idempotent).</p>
-                <label className="setup-label">Project URL
-                  <input type="text" className="setup-input" value={supabaseUrl} onChange={e => setSupabaseUrl(e.target.value)} disabled={supabaseMigrating} />
-                </label>
-                <label className="setup-label">Service Role Key
-                  <input type="password" className="setup-input" value={supabaseKey} onChange={e => setSupabaseKey(e.target.value)} disabled={supabaseMigrating} />
-                </label>
-                <label className="setup-label">PAT <span className="setup-hint-inline">(leave blank to update keys only)</span>
-                  <input type="password" className="setup-input" placeholder="sbp_…" value={supabasePat} onChange={e => setSupabasePat(e.target.value)} disabled={supabaseMigrating} />
-                </label>
-                {supabaseError && <p className="setup-error">{supabaseError}</p>}
+                {supabaseConfigured ? (
+                  // Connected — credentials are hard-locked in normal use, but we
+                  // expose a "Change connection" path that pre-fills the URL and
+                  // clears key+PAT. Saving runs admin_setup_supabase, which
+                  // re-validates, re-runs the schema migration, and re-pushes
+                  // the full catalog. This is the operator's recovery hatch for
+                  // stale cloud schemas (e.g. an older build missing tables).
+                  <div className="settings-info-box">
+                    <p>✓ Supabase is connected and syncing.</p>
+                    {supabaseUrlCached && (
+                      <p className="setup-subtitle" style={{ marginTop: 4, fontFamily: "monospace", fontSize: "0.78rem" }}>
+                        {supabaseUrlCached}
+                      </p>
+                    )}
+                    <p className="setup-subtitle" style={{ marginTop: 8 }}>
+                      Credentials are locked while connected. Use <strong>Change connection</strong>{" "}
+                      to re-run the schema migration (patches the cloud DB and re-pushes your
+                      catalog). You will need to re-enter the Service Role Key and a fresh
+                      Personal Access Token.
+                    </p>
+                    <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
+                      <p className="setup-subtitle" style={{ marginBottom: 8 }}>
+                        Other terminals can't see this device's data? Re-queue the entire
+                        catalog (products, users, this device) and push it to the cloud now.
+                      </p>
+                      <button
+                        className="btn-secondary"
+                        disabled={resyncing}
+                        onClick={async () => {
+                          setResyncing(true); setResyncMsg(null);
+                          try {
+                            const msg = await syncForceFullResync(sessionUser.user_id);
+                            setResyncMsg(msg);
+                          } catch (e) {
+                            setResyncMsg(typeof e === "string" ? e : "Re-sync failed");
+                          } finally { setResyncing(false); }
+                        }}
+                      >
+                        {resyncing ? "Re-syncing…" : "⟳ Force Full Re-Sync"}
+                      </button>
+                      {resyncMsg && (
+                        <p className="setup-subtitle" style={{ marginTop: 8, color: "var(--accent)" }}>
+                          {resyncMsg}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p className="setup-subtitle">Connect Supabase for multi-terminal sync and cloud backup.</p>
+                    <label className="setup-label">Project URL
+                      <input type="text" className="setup-input" value={supabaseUrl} onChange={e => setSupabaseUrl(e.target.value)} disabled={supabaseMigrating} />
+                    </label>
+                    <label className="setup-label">Service Role Key
+                      <input type="password" className="setup-input" value={supabaseKey} onChange={e => setSupabaseKey(e.target.value)} disabled={supabaseMigrating} />
+                    </label>
+                    <label className="setup-label">PAT <span className="setup-hint-inline">(leave blank to update keys only)</span>
+                      <input type="password" className="setup-input" placeholder="sbp_…" value={supabasePat} onChange={e => setSupabasePat(e.target.value)} disabled={supabaseMigrating} />
+                    </label>
+                    {supabaseError && <p className="setup-error">{supabaseError}</p>}
+                  </>
+                )}
                 <div className="setup-actions">
-                  <button className="btn-secondary" onClick={() => setSetupStep("done")}>Cancel</button>
-                  <button className="btn-primary" onClick={handleSetupSupabase} disabled={supabaseMigrating || !supabaseUrl.trim() || !supabaseKey.trim() || !supabasePat.trim()}>
-                    {supabaseMigrating ? "Saving…" : "Save & Re-Migrate"}
-                  </button>
+                  <button className="btn-secondary" onClick={() => setSetupStep("done")}>{supabaseConfigured ? "Close" : "Cancel"}</button>
+                  {supabaseConfigured ? (
+                    <button
+                      className="btn-primary"
+                      onClick={() => {
+                        // Re-migration flow: pre-fill URL, clear key+PAT so the
+                        // user MUST re-enter them (PAT is needed for migration;
+                        // key is required by the current validation but is also
+                        // already in the keyring — re-typing is fine).
+                        setSupabaseUrl(supabaseUrlCached);
+                        setSupabaseKey("");
+                        setSupabasePat("");
+                        setSupabaseError("");
+                        setSetupStep("sync_setup");
+                      }}
+                    >
+                      ↻ Change connection
+                    </button>
+                  ) : (
+                    <button className="btn-primary" onClick={handleSetupSupabase} disabled={supabaseMigrating || !supabaseUrl.trim() || !supabaseKey.trim() || !supabasePat.trim()}>
+                      {supabaseMigrating ? "Saving…" : "Save & Connect"}
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -1332,7 +1562,12 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
               <button className="provider-choice-btn" onClick={() => setSetupStep("openai_url_key")}>
                 <span className="provider-choice-icon">⬡</span>
                 <span className="provider-choice-name">OpenAI Compatible</span>
-                <span className="provider-choice-desc">OpenAI, Groq, Ollama, LM Studio, vLLM</span>
+                <span className="provider-choice-desc">OpenAI, Groq, and compatible APIs</span>
+              </button>
+              <button className="provider-choice-btn" onClick={() => setSetupStep("gemini_key")}>
+                <span className="provider-choice-icon">✦</span>
+                <span className="provider-choice-name">Google Gemini</span>
+                <span className="provider-choice-desc">gemini-2.0-flash, gemini-1.5-pro</span>
               </button>
             </div>
             {config?.provider && (
@@ -1387,7 +1622,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
                 value={openaiBaseUrl} onChange={e => setOpenaiBaseUrl(e.target.value)} disabled={validating} />
             </label>
             <div className="setup-url-examples">
-              {["https://api.openai.com/v1", "https://api.groq.com/openai/v1", "http://localhost:11434/v1", "http://localhost:1234/v1"].map(u => (
+              {["https://api.openai.com/v1", "https://api.groq.com/openai/v1"].map(u => (
                 <button key={u} className="setup-url-chip" onClick={() => setOpenaiBaseUrl(u)} disabled={validating}>
                   {u.replace(/https?:\/\//, "").split("/")[0]}
                 </button>
@@ -1444,6 +1679,76 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
               <button className="btn-secondary" onClick={() => setSetupStep("openai_url_key")}>Back</button>
               <button className="btn-primary" onClick={handleSaveOpenai} disabled={savingOpenai || !selectedModel.trim()}>
                 {savingOpenai ? "Saving…" : "Use This Model"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Render: Gemini key ──────────────────────────────────────────────────────
+  if (setupStep === "gemini_key" || setupStep === "gemini_validating") {
+    return (
+      <div className="admin-chat-page">
+        <SetupTopBar label="Google Gemini Setup" user={sessionUser.display_name} onBack={() => setSetupStep("pick_provider")} />
+        <div className="setup-center">
+          <div className="setup-card">
+            <h2>Google Gemini API Key</h2>
+            <p className="setup-subtitle">
+              From <strong>aistudio.google.com/apikey</strong>. Uses Gemini's OpenAI-compatible endpoint.
+            </p>
+            <label className="setup-label">API Key
+              <input type="password" className="setup-input" placeholder="AIza…"
+                value={geminiKey} onChange={e => setGeminiKey(e.target.value)} disabled={validating}
+                onKeyDown={e => e.key === "Enter" && handleValidateGemini()} autoFocus />
+            </label>
+            {validateError && <p className="setup-error">{validateError}</p>}
+            <div className="setup-actions">
+              <button className="btn-secondary" onClick={() => setSetupStep("pick_provider")} disabled={validating}>Back</button>
+              <button className="btn-primary" onClick={handleValidateGemini} disabled={validating || !geminiKey.trim()}>
+                {validating ? "Connecting…" : "Connect & Fetch Models"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Render: Gemini model picker ─────────────────────────────────────────────
+  if (setupStep === "gemini_pick_model") {
+    return (
+      <div className="admin-chat-page">
+        <SetupTopBar label="Select Model" user={sessionUser.display_name} onBack={() => setSetupStep("gemini_key")} />
+        <div className="setup-center">
+          <div className="setup-card setup-card-wide">
+            <h2>Select a Gemini Model</h2>
+            <p className="setup-subtitle">
+              {modelList.length > 0
+                ? `${modelList.length} Gemini model(s) available`
+                : "No models listed — enter a name manually."}
+            </p>
+            {modelList.length > 0 ? (
+              <div className="model-list">
+                {modelList.map(m => (
+                  <button key={m.id} className={`model-list-item ${geminiModel === m.id ? "model-list-item-active" : ""}`} onClick={() => setGeminiModel(m.id)}>
+                    <span className="model-list-id">{m.id}</span>
+                    {geminiModel === m.id && <span className="model-list-check">✓</span>}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <label className="setup-label">Model name
+                <input type="text" className="setup-input" placeholder="gemini-2.0-flash"
+                  value={geminiModel} onChange={e => setGeminiModel(e.target.value)} autoFocus />
+              </label>
+            )}
+            {validateError && <p className="setup-error">{validateError}</p>}
+            <div className="setup-actions">
+              <button className="btn-secondary" onClick={() => setSetupStep("gemini_key")}>Back</button>
+              <button className="btn-primary" onClick={handleSaveGemini} disabled={savingGemini || !geminiModel.trim()}>
+                {savingGemini ? "Saving…" : "Use This Model"}
               </button>
             </div>
           </div>

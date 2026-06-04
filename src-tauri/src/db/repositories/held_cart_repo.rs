@@ -1,8 +1,8 @@
-use sqlx::{SqlitePool, Row};
-use ulid::Ulid;
 use crate::domain::cart::Cart;
 use crate::domain::refund::HeldCartSummary;
 use crate::errors::{AppError, AppResult};
+use sqlx::{Row, SqlitePool};
+use ulid::Ulid;
 
 pub async fn save_held_cart(
     pool: &SqlitePool,
@@ -11,11 +11,12 @@ pub async fn save_held_cart(
 ) -> AppResult<HeldCartSummary> {
     let held_cart_id = Ulid::new().to_string();
     let now = chrono::Utc::now().to_rfc3339();
-    let cart_json = serde_json::to_string(cart)
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let cart_json = serde_json::to_string(cart).map_err(|e| AppError::Internal(e.to_string()))?;
 
     let line_count = cart.lines.iter().filter(|l| !l.voided).count() as i64;
-    let estimated_total: i64 = cart.lines.iter()
+    let estimated_total: i64 = cart
+        .lines
+        .iter()
         .filter(|l| !l.voided)
         .map(|l| l.line_total_minor)
         .sum();
@@ -39,7 +40,10 @@ pub async fn save_held_cart(
     })
 }
 
-pub async fn list_held_carts(pool: &SqlitePool, device_id: &str) -> AppResult<Vec<HeldCartSummary>> {
+pub async fn list_held_carts(
+    pool: &SqlitePool,
+    device_id: &str,
+) -> AppResult<Vec<HeldCartSummary>> {
     let rows = sqlx::query(
         "SELECT held_cart_id, note, held_at, cart_json FROM held_carts WHERE device_id = ? ORDER BY held_at DESC"
     )
@@ -50,10 +54,12 @@ pub async fn list_held_carts(pool: &SqlitePool, device_id: &str) -> AppResult<Ve
     let mut result = Vec::new();
     for row in &rows {
         let cart_json: String = row.get("cart_json");
-        let cart: Cart = serde_json::from_str(&cart_json)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let cart: Cart =
+            serde_json::from_str(&cart_json).map_err(|e| AppError::Internal(e.to_string()))?;
         let line_count = cart.lines.iter().filter(|l| !l.voided).count() as i64;
-        let estimated_total: i64 = cart.lines.iter()
+        let estimated_total: i64 = cart
+            .lines
+            .iter()
             .filter(|l| !l.voided)
             .map(|l| l.line_total_minor)
             .sum();
@@ -80,8 +86,8 @@ pub async fn resume_held_cart(
         .ok_or_else(|| AppError::NotFound("Held cart not found".into()))?;
 
     let cart_json: String = row.get("cart_json");
-    let mut cart: Cart = serde_json::from_str(&cart_json)
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let mut cart: Cart =
+        serde_json::from_str(&cart_json).map_err(|e| AppError::Internal(e.to_string()))?;
 
     cart.shift_id = shift_id.to_string();
     cart.cart_id = Ulid::new().to_string();

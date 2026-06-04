@@ -20,6 +20,8 @@ interface Props {
   onSearch: (query: string) => void;
   onEscape?: () => void;
   disabled?: boolean;
+  /** Active user ID for RBAC on product search. */
+  actorUserId?: string;
 }
 
 /**
@@ -31,7 +33,7 @@ interface Props {
  * dropdown. Arrow keys navigate; Enter / click selects.
  */
 const BarcodeInput = forwardRef<BarcodeInputHandle, Props>(function BarcodeInput(
-  { onBarcode, onSelectProduct, onSearch, onEscape, disabled },
+  { onBarcode, onSelectProduct, onSearch, onEscape, disabled, actorUserId = "" },
   ref,
 ) {
   const inputRef    = useRef<HTMLInputElement>(null);
@@ -40,8 +42,9 @@ const BarcodeInput = forwardRef<BarcodeInputHandle, Props>(function BarcodeInput
   const [scanState, setScanState]   = useState<"" | "success" | "error">("");
   const [results, setResults]       = useState<ProductWithPrice[]>([]);
   const [highlighted, setHighlighted] = useState(-1);
-  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const flashTimer    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debounceTimer  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refocusTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showDropdown = results.length > 0;
 
@@ -62,7 +65,7 @@ const BarcodeInput = forwardRef<BarcodeInputHandle, Props>(function BarcodeInput
     flashError:   () => { setScanState("error");   clearFlash(); },
   }));
 
-  // Auto-focus on mount; F2 / F3 return focus here
+  // Auto-focus on mount; F2 / F3 and window re-focus return cursor here
   useEffect(() => {
     inputRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
@@ -71,8 +74,71 @@ const BarcodeInput = forwardRef<BarcodeInputHandle, Props>(function BarcodeInput
         inputRef.current?.focus();
       }
     };
+
+    // When the Tauri app window itself regains focus (e.g. user Alt-Tabs back),
+    // put the cursor straight back on the barcode field unless a modal has it.
+    const onWindowFocus = () => {
+      const active = document.activeElement as HTMLElement | null;
+      if (active && (
+        active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT" ||
+        active.isContentEditable ||
+        active.closest(".modal-overlay, .payment-modal, [role='dialog'], .mig-page, .bulk-modal, .login-screen, .lock-screen")
+      )) return;
+      inputRef.current?.focus();
+    };
+
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("focus", onWindowFocus);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("focus", onWindowFocus);
+    };
+  }, []);
+
+  // Timer cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      if (refocusTimer.current) clearTimeout(refocusTimer.current);
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    };
+  }, []);
+
+  // Re-focus when the input transitions from disabled → enabled.
+  // Without this, calling .focus() in the scan handler's finally block
+  // races with React flushing setLoading(false) to the DOM — the call
+  // lands while the <input> is still disabled and silently no-ops.
+  // This effect fires AFTER the DOM has been updated, so the input is
+  // guaranteed to be enabled before focus() is called.
+  useEffect(() => {
+    if (!disabled) inputRef.current?.focus();
+  }, [disabled]);
+
+  // Aggressive refocus — 100 ms after blur, steal focus back unless a modal
+  // or another real input field has taken it (payment, discount, custom-item, etc.)
+  const handleBlur = useCallback(() => {
+    if (refocusTimer.current) clearTimeout(refocusTimer.current);
+    refocusTimer.current = setTimeout(() => {
+      if (disabled) return;
+      const active = document.activeElement as HTMLElement | null;
+      if (active) {
+        const tag = active.tagName;
+        // Leave alone if another real input/select/textarea has focus
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+        if (active.isContentEditable) return;
+        // Leave alone if inside any modal overlay or dialog
+        if (active.closest(
+          ".modal-overlay, .payment-modal, [role='dialog'], " +
+          ".mig-page, .bulk-modal, .login-screen, .lock-screen"
+        )) return;
+      }
+      inputRef.current?.focus();
+    }, 100);
+  }, [disabled]);
+
+  // Cancel pending refocus when we voluntarily re-enter the field
+  const handleFocus = useCallback(() => {
+    if (refocusTimer.current) clearTimeout(refocusTimer.current);
   }, []);
 
   // Close dropdown on outside click
@@ -96,7 +162,7 @@ const BarcodeInput = forwardRef<BarcodeInputHandle, Props>(function BarcodeInput
     if (!v.trim()) { setResults([]); onSearch(""); return; }
     debounceTimer.current = setTimeout(async () => {
       try {
-        const found = await productSearch(v.trim());
+        const found = await productSearch(actorUserId, v.trim());
         setResults(found.slice(0, 8));
       } catch {
         setResults([]);
@@ -148,12 +214,17 @@ const BarcodeInput = forwardRef<BarcodeInputHandle, Props>(function BarcodeInput
           onBarcode(barcode, qty);
           setValue(""); closeDropdown();
           if (debounceTimer.current) clearTimeout(debounceTimer.current);
+          // Keep focus on the input immediately — the async handler in the parent
+          // will also call focus() after it resolves, but this fires right away.
+          inputRef.current?.focus();
           return;
         }
       }
       onBarcode(raw);
       setValue(""); closeDropdown();
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
+      // Re-assert focus immediately so the scanner is ready for the next item.
+      inputRef.current?.focus();
     } else if (e.key === "Escape") {
       e.preventDefault();
       setValue(""); closeDropdown(); setScanState("");
@@ -177,6 +248,8 @@ const BarcodeInput = forwardRef<BarcodeInputHandle, Props>(function BarcodeInput
           placeholder="Scan barcode or search product…"
           onChange={handleChange}
           onKeyDown={handleKeyDown}
+          onBlur={handleBlur}
+          onFocus={handleFocus}
           disabled={disabled}
           autoComplete="off"
           autoCorrect="off"

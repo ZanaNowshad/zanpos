@@ -8,19 +8,24 @@ interface Props {
 }
 
 export default function WhatsAppQRModal({ onClose, onConnected }: Props) {
-  const [status, setStatus] = useState<WhatsAppStatus>({ connected: false });
-  const [loading, setLoading] = useState(true);
+  const [status, setStatus]     = useState<WhatsAppStatus>({ connected: false });
+  const [loading, setLoading]   = useState(true);
+  const [unreachable, setUnreachable] = useState(false);
+  const [, setPollCount]     = useState(0);
 
   const poll = useCallback(async () => {
     try {
       const s = await whatsappStatus();
       setStatus(s);
+      setUnreachable(false);
       setLoading(false);
+      setPollCount(n => n + 1);
       if (s.connected) {
         onConnected?.();
         onClose();
       }
     } catch {
+      setUnreachable(true);
       setLoading(false);
     }
   }, [onClose, onConnected]);
@@ -31,6 +36,9 @@ export default function WhatsAppQRModal({ onClose, onConnected }: Props) {
     return () => clearInterval(id);
   }, [poll]);
 
+  // While we have a response but no QR yet, the sidecar is warming up — keep polling
+  const waitingForQr = !loading && !unreachable && !status.connected && !status.qr;
+
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal wa-qr-modal">
@@ -40,16 +48,24 @@ export default function WhatsAppQRModal({ onClose, onConnected }: Props) {
         </div>
 
         <div className="wa-qr-body">
-          {loading && <div className="wa-qr-hint">Connecting to sidecar…</div>}
-
-          {!loading && !status.connected && !status.qr && (
+          {/* Sidecar unreachable — genuine error */}
+          {unreachable && (
             <div className="wa-qr-hint wa-qr-hint-warn">
-              WhatsApp sidecar is not running.<br />
-              Restart the app to reconnect.
+              ⚠️ WhatsApp sidecar is not responding.<br />
+              Restart the app and try again.
             </div>
           )}
 
-          {!loading && !status.connected && status.qr && (
+          {/* Sidecar reachable but QR not ready yet (warming up) */}
+          {(loading || waitingForQr) && !unreachable && (
+            <div className="wa-qr-hint wa-qr-warming">
+              <span className="wa-qr-spinner">⟳</span>
+              {loading ? "Connecting to sidecar…" : "Generating QR code, please wait…"}
+            </div>
+          )}
+
+          {/* QR ready — show it */}
+          {!loading && !unreachable && !status.connected && status.qr && (
             <>
               <p className="wa-qr-instruction">
                 Open WhatsApp on your phone → <strong>Linked Devices</strong> → <strong>Link a Device</strong> and scan this QR code.
@@ -61,12 +77,17 @@ export default function WhatsAppQRModal({ onClose, onConnected }: Props) {
             </>
           )}
 
+          {/* Already connected */}
           {!loading && status.connected && (
             <div className="wa-qr-hint wa-qr-connected">✅ WhatsApp connected!</div>
           )}
         </div>
 
         <div className="modal-actions">
+          {/* Retry button shown only when unreachable */}
+          {unreachable && (
+            <button className="btn-primary" onClick={poll}>Retry</button>
+          )}
           <button className="btn-secondary" onClick={onClose}>Close</button>
         </div>
       </div>

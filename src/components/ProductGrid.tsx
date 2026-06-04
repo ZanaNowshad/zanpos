@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { ProductWithPrice } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney } from "../money";
@@ -7,7 +8,6 @@ interface Props {
   products: ProductWithPrice[];
   onSelect: (product: ProductWithPrice) => void;
   loading?: boolean;
-  /** Set of product_ids currently in the active cart (for in-cart state) */
   cartProductIds?: Set<string>;
 }
 
@@ -22,7 +22,7 @@ function stockBadge(p: ProductWithPrice) {
   return <span className="stock-badge stock-badge-in">In stock: {p.quantity_on_hand}</span>;
 }
 
-export default function ProductGrid({ products, onSelect, loading, cartProductIds }: Props) {
+const ProductGrid = memo(function ProductGrid({ products, onSelect, loading, cartProductIds }: Props) {
   if (loading) {
     return (
       <div className="product-grid">
@@ -38,7 +38,12 @@ export default function ProductGrid({ products, onSelect, loading, cartProductId
       </div>
     );
   }
-  if (!products.length) return <div className="product-grid-msg">No products found.</div>;
+  // L11: Add role="status" + aria-live so screen readers announce empty state
+  if (!products.length) return (
+    <div className="product-grid-msg" role="status" aria-live="polite">
+      No products found.
+    </div>
+  );
 
   return (
     <div className="product-grid">
@@ -66,4 +71,6 @@ export default function ProductGrid({ products, onSelect, loading, cartProductId
       })}
     </div>
   );
-}
+});
+
+export default ProductGrid;

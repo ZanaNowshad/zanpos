@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { SyncQueueItem } from "../types";
 import { syncQueueList, syncQueueRetry, syncQueueDismiss } from "../tauri/commands";
 
 interface Props {
   onClose: () => void;
+  sessionUserId: string;
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -18,18 +19,21 @@ const STATUS_CLASS: Record<string, string> = {
   conflict: "sq-badge-conflict",
 };
 
-export default function SyncQueueModal({ onClose }: Props) {
+export default function SyncQueueModal({ onClose, sessionUserId }: Props) {
   const [items, setItems] = useState<SyncQueueItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const cancelledRef = useRef(false);
+
   const load = () => {
     setLoading(true);
+    cancelledRef.current = false;
     syncQueueList()
-      .then(setItems)
-      .catch(() => setError("Failed to load sync queue"))
-      .finally(() => setLoading(false));
+      .then(data => { if (!cancelledRef.current) setItems(data); })
+      .catch(() => { if (!cancelledRef.current) setError("Failed to load sync queue"); })
+      .finally(() => { if (!cancelledRef.current) setLoading(false); });
   };
 
   useEffect(load, []);
@@ -38,7 +42,7 @@ export default function SyncQueueModal({ onClose }: Props) {
     setBusyId(id);
     setError(null);
     try {
-      await syncQueueRetry(id);
+      await syncQueueRetry(sessionUserId, id);
       load();
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Retry failed");
@@ -51,7 +55,7 @@ export default function SyncQueueModal({ onClose }: Props) {
     setBusyId(id);
     setError(null);
     try {
-      await syncQueueDismiss(id);
+      await syncQueueDismiss(sessionUserId, id);
       setItems(prev => prev.filter(i => i.sync_event_id !== id));
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Dismiss failed");
@@ -63,7 +67,7 @@ export default function SyncQueueModal({ onClose }: Props) {
   const retryAll = async () => {
     const retryable = items.filter(i => i.status === "failed" || i.status === "conflict");
     for (const item of retryable) {
-      try { await syncQueueRetry(item.sync_event_id); } catch { /* continue */ }
+      try { await syncQueueRetry(sessionUserId, item.sync_event_id); } catch { /* continue */ }
     }
     load();
   };

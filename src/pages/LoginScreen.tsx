@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { SessionUser, UserSummary } from "../types";
 import { authListUsers, authLoginPin } from "../tauri/commands";
+import ZanposBootLogo from "../components/ZanposBootLogo";
 
 interface Props {
   onLogin: (user: SessionUser) => void;
@@ -13,8 +14,69 @@ export default function LoginScreen({ onLogin }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Refs to avoid stale closures in the keydown listener
+  const selectedRef   = useRef(selected);
+  const pinRef         = useRef(pin);
+  const loadingRef     = useRef(loading);
+  const submitRef      = useRef<(() => Promise<void>) | null>(null);
+  useEffect(() => { selectedRef.current = selected; }, [selected]);
+  useEffect(() => { pinRef.current = pin; }, [pin]);
+  useEffect(() => { loadingRef.current = loading; }, [loading]);
+
+  // ── Physical keyboard support for PIN entry ───────────────────────────────
   useEffect(() => {
-    authListUsers().then(setUsers).catch(() => {});
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!selectedRef.current || loadingRef.current) return;
+      if (e.key >= "0" && e.key <= "9") {
+        e.preventDefault();
+        setError(null);
+        setPin(p => p.length < 6 ? p + e.key : p);
+      } else if (e.key === "Backspace") {
+        e.preventDefault();
+        setError(null);
+        setPin(p => p.slice(0, -1));
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        // Trigger submit using current ref values
+        const cur = selectedRef.current;
+        const curPin = pinRef.current;
+        if (cur && curPin.length > 0) {
+          // Simulate click on OK by calling handleSubmit indirectly via the
+          // same async path — we trigger it via a microtask so React state settles
+          setTimeout(() => submitRef.current?.(), 0);
+        }
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        setSelected(null);
+        setPin("");
+        setError(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      authListUsers()
+        .then(list => {
+          if (cancelled) return;
+          setUsers(list);
+        })
+        .catch((e: unknown) => {
+          if (cancelled) return;
+          // F-MED-12: Backend now returns "rate_limit" error instead of empty list.
+          // Retry after the 3-second window; all other errors are genuine failures.
+          const msg = typeof e === "string" ? e : String(e);
+          if (msg.includes("rate_limit")) {
+            setTimeout(() => { if (!cancelled) load(); }, 3200);
+          }
+          // else: genuine error — leave users empty, login screen shows "no users" state
+        });
+    };
+    load();
+    return () => { cancelled = true; };
   }, []);
 
   const handleUserSelect = (u: UserSummary) => {
@@ -46,10 +108,12 @@ export default function LoginScreen({ onLogin }: Props) {
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Invalid PIN");
       setPin("");
+
     } finally {
       setLoading(false);
     }
   };
+  useEffect(() => { submitRef.current = handleSubmit; });
 
   const PAD = [
     ["1", "2", "3"],
@@ -67,14 +131,7 @@ export default function LoginScreen({ onLogin }: Props) {
 
       {/* Left brand panel */}
       <div className="login-brand">
-        <div className="login-logo">ZAN<span>POS</span></div>
-        <div className="login-brand-rule" />
-        <div className="login-tagline">Local-First. Business-First.</div>
-
-        <div className="login-brand-footer">
-          <span>🛡</span>
-          <span>Secure. Reliable. Local.</span>
-        </div>
+        <ZanposBootLogo />
       </div>
 
       {/* Right — floating card */}
@@ -135,6 +192,8 @@ export default function LoginScreen({ onLogin }: Props) {
                   </div>
                 ))}
               </div>
+
+              <p className="pin-keyboard-hint">⌨ Type digits on your keyboard · Enter to confirm · Esc to go back</p>
 
               <button className="login-back" onClick={() => { setSelected(null); setPin(""); setError(null); }}>
                 ← Back to cashier selection

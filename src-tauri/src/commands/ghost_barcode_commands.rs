@@ -27,6 +27,7 @@ pub struct GhostSummary {
     pub pending: i64,
     pub found: i64,
     pub not_found: i64,
+    pub dismissed: i64,  // M-19: previously omitted from summary counts
 }
 
 #[derive(Debug, Serialize)]
@@ -56,13 +57,14 @@ fn now_ms() -> i64 {
 // ── Commands ──────────────────────────────────────────────────────────────────
 
 /// Called by the POS frontend whenever a barcode scan fails.
-/// No RBAC — any authenticated user (cashier) may call this.
 /// Fire-and-forget from the frontend: returns Ok(()) always.
 #[tauri::command]
 pub async fn ghost_record(
     barcode: String,
+    actor_user_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     if barcode.trim().is_empty() {
         return Ok(());
     }
@@ -96,21 +98,20 @@ pub async fn ghost_summary(
     state: State<'_, AppState>,
 ) -> AppResult<GhostSummary> {
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    // M-19: include dismissed in the GROUP BY so the count is complete
     let rows: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT status, COUNT(*) as cnt
-         FROM unknown_barcodes
-         WHERE status != 'dismissed'
-         GROUP BY status",
+        "SELECT status, COUNT(*) as cnt FROM unknown_barcodes GROUP BY status",
     )
     .fetch_all(&state.db)
     .await?;
 
-    let mut summary = GhostSummary { pending: 0, found: 0, not_found: 0 };
+    let mut summary = GhostSummary { pending: 0, found: 0, not_found: 0, dismissed: 0 };
     for (status, cnt) in rows {
         match status.as_str() {
             "pending"   => summary.pending   = cnt,
             "found"     => summary.found     = cnt,
             "not_found" => summary.not_found = cnt,
+            "dismissed" => summary.dismissed = cnt,
             _ => {}
         }
     }

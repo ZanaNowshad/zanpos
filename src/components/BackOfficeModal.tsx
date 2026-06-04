@@ -272,7 +272,7 @@ export default function BackOfficeModal({ sessionUser, onClose }: Props) {
         <BulkStockTakeModal user={sessionUser} onClose={() => setShowBulkStockTake(false)} />
       )}
       {showSyncQueue && (
-        <SyncQueueModal onClose={() => setShowSyncQueue(false)} />
+        <SyncQueueModal sessionUserId={sessionUser.user_id} onClose={() => setShowSyncQueue(false)} />
       )}
     </>
   );

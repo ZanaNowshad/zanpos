@@ -5,7 +5,7 @@ import * as cmd from "../tauri/commands";
 
 interface Props { sessionUserId: string; }
 
-export default function DevicesTab({ sessionUserId: _sessionUserId }: Props) {
+export default function DevicesTab({ sessionUserId }: Props) {
   const [devices, setDevices]   = useState<DeviceRow[]>([]);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);
@@ -34,7 +34,7 @@ export default function DevicesTab({ sessionUserId: _sessionUserId }: Props) {
     }
     setSaving(true); setError(null);
     try {
-      const created = await cmd.deviceCreate({ device_code: code.trim(), device_name: name.trim() });
+      const created = await cmd.deviceCreate(sessionUserId, { device_code: code.trim(), device_name: name.trim() });
       setDevices(prev => [...prev, created]);
       setShowForm(false); setCode(""); setName("");
     } catch (e: unknown) {
@@ -46,7 +46,7 @@ export default function DevicesTab({ sessionUserId: _sessionUserId }: Props) {
 
   async function handleToggle(device: DeviceRow) {
     try {
-      await cmd.deviceToggleActive(device.device_id, !device.is_active);
+      await cmd.deviceToggleActive(sessionUserId, device.device_id, !device.is_active);
       setDevices(prev => prev.map(d =>
         d.device_id === device.device_id ? { ...d, is_active: !d.is_active } : d
       ));

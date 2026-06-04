@@ -162,24 +162,25 @@ export default function ProductsTab({
     setExtraBarcodes([]); setPendingBarcodes([]); setNewBarcodeInput(""); setBarcodeError(null);
   }
 
+  function computeSellingFromMarkup(cost: number, markupPct: string): number {
+    const markupBp = Math.round(parseFloat(markupPct || "0") * 100);
+    if (cost <= 0 || isNaN(markupBp) || markupBp < 0) return 0;
+    // selling = cost * (1 + markupBp/10000) = cost * (10000 + markupBp) / 10000
+    return Math.round(cost * (10000 + markupBp) / 10000);
+  }
+
   function handleCostChange(val: string) {
     setCostPrice(val);
     const cost = parseMoney(val, exp);
-    const markup = parseFloat(markupPct);
-    if (cost > 0 && !isNaN(markup) && markup >= 0) {
-      const selling = cost * (1 + markup / 100);
-      set("price", formatMoney(Math.round(selling), exp));
-    }
+    const selling = computeSellingFromMarkup(cost, markupPct);
+    if (selling > 0) set("price", formatMoney(selling, exp));
   }
 
   function handleMarkupChange(val: string) {
     setMarkupPct(val);
     const cost = parseMoney(costPrice, exp);
-    const markup = parseFloat(val);
-    if (cost > 0 && !isNaN(markup) && markup >= 0) {
-      const selling = cost * (1 + markup / 100);
-      set("price", formatMoney(Math.round(selling), exp));
-    }
+    const selling = computeSellingFromMarkup(cost, val);
+    if (selling > 0) set("price", formatMoney(selling, exp));
   }
 
   async function addBarcodeForEdit() {

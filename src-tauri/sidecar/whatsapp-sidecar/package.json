@@ -6,16 +6,18 @@
   "bin": "server.js",
   "scripts": {
     "start": "node server.js",
-    "build": "pkg . --target node18-win-x64 --output ../../binaries/whatsapp-sidecar-x86_64-pc-windows-msvc.exe --compress GZip"
+    "bundle": "esbuild server.js --bundle --platform=node --format=cjs --target=node20 --outfile=bundle.cjs --external:bufferutil --external:utf-8-validate",
+    "build": "npm run bundle && pkg bundle.cjs --target node20-win-x64 --output ../../binaries/whatsapp-sidecar-x86_64-pc-windows-msvc.exe --no-bytecode --public-packages \"*\" --public"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.9",
     "express": "^4.19.2",
-    "qrcode": "^1.5.4",
-    "pino": "^9.0.0"
+    "pino": "^9.0.0",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
-    "pkg": "^5.8.1"
+    "@yao-pkg/pkg": "^6.19.0",
+    "esbuild": "^0.28.0"
   },
   "pkg": {
     "assets": [
@@ -24,7 +26,9 @@
       "node_modules/libsignal/**/*",
       "node_modules/node-cache/**/*"
     ],
-    "targets": ["node18-win-x64"],
+    "targets": [
+      "node20-win-x64"
+    ],
     "outputPath": "../../binaries"
   }
 }

@@ -42,3 +42,33 @@ coverage/
 
 # Sidecar compiled binaries (built locally via pkg)
 src-tauri/binaries/*.exe
+
+# Database files — never commit POS data
+*.db
+*.db-journal
+*.db-wal
+
+# S-04: WhatsApp session + sidecar auth token — never commit credentials
+wa-session/
+**/wa-session/
+*.sidecar_token
+.sidecar_token
+*.db-shm
+*.sqlite
+*.sqlite3
+*.db3
+*.s3db
+*.bak
+zanpos*.db*
+src-tauri/zanpos*.db*
+
+# Certificates and keys
+*.pem
+*.p12
+*.pfx
+*.key
+id_rsa*
+id_ed25519*
+id_ecdsa*
+*.key.pub
+*.crt

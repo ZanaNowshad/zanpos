@@ -23,7 +23,7 @@ export default function BulkStockTakeModal({ user, onClose }: Props) {
   const [search, setSearch] = useState("");
 
   useEffect(() => {
-    productListAll()
+    productListAll(user.user_id)
       .then((products: ProductWithPrice[]) => {
         const tracked = products.filter(p => p.track_inventory);
         setRows(tracked.map(p => ({

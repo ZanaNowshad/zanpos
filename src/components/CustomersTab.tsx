@@ -6,7 +6,7 @@ const EMPTY_FORM = { name: "", phone: "", email: "", notes: "" };
 
 interface Props { sessionUserId: string; }
 
-export default function CustomersTab({ sessionUserId: _sessionUserId }: Props) {
+export default function CustomersTab({ sessionUserId }: Props) {
   const [customers, setCustomers]   = useState<CustomerRow[]>([]);
   const [selected, setSelected]     = useState<CustomerRow | null>(null);
   const [creating, setCreating]     = useState(false);
@@ -17,7 +17,7 @@ export default function CustomersTab({ sessionUserId: _sessionUserId }: Props) {
 
   const load = async (q: string) => {
     try {
-      const rows = await cmd.customerList(q);
+      const rows = await cmd.customerList(sessionUserId, q);
       setCustomers(rows);
     } catch {
       setError("Failed to load customers");
@@ -61,6 +61,7 @@ export default function CustomersTab({ sessionUserId: _sessionUserId }: Props) {
           phone: form.phone.trim()  || undefined,
           email: form.email.trim()  || undefined,
           notes: form.notes.trim()  || undefined,
+          actor_user_id: sessionUserId,
         });
         setCustomers(prev => [created, ...prev]);
       } else if (selected) {
@@ -70,6 +71,7 @@ export default function CustomersTab({ sessionUserId: _sessionUserId }: Props) {
           phone: form.phone.trim()  || undefined,
           email: form.email.trim()  || undefined,
           notes: form.notes.trim()  || undefined,
+          actor_user_id: sessionUserId,
         });
         setCustomers(prev => prev.map(c => c.customer_id === updated.customer_id ? updated : c));
       }
@@ -116,7 +118,11 @@ export default function CustomersTab({ sessionUserId: _sessionUserId }: Props) {
             </button>
           ))}
           {customers.length === 0 && (
-            <div className="bo-empty">No customers found.</div>
+            <div className="bo-empty">
+              <div className="bo-empty-icon">👤</div>
+              <p className="bo-empty-title">No customers found</p>
+              <p className="bo-empty-hint">Try a different search term, or add a new customer.</p>
+            </div>
           )}
         </div>
       </div>

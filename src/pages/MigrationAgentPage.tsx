@@ -3,6 +3,14 @@ import {
   migrationInspectFile,
   migrationAiMap,
   migrationExecute,
+  migrationConnectTest,
+  migrationListTables,
+  migrationListProcesses,
+  migrationFindDbFiles,
+  migrationDecompress,
+  migrationZanposStats,
+  migrationRollback,
+  migrationAgentChat,
   adminGetProviderConfig,
   adminSetAnthropic,
   adminValidateOpenai,
@@ -13,6 +21,7 @@ import type {
   MappingConfig,
   MigrationProgress,
   ModelInfo,
+  ChatMessage,
 } from "../types";
 import { Channel } from "@tauri-apps/api/core";
 import { open as openFilePicker } from "@tauri-apps/plugin-dialog";
@@ -52,9 +61,19 @@ interface ChatMsg {
 
 interface Props {
   onDone: () => void;
+  sessionUserId?: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Strips potentially sensitive content from backend error strings before display. */
+function sanitizeErrorMessage(raw: string): string {
+  return raw
+    .replace(/sk-[A-Za-z0-9\-_]{20,}/g, '[API_KEY_REDACTED]')
+    .replace(/Bearer\s+[A-Za-z0-9\-_.]{20,}/g, 'Bearer [REDACTED]')
+    .replace(/C:\\Users\\[^\\]+\\/gi, 'C:\\Users\\[user]\\')
+    .slice(0, 300); // cap length
+}
 
 function uid() { return Math.random().toString(36).slice(2); }
 
@@ -77,7 +96,7 @@ function SimpleMarkdown({ text }: { text: string }) {
 
 // ─── AI Config Setup Panel ────────────────────────────────────────────────────
 
-function AiSetupPanel({ onConfigured }: { onConfigured: () => void }) {
+function AiSetupPanel({ onConfigured, sessionUserId = "" }: { onConfigured: () => void; sessionUserId?: string }) {
   const [provider, setProvider]     = useState<AiProvider>("anthropic");
   const [anthropicKey, setAnthropicKey] = useState("");
   const [baseUrl, setBaseUrl]       = useState("https://api.openai.com/v1");
@@ -101,8 +120,8 @@ function AiSetupPanel({ onConfigured }: { onConfigured: () => void }) {
     const key = anthropicKey.trim();
     if (!key.startsWith("sk-ant-")) { setError("Key must start with sk-ant-"); return; }
     setSaving(true); setError(null);
-    try { await adminSetAnthropic(key); onConfigured(); }
-    catch (e) { setError(String(e)); } finally { setSaving(false); }
+    try { await adminSetAnthropic(sessionUserId, key); onConfigured(); }
+    catch (e) { setError(sanitizeErrorMessage(String(e))); } finally { setSaving(false); }
   };
 
   const handleValidateOpenai = async () => {
@@ -112,14 +131,14 @@ function AiSetupPanel({ onConfigured }: { onConfigured: () => void }) {
       if (res.success && res.models.length > 0) {
         setModels(res.models); setSelectedModel(res.models[0].id);
       } else setError(res.error ?? "Validation failed");
-    } catch (e) { setError(String(e)); } finally { setValidating(false); }
+    } catch (e) { setError(sanitizeErrorMessage(String(e))); } finally { setValidating(false); }
   };
 
   const handleSaveOpenai = async () => {
     if (!selectedModel) return;
     setSaving(true); setError(null);
-    try { await adminSetOpenai(baseUrl.trim(), openaiKey.trim(), selectedModel); onConfigured(); }
-    catch (e) { setError(String(e)); } finally { setSaving(false); }
+    try { await adminSetOpenai(sessionUserId, baseUrl.trim(), openaiKey.trim(), selectedModel); onConfigured(); }
+    catch (e) { setError(sanitizeErrorMessage(String(e))); } finally { setSaving(false); }
   };
 
   return (
@@ -196,7 +215,7 @@ function AiSetupPanel({ onConfigured }: { onConfigured: () => void }) {
 
 // ─── AI Settings Drawer ───────────────────────────────────────────────────────
 
-function AiSettingsDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: (label: string) => void }) {
+function AiSettingsDrawer({ onClose, onSaved, sessionUserId = "" }: { onClose: () => void; onSaved: (label: string) => void; sessionUserId?: string }) {
   const [provider, setProvider]     = useState<AiProvider>("anthropic");
   const [anthropicKey, setAnthropicKey] = useState("");
   const [baseUrl, setBaseUrl]       = useState("https://api.openai.com/v1");
@@ -248,16 +267,16 @@ function AiSettingsDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
                   const key = anthropicKey.trim();
                   if (!key.startsWith("sk-ant-")) { setError("Key must start with sk-ant-"); return; }
                   setSaving(true); setError(null);
-                  try { await adminSetAnthropic(key); onSaved("◆ Claude"); }
-                  catch (ex) { setError(String(ex)); } finally { setSaving(false); }
+                  try { await adminSetAnthropic(sessionUserId, key); onSaved("◆ Claude"); }
+                  catch (ex) { setError(sanitizeErrorMessage(String(ex))); } finally { setSaving(false); }
                 })()} style={inp} />
               {error && <div style={{ color:"#ef4444", fontSize:"0.78rem", marginBottom:8 }}>{error}</div>}
               <button onClick={async () => {
                 const key = anthropicKey.trim();
                 if (!key.startsWith("sk-ant-")) { setError("Key must start with sk-ant-"); return; }
                 setSaving(true); setError(null);
-                try { await adminSetAnthropic(key); onSaved("◆ Claude"); }
-                catch (ex) { setError(String(ex)); } finally { setSaving(false); }
+                try { await adminSetAnthropic(sessionUserId, key); onSaved("◆ Claude"); }
+                catch (ex) { setError(sanitizeErrorMessage(String(ex))); } finally { setSaving(false); }
               }} disabled={saving||!anthropicKey.trim()}
                 style={{ width:"100%", padding:9, background:"var(--accent)", color:"#fff", border:"none", borderRadius:7, fontWeight:700, fontSize:"0.875rem", cursor:saving||!anthropicKey.trim()?"not-allowed":"pointer", opacity:saving||!anthropicKey.trim()?0.5:1 }}>
                 {saving?"Saving…":"Save Changes"}
@@ -278,7 +297,7 @@ function AiSettingsDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
                     const res = await adminValidateOpenai(baseUrl.trim(), openaiKey.trim());
                     if (res.success && res.models.length > 0) { setModels(res.models); setSelectedModel(res.models[0].id); }
                     else setError(res.error ?? "Validation failed");
-                  } catch (ex) { setError(String(ex)); } finally { setValidating(false); }
+                  } catch (ex) { setError(sanitizeErrorMessage(String(ex))); } finally { setValidating(false); }
                 }} disabled={validating||!baseUrl.trim()||!openaiKey.trim()}
                   style={{ width:"100%", padding:9, background:"transparent", color:"var(--text)", border:"1.5px solid var(--border)", borderRadius:7, fontWeight:600, fontSize:"0.875rem", cursor:validating||!baseUrl.trim()||!openaiKey.trim()?"not-allowed":"pointer", opacity:validating||!baseUrl.trim()||!openaiKey.trim()?0.5:1 }}>
                   {validating?"Connecting…":"Validate & Fetch Models"}
@@ -292,8 +311,8 @@ function AiSettingsDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
                   <button onClick={async () => {
                     if (!selectedModel) return;
                     setSaving(true); setError(null);
-                    try { await adminSetOpenai(baseUrl.trim(), openaiKey.trim(), selectedModel); onSaved(`⬡ ${selectedModel}`); }
-                    catch (ex) { setError(String(ex)); } finally { setSaving(false); }
+                    try { await adminSetOpenai(sessionUserId, baseUrl.trim(), openaiKey.trim(), selectedModel); onSaved(`⬡ ${selectedModel}`); }
+                    catch (ex) { setError(sanitizeErrorMessage(String(ex))); } finally { setSaving(false); }
                   }} disabled={saving||!selectedModel}
                     style={{ width:"100%", padding:9, background:"var(--accent)", color:"#fff", border:"none", borderRadius:7, fontWeight:700, fontSize:"0.875rem", cursor:saving||!selectedModel?"not-allowed":"pointer", opacity:saving||!selectedModel?0.5:1 }}>
                     {saving?"Saving…":"Save Changes"}
@@ -427,14 +446,16 @@ function MappingDrawer({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function MigrationAgentPage({ onDone }: Props) {
+export default function MigrationAgentPage({ onDone, sessionUserId = "" }: Props) {
   const [aiReady, setAiReady]               = useState<boolean | null>(null);
   const [providerLabel, setProviderLabel]   = useState("⚙ AI");
   const [showAiSettings, setShowAiSettings] = useState(false);
 
   const [messages, setMessages]             = useState<ChatMsg[]>([]);
+  const [chatHistory, setChatHistory]       = useState<ChatMessage[]>([]);
   const [input, setInput]                   = useState("");
   const [isDragOver, setIsDragOver]         = useState(false);
+  const [aiLoading, setAiLoading]           = useState(false);
 
   // Working state (kept separate from messages so widgets can reference live values)
   const [schema, setSchema]                 = useState<FileSchema | null>(null);
@@ -510,7 +531,7 @@ export default function MigrationAgentPage({ onDone }: Props) {
     } catch (e) {
       setMessages(prev => prev.map(m => m.id === thinkId ? {
         ...m,
-        text: `❌ Couldn't read that file: ${String(e)}\n\nTry another file:`,
+        text: `❌ Couldn't read that file: ${sanitizeErrorMessage(String(e))}\n\nTry another file:`,
         node: <WelcomeFilePicker onFile={handleFile} isDragOver={false} compact />,
       } : m));
     }
@@ -522,7 +543,7 @@ export default function MigrationAgentPage({ onDone }: Props) {
       const selected = await openFilePicker({
         multiple: false,
         filters: [
-          { name: "Database / Spreadsheet", extensions: ["db","sqlite","sqlite3","csv","xlsx","xls"] },
+          { name: "Database / Export File", extensions: ["db","sqlite","sqlite3","db3","s3db","csv","xlsx","xls","sql","json","accdb","mdb","mdf","bak","zip"] },
           { name: "All Files", extensions: ["*"] },
         ],
       });
@@ -557,7 +578,7 @@ export default function MigrationAgentPage({ onDone }: Props) {
     } catch (e) {
       setMessages(prev => prev.map(msg => msg.id === thinkId ? {
         ...msg,
-        text: `❌ AI mapping failed: ${String(e)}\n\nWant to try again?`,
+        text: `❌ AI mapping failed: ${sanitizeErrorMessage(String(e))}\n\nWant to try again?`,
         node: <RetryButton label="♻ Retry AI Mapping" onClick={() => runAiMap(s)} />,
       } : msg));
     }
@@ -608,11 +629,11 @@ export default function MigrationAgentPage({ onDone }: Props) {
     };
 
     try {
-      await migrationExecute(storedPath, m, 3, channel);
+      await migrationExecute(storedPath, m, 3, sessionUserId, channel);
     } catch (e) {
       setMessages(prev => prev.map(msg => msg.id === progressMsgId ? {
         ...msg,
-        text: `❌ Migration error: ${String(e)}`,
+        text: `❌ Migration error: ${sanitizeErrorMessage(String(e))}`,
       } : msg));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -628,23 +649,190 @@ export default function MigrationAgentPage({ onDone }: Props) {
     if (path) await handleFile(path);
   };
 
-  // ── Text input ─────────────────────────────────────────────────────────────
-  const handleSend = () => {
+  // ── Text input — real AI chat ──────────────────────────────────────────────
+  const handleSend = useCallback(async () => {
     const text = input.trim();
-    if (!text) return;
+    if (!text || aiLoading) return;
     setInput("");
+    setAiLoading(true);
+
+    // Add user message to display
     addMsg("user", text);
 
-    const lc = text.toLowerCase();
-    if (/mysql|mssql|sql server|postgr|oracle|mongo/.test(lc)) {
-      addMsg("assistant", "For MySQL, MSSQL, or other network databases, the easiest path is to export a CSV or Excel file from that system first, then import it here.\n\nMost POS systems have an **Export** or **Backup** option in their settings. Export your products, customers, and sales as CSV, then drop them here.");
-    } else if (/help|what|how|support|format|type/.test(lc)) {
-      addMsg("assistant", "I support these file formats:\n\n- **Excel** (.xlsx, .xls) — multi-sheet files work great\n- **CSV** (.csv) — one table per file\n- **SQLite** (.db, .sqlite, .sqlite3) — full database files\n\nDrop your file anywhere on this screen, or click **Browse File** below.");
-    } else if (/skip|cancel|later|no/.test(lc)) {
-      addMsg("assistant", "No problem! You can always run the migration later from the Settings panel. Click **Skip → Launch POS** in the top right to continue.");
-    } else {
-      addMsg("assistant", "Got it! To get started, just drop your file anywhere on this screen or click **Browse File** in my first message above. I'll take it from there. 👆");
+    // Show thinking indicator
+    const thinkId = addMsg("assistant", "⏳ Thinking…");
+
+    // Build history for this turn (exclude the thinking placeholder)
+    const historyForTurn: ChatMessage[] = [...chatHistory];
+
+    try {
+      const reply = await migrationAgentChat(historyForTurn, text);
+
+      // Update the thinking message with the real reply
+      setMessages(prev => prev.map(m => m.id === thinkId ? { ...m, text: reply } : m));
+
+      // Persist the exchange in chat history for multi-turn memory
+      setChatHistory(prev => [
+        ...prev,
+        { role: "user", content: text },
+        { role: "assistant", content: reply },
+      ]);
+    } catch (e) {
+      setMessages(prev => prev.map(m => m.id === thinkId ? {
+        ...m,
+        text: `❌ AI error: ${sanitizeErrorMessage(String(e))}\n\nMake sure your API key is configured (click the AI button in the header).`,
+      } : m));
+    } finally {
+      setAiLoading(false);
     }
+  }, [input, aiLoading, chatHistory, addMsg]);
+
+  // ── Quick-action toolbar handlers ─────────────────────────────────────────
+  const [quickBusy, setQuickBusy] = useState<string | null>(null);
+  const [dbConnForm, setDbConnForm] = useState<{ open: boolean; type: string; conn: string }>({ open: false, type: "sqlite", conn: "" });
+  const [rollbackTs, setRollbackTs] = useState<string>("");
+  const [showRollbackConfirm, setShowRollbackConfirm] = useState(false);
+
+  const runScanDisk = async () => {
+    setQuickBusy("scan");
+    const msgId = addMsg("assistant", "🔍 Scanning common directories for database files…");
+    try {
+      const files = await migrationFindDbFiles();
+      if (files.length === 0) {
+        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text: "No database files found in common locations (AppData, Desktop, Documents, Program Files).\n\nTry specifying a custom path in the text box." } : m));
+      } else {
+        const lines = files.slice(0, 30).map(f =>
+          `• **${f.path.replace(/\\/g, "/")}**  (${f.file_type.toUpperCase()}, ${(f.size_bytes / 1024).toFixed(0)} KB, ${f.modified})`
+        ).join("\n");
+        const more = files.length > 30 ? `\n\n…and ${files.length - 30} more.` : "";
+        setMessages(prev => prev.map(m => m.id === msgId ? {
+          ...m,
+          text: `📂 Found **${files.length}** database file${files.length !== 1 ? "s" : ""}:\n\n${lines}${more}\n\nClick any path above or paste it in the input box to inspect it.`,
+        } : m));
+      }
+    } catch (e) {
+      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text: `❌ Scan failed: ${sanitizeErrorMessage(String(e))}` } : m));
+    } finally { setQuickBusy(null); }
+  };
+
+  const runListProcesses = async () => {
+    setQuickBusy("proc");
+    const msgId = addMsg("assistant", "📋 Listing running processes…");
+    try {
+      const procs = await migrationListProcesses();
+      const posKeywords = ["pos", "retail", "revel", "lightspeed", "square", "shopify", "odoo", "quickbooks", "quicksale", "loyverse", "vend", "toast", "clover", "talech"];
+      const interesting = procs.filter(p => posKeywords.some(k => p.name.toLowerCase().includes(k)));
+      let text = "";
+      if (interesting.length > 0) {
+        text = `🔎 Found **${interesting.length}** likely POS process${interesting.length !== 1 ? "es" : ""}:\n\n` +
+          interesting.map(p => `• **${p.name}** (PID ${p.pid}, ${p.memory_kb})`).join("\n") +
+          "\n\nIf you recognise your old POS here, it may have left a database nearby. Use **🔍 Scan Disk** to find it.";
+      } else {
+        const count = procs.length;
+        text = `No active POS processes found among ${count} running processes.\n\nYour old POS software may not be running — that's fine. Use **🔍 Scan Disk** to find its database files.`;
+      }
+      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text } : m));
+    } catch (e) {
+      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text: `❌ Process list failed: ${sanitizeErrorMessage(String(e))}` } : m));
+    } finally { setQuickBusy(null); }
+  };
+
+  const runZanposStats = async () => {
+    setQuickBusy("stats");
+    const msgId = addMsg("assistant", "📊 Counting current ZANPOS records…");
+    try {
+      const s = await migrationZanposStats();
+      const rows = [
+        ["Products", s.products],
+        ["Categories", s.categories],
+        ["Customers", s.customers],
+        ["Sales", s.sales],
+        ["Sale Items", s.sale_items],
+        ["Stock Levels", s.stock_levels],
+      ];
+      const table = rows.map(([k, v]) => `• **${k}**: ${Number(v).toLocaleString()}`).join("\n");
+      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text: `📊 **Current ZANPOS data:**\n\n${table}` } : m));
+    } catch (e) {
+      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text: `❌ Stats failed: ${sanitizeErrorMessage(String(e))}` } : m));
+    } finally { setQuickBusy(null); }
+  };
+
+  const runConnectTest = async () => {
+    const { type, conn } = dbConnForm;
+    if (!conn.trim()) return;
+    setQuickBusy("conn");
+    setDbConnForm(f => ({ ...f, open: false }));
+    const msgId = addMsg("assistant", `🔌 Testing ${type.toUpperCase()} connection…`);
+    try {
+      const r = await migrationConnectTest(type, conn.trim());
+      if (r.success) {
+        // Also list tables
+        const tables = await migrationListTables(type, conn.trim());
+        const tblLines = tables.slice(0, 20).map(t =>
+          `• **${t.name}** — ${t.row_count.toLocaleString()} rows, ${t.columns.length} cols`
+        ).join("\n");
+        const more = tables.length > 20 ? `\n…+${tables.length - 20} more tables` : "";
+        setMessages(prev => prev.map(m => m.id === msgId ? {
+          ...m,
+          text: `✅ Connected! ${r.server_version ?? ""}\n\nFound **${tables.length} table${tables.length !== 1 ? "s" : ""}**:\n\n${tblLines}${more}\n\nTo import this database, select it using **📂 Browse File** in the input bar.`,
+        } : m));
+      } else {
+        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text: `❌ Connection failed: ${r.message}` } : m));
+      }
+    } catch (e) {
+      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text: `❌ Error: ${sanitizeErrorMessage(String(e))}` } : m));
+    } finally { setQuickBusy(null); }
+  };
+
+  const runExtractZip = async () => {
+    try {
+      const selected = await openFilePicker({
+        multiple: false,
+        filters: [{ name: "ZIP Archive", extensions: ["zip"] }, { name: "All Files", extensions: ["*"] }],
+      });
+      if (!selected) return;
+      const archivePath = Array.isArray(selected) ? selected[0] : selected as string;
+      if (!archivePath) return;
+
+      setQuickBusy("zip");
+      const msgId = addMsg("assistant", `📦 Extracting ${archivePath.replace(/\\/g, "/").split("/").pop()}…`);
+      try {
+        const r = await migrationDecompress(archivePath);
+        let text = `📦 Extracted **${r.extracted_files.length} files** to:\n\`${r.dest_dir}\``;
+        if (r.db_files.length > 0) {
+          text += `\n\n🗄 Found **${r.db_files.length} database file${r.db_files.length !== 1 ? "s" : ""}**:\n` +
+            r.db_files.map(f => `• \`${f.replace(/\\/g, "/").split("/").pop()}\``).join("\n") +
+            "\n\nClick **📂 Browse File** and navigate to the extracted folder to import one.";
+        } else {
+          text += "\n\nNo database files detected in the archive. Check if it contains .csv or .xlsx files instead.";
+        }
+        if (r.error) text += `\n\n⚠ Warning: ${r.error}`;
+        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text } : m));
+      } catch (e) {
+        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text: `❌ Extraction failed: ${sanitizeErrorMessage(String(e))}` } : m));
+      } finally { setQuickBusy(null); }
+    } catch { /* cancelled */ }
+  };
+
+  const runRollback = async () => {
+    if (!rollbackTs.trim()) return;
+    setShowRollbackConfirm(false);
+    setQuickBusy("rollback");
+    const msgId = addMsg("assistant", `↩ Rolling back records created since ${rollbackTs}…`);
+    try {
+      const r = await migrationRollback(rollbackTs.trim());
+      if (r.total_deleted === 0) {
+        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text: `No records found after ${rollbackTs}. Nothing was deleted.` } : m));
+      } else {
+        const lines = r.deleted_counts.map(([t, n]) => `• **${t}**: ${n.toLocaleString()} deleted`).join("\n");
+        setMessages(prev => prev.map(m => m.id === msgId ? {
+          ...m,
+          text: `✅ Rollback complete. Removed **${r.total_deleted.toLocaleString()} records**:\n\n${lines}`,
+        } : m));
+      }
+    } catch (e) {
+      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text: `❌ Rollback failed: ${sanitizeErrorMessage(String(e))}` } : m));
+    } finally { setQuickBusy(null); setRollbackTs(""); }
   };
 
   // ── Loading / AI gate ──────────────────────────────────────────────────────
@@ -656,7 +844,7 @@ export default function MigrationAgentPage({ onDone }: Props) {
     );
   }
   if (aiReady === false) {
-    return <AiSetupPanel onConfigured={() => setAiReady(true)} />;
+    return <AiSetupPanel onConfigured={() => setAiReady(true)} sessionUserId={sessionUserId} />;
   }
 
   return (
@@ -691,7 +879,7 @@ export default function MigrationAgentPage({ onDone }: Props) {
 
       {/* AI Settings Drawer */}
       {showAiSettings && (
-        <AiSettingsDrawer onClose={() => setShowAiSettings(false)} onSaved={label => { setProviderLabel(label); setShowAiSettings(false); }} />
+        <AiSettingsDrawer onClose={() => setShowAiSettings(false)} onSaved={label => { setProviderLabel(label); setShowAiSettings(false); }} sessionUserId={sessionUserId} />
       )}
 
       {/* Mapping Drawer */}
@@ -703,6 +891,106 @@ export default function MigrationAgentPage({ onDone }: Props) {
           onUpdate={m => { setMapping(m); setShowMappingDrawer(false); }}
         />
       )}
+
+      {/* DB Connection form */}
+      {dbConnForm.open && (
+        <>
+          <div onClick={() => setDbConnForm(f => ({ ...f, open: false }))} style={{ position:"fixed", inset:0, zIndex:30 }} />
+          <div style={{ position:"absolute", top:56, left:"50%", transform:"translateX(-50%)", zIndex:31, background:"var(--surface)", border:"1px solid var(--border)", borderRadius:10, padding:18, width:"min(440px, 90vw)", boxShadow:"0 8px 32px rgba(0,0,0,0.3)" }}>
+            <div style={{ fontWeight:700, marginBottom:12, fontSize:"0.9rem" }}>🔌 Test DB Connection</div>
+            <div style={{ display:"flex", gap:6, marginBottom:10 }}>
+              {(["sqlite","mysql","mssql"] as const).map(t => (
+                <button key={t} onClick={() => setDbConnForm(f => ({ ...f, type: t }))}
+                  style={{ flex:1, padding:"6px 0", borderRadius:7, fontSize:"0.8rem", fontWeight:600, cursor:"pointer",
+                    background:dbConnForm.type===t?"var(--accent)":"transparent",
+                    color:dbConnForm.type===t?"#fff":"var(--text-dim)",
+                    border:`1.5px solid ${dbConnForm.type===t?"var(--accent)":"var(--border)"}` }}>
+                  {t.toUpperCase()}
+                </button>
+              ))}
+            </div>
+            <input
+              type="text"
+              placeholder={
+                dbConnForm.type === "sqlite" ? "C:\\path\\to\\database.db" :
+                dbConnForm.type === "mysql"  ? "mysql://user:pass@host:3306/dbname" :
+                "Server=host;Database=db;User Id=user;Password=pass"
+              }
+              value={dbConnForm.conn}
+              onChange={e => setDbConnForm(f => ({ ...f, conn: e.target.value }))}
+              onKeyDown={e => e.key === "Enter" && runConnectTest()}
+              autoFocus
+              style={{ width:"100%", padding:"8px 11px", borderRadius:7, border:"1px solid var(--border)", background:"var(--bg)", color:"var(--text)", fontSize:"0.85rem", boxSizing:"border-box", marginBottom:10 }}
+            />
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={() => setDbConnForm(f => ({ ...f, open: false }))}
+                style={{ padding:"8px 14px", background:"transparent", border:"1px solid var(--border)", borderRadius:7, cursor:"pointer", color:"var(--text-dim)", fontSize:"0.85rem" }}>
+                Cancel
+              </button>
+              <button onClick={runConnectTest} disabled={!dbConnForm.conn.trim() || quickBusy === "conn"}
+                style={{ flex:1, padding:"8px 0", background:"var(--accent)", color:"#fff", border:"none", borderRadius:7, fontWeight:700, fontSize:"0.875rem",
+                  cursor:!dbConnForm.conn.trim()||quickBusy==="conn"?"not-allowed":"pointer",
+                  opacity:!dbConnForm.conn.trim()||quickBusy==="conn"?0.5:1 }}>
+                Connect & List Tables
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Rollback confirm */}
+      {showRollbackConfirm && (
+        <>
+          <div onClick={() => setShowRollbackConfirm(false)} style={{ position:"fixed", inset:0, zIndex:30 }} />
+          <div style={{ position:"absolute", top:56, left:"50%", transform:"translateX(-50%)", zIndex:31, background:"var(--surface)", border:"1.5px solid #ef4444", borderRadius:10, padding:18, width:"min(420px, 90vw)", boxShadow:"0 8px 32px rgba(0,0,0,0.3)" }}>
+            <div style={{ fontWeight:700, marginBottom:10, fontSize:"0.9rem", color:"#ef4444" }}>↩ Rollback Migration</div>
+            <p style={{ margin:"0 0 12px", fontSize:"0.84rem", color:"var(--text-dim)", lineHeight:1.5 }}>
+              Delete all ZANPOS records created <strong>at or after</strong> this timestamp. Enter an ISO datetime (e.g. <code>2025-01-15T10:30:00</code>).
+            </p>
+            <input
+              type="text"
+              placeholder="2025-01-15T10:30:00"
+              value={rollbackTs}
+              onChange={e => setRollbackTs(e.target.value)}
+              autoFocus
+              style={{ width:"100%", padding:"8px 11px", borderRadius:7, border:"1.5px solid #ef4444", background:"var(--bg)", color:"var(--text)", fontSize:"0.85rem", boxSizing:"border-box", marginBottom:10, fontFamily:"monospace" }}
+            />
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={() => setShowRollbackConfirm(false)}
+                style={{ padding:"8px 14px", background:"transparent", border:"1px solid var(--border)", borderRadius:7, cursor:"pointer", color:"var(--text-dim)", fontSize:"0.85rem" }}>
+                Cancel
+              </button>
+              <button onClick={runRollback} disabled={!rollbackTs.trim()}
+                style={{ flex:1, padding:"8px 0", background:"#ef4444", color:"#fff", border:"none", borderRadius:7, fontWeight:700, fontSize:"0.875rem",
+                  cursor:!rollbackTs.trim()?"not-allowed":"pointer", opacity:!rollbackTs.trim()?0.5:1 }}>
+                ↩ Confirm Rollback
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Quick-action toolbar */}
+      <div className="mig-quick-bar">
+        <button className="mig-quick-btn" onClick={runScanDisk} disabled={quickBusy !== null} title="Search common locations for .db/.sqlite/.mdf files">
+          {quickBusy === "scan" ? "⏳" : "🔍"} Scan Disk
+        </button>
+        <button className="mig-quick-btn" onClick={runListProcesses} disabled={quickBusy !== null} title="List running processes — detect if old POS is active">
+          {quickBusy === "proc" ? "⏳" : "📋"} Processes
+        </button>
+        <button className="mig-quick-btn" onClick={runZanposStats} disabled={quickBusy !== null} title="Count current records in ZANPOS">
+          {quickBusy === "stats" ? "⏳" : "📊"} ZANPOS Stats
+        </button>
+        <button className="mig-quick-btn" onClick={() => setDbConnForm(f => ({ ...f, open: true }))} disabled={quickBusy !== null} title="Test MySQL/MSSQL/SQLite connection">
+          {quickBusy === "conn" ? "⏳" : "🔌"} Test DB
+        </button>
+        <button className="mig-quick-btn" onClick={runExtractZip} disabled={quickBusy !== null} title="Extract a .zip archive and find database files inside">
+          {quickBusy === "zip" ? "⏳" : "📦"} Extract ZIP
+        </button>
+        <button className="mig-quick-btn mig-quick-btn--danger" onClick={() => setShowRollbackConfirm(true)} disabled={quickBusy !== null} title="Undo a migration by deleting records since a timestamp">
+          {quickBusy === "rollback" ? "⏳" : "↩"} Rollback
+        </button>
+      </div>
 
       {/* Chat messages */}
       <div style={{ flex:1, overflowY:"auto", padding:"20px 0" }}>
@@ -741,10 +1029,10 @@ export default function MigrationAgentPage({ onDone }: Props) {
           placeholder="Ask a question or type a message…"
           value={input}
           onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void handleSend(); } }}
         />
-        <button className="mig-send-btn" onClick={handleSend} disabled={!input.trim()}>
-          Send ↵
+        <button className="mig-send-btn" onClick={() => void handleSend()} disabled={!input.trim() || aiLoading}>
+          {aiLoading ? "⏳" : "Send ↵"}
         </button>
       </div>
     </div>
@@ -759,7 +1047,7 @@ function WelcomeFilePicker({ onFile, isDragOver, compact }: { onFile: (p: string
       const selected = await openFilePicker({
         multiple: false,
         filters: [
-          { name: "Database / Spreadsheet", extensions: ["db","sqlite","sqlite3","csv","xlsx","xls"] },
+          { name: "Database / Export File", extensions: ["db","sqlite","sqlite3","db3","s3db","csv","xlsx","xls","sql","json","accdb","mdb","mdf","bak","zip"] },
           { name: "All Files", extensions: ["*"] },
         ],
       });

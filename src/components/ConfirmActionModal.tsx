@@ -9,8 +9,8 @@ interface Props {
 export default function ConfirmActionModal({ preview, onConfirm, onCancel }: Props) {
   return (
     <div className="modal-overlay">
-      <div className="modal confirm-action-modal">
-        <h2>Confirm Change</h2>
+      <div className="modal confirm-action-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+        <h2 id="confirm-title">Confirm Change</h2>
         <p className="confirm-description">{preview.description}</p>
 
         <div className="confirm-fields">

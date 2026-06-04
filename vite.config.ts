@@ -29,4 +29,21 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+  build: {
+    chunkSizeWarningLimit: 500,
+    // F-MED-07: Strip console.* and debugger in production to prevent
+    // debug output in production builds and minor stack trace leakage.
+    minify: "esbuild",
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ["react", "react-dom"],
+          lucide: ["lucide-react"],
+        },
+      },
+    },
+  },
+  esbuild: {
+    drop: ["console", "debugger"],
+  },
 }));

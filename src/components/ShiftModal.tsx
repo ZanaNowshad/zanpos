@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { CashDrawerSummary, SessionUser, Shift, TodaySummary } from "../types";
 import { DEVICE } from "../types";
 import { shiftOpen, shiftClose, reportToday, cashDrawerSummary, printReceiptRaw } from "../tauri/commands";
-import { formatMoney } from "../money";
+import { formatMoney, parseMoney } from "../money";
 
 // ─── Denomination sets (minor units) per currency ─────────────────────────────
 const DENOM_SETS: Record<string, { label: string; minor: number }[]> = {
@@ -89,22 +89,24 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
   // Fetch today's Z-report and cash drawer summary when closing a shift
   useEffect(() => {
     if (mode !== "close") return;
-    const today = new Date().toISOString().slice(0, 10);
+    let cancelled = false;
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" });
     reportToday(DEVICE.branch_id, today)
-      .then(setTodaySummary)
+      .then(data => { if (!cancelled) setTodaySummary(data); })
       .catch(() => {}); // non-fatal
     if (shift) {
       cashDrawerSummary(shift.shift_id)
-        .then(setDrawerSummary)
+        .then(data => { if (!cancelled) setDrawerSummary(data); })
         .catch(() => {}); // non-fatal
     }
+    return () => { cancelled = true; };
   }, [mode, shift]);
 
   const handleOpen = async () => {
     setLoading(true);
     setError(null);
     try {
-      const cashMinor = openingCash ? Math.round(parseFloat(openingCash) * 1000) : 0;
+      const cashMinor = openingCash ? parseMoney(openingCash, DEVICE.currency_exponent) : 0;
       const opened = await shiftOpen(DEVICE.branch_id, DEVICE.device_id, user.user_id, cashMinor);
       onShiftOpened(opened);
     } catch (e: unknown) {
@@ -158,7 +160,7 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
       lines.push("--------------------------------");
       lines.push(`Expected:       ${fm(drawerSummary.expected_minor)}`);
       if (countedCash) {
-        const countedMinor = Math.round(parseFloat(countedCash) * 1000);
+        const countedMinor = parseMoney(countedCash, DEVICE.currency_exponent);
         const variance = countedMinor - drawerSummary.expected_minor;
         lines.push(`Counted:        ${fm(countedMinor)}`);
         lines.push(`Variance:       ${variance >= 0 ? "+" : ""}${fm(variance)}`);
@@ -179,8 +181,8 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
     setLoading(true);
     setError(null);
     try {
-      const countedMinor = countedCash ? Math.round(parseFloat(countedCash) * 1000) : undefined;
-      await shiftClose(shift.shift_id, countedMinor, notes || undefined);
+      const countedMinor = countedCash ? parseMoney(countedCash, DEVICE.currency_exponent) : undefined;
+      await shiftClose(shift.shift_id, user.user_id, countedMinor, notes || undefined);
       onShiftClosed();
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to close shift");
@@ -191,10 +193,10 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
 
   return (
     <div className="modal-overlay">
-      <div className="modal shift-modal">
+      <div className="modal shift-modal" role="dialog" aria-modal="true" aria-labelledby="shift-dialog-title">
         {mode === "open" ? (
           <>
-            <h2 className="modal-title">Open Shift</h2>
+            <h2 className="modal-title" id="shift-dialog-title">Open Shift</h2>
             <p className="shift-info-text">
               Starting shift for <strong>{user.display_name}</strong> on {DEVICE.branch_name}
             </p>
@@ -222,7 +224,7 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
           </>
         ) : (
           <>
-            <h2 className="modal-title">Close Shift — Z-Report</h2>
+            <h2 className="modal-title" id="shift-dialog-title">Close Shift — Z-Report</h2>
             {shift && (
               <div className="shift-summary">
                 <div className="shift-summary-row">
@@ -391,7 +393,7 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
               onChange={e => setCountedCash(e.target.value)}
             />
             {countedCash && drawerSummary && (() => {
-              const countedMinor = Math.round(parseFloat(countedCash) * 1000);
+              const countedMinor = parseMoney(countedCash, DEVICE.currency_exponent);
               const variance = countedMinor - drawerSummary.expected_minor;
               const label = variance === 0 ? "EXACT" : variance > 0 ? "OVER" : "UNDER";
               return (

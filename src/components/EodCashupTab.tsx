@@ -9,7 +9,7 @@ const CUR = DEVICE.currency;
 function fmt(n: number) { return `${CUR} ${formatMoney(n, EXP)}`; }
 function fmtOpt(n: number | null | undefined) { return n != null ? fmt(n) : "—"; }
 
-function isoDate(d: Date) { return d.toISOString().slice(0, 10); }
+function isoDate(d: Date) { return d.toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" }); }
 
 export default function EodCashupTab({ sessionUserId: _sid }: { sessionUserId: string }) {
   const [date, setDate] = useState(isoDate(new Date()));

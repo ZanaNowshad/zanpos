@@ -1,0 +1,1 @@
+[2m2026-05-28T22:02:58.085055Z[0m [32m INFO[0m [2mzanpos_lib[0m[2m:[0m Database path: C:\Users\super\AppData\Roaming\com.super.zanpos\zanpos.db

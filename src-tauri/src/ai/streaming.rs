@@ -1,0 +1,362 @@
+//! Real-time streaming chat via Anthropic SSE API.
+//! Drives the same multi-turn tool loop as ai_chat but emits StreamEvent
+//! tokens through a Tauri Channel so the frontend can render word-by-word.
+
+use crate::ai::tools;
+use crate::db::repositories::ai_admin_repo;
+use crate::domain::ai_admin::{AiChatInput, ChatMessage, StreamEvent, ToolPreview};
+use crate::errors::{AppError, AppResult};
+use futures::StreamExt;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sqlx::SqlitePool;
+use tauri::ipc::Channel;
+use ulid::Ulid;
+
+// ── Anthropic streaming request ────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct AnthropicStreamRequest {
+    model: String,
+    max_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    system: String,
+    messages: Vec<AnthropicMsg>,
+    tools: Vec<crate::ai::client::ToolDef>,
+    stream: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct AnthropicMsg {
+    role: String,
+    content: Vec<MsgContent>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum MsgContent {
+    Text { text: String },
+    ToolUse { id: String, name: String, input: Value },
+    ToolResult { tool_use_id: String, content: String },
+}
+
+// ── SSE event variants we care about ─────────────────────────────────────────
+
+#[derive(Deserialize, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum SseEvent {
+    ContentBlockStart { content_block: SseBlock },
+    ContentBlockDelta { delta: SseDelta },
+    ContentBlockStop {},
+    MessageDelta { delta: MsgDeltaData },
+    MessageStart { message: Value },
+    MessageStop {},
+    Ping {},
+    Error { error: Value },
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum SseBlock {
+    Text { text: String },
+    ToolUse { id: String, name: String },
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum SseDelta {
+    TextDelta { text: String },
+    InputJsonDelta { partial_json: String },
+}
+
+#[derive(Deserialize, Debug)]
+struct MsgDeltaData {
+    stop_reason: Option<String>,
+}
+
+// ── Main streaming function ───────────────────────────────────────────────────
+
+/// Valid Anthropic model ID — date-stamped snapshot as required by the API.
+const MODEL: &str = "claude-sonnet-4-20250514";
+/// 8096 tokens accommodates tool-call JSON + multi-step reasoning loops.
+const MAX_TOKENS: u32 = 8096;
+const MAX_TURNS: usize = 8;
+const API_URL: &str = "https://api.anthropic.com/v1/messages";
+
+/// Drive a full multi-turn tool-loop, emitting StreamEvent tokens to the channel.
+/// Returns the accumulated assistant text (for saving to history).
+pub async fn run_streaming_chat(
+    pool: &SqlitePool,
+    api_key: &str,
+    system: &str,
+    input: &AiChatInput,
+    tool_defs: &[crate::ai::client::ToolDef],
+    on_event: &Channel<StreamEvent>,
+) -> AppResult<String> {
+    // R-02: SSE streams are long-lived so we do NOT set an overall request timeout
+    // (that would kill a healthy long stream). We DO set a connect timeout so an
+    // unreachable API fails fast instead of hanging the task forever.
+    let http = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_default();
+    let mut msgs = build_messages(&input.history, &input.message);
+    let mut accumulated_text = String::new();
+
+    for _turn in 0..MAX_TURNS {
+        // ── POST with stream: true ─────────────────────────────────────────────
+        let request_body = AnthropicStreamRequest {
+            model: MODEL.into(),
+            max_tokens: MAX_TOKENS,
+            temperature: Some(0.0),
+            system: system.into(),
+            messages: msgs.clone(),
+            tools: tool_defs.to_vec(),
+            stream: true,
+        };
+
+        let response = http
+            .post(API_URL)
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(format!("Stream request failed: {e}")))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            let msg = format!("API error {status}: {body}");
+            let _ = on_event.send(StreamEvent::Error { message: msg.clone() });
+            return Err(AppError::Internal(msg));
+        }
+
+        // ── Parse SSE line-by-line ─────────────────────────────────────────────
+        let mut byte_stream = response.bytes_stream();
+        let mut line_buf = String::new();
+        let mut turn_text = String::new();
+        let mut tool_id = String::new();
+        let mut tool_name = String::new();
+        let mut tool_json = String::new();
+        let mut is_tool_turn = false;
+
+        'sse: while let Some(chunk) = byte_stream.next().await {
+            let chunk =
+                chunk.map_err(|e| AppError::Internal(format!("Stream read error: {e}")))?;
+            line_buf.push_str(&String::from_utf8_lossy(&chunk));
+
+            // Process all complete lines in the buffer
+            loop {
+                match line_buf.find('\n') {
+                    None => break,
+                    Some(pos) => {
+                        let raw = line_buf[..pos].trim_end_matches('\r').to_string();
+                        line_buf = line_buf[pos + 1..].to_string();
+
+                        if raw.is_empty() {
+                            continue;
+                        }
+
+                        let data = match raw.strip_prefix("data: ") {
+                            None => continue,
+                            Some(d) => d,
+                        };
+
+                        if data == "[DONE]" {
+                            break 'sse;
+                        }
+
+                        let event: SseEvent = match serde_json::from_str(data) {
+                            Ok(e) => e,
+                            Err(_) => continue,
+                        };
+
+                        match event {
+                            SseEvent::ContentBlockStart {
+                                content_block: SseBlock::ToolUse { id, name },
+                            } => {
+                                is_tool_turn = true;
+                                tool_id = id;
+                                tool_name = name.clone();
+                                let _ = on_event
+                                    .send(StreamEvent::ToolStart { name: name.clone() });
+                            }
+                            SseEvent::ContentBlockStart {
+                                content_block: SseBlock::Text { .. },
+                            } => {}
+                            SseEvent::ContentBlockDelta {
+                                delta: SseDelta::TextDelta { text },
+                            } => {
+                                turn_text.push_str(&text);
+                                accumulated_text.push_str(&text);
+                                let _ = on_event.send(StreamEvent::Token { text });
+                            }
+                            SseEvent::ContentBlockDelta {
+                                delta: SseDelta::InputJsonDelta { partial_json },
+                            } => {
+                                tool_json.push_str(&partial_json);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── End of this turn ──────────────────────────────────────────────────
+        if !is_tool_turn {
+            // Pure text response — done
+            let _ = on_event.send(StreamEvent::Done);
+            return Ok(accumulated_text);
+        }
+
+        // R-04: Parse the accumulated tool input JSON. If it is malformed, do NOT
+        // silently proceed with an empty object — that would let a mutation execute
+        // with all-default values. Log the raw JSON and surface an error instead.
+        let tool_input: Value = match serde_json::from_str(&tool_json) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(
+                    "AI tool '{}' returned malformed input JSON: {} — raw: {}",
+                    tool_name, e, tool_json
+                );
+                let msg = format!(
+                    "The AI produced invalid parameters for '{}' and the action was stopped. Please retry.",
+                    tool_name
+                );
+                let _ = on_event.send(StreamEvent::Error { message: msg.clone() });
+                return Err(AppError::Internal(msg));
+            }
+        };
+
+        let _ = on_event.send(StreamEvent::ToolDone { name: tool_name.clone() });
+
+        // Mutation → needs confirmation, emit pending event and exit
+        if tools::is_mutation_tool(&tool_name) {
+            let preview = tools::dry_run_mutation(
+                pool,
+                &tool_name,
+                &tool_input,
+                input.currency_exponent,
+            )
+            .await?;
+
+            let tool_input_json = tool_input.to_string();
+            let preview_text = preview_to_text(&preview);
+
+            let action = ai_admin_repo::create_action(
+                pool,
+                &input.user_id,
+                &tool_name,
+                &tool_input_json,
+                &hash_str(&tool_input_json),
+                &preview_text,
+                &Ulid::new().to_string(),
+            )
+            .await?;
+
+            let _ = on_event.send(StreamEvent::MutationPending {
+                action_id: action.action_id,
+                tool_name,
+                preview,
+                expires_at: action.expires_at,
+                assistant_text: turn_text,
+            });
+            return Ok(accumulated_text);
+        }
+
+        let tool_result = match tools::execute_read_tool(
+            pool,
+            &tool_name,
+            &tool_input,
+            &input.branch_id,
+            input.currency_exponent,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                let msg = format!("Tool '{}' failed: {e}", tool_name);
+                tracing::error!("{msg}");
+                msg
+            }
+        };
+
+        // Append assistant turn + tool result to message list
+        msgs.push(AnthropicMsg {
+            role: "assistant".into(),
+            content: vec![
+                MsgContent::Text { text: turn_text.clone() },
+                MsgContent::ToolUse {
+                    id: tool_id.clone(),
+                    name: tool_name.clone(),
+                    input: tool_input,
+                },
+            ],
+        });
+        msgs.push(AnthropicMsg {
+            role: "user".into(),
+            content: vec![MsgContent::ToolResult {
+                tool_use_id: tool_id.clone(),
+                content: tool_result,
+            }],
+        });
+
+        // Reset for next turn
+        turn_text.clear();
+        tool_id.clear();
+        tool_name.clear();
+        tool_json.clear();
+    }
+
+    // R-08: We exhausted MAX_TURNS without the model producing a final text answer.
+    // Tell the user the conversation was cut short instead of ending silently.
+    tracing::warn!("AI streaming hit MAX_TURNS ({MAX_TURNS}) tool-loop limit — truncated");
+    let _ = on_event.send(StreamEvent::Error {
+        message: format!(
+            "Reached the {MAX_TURNS}-step limit for one request. The answer may be incomplete — \
+             try narrowing your request or asking again."
+        ),
+    });
+    let _ = on_event.send(StreamEvent::Done);
+    Ok(accumulated_text)
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn build_messages(history: &[ChatMessage], user_message: &str) -> Vec<AnthropicMsg> {
+    let mut msgs: Vec<AnthropicMsg> = history
+        .iter()
+        .map(|m| AnthropicMsg {
+            role: m.role.clone(),
+            content: vec![MsgContent::Text { text: m.content.clone() }],
+        })
+        .collect();
+    msgs.push(AnthropicMsg {
+        role: "user".into(),
+        content: vec![MsgContent::Text { text: user_message.into() }],
+    });
+    msgs
+}
+
+fn preview_to_text(p: &ToolPreview) -> String {
+    format!(
+        "{}: {}",
+        p.description,
+        p.fields
+            .iter()
+            .map(|f| format!("{} = {}", f.label, f.value))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn hash_str(s: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    hex::encode(h.finalize())
+}

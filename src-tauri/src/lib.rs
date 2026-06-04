@@ -726,6 +726,7 @@ pub fn run() {
             // AI Admin — provider management
             commands::ai_admin_commands::admin_get_provider_config,
             commands::ai_admin_commands::admin_set_anthropic,
+            commands::ai_admin_commands::admin_validate_anthropic,
             commands::ai_admin_commands::admin_validate_openai,
             commands::ai_admin_commands::admin_set_openai,
             commands::ai_admin_commands::admin_validate_gemini,

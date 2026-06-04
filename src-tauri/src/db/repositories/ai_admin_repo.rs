@@ -1,7 +1,7 @@
-use sqlx::{SqlitePool, Row};
-use ulid::Ulid;
 use crate::domain::ai_admin::{AiAction, UndoRecord};
 use crate::errors::{AppError, AppResult};
+use sqlx::{Row, SqlitePool};
+use ulid::Ulid;
 
 // ── App config ─────────────────────────────────────────────────────────────────
 
@@ -17,7 +17,7 @@ pub async fn set_config(pool: &SqlitePool, key: &str, value: &str) -> AppResult<
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
         "INSERT INTO app_config (key, value, updated_at) VALUES (?, ?, ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
     )
     .bind(key)
     .bind(value)
@@ -46,8 +46,8 @@ pub async fn create_action(
     sqlx::query(
         "INSERT INTO ai_actions
          (action_id, session_user_id, tool_name, tool_input_json, tool_input_hash,
-          preview_text, status, confirmation_token, prepared_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'prepared', ?, ?, ?)"
+          preview_text, status, confirmation_token, prepared_at, expires_at, actor_type)
+         VALUES (?, ?, ?, ?, ?, ?, 'prepared', ?, ?, ?, 'ai')",
     )
     .bind(&action_id)
     .bind(session_user_id)
@@ -61,7 +61,8 @@ pub async fn create_action(
     .execute(pool)
     .await?;
 
-    get_action(pool, &action_id).await?
+    get_action(pool, &action_id)
+        .await?
         .ok_or_else(|| AppError::Internal("Action not found after insert".into()))
 }
 
@@ -70,7 +71,7 @@ pub async fn get_action(pool: &SqlitePool, action_id: &str) -> AppResult<Option<
         "SELECT action_id, session_user_id, tool_name, tool_input_json, tool_input_hash,
                 preview_text, status, confirmation_token, prepared_at, confirmed_at,
                 executed_at, expires_at, result_json, error_message
-         FROM ai_actions WHERE action_id = ?"
+         FROM ai_actions WHERE action_id = ?",
     )
     .bind(action_id)
     .fetch_optional(pool)
@@ -94,15 +95,11 @@ pub async fn get_action(pool: &SqlitePool, action_id: &str) -> AppResult<Option<
     }))
 }
 
-pub async fn mark_executed(
-    pool: &SqlitePool,
-    action_id: &str,
-    result_json: &str,
-) -> AppResult<()> {
+pub async fn mark_executed(pool: &SqlitePool, action_id: &str, result_json: &str) -> AppResult<()> {
     let now = chrono::Utc::now().to_rfc3339();
     let rows = sqlx::query(
         "UPDATE ai_actions SET status = 'executed', executed_at = ?, result_json = ?
-         WHERE action_id = ? AND status = 'prepared'"
+         WHERE action_id = ? AND status = 'prepared'",
     )
     .bind(&now)
     .bind(result_json)
@@ -111,23 +108,27 @@ pub async fn mark_executed(
     .await?;
 
     if rows.rows_affected() == 0 {
-        return Err(AppError::Conflict("Action is not in prepared state or already executed".into()));
+        return Err(AppError::Conflict(
+            "Action is not in prepared state or already executed".into(),
+        ));
     }
     Ok(())
 }
 
 pub async fn mark_cancelled(pool: &SqlitePool, action_id: &str) -> AppResult<()> {
-    sqlx::query("UPDATE ai_actions SET status = 'cancelled' WHERE action_id = ? AND status = 'prepared'")
-        .bind(action_id)
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "UPDATE ai_actions SET status = 'cancelled' WHERE action_id = ? AND status = 'prepared'",
+    )
+    .bind(action_id)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
 pub async fn expire_old_actions(pool: &SqlitePool) -> AppResult<()> {
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
-        "UPDATE ai_actions SET status = 'expired' WHERE status = 'prepared' AND expires_at < ?"
+        "UPDATE ai_actions SET status = 'expired' WHERE status = 'prepared' AND expires_at < ?",
     )
     .bind(&now)
     .execute(pool)
@@ -153,7 +154,7 @@ pub async fn create_undo_record(
         "INSERT INTO undo_records
          (undo_id, action_id, entity_type, entity_id, snapshot_json,
           rollback_tool, rollback_input_json, status, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'available', ?)"
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'available', ?)",
     )
     .bind(&undo_id)
     .bind(action_id)
@@ -166,7 +167,8 @@ pub async fn create_undo_record(
     .execute(pool)
     .await?;
 
-    get_undo_record(pool, &undo_id).await?
+    get_undo_record(pool, &undo_id)
+        .await?
         .ok_or_else(|| AppError::Internal("Undo record not found after insert".into()))
 }
 
@@ -174,7 +176,7 @@ pub async fn get_undo_record(pool: &SqlitePool, undo_id: &str) -> AppResult<Opti
     let row = sqlx::query(
         "SELECT undo_id, action_id, entity_type, entity_id, snapshot_json,
                 rollback_tool, rollback_input_json, status, created_at, undone_at, undone_by_user_id
-         FROM undo_records WHERE undo_id = ?"
+         FROM undo_records WHERE undo_id = ?",
     )
     .bind(undo_id)
     .fetch_optional(pool)
@@ -199,7 +201,7 @@ pub async fn mark_undone(pool: &SqlitePool, undo_id: &str, user_id: &str) -> App
     let now = chrono::Utc::now().to_rfc3339();
     let rows = sqlx::query(
         "UPDATE undo_records SET status = 'undone', undone_at = ?, undone_by_user_id = ?
-         WHERE undo_id = ? AND status = 'available'"
+         WHERE undo_id = ? AND status = 'available'",
     )
     .bind(&now)
     .bind(user_id)
@@ -208,7 +210,9 @@ pub async fn mark_undone(pool: &SqlitePool, undo_id: &str, user_id: &str) -> App
     .await?;
 
     if rows.rows_affected() == 0 {
-        return Err(AppError::Conflict("Undo record is not available or already used".into()));
+        return Err(AppError::Conflict(
+            "Undo record is not available or already used".into(),
+        ));
     }
     Ok(())
 }

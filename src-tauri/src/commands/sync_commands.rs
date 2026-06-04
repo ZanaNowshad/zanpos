@@ -1,3 +1,4 @@
+use crate::commands::rbac;
 use crate::db::repositories::{ai_admin_repo, sync_repo};
 use crate::errors::{AppError, AppResult};
 use crate::sync::central_schema::CENTRAL_SCHEMA_SQL;
@@ -52,6 +53,59 @@ pub async fn sync_trigger_now(state: State<'_, AppState>) -> Result<String, AppE
     }
 }
 
+// ── sync_force_full_resync ────────────────────────────────────────────────────
+
+/// Recovery action: re-enqueue this device's ENTIRE catalog (branch, users,
+/// products, categories, tax rules, prices, device) to the outbox, clear any
+/// exhausted/failed queue rows, reset the one-time bootstrap guard, and push
+/// immediately. Use this when a terminal's data never reached the cloud (e.g. the
+/// schema was added after setup, or the key was briefly unreadable) so the outbox
+/// looks "done" but the cloud is empty. Idempotent — the central RPC dedups by
+/// idempotency key, so re-running it is always safe.
+#[tauri::command]
+pub async fn sync_force_full_resync(
+    state: State<'_, AppState>,
+    actor_user_id: String,
+) -> Result<String, AppError> {
+    crate::commands::rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+
+    // Clear failed/exhausted rows so they don't shadow the fresh enqueue, and let
+    // the bootstrap self-heal run again.
+    let _ = sqlx::query("DELETE FROM sync_queue WHERE status IN ('failed', 'conflict')")
+        .execute(&state.db)
+        .await;
+    let _ = sqlx::query(
+        "UPDATE app_config SET value = '0' WHERE key IN ('sync_bootstrap_v1','sync_bootstrap_v2','sync_bootstrap_v3')",
+    )
+    .execute(&state.db)
+    .await;
+
+    // Re-enqueue the full catalog (branch is pushed via upsert_branch on next cycle;
+    // everything else via the outbox → apply_sync_event RPC).
+    crate::sync::outbox::enqueue_full_catalog(&state.db).await?;
+
+    // Push + pull immediately.
+    state.sync_worker.run_once().await;
+
+    let queued: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sync_queue WHERE status IN ('pending','failed')")
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0);
+    let worker_state = state.sync_worker.state.lock().await;
+    if worker_state.online {
+        Ok(format!(
+            "Full re-sync started. Catalog re-queued and pushing now ({queued} events remaining)."
+        ))
+    } else if let Some(ref e) = worker_state.last_error {
+        Ok(format!(
+            "Re-sync queued {queued} events but the push reported: {e}"
+        ))
+    } else {
+        Ok(format!("Re-sync queued {queued} events."))
+    }
+}
+
 // ── admin_setup_supabase ──────────────────────────────────────────────────────
 
 /// Called from the setup wizard. Validates credentials, runs the central schema
@@ -100,12 +154,41 @@ pub async fn admin_setup_supabase(
 
     // Step 3: Persist config (PAT is intentionally NOT stored)
     ai_admin_repo::set_config(&state.db, "supabase_url", &url).await?;
-    // Try OS credential store first; always fall back to DB so the key is
-    // never silently lost when keyring returns false on some Windows setups.
-    crate::secure_store::set_secret("supabase_service_key", &service_key);
-    ai_admin_repo::set_config(&state.db, "supabase_service_key", &service_key).await?;
+    // Write service key to OS credential store. If it fails, keep the plaintext
+    // fallback — never clear the only readable copy (prevents silent sync death).
+    if crate::secure_store::set_secret("supabase_service_key", &service_key) {
+        let _ = ai_admin_repo::set_config(&state.db, "supabase_service_key", "").await;
+    } else {
+        tracing::error!("CRITICAL: Failed to write service key to OS credential store. Keeping plaintext fallback to prevent sync death.");
+    }
+
+    // Record that the central schema has been migrated — this flag is checked by
+    // setup_wizard_complete to prevent New-Store from completing without schema.
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO app_config(key, value, updated_at) VALUES ('schema_migrated','1',?)
+         ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at",
+    )
+    .bind(&now)
+    .execute(&state.db)
+    .await
+    .ok();
 
     tracing::info!("Supabase configured: {url}");
+
+    // CRITICAL (multi-terminal): enqueue the FULL current catalog — products,
+    // categories, tax rules, the real owner + all users, prices, customers, and this
+    // device — at the moment Supabase is first configured. The old boot-time
+    // bootstrap ran before setup/Supabase existed and marked itself done, so the
+    // outbox would otherwise be empty here and a joining terminal would see no users
+    // and no devices. Then push immediately rather than waiting for the 30s tick.
+    let _ = crate::sync::outbox::enqueue_full_catalog(&state.db).await;
+    // Non-blocking: the UI must not block on network calls (offline-first principle).
+    let worker = state.sync_worker.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = worker.run_once().await;
+    });
+
     Ok(())
 }
 
@@ -117,9 +200,11 @@ pub async fn admin_setup_supabase(
 #[tauri::command]
 pub async fn admin_setup_supabase_creds_only(
     state: State<'_, AppState>,
+    actor_user_id: String,
     url: String,
     service_key: String,
 ) -> Result<(), AppError> {
+    rbac::owner_only(&state.db, &actor_user_id).await?;
     let url = url.trim().trim_end_matches('/').to_string();
     if url.is_empty() {
         return Err(AppError::Validation("Supabase URL is required".into()));
@@ -137,10 +222,23 @@ pub async fn admin_setup_supabase_creds_only(
     })?;
 
     ai_admin_repo::set_config(&state.db, "supabase_url", &url).await?;
-    crate::secure_store::set_secret("supabase_service_key", &service_key);
-    ai_admin_repo::set_config(&state.db, "supabase_service_key", &service_key).await?;
+    if crate::secure_store::set_secret("supabase_service_key", &service_key) {
+        let _ = ai_admin_repo::set_config(&state.db, "supabase_service_key", "").await;
+    } else {
+        tracing::error!("CRITICAL: Failed to write service key to OS credential store. Keeping plaintext fallback to prevent sync death.");
+    }
 
     tracing::info!("Supabase credentials stored (no schema migration): {url}");
+
+    // Multi-terminal: enqueue full catalog + sync now so a joining terminal sees
+    // users/devices even when the schema migration step was skipped.
+    let _ = crate::sync::outbox::enqueue_full_catalog(&state.db).await;
+    // Non-blocking: the UI must not block on network calls (offline-first principle).
+    let worker = state.sync_worker.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = worker.run_once().await;
+    });
+
     Ok(())
 }
 
@@ -193,10 +291,15 @@ pub async fn sync_queue_list(state: State<'_, AppState>) -> Result<Vec<SyncQueue
 #[tauri::command]
 pub async fn sync_queue_retry(
     sync_event_id: String,
+    actor_user_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    // Reset attempt_count too — otherwise an event that already hit MAX_ATTEMPTS
+    // stays excluded by the worker's `attempt_count < MAX_ATTEMPTS` push filter and
+    // "Retry" silently does nothing. Clearing it gives the event a fresh 10 attempts.
     let rows_affected = sqlx::query(
-        "UPDATE sync_queue SET status = 'pending', last_error = NULL
+        "UPDATE sync_queue SET status = 'pending', last_error = NULL, attempt_count = 0
          WHERE sync_event_id = ? AND status IN ('failed', 'conflict')",
     )
     .bind(&sync_event_id)
@@ -217,8 +320,10 @@ pub async fn sync_queue_retry(
 #[tauri::command]
 pub async fn sync_queue_dismiss(
     sync_event_id: String,
+    actor_user_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let rows_affected = sqlx::query("DELETE FROM sync_queue WHERE sync_event_id = ?")
         .bind(&sync_event_id)
         .execute(&state.db)
@@ -238,6 +343,10 @@ pub async fn sync_queue_dismiss(
 #[derive(Serialize)]
 pub struct SupabaseStatus {
     pub configured: bool,
+    /// Public Supabase project URL, safe to surface in the UI for pre-filling
+    /// the "change connection" form. The service role key is NEVER returned —
+    /// it lives only in the OS credential store.
+    pub url: String,
 }
 
 #[tauri::command]
@@ -262,5 +371,6 @@ pub async fn admin_get_supabase_status(
     };
     Ok(SupabaseStatus {
         configured: !url.is_empty() && !key.is_empty(),
+        url,
     })
 }

@@ -334,7 +334,11 @@ pub async fn setup_wizard_complete(
         // The old boot-time bootstrap ran before the wizard existed, so without this a
         // second terminal would find no users to log in with and never see this device.
         let _ = outbox::enqueue_full_catalog(&state.db).await;
-        state.sync_worker.run_once().await;
+        // Non-blocking: the UI must not block on network calls (offline-first principle).
+        let worker = state.sync_worker.clone();
+        tauri::async_runtime::spawn(async move {
+            let _ = worker.run_once().await;
+        });
     } else {
         // Record grace deadline: now + 7 days
         let deadline = (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339();
@@ -604,8 +608,16 @@ pub async fn setup_join_store(
             .await?;
 
     // Remove any seed device and insert this terminal's record
-    sqlx::query("DELETE FROM devices WHERE device_code = '01JDEVICE0000000000000001' OR device_code = 'POS01'")
-        .execute(&state.db).await.ok();
+    // Only delete inactive seed devices to avoid accidentally removing an active
+    // device whose code happens to match one of the hardcoded seed values (M-18).
+    sqlx::query(
+        "DELETE FROM devices WHERE device_id IN (
+           SELECT device_id FROM devices
+           WHERE is_active = 0 AND device_code IN ('POS01', '01JDEVICE0000000000000001')
+         )"
+    )
+    .execute(&state.db)
+    .await?;
     sqlx::query(
         "INSERT OR REPLACE INTO devices (device_id, branch_id, device_code, name, status, is_active)
          VALUES (?,?,?,?,'online',1)"
@@ -675,9 +687,13 @@ pub async fn setup_join_store(
     ).await;
 
     // Trigger initial sync: push the device event + pull the full catalog from Supabase.
-    // This runs synchronously so the user's setup screen completes only after the
-    // first pull has already applied POS 1's products/categories/settings locally.
-    state.sync_worker.run_once().await;
+    // Non-blocking: the UI must not block on network calls (offline-first principle).
+    // The sync will complete in the background and the first pull will apply
+    // POS 1's products/categories/settings when connectivity is available.
+    let worker = state.sync_worker.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = worker.run_once().await;
+    });
 
     app_config_load(state).await
 }

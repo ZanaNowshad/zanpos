@@ -115,6 +115,7 @@ pub async fn pos_add_item_by_barcode(
         Some(p) => p,
         None => {
             // Record unknown barcode for ghost resolution workflow
+            // best-effort: record unknown barcode for admin resolution
             let _ = crate::commands::ghost_barcode_commands::ghost_record(
                 input.barcode.clone(),
                 input.cart.cashier_user_id.clone(),
@@ -392,14 +393,16 @@ pub async fn pos_finalize_sale(
                 crate::commands::thermal_commands::build_receipt_bytes(&store_name, &lines);
             let baud: u32 = baud_str.parse().unwrap_or(9600);
             let port_clone = port.clone();
-            let _ = tokio::task::spawn_blocking(move || {
-                crate::commands::thermal_commands::write_to_port(
+            // Fire-and-forget: don't block the sale response on print completion
+            tokio::task::spawn_blocking(move || {
+                if let Err(e) = crate::commands::thermal_commands::write_to_port(
                     &port_clone,
                     baud,
                     payload,
-                )
-            })
-            .await;
+                ) {
+                    tracing::warn!("Auto-print failed: {}", e);
+                }
+            });
         }
     }
 

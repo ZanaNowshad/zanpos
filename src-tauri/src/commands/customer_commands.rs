@@ -118,17 +118,22 @@ pub async fn customer_create(
     let branch_id = active_branch_id(&state).await?;
     let customer_id = Ulid::new().to_string();
     let now = chrono::Utc::now().to_rfc3339();
+    let device_id: String =
+        sqlx::query_scalar("SELECT device_id FROM devices WHERE is_active=1 ORDER BY device_code LIMIT 1")
+            .fetch_optional(&state.db).await?.flatten().unwrap_or_default();
 
     sqlx::query(
         "INSERT INTO customers
-           (customer_id, branch_id, name, phone, email, loyalty_points, created_at, notes)
-         VALUES (?,?,?,?,?,0,?,?)",
+           (customer_id, branch_id, origin_device_id, name, phone, email, loyalty_points, created_at, updated_at, notes)
+         VALUES (?,?,?,?,?,?,0,?,?,?)",
     )
     .bind(&customer_id)
     .bind(&branch_id)
+    .bind(&device_id)
     .bind(input.name.trim())
     .bind(input.phone.as_deref().filter(|s| !s.is_empty()))
     .bind(input.email.as_deref().filter(|s| !s.is_empty()))
+    .bind(&now)
     .bind(&now)
     .bind(input.notes.as_deref().filter(|s| !s.is_empty()))
     .execute(&state.db)
@@ -143,9 +148,6 @@ pub async fn customer_create(
     .await?;
 
     // Enqueue for sync — best-effort, don't fail the create if sync write fails.
-    let device_id: String =
-        sqlx::query_scalar("SELECT device_id FROM devices WHERE is_active=1 ORDER BY device_code LIMIT 1")
-            .fetch_optional(&state.db).await?.flatten().unwrap_or_default();
     let _ = outbox::enqueue_customer(
         &state.db, &device_id, &branch_id,
         &customer_id,
@@ -154,6 +156,7 @@ pub async fn customer_create(
         input.email.as_deref().filter(|s| !s.is_empty()),
         0,
         input.notes.as_deref().filter(|s| !s.is_empty()),
+        &now,
         &now,
     ).await;
 
@@ -182,15 +185,17 @@ pub async fn customer_update(
         return Err(AppError::Validation("Customer name is required".into()));
     }
 
+    let now = chrono::Utc::now().to_rfc3339();
     let affected = sqlx::query(
         "UPDATE customers
-         SET name=?, phone=?, email=?, notes=?
+         SET name=?, phone=?, email=?, notes=?, updated_at=?
          WHERE customer_id=?",
     )
     .bind(input.name.trim())
     .bind(input.phone.as_deref().filter(|s| !s.is_empty()))
     .bind(input.email.as_deref().filter(|s| !s.is_empty()))
     .bind(input.notes.as_deref().filter(|s| !s.is_empty()))
+    .bind(&now)
     .bind(&input.customer_id)
     .execute(&state.db)
     .await?
@@ -226,6 +231,7 @@ pub async fn customer_update(
         customer.loyalty_points,
         customer.notes.as_deref(),
         &customer.created_at,
+        &now,
     ).await;
 
     Ok(customer)
@@ -264,17 +270,40 @@ pub async fn customer_add_loyalty(
         return Err(AppError::Validation("Points delta must be non-zero".into()));
     }
 
-    sqlx::query("UPDATE customers SET loyalty_points = loyalty_points + ? WHERE customer_id = ?")
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query("UPDATE customers SET loyalty_points = loyalty_points + ?, updated_at = ? WHERE customer_id = ?")
         .bind(points)
+        .bind(&now)
         .bind(&customer_id)
         .execute(&state.db)
         .await?;
 
-    let new_total: i64 =
-        sqlx::query_scalar("SELECT loyalty_points FROM customers WHERE customer_id = ?")
-            .bind(&customer_id)
-            .fetch_one(&state.db)
-            .await?;
+    let row = sqlx::query(
+        "SELECT customer_id, branch_id, name, phone, email, loyalty_points, created_at, notes
+         FROM customers WHERE customer_id = ?",
+    )
+    .bind(&customer_id)
+    .fetch_one(&state.db)
+    .await?;
+
+    let customer = map_row(&row);
+    let new_total = customer.loyalty_points;
+
+    // Enqueue updated customer for sync.
+    let device_id: String =
+        sqlx::query_scalar("SELECT device_id FROM devices WHERE is_active=1 ORDER BY device_code LIMIT 1")
+            .fetch_optional(&state.db).await?.flatten().unwrap_or_default();
+    let _ = outbox::enqueue_customer(
+        &state.db, &device_id, &customer.branch_id,
+        &customer.customer_id,
+        &customer.name,
+        customer.phone.as_deref(),
+        customer.email.as_deref(),
+        customer.loyalty_points,
+        customer.notes.as_deref(),
+        &customer.created_at,
+        &now,
+    ).await;
 
     Ok(new_total)
 }

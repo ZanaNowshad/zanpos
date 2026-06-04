@@ -131,7 +131,7 @@ pub fn run() {
 
                     // Enqueue all existing customers
                     if let Ok(rows) = sqlx::query(
-                        "SELECT customer_id, name, phone, email, loyalty_points, created_at, notes
+                        "SELECT customer_id, name, phone, email, loyalty_points, created_at, updated_at, notes
                          FROM customers WHERE branch_id = ?",
                     )
                     .bind(&branch_id)
@@ -151,6 +151,7 @@ pub fn run() {
                                 r.get::<i64, _>("loyalty_points"),
                                 r.get("notes"),
                                 r.get("created_at"),
+                                r.get("updated_at"),
                             )
                             .await;
                         }

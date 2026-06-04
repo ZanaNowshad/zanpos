@@ -1395,8 +1395,8 @@ pub async fn enqueue_customer(
     loyalty_points: i64,
     notes: Option<&str>,
     created_at: &str,
+    updated_at: &str,
 ) -> AppResult<()> {
-    let now = chrono::Utc::now().to_rfc3339();
     let payload = serde_json::json!({
         "customer_id":    customer_id,
         "branch_id":      branch_id,
@@ -1407,9 +1407,9 @@ pub async fn enqueue_customer(
         "loyalty_points": loyalty_points,
         "notes":          notes,
         "created_at":     created_at,
-        "updated_at":     now,
+        "updated_at":     updated_at,
     });
-    enqueue_raw(pool, device_id, branch_id, "customer", customer_id, "upsert", payload, &now)
+    enqueue_raw(pool, device_id, branch_id, "customer", customer_id, "upsert", payload, updated_at)
         .await?;
     Ok(())
 }
@@ -1425,8 +1425,8 @@ pub async fn enqueue_customer_in_tx(
     loyalty_points: i64,
     notes: Option<&str>,
     created_at: &str,
+    updated_at: &str,
 ) -> AppResult<()> {
-    let now = chrono::Utc::now().to_rfc3339();
     let payload = serde_json::json!({
         "customer_id":    customer_id,
         "branch_id":      branch_id,
@@ -1437,9 +1437,9 @@ pub async fn enqueue_customer_in_tx(
         "loyalty_points": loyalty_points,
         "notes":          notes,
         "created_at":     created_at,
-        "updated_at":     now,
+        "updated_at":     updated_at,
     });
-    enqueue_raw_in_tx(tx, device_id, branch_id, "customer", customer_id, "upsert", payload, &now)
+    enqueue_raw_in_tx(tx, device_id, branch_id, "customer", customer_id, "upsert", payload, updated_at)
         .await?;
     Ok(())
 }
@@ -1708,7 +1708,7 @@ pub async fn enqueue_full_catalog(pool: &SqlitePool) -> AppResult<()> {
 
     // ── Customers ──
     if let Ok(rows) = sqlx::query(
-        "SELECT customer_id, name, phone, email, loyalty_points, notes, created_at FROM customers WHERE branch_id = ?",
+        "SELECT customer_id, name, phone, email, loyalty_points, notes, created_at, updated_at FROM customers WHERE branch_id = ?",
     ).bind(&branch_id).fetch_all(pool).await {
         for r in &rows {
             let _ = enqueue_customer(
@@ -1717,6 +1717,7 @@ pub async fn enqueue_full_catalog(pool: &SqlitePool) -> AppResult<()> {
                 r.get("phone"), r.get("email"),
                 r.get::<i64, _>("loyalty_points"),
                 r.get("notes"), r.get("created_at"),
+                r.get("updated_at"),
             ).await;
         }
         tracing::info!("enqueue_full_catalog: {} customers", rows.len());

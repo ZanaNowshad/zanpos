@@ -1,6 +1,6 @@
-use sqlx::{SqlitePool, Row};
 use crate::domain::product::{Product, ProductWithPrice};
 use crate::errors::AppResult;
+use sqlx::{Row, SqlitePool};
 
 const PRODUCT_QUERY: &str = r#"
     SELECT
@@ -21,6 +21,7 @@ const PRODUCT_QUERY: &str = r#"
         p.updated_at,
         p.reorder_point,
         p.image_path,
+        p.default_supplier_id,
         c.name AS category_name,
         COALESCE(pp.price_minor, 0) AS price_minor,
         COALESCE(t.rate_basis_points, 0) AS tax_rate_basis_points,
@@ -31,10 +32,10 @@ const PRODUCT_QUERY: &str = r#"
     LEFT JOIN product_prices pp ON pp.product_id = p.product_id
         AND pp.branch_id IS NULL
         AND pp.price_type = 'selling'
-        AND pp.effective_from <= datetime('now')
-        AND (pp.effective_to IS NULL OR pp.effective_to > datetime('now'))
+        AND datetime(pp.effective_from) <= datetime('now')
+        AND (pp.effective_to IS NULL OR datetime(pp.effective_to) > datetime('now'))
     LEFT JOIN tax_rules t ON t.tax_rule_id = p.tax_rule_id AND t.is_active = 1
-    LEFT JOIN stock_levels sl ON sl.product_id = p.product_id
+    LEFT JOIN (SELECT product_id, quantity_on_hand FROM stock_levels WHERE branch_id = (SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1)) sl ON sl.product_id = p.product_id
     WHERE p.is_active = 1
 "#;
 
@@ -62,6 +63,7 @@ fn row_to_product(row: &sqlx::sqlite::SqliteRow) -> ProductWithPrice {
             updated_at: row.try_get("updated_at").unwrap_or_default(),
             reorder_point: row.try_get("reorder_point").unwrap_or(0),
             image_path: row.try_get("image_path").unwrap_or(None),
+            default_supplier_id: row.try_get("default_supplier_id").unwrap_or(None),
         },
         price_minor: row.get("price_minor"),
         tax_rate_basis_points: row.get("tax_rate_basis_points"),
@@ -71,10 +73,20 @@ fn row_to_product(row: &sqlx::sqlite::SqliteRow) -> ProductWithPrice {
     }
 }
 
-pub async fn search_products(pool: &SqlitePool, query: &str, limit: i64) -> AppResult<Vec<ProductWithPrice>> {
-    let pattern = format!("%{}%", query.to_lowercase());
+pub async fn search_products(
+    pool: &SqlitePool,
+    query: &str,
+    limit: i64,
+) -> AppResult<Vec<ProductWithPrice>> {
+    // SQLite LIKE is case-insensitive for ASCII — no need for lower() wrapping.
+    // Removing lower() allows the idx_products_name index to be used directly.
+    let escaped = query
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("%{}%", escaped);
     let sql = format!(
-        "{} AND (lower(p.name) LIKE ? OR lower(p.sku) LIKE ? OR lower(p.barcode) LIKE ?) ORDER BY p.name LIMIT ?",
+        "{} AND (p.name LIKE ? ESCAPE '\\' OR p.sku LIKE ? ESCAPE '\\' OR p.barcode LIKE ? ESCAPE '\\') ORDER BY p.name LIMIT ?",
         PRODUCT_QUERY
     );
     let rows = sqlx::query(&sql)
@@ -88,7 +100,10 @@ pub async fn search_products(pool: &SqlitePool, query: &str, limit: i64) -> AppR
     Ok(rows.iter().map(row_to_product).collect())
 }
 
-pub async fn get_product_by_barcode(pool: &SqlitePool, barcode: &str) -> AppResult<Option<ProductWithPrice>> {
+pub async fn get_product_by_barcode(
+    pool: &SqlitePool,
+    barcode: &str,
+) -> AppResult<Option<ProductWithPrice>> {
     let sql = format!(
         "{} AND (p.barcode = ? OR p.product_id IN (SELECT product_id FROM product_barcodes WHERE barcode = ?)) LIMIT 1",
         PRODUCT_QUERY
@@ -102,7 +117,10 @@ pub async fn get_product_by_barcode(pool: &SqlitePool, barcode: &str) -> AppResu
     Ok(row.as_ref().map(row_to_product))
 }
 
-pub async fn get_product_by_id(pool: &SqlitePool, product_id: &str) -> AppResult<Option<ProductWithPrice>> {
+pub async fn get_product_by_id(
+    pool: &SqlitePool,
+    product_id: &str,
+) -> AppResult<Option<ProductWithPrice>> {
     let sql = format!("{} AND p.product_id = ?", PRODUCT_QUERY);
     let row = sqlx::query(&sql)
         .bind(product_id)

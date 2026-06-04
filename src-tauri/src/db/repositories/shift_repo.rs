@@ -322,13 +322,20 @@ pub async fn close_shift(
     // Previously only opening + cash_sales was computed here — that was incorrect.
     // Only deduct refunds where the original sale had a cash payment component.
     // Card/wallet refunds do not reduce the physical cash drawer balance.
+    // Unpaid deliveries are excluded from expected cash — the physical cash drawer
+    // does not contain cash that hasn't been collected yet, matching drawer_summary_inner.
     let expected: Option<i64> = sqlx::query_scalar(
         "SELECT s.opening_cash_minor
               + COALESCE((SELECT SUM(p.amount_minor)
                           FROM payments p
                           JOIN sales sa ON sa.sale_id = p.sale_id
                           WHERE sa.shift_id = ? AND p.payment_method = 'cash'
-                            AND sa.status != 'voided'), 0)
+                            AND sa.status != 'voided'
+                            AND (sa.is_delivery = 0 OR EXISTS (
+                                SELECT 1 FROM delivery_orders d
+                                WHERE d.sale_id = sa.sale_id AND d.payment_status = 'paid'
+                            ))
+                         ), 0)
               - COALESCE((SELECT SUM(r.refund_total_minor)
                           FROM refunds r
                           JOIN sales sa ON sa.sale_id = r.original_sale_id

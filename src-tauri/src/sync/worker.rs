@@ -418,7 +418,7 @@ impl SyncWorker {
                     // R-05: Stop on first TRANSIENT error (network/5xx/429) — the
                     // remaining queue retries next cycle. Permanent errors (4xx,
                     // bad payload) fall through so one poison row can't block the batch.
-                    if e.to_string().contains(crate::sync::supabase_client::TRANSIENT_TAG.trim()) {
+                    if e.to_string().contains(crate::sync::supabase_client::TRANSIENT_TAG) {
                         return Err(e);
                     }
                 }

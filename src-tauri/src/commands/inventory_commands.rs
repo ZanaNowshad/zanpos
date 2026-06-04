@@ -1,16 +1,20 @@
+use crate::commands::rbac;
+use crate::db::repositories::audit_hash;
+use crate::errors::{AppError, AppResult};
+use crate::inventory::stock_repo::{self, StockLevel, StockLevelPage, StockMovementRow};
+use crate::sync::outbox;
+use crate::AppState;
+use rust_decimal::Decimal;
+use sqlx::Row;
+use std::str::FromStr;
 use tauri::State;
 use ulid::Ulid;
-use sqlx::Row;
-use crate::errors::{AppError, AppResult};
-use crate::inventory::stock_repo::{self, StockLevel, StockMovementRow};
-use crate::commands::rbac;
-use crate::AppState;
 
 /// Resolve the active branch_id from the database at runtime.
 /// Replaces the old compile-time constant so multi-branch or post-wizard IDs work.
 async fn active_branch_id(state: &AppState) -> AppResult<String> {
     let row = sqlx::query(
-        "SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1"
+        "SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1",
     )
     .fetch_optional(&state.db)
     .await?
@@ -21,7 +25,7 @@ async fn active_branch_id(state: &AppState) -> AppResult<String> {
 /// Resolve the active device_id from the database at runtime.
 async fn active_device_id(state: &AppState) -> AppResult<String> {
     let row = sqlx::query(
-        "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1"
+        "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1",
     )
     .fetch_optional(&state.db)
     .await?
@@ -29,13 +33,37 @@ async fn active_device_id(state: &AppState) -> AppResult<String> {
     Ok(row.get("device_id"))
 }
 
+// ── Decimal quantity helper (H9/H10) ─────────────────────────────────────────────
+
+/// Parse a decimal quantity string, rejecting non-numeric input.
+/// Uses `rust_decimal::Decimal` for exact base-10 arithmetic — no float
+/// contamination.
+fn parse_qty(s: &str) -> AppResult<Decimal> {
+    Decimal::from_str(s.trim())
+        .map_err(|_| AppError::Validation(format!("Invalid quantity: {}", s)))
+}
+
 // ── inventory_get_levels ──────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn inventory_get_levels(
+pub async fn inventory_get_levels(state: State<'_, AppState>) -> Result<Vec<StockLevel>, AppError> {
+    let branch_id = active_branch_id(&state).await?;
+    stock_repo::get_all_levels(&state.db, &branch_id).await
+}
+
+// ── inventory_get_levels_paged ────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn inventory_get_levels_paged(
+    search: Option<String>,
+    offset: Option<i64>,
+    limit: Option<i64>,
     state: State<'_, AppState>,
-) -> Result<Vec<StockLevel>, AppError> {
-    stock_repo::get_all_levels(&state.db).await
+) -> Result<StockLevelPage, AppError> {
+    let branch_id = active_branch_id(&state).await?;
+    let limit = limit.unwrap_or(100).min(500);
+    let offset = offset.unwrap_or(0).max(0);
+    stock_repo::get_levels_paged(&state.db, &branch_id, search.as_deref(), offset, limit).await
 }
 
 // ── inventory_get_low_stock ───────────────────────────────────────────────────
@@ -44,14 +72,15 @@ pub async fn inventory_get_levels(
 pub async fn inventory_get_low_stock(
     state: State<'_, AppState>,
 ) -> Result<Vec<StockLevel>, AppError> {
-    stock_repo::get_low_stock(&state.db).await
+    let branch_id = active_branch_id(&state).await?;
+    stock_repo::get_low_stock(&state.db, &branch_id).await
 }
 
 // ── inventory_get_movements ───────────────────────────────────────────────────
 
 #[tauri::command]
 pub async fn inventory_get_movements(
-    state:      State<'_, AppState>,
+    state: State<'_, AppState>,
     product_id: String,
 ) -> Result<Vec<StockMovementRow>, AppError> {
     stock_repo::get_movements(&state.db, &product_id).await
@@ -61,75 +90,138 @@ pub async fn inventory_get_movements(
 
 #[derive(serde::Deserialize)]
 pub struct ReceiveStockInput {
-    pub product_id:          String,
-    pub quantity:            String,   // decimal string
-    pub notes:               Option<String>,
+    pub product_id: String,
+    pub quantity: String, // decimal string
+    pub notes: Option<String>,
     pub received_by_user_id: String,
 }
 
+/// C-2 fix: read-modify-write is wrapped in a transaction to prevent races.
+/// H-9/H-10 fix: quantity arithmetic uses exact Decimal, not f64/CAST AS REAL.
+/// H-29 fix: audit log entry is written after commit.
+/// M-6 fix: reference_type and movement_type are 'receive' (not 'manual_receive').
 #[tauri::command]
 pub async fn inventory_receive_stock(
     input: ReceiveStockInput,
     state: State<'_, AppState>,
 ) -> Result<StockLevel, AppError> {
     rbac::manager_or_owner(&state.db, &input.received_by_user_id).await?;
-    let qty: f64 = input.quantity.parse()
-        .map_err(|_| AppError::Validation("Invalid quantity".into()))?;
-    if qty <= 0.0 {
+
+    // Parse and validate quantity
+    let qty = parse_qty(&input.quantity)?;
+    if qty <= Decimal::ZERO {
         return Err(AppError::Validation("Quantity must be positive".into()));
     }
 
     let branch_id = active_branch_id(&state).await?;
     let device_id = active_device_id(&state).await?;
     let now = chrono::Utc::now().to_rfc3339();
+    let stock_level_id = format!("SL-{}-{}", input.product_id, branch_id);
 
-    // Upsert stock_levels
+    // Build audit snapshots *before* entering the transaction so we capture
+    // the pre-mutation state.
+    let old_qty_read: Option<String> = sqlx::query_scalar(
+        "SELECT quantity_on_hand FROM stock_levels WHERE product_id = ? AND branch_id = ?",
+    )
+    .bind(&input.product_id)
+    .bind(&branch_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let old_qty_str = old_qty_read.as_deref().unwrap_or("0");
+    let before_json =
+        serde_json::json!({"quantity_on_hand": old_qty_str}).to_string();
+
+    // ── Transaction: read old qty → compute new → upsert → movement → outbox ──
+    let mut tx = state.db.begin().await?;
+
+    // Re-read inside tx for correctness (the snapshot above is for audit only)
+    let old_qty_in_tx: Option<String> = sqlx::query_scalar(
+        "SELECT quantity_on_hand FROM stock_levels WHERE product_id = ? AND branch_id = ?",
+    )
+    .bind(&input.product_id)
+    .bind(&branch_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let old_qty = old_qty_in_tx
+        .as_deref()
+        .unwrap_or("0");
+    let old_qty_dec = Decimal::from_str(old_qty).unwrap_or(Decimal::ZERO);
+
+    // Exact Decimal arithmetic — no CAST AS REAL (H-9/H-10)
+    let new_qty_dec = old_qty_dec + qty;
+    let new_qty_str = new_qty_dec.to_string();
+    let delta_str = qty.to_string();
+
+    // Upsert stock_levels with the computed string (include PK so ON CONFLICT fires)
     sqlx::query(
-        "INSERT INTO stock_levels (product_id, branch_id, quantity_on_hand, updated_at)
-         VALUES (?, ?, ?, ?)
+        "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at)
+         VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(product_id, branch_id) DO UPDATE SET
-           quantity_on_hand = CAST(CAST(quantity_on_hand AS REAL) + ? AS TEXT),
-           updated_at = excluded.updated_at"
+           quantity_on_hand = excluded.quantity_on_hand,
+           updated_at = excluded.updated_at",
     )
+    .bind(&stock_level_id)
     .bind(&input.product_id)
     .bind(&branch_id)
-    .bind(&input.quantity)
+    .bind(&new_qty_str)
     .bind(&now)
-    .bind(&input.quantity)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
 
-    // Get new quantity for movement record
-    let new_qty: String = sqlx::query_scalar(
-        "SELECT quantity_on_hand FROM stock_levels WHERE product_id = ? AND branch_id = ?"
-    )
-    .bind(&input.product_id)
-    .bind(&branch_id)
-    .fetch_one(&state.db)
-    .await?;
-
-    // Record movement
+    let movement_id = Ulid::new().to_string();
+    // Record movement — M-6: reference_type and movement_type are 'receive'
     sqlx::query(
         "INSERT INTO stock_movements
-           (movement_id, product_id, branch_id, device_id, movement_type, quantity_delta,
-            quantity_after, reference_type, notes, created_by_user_id, created_at)
-         VALUES (?, ?, ?, ?, 'receive', ?, ?, 'manual_receive', ?, ?, ?)"
+           (movement_id, product_id, branch_id, device_id, origin_device_id, movement_type, quantity_delta,
+            quantity_after, reference_type, notes, created_by_user_id, created_at, sync_status)
+         VALUES (?, ?, ?, ?, ?, 'receive', ?, ?, 'receive', ?, ?, ?, 'pending')",
     )
-    .bind(Ulid::new().to_string())
+    .bind(&movement_id)
     .bind(&input.product_id)
     .bind(&branch_id)
     .bind(&device_id)
-    .bind(&input.quantity)
-    .bind(&new_qty)
+    .bind(&device_id)
+    .bind(&delta_str)
+    .bind(&new_qty_str)
     .bind(&input.notes)
     .bind(&input.received_by_user_id)
     .bind(&now)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
 
+    // Enqueue movement and level inside the transaction (C-2)
+    let _ = outbox::enqueue_stock_movement_in_tx(
+        &mut tx, &device_id, &branch_id, &movement_id, &input.product_id,
+        "receive", &delta_str, &new_qty_str, "receive", "",
+        input.notes.as_deref(), Some(&input.received_by_user_id), &now,
+    ).await;
+    let _ = outbox::enqueue_stock_level_in_tx(
+        &mut tx, &device_id, &branch_id, &input.product_id, &new_qty_str, &now, &now,
+    ).await;
+
+    tx.commit().await?;
+
+    // ── Audit log AFTER commit (H-29) ──
+    let after_json =
+        serde_json::json!({"quantity_on_hand": new_qty_str}).to_string();
+    let _ = audit_hash::insert_audit_entry(
+        &state.db,
+        "STOCK_RECEIVED",
+        "stock_level",
+        &input.product_id,
+        &input.received_by_user_id,
+        "user",
+        &device_id,
+        &branch_id,
+        Some(&before_json),
+        Some(&after_json),
+        input.notes.as_deref(),
+    ).await;
+
     // Return updated level
-    let levels = stock_repo::get_all_levels(&state.db).await?;
-    levels.into_iter()
+    let levels = stock_repo::get_all_levels(&state.db, &branch_id).await?;
+    levels
+        .into_iter()
         .find(|l| l.product_id == input.product_id)
         .ok_or_else(|| AppError::NotFound(format!("Product {} not found", input.product_id)))
 }
@@ -138,77 +230,135 @@ pub async fn inventory_receive_stock(
 
 #[derive(serde::Deserialize)]
 pub struct AdjustStockInput {
-    pub product_id:          String,
-    pub new_quantity:        String,  // absolute quantity (count correction)
-    pub notes:               Option<String>,
+    pub product_id: String,
+    pub new_quantity: String, // absolute quantity (count correction)
+    pub notes: Option<String>,
     pub adjusted_by_user_id: String,
 }
 
+/// C-2 fix: transaction guards the read-modify-write.
+/// H-9/H-10 fix: Decimal arithmetic, no CAST AS REAL.
+/// H-29 fix: audit log entry after commit.
+/// M-7 fix: movement_type and reference_type are 'manual_adjust' (not 'adjustment'/'count_correction').
 #[tauri::command]
 pub async fn inventory_adjust_stock(
     input: AdjustStockInput,
     state: State<'_, AppState>,
 ) -> Result<StockLevel, AppError> {
     rbac::manager_or_owner(&state.db, &input.adjusted_by_user_id).await?;
-    let new_qty: f64 = input.new_quantity.parse()
-        .map_err(|_| AppError::Validation("Invalid quantity".into()))?;
-    if new_qty < 0.0 {
+
+    // Parse target quantity
+    let new_qty = parse_qty(&input.new_quantity)?;
+    if new_qty < Decimal::ZERO {
         return Err(AppError::Validation("Quantity cannot be negative".into()));
     }
 
     let branch_id = active_branch_id(&state).await?;
     let device_id = active_device_id(&state).await?;
     let now = chrono::Utc::now().to_rfc3339();
+    let stock_level_id = format!("SL-{}-{}", input.product_id, branch_id);
 
-    // Get old quantity for delta calculation
-    let old_qty_str: Option<String> = sqlx::query_scalar(
-        "SELECT quantity_on_hand FROM stock_levels WHERE product_id = ? AND branch_id = ?"
+    // Pre-tx snapshot for audit
+    let old_qty_read: Option<String> = sqlx::query_scalar(
+        "SELECT quantity_on_hand FROM stock_levels WHERE product_id = ? AND branch_id = ?",
     )
     .bind(&input.product_id)
     .bind(&branch_id)
     .fetch_optional(&state.db)
     .await?;
+    let old_qty_str = old_qty_read.as_deref().unwrap_or("0");
+    let before_json =
+        serde_json::json!({"quantity_on_hand": old_qty_str}).to_string();
 
-    let old_qty: f64 = old_qty_str.as_deref().unwrap_or("0").parse().unwrap_or(0.0);
-    let delta = new_qty - old_qty;
-    let delta_str = delta.to_string();
+    // ── Transaction ──
+    let mut tx = state.db.begin().await?;
 
-    // Upsert stock_levels
-    sqlx::query(
-        "INSERT INTO stock_levels (product_id, branch_id, quantity_on_hand, updated_at)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(product_id, branch_id) DO UPDATE SET
-           quantity_on_hand = excluded.quantity_on_hand,
-           updated_at = excluded.updated_at"
+    let old_qty_in_tx: Option<String> = sqlx::query_scalar(
+        "SELECT quantity_on_hand FROM stock_levels WHERE product_id = ? AND branch_id = ?",
     )
     .bind(&input.product_id)
     .bind(&branch_id)
-    .bind(&input.new_quantity)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let old_qty = old_qty_in_tx
+        .as_deref()
+        .unwrap_or("0");
+    let old_qty_dec = Decimal::from_str(old_qty).unwrap_or(Decimal::ZERO);
+
+    // Compute delta using Decimal arithmetic
+    let delta_dec = new_qty - old_qty_dec;
+    let new_qty_str = new_qty.to_string();
+    let delta_str = delta_dec.to_string();
+
+    // Upsert stock_levels (include PK)
+    sqlx::query(
+        "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(product_id, branch_id) DO UPDATE SET
+           quantity_on_hand = excluded.quantity_on_hand,
+           updated_at = excluded.updated_at",
+    )
+    .bind(&stock_level_id)
+    .bind(&input.product_id)
+    .bind(&branch_id)
+    .bind(&new_qty_str)
     .bind(&now)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
 
-    // Record movement
+    let movement_id = Ulid::new().to_string();
+    // M-7: movement_type and reference_type are 'manual_adjust'
     sqlx::query(
         "INSERT INTO stock_movements
-           (movement_id, product_id, branch_id, device_id, movement_type, quantity_delta,
-            quantity_after, reference_type, notes, created_by_user_id, created_at)
-         VALUES (?, ?, ?, ?, 'adjustment', ?, ?, 'count_correction', ?, ?, ?)"
+           (movement_id, product_id, branch_id, device_id, origin_device_id, movement_type, quantity_delta,
+            quantity_after, reference_type, notes, created_by_user_id, created_at, sync_status)
+         VALUES (?, ?, ?, ?, ?, 'manual_adjust', ?, ?, 'manual_adjust', ?, ?, ?, 'pending')",
     )
-    .bind(Ulid::new().to_string())
+    .bind(&movement_id)
     .bind(&input.product_id)
     .bind(&branch_id)
     .bind(&device_id)
+    .bind(&device_id)
     .bind(&delta_str)
-    .bind(&input.new_quantity)
+    .bind(&new_qty_str)
     .bind(&input.notes)
     .bind(&input.adjusted_by_user_id)
     .bind(&now)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
 
-    let levels = stock_repo::get_all_levels(&state.db).await?;
-    levels.into_iter()
+    // Enqueue inside transaction
+    let _ = outbox::enqueue_stock_movement_in_tx(
+        &mut tx, &device_id, &branch_id, &movement_id, &input.product_id,
+        "manual_adjust", &delta_str, &new_qty_str, "manual_adjust", "",
+        input.notes.as_deref(), Some(&input.adjusted_by_user_id), &now,
+    ).await;
+    let _ = outbox::enqueue_stock_level_in_tx(
+        &mut tx, &device_id, &branch_id, &input.product_id, &new_qty_str, &now, &now,
+    ).await;
+
+    tx.commit().await?;
+
+    // ── Audit log AFTER commit (H-29) ──
+    let after_json =
+        serde_json::json!({"quantity_on_hand": new_qty_str}).to_string();
+    let _ = audit_hash::insert_audit_entry(
+        &state.db,
+        "STOCK_ADJUSTED",
+        "stock_level",
+        &input.product_id,
+        &input.adjusted_by_user_id,
+        "user",
+        &device_id,
+        &branch_id,
+        Some(&before_json),
+        Some(&after_json),
+        input.notes.as_deref(),
+    ).await;
+
+    let levels = stock_repo::get_all_levels(&state.db, &branch_id).await?;
+    levels
+        .into_iter()
         .find(|l| l.product_id == input.product_id)
         .ok_or_else(|| AppError::NotFound(format!("Product {} not found", input.product_id)))
 }
@@ -217,27 +367,33 @@ pub async fn inventory_adjust_stock(
 
 #[derive(serde::Deserialize)]
 pub struct BulkStockTakeEntry {
-    pub product_id:   String,
-    pub new_quantity: f64,
-    pub notes:        Option<String>,
+    pub product_id: String,
+    pub new_quantity: String, // H-9/H-10: String, not f64
+    pub notes: Option<String>,
 }
 
 #[derive(serde::Serialize)]
 pub struct BulkStockTakeResult {
     pub updated: usize,
-    pub errors:  Vec<String>,
+    pub errors: Vec<String>,
 }
 
+/// Each entry runs in its own transaction so a failure on one product does not
+/// roll back others.  H-9/H-10: Decimal arithmetic.  H-29: audit logs.
+/// M-8: movement_type and reference_type are 'stock_take' (not 'adjustment'/'stock_take').
 #[tauri::command]
 pub async fn inventory_bulk_stock_take(
-    entries:         Vec<BulkStockTakeEntry>,
-    actor_user_id:   String,
-    state:           State<'_, AppState>,
+    entries: Vec<BulkStockTakeEntry>,
+    actor_user_id: String,
+    state: State<'_, AppState>,
 ) -> Result<BulkStockTakeResult, AppError> {
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
 
     if entries.is_empty() {
-        return Ok(BulkStockTakeResult { updated: 0, errors: vec![] });
+        return Ok(BulkStockTakeResult {
+            updated: 0,
+            errors: vec![],
+        });
     }
 
     let branch_id = active_branch_id(&state).await?;
@@ -245,68 +401,145 @@ pub async fn inventory_bulk_stock_take(
     let now = chrono::Utc::now().to_rfc3339();
 
     let mut updated = 0usize;
-    let mut errors  = Vec::<String>::new();
+    let mut errors = Vec::<String>::new();
 
     for entry in &entries {
-        if entry.new_quantity < 0.0 {
-            errors.push(format!("Product {}: quantity cannot be negative", entry.product_id));
+        // Parse and validate with Decimal
+        let new_qty = match parse_qty(&entry.new_quantity) {
+            Ok(q) => q,
+            Err(e) => {
+                errors.push(format!("Product {}: {e}", entry.product_id));
+                continue;
+            }
+        };
+        if new_qty < Decimal::ZERO {
+            errors.push(format!(
+                "Product {}: quantity cannot be negative",
+                entry.product_id
+            ));
             continue;
         }
 
-        let new_qty_str = entry.new_quantity.to_string();
+        let new_qty_str = new_qty.to_string();
+        let stock_level_id = format!("SL-{}-{}", entry.product_id, branch_id);
 
-        // Get old quantity for delta
-        let old_qty_str: Option<String> = sqlx::query_scalar(
-            "SELECT quantity_on_hand FROM stock_levels WHERE product_id = ? AND branch_id = ?"
+        // Pre-tx snapshot for audit
+        let old_qty_read: Option<String> = sqlx::query_scalar(
+            "SELECT quantity_on_hand FROM stock_levels WHERE product_id = ? AND branch_id = ?",
         )
         .bind(&entry.product_id)
         .bind(&branch_id)
         .fetch_optional(&state.db)
         .await
         .unwrap_or(None);
+        let old_qty_str = old_qty_read.as_deref().unwrap_or("0");
+        let before_json =
+            serde_json::json!({"quantity_on_hand": old_qty_str}).to_string();
 
-        let old_qty: f64 = old_qty_str.as_deref().unwrap_or("0").parse().unwrap_or(0.0);
-        let delta = entry.new_quantity - old_qty;
-        let delta_str = delta.to_string();
+        // ── Transaction per entry ──
+        let mut tx = match state.db.begin().await {
+            Ok(tx) => tx,
+            Err(e) => {
+                errors.push(format!("Product {}: {e}", entry.product_id));
+                continue;
+            }
+        };
 
-        // Upsert stock level
-        let upsert = sqlx::query(
-            "INSERT INTO stock_levels (product_id, branch_id, quantity_on_hand, updated_at)
-             VALUES (?, ?, ?, ?)
+        // Re-read inside tx
+        let old_qty_in_tx: Option<String> = sqlx::query_scalar(
+            "SELECT quantity_on_hand FROM stock_levels WHERE product_id = ? AND branch_id = ?",
+        )
+        .bind(&entry.product_id)
+        .bind(&branch_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .unwrap_or(None);
+        let old_qty_dec = old_qty_in_tx
+            .as_deref()
+            .unwrap_or("0");
+        let old_qty_dec = Decimal::from_str(old_qty_dec).unwrap_or(Decimal::ZERO);
+
+        let delta_dec = new_qty - old_qty_dec;
+        let delta_str = delta_dec.to_string();
+
+        // Upsert stock level (include PK)
+        if let Err(e) = sqlx::query(
+            "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at)
+             VALUES (?, ?, ?, ?, ?)
              ON CONFLICT(product_id, branch_id) DO UPDATE SET
                quantity_on_hand = excluded.quantity_on_hand,
-               updated_at = excluded.updated_at"
+               updated_at = excluded.updated_at",
         )
+        .bind(&stock_level_id)
         .bind(&entry.product_id)
         .bind(&branch_id)
         .bind(&new_qty_str)
         .bind(&now)
-        .execute(&state.db)
-        .await;
-
-        if let Err(e) = upsert {
+        .execute(&mut *tx)
+        .await
+        {
             errors.push(format!("Product {}: {e}", entry.product_id));
+            let _ = tx.rollback().await;
             continue;
         }
 
-        // Record stock movement
-        let _ = sqlx::query(
+        let movement_id = Ulid::new().to_string();
+        // M-8: movement_type and reference_type are 'stock_take'
+        if let Err(e) = sqlx::query(
             "INSERT INTO stock_movements
-               (movement_id, product_id, branch_id, device_id, movement_type, quantity_delta,
-                quantity_after, reference_type, notes, created_by_user_id, created_at)
-             VALUES (?, ?, ?, ?, 'adjustment', ?, ?, 'stock_take', ?, ?, ?)"
+               (movement_id, product_id, branch_id, device_id, origin_device_id, movement_type, quantity_delta,
+                quantity_after, reference_type, notes, created_by_user_id, created_at, sync_status)
+             VALUES (?, ?, ?, ?, ?, 'stock_take', ?, ?, 'stock_take', ?, ?, ?, 'pending')",
         )
-        .bind(Ulid::new().to_string())
+        .bind(&movement_id)
         .bind(&entry.product_id)
         .bind(&branch_id)
+        .bind(&device_id)
         .bind(&device_id)
         .bind(&delta_str)
         .bind(&new_qty_str)
         .bind(&entry.notes)
         .bind(&actor_user_id)
         .bind(&now)
-        .execute(&state.db)
-        .await;
+        .execute(&mut *tx)
+        .await
+        {
+            errors.push(format!("Product {}: {e}", entry.product_id));
+            let _ = tx.rollback().await;
+            continue;
+        }
+
+        // Enqueue inside transaction
+        let _ = outbox::enqueue_stock_movement_in_tx(
+            &mut tx, &device_id, &branch_id, &movement_id, &entry.product_id,
+            "stock_take", &delta_str, &new_qty_str, "stock_take", "",
+            entry.notes.as_deref(), Some(actor_user_id.as_str()), &now,
+        ).await;
+        let _ = outbox::enqueue_stock_level_in_tx(
+            &mut tx, &device_id, &branch_id, &entry.product_id, &new_qty_str, &now, &now,
+        ).await;
+
+        if let Err(e) = tx.commit().await {
+            errors.push(format!("Product {}: {e}", entry.product_id));
+            continue;
+        }
+
+        // ── Audit log AFTER commit (H-29) ──
+        let after_json =
+            serde_json::json!({"quantity_on_hand": new_qty_str}).to_string();
+        let _ = audit_hash::insert_audit_entry(
+            &state.db,
+            "STOCK_TAKE",
+            "stock_level",
+            &entry.product_id,
+            &actor_user_id,
+            "user",
+            &device_id,
+            &branch_id,
+            Some(&before_json),
+            Some(&after_json),
+            entry.notes.as_deref(),
+        ).await;
 
         updated += 1;
     }

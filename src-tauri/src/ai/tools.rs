@@ -1,6 +1,5 @@
 use crate::ai::client::ToolDef;
 use crate::db::repositories::{product_repo, report_repo, sync_repo};
-use crate::sync::outbox;
 use crate::domain::ai_admin::{ToolPreview, ToolPreviewField};
 use crate::domain::money;
 use crate::errors::{AppError, AppResult};

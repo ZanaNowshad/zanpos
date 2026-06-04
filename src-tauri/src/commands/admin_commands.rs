@@ -59,6 +59,9 @@ pub struct AdminProduct {
     pub price_minor: i64,
     pub reorder_point: i64,
     pub image_path: Option<String>,
+    pub cost_minor: Option<i64>,
+    pub description: Option<String>,
+    pub default_supplier_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -102,6 +105,7 @@ const ADMIN_PRODUCT_QUERY: &str = r#"
     SELECT p.product_id, p.category_id, c.name AS category_name,
            p.name, p.sku, p.barcode, p.track_inventory, p.allow_decimal_quantity,
            p.is_active, p.tax_rule_id, p.reorder_point, p.image_path,
+           p.cost_minor, p.description, p.default_supplier_id,
            t.name AS tax_rule_name,
            COALESCE(pp.price_minor, 0) AS price_minor
     FROM products p
@@ -133,6 +137,9 @@ fn row_to_admin_product(r: &sqlx::sqlite::SqliteRow) -> AdminProduct {
         price_minor: r.get("price_minor"),
         reorder_point: r.get("reorder_point"),
         image_path: r.get("image_path"),
+        cost_minor: r.get("cost_minor"),
+        description: r.get("description"),
+        default_supplier_id: r.get("default_supplier_id"),
     }
 }
 
@@ -241,6 +248,9 @@ pub struct CreateProductInput {
     pub reorder_point: i64,
     pub created_by_user_id: String,
     pub image_path: Option<String>,
+    pub cost_minor: Option<i64>,
+    pub description: Option<String>,
+    pub default_supplier_id: Option<String>,
 }
 
 #[tauri::command]
@@ -257,8 +267,9 @@ pub async fn admin_create_product(
         "INSERT INTO products
            (product_id, category_id, name, sku, barcode,
             track_inventory, allow_decimal_quantity, is_active,
-            tax_rule_id, reorder_point, image_path, currency, created_at, updated_at, version)
-         VALUES (?,?,?,?,?,?,?,1,?,?,?,'BHD',?,?,1)",
+            tax_rule_id, reorder_point, image_path, cost_minor, description,
+            default_supplier_id, currency, created_at, updated_at, version)
+         VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?,'BHD',?,?,1)",
     )
     .bind(&product_id)
     .bind(&input.category_id)
@@ -270,6 +281,9 @@ pub async fn admin_create_product(
     .bind(&input.tax_rule_id)
     .bind(input.reorder_point)
     .bind(input.image_path.as_deref().filter(|s| !s.is_empty()))
+    .bind(input.cost_minor)
+    .bind(input.description.as_deref().filter(|s| !s.is_empty()))
+    .bind(input.default_supplier_id.as_deref().filter(|s| !s.is_empty()))
     .bind(&now)
     .bind(&now)
     .execute(&state.db)
@@ -321,11 +335,12 @@ pub async fn admin_create_product(
         &input.category_id, &input.name,
         input.sku.as_deref().filter(|s| !s.is_empty()),
         input.barcode.as_deref().filter(|s| !s.is_empty()),
-        None, input.track_inventory, input.allow_decimal_quantity, true,
-        input.tax_rule_id.as_deref(), None, "BHD",
+        input.description.as_deref().filter(|s| !s.is_empty()),
+        input.track_inventory, input.allow_decimal_quantity, true,
+        input.tax_rule_id.as_deref(), input.cost_minor, "BHD",
         input.reorder_point,
         input.image_path.as_deref(),
-        None,
+        input.default_supplier_id.as_deref().filter(|s| !s.is_empty()),
         &now, &now, 1,
     ).await;
     let _ = outbox::enqueue_product_price(
@@ -369,6 +384,9 @@ pub struct UpdateProductInput {
     pub is_active: bool,
     pub updated_by_user_id: String,
     pub image_path: Option<String>,
+    pub cost_minor: Option<i64>,
+    pub description: Option<String>,
+    pub default_supplier_id: Option<String>,
 }
 
 #[tauri::command]
@@ -379,9 +397,9 @@ pub async fn admin_update_product(
     rbac::manager_or_owner(&state.db, &input.updated_by_user_id).await?;
     let now = chrono::Utc::now().to_rfc3339();
 
-    // Check if price changed
-    let current_price: Option<i64> = sqlx::query_scalar(
-        "SELECT price_minor FROM product_prices
+    // Check if price changed — fetch full old price row for H-8 re-enqueue
+    let old_price_row = sqlx::query(
+        "SELECT price_id, price_minor, effective_from FROM product_prices
          WHERE product_id = ? AND branch_id IS NULL
            AND price_type = 'selling' AND effective_to IS NULL
          LIMIT 1",
@@ -390,11 +408,15 @@ pub async fn admin_update_product(
     .fetch_optional(&state.db)
     .await?;
 
+    let current_price: Option<i64> = old_price_row.as_ref().map(|r| r.get("price_minor"));
+
+    // H-4: version = version + 1, plus M-3/M-4/M-5 new fields
     sqlx::query(
         "UPDATE products SET
            category_id=?, name=?, sku=?, barcode=?, tax_rule_id=?,
            track_inventory=?, allow_decimal_quantity=?,
-           reorder_point=?, is_active=?, image_path=?, updated_at=?
+           reorder_point=?, is_active=?, image_path=?, cost_minor=?, description=?,
+           default_supplier_id=?, updated_at=?, version = version + 1
          WHERE product_id=?",
     )
     .bind(&input.category_id)
@@ -407,6 +429,9 @@ pub async fn admin_update_product(
     .bind(input.reorder_point)
     .bind(input.is_active as i64)
     .bind(input.image_path.as_deref().filter(|s| !s.is_empty()))
+    .bind(input.cost_minor)
+    .bind(input.description.as_deref().filter(|s| !s.is_empty()))
+    .bind(input.default_supplier_id.as_deref().filter(|s| !s.is_empty()))
     .bind(&now)
     .bind(&input.product_id)
     .execute(&state.db)
@@ -419,6 +444,14 @@ pub async fn admin_update_product(
         }
     })?;
 
+    // H-4: Fetch the incremented version for outbox
+    let new_version: i64 = sqlx::query_scalar(
+        "SELECT version FROM products WHERE product_id = ?",
+    )
+    .bind(&input.product_id)
+    .fetch_one(&state.db)
+    .await?;
+
     if current_price != Some(input.price_minor) {
         // Close old price
         sqlx::query(
@@ -430,6 +463,20 @@ pub async fn admin_update_product(
         .bind(&input.product_id)
         .execute(&state.db)
         .await?;
+
+        // H-8: Re-enqueue the closed price row so sync peers know its effective_to
+        if let Some(ref old) = old_price_row {
+            let old_pid: String = old.get("price_id");
+            let old_price: i64 = old.get("price_minor");
+            let old_eff_from: String = old.get("effective_from");
+            let dev_id = active_device_id(&state).await;
+            let br_id = active_branch_id(&state).await?;
+            let _ = outbox::enqueue_product_price(
+                &state.db, &dev_id, &br_id, &old_pid, &input.product_id,
+                old_price, "BHD", &old_eff_from, Some(&now),
+                &input.updated_by_user_id, None, &now,
+            ).await;
+        }
 
         // Insert new price
         let price_id = Ulid::new().to_string();
@@ -473,7 +520,7 @@ pub async fn admin_update_product(
         .await?;
     }
 
-    // Enqueue product for sync
+    // Enqueue product for sync — use real version, not hardcoded 1
     let device_id = active_device_id(&state).await;
     let branch_id_str = active_branch_id(&state).await?;
     let _ = outbox::enqueue_product(
@@ -481,12 +528,13 @@ pub async fn admin_update_product(
         &input.category_id, &input.name,
         input.sku.as_deref().filter(|s| !s.is_empty()),
         input.barcode.as_deref().filter(|s| !s.is_empty()),
-        None, input.track_inventory, input.allow_decimal_quantity, input.is_active,
-        input.tax_rule_id.as_deref(), None, "BHD",
+        input.description.as_deref().filter(|s| !s.is_empty()),
+        input.track_inventory, input.allow_decimal_quantity, input.is_active,
+        input.tax_rule_id.as_deref(), input.cost_minor, "BHD",
         input.reorder_point,
         input.image_path.as_deref(),
-        None,
-        &now, &now, 1,
+        input.default_supplier_id.as_deref().filter(|s| !s.is_empty()),
+        &now, &now, new_version,
     ).await;
 
     // H8: Audit log — product updated
@@ -597,20 +645,63 @@ pub async fn admin_save_tax_rule(
     let is_tax_update = input.tax_rule_id.is_some();
 
     let tax_rule_id = if let Some(ref id) = input.tax_rule_id {
-        // Update existing
-        sqlx::query(
-            "UPDATE tax_rules SET name=?, rate_basis_points=?, inclusive=?, is_active=?,
-             updated_at=? WHERE tax_rule_id=?",
+        // H-6: Check if rate or inclusive changed — tax rules are append-only
+        let existing = sqlx::query(
+            "SELECT rate_basis_points, inclusive FROM tax_rules WHERE tax_rule_id = ?",
         )
-        .bind(&name)
-        .bind(rate_basis_points)
-        .bind(input.inclusive as i64)
-        .bind(input.is_active as i64)
-        .bind(&now)
         .bind(id)
-        .execute(&state.db)
+        .fetch_optional(&state.db)
         .await?;
-        id.clone()
+
+        let rate_changed = existing.as_ref().map_or(true, |r| {
+            let old_rate: i64 = r.get("rate_basis_points");
+            let old_inclusive: i64 = r.get("inclusive");
+            old_rate != rate_basis_points || old_inclusive != (input.inclusive as i64)
+        });
+
+        if rate_changed {
+            // Close old rule by setting effective_to
+            sqlx::query(
+                "UPDATE tax_rules SET effective_to = ?, updated_at = ? WHERE tax_rule_id = ?",
+            )
+            .bind(&now)
+            .bind(&now)
+            .bind(id)
+            .execute(&state.db)
+            .await?;
+
+            // Insert new rule with new rate/inclusive (append-only pattern)
+            let new_id = Ulid::new().to_string();
+            sqlx::query(
+                "INSERT INTO tax_rules
+                   (tax_rule_id, name, rate_basis_points, inclusive, is_active,
+                    effective_from, updated_at, version)
+                 VALUES (?,?,?,?,?,?,?,1)",
+            )
+            .bind(&new_id)
+            .bind(&name)
+            .bind(rate_basis_points)
+            .bind(input.inclusive as i64)
+            .bind(input.is_active as i64)
+            .bind(&now)
+            .bind(&now)
+            .execute(&state.db)
+            .await?;
+            new_id
+        } else {
+            // Non-rate change: normal UPDATE (name, is_active only)
+            sqlx::query(
+                "UPDATE tax_rules SET name=?, is_active=?, updated_at=?
+                 WHERE tax_rule_id=?",
+            )
+            .bind(&name)
+            .bind(input.is_active as i64)
+            .bind(&now)
+            .bind(id)
+            .execute(&state.db)
+            .await?;
+            id.clone()
+        }
     } else {
         // Create new
         let id = Ulid::new().to_string();
@@ -697,8 +788,10 @@ pub async fn admin_save_category(
     let is_update = input.category_id.is_some();
 
     let category_id = if let Some(id) = input.category_id {
+        // H-5: version = version + 1 on UPDATE
         sqlx::query(
-            "UPDATE categories SET name=?, sort_order=?, is_active=?, parent_category_id=?, updated_at=?
+            "UPDATE categories SET name=?, sort_order=?, is_active=?, parent_category_id=?, updated_at=?,
+             version = version + 1
              WHERE category_id=?",
         )
         .bind(&input.name)
@@ -744,14 +837,22 @@ pub async fn admin_save_category(
         parent_category_id: row.get("parent_category_id"),
     };
 
-    // Enqueue for sync
+    // H-5: Fetch the actual category version (incremented on update, 1 on create)
+    let cat_version: i64 = sqlx::query_scalar(
+        "SELECT version FROM categories WHERE category_id = ?",
+    )
+    .bind(&result.category_id)
+    .fetch_one(&state.db)
+    .await?;
+
+    // Enqueue for sync — use real version, not hardcoded 1
     let device_id = active_device_id(&state).await;
     let branch_id = active_branch_id(&state).await?;
     let _ = outbox::enqueue_category(
         &state.db, &device_id, &branch_id, &result.category_id,
         &result.name, result.sort_order, result.is_active,
         result.parent_category_id.as_deref(),
-        &now, &now, 1,
+        &now, &now, cat_version,
     ).await;
 
     // H8: Audit log — category created/updated
@@ -776,6 +877,7 @@ pub async fn admin_save_category(
 pub struct BulkCategoryRow {
     pub name: String,
     pub sort_order: Option<i64>,
+    pub parent_category_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -794,6 +896,7 @@ pub struct BulkProductRow {
     pub barcodes: Option<String>,
     pub track_inventory: Option<bool>,
     pub tax_rule_name: Option<String>,
+    pub reorder_point: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -832,8 +935,8 @@ pub async fn admin_bulk_import_categories(
     let mut inserted = 0usize;
     let mut skipped = 0usize;
     let mut errors: Vec<BulkRowError> = Vec::new();
-    // Collect (category_id, name, sort_order) for post-commit outbox enqueue
-    let mut to_enqueue: Vec<(String, String, i64)> = Vec::new();
+    // Collect (category_id, name, sort_order, parent_category_id) for post-commit outbox enqueue
+    let mut to_enqueue: Vec<(String, String, i64, Option<String>)> = Vec::new();
 
     for (idx, row) in rows.iter().enumerate() {
         let name = row.name.trim();
@@ -860,19 +963,20 @@ pub async fn admin_bulk_import_categories(
         let category_id = Ulid::new().to_string();
 
         match sqlx::query(
-            "INSERT INTO categories (category_id, name, sort_order, is_active, created_at, updated_at, version)
-             VALUES (?,?,?,1,?,?,1)",
+            "INSERT INTO categories (category_id, name, sort_order, is_active, parent_category_id, created_at, updated_at, version)
+             VALUES (?,?,?,1,?,?,?,1)",
         )
         .bind(&category_id)
         .bind(name)
         .bind(sort_order)
+        .bind(row.parent_category_id.as_deref().filter(|s| !s.is_empty()))
         .bind(&now)
         .bind(&now)
         .execute(&state.db)
         .await
         {
             Ok(_) => {
-                to_enqueue.push((category_id, name.to_string(), sort_order));
+                to_enqueue.push((category_id, name.to_string(), sort_order, row.parent_category_id.clone()));
                 inserted += 1;
             }
             Err(e) if e.to_string().contains("UNIQUE") => skipped += 1,
@@ -887,10 +991,10 @@ pub async fn admin_bulk_import_categories(
     // Enqueue inserted categories for sync
     let device_id = active_device_id(&state).await;
     let branch_id = active_branch_id(&state).await?;
-    for (cat_id, cat_name, sort_order) in &to_enqueue {
+    for (cat_id, cat_name, sort_order, parent_id) in &to_enqueue {
         let _ = outbox::enqueue_category(
             &state.db, &device_id, &branch_id, cat_id,
-            cat_name, *sort_order, true, None, &now, &now, 1,
+            cat_name, *sort_order, true, parent_id.as_deref(), &now, &now, 1,
         ).await;
     }
 
@@ -953,6 +1057,7 @@ pub async fn admin_bulk_import_products(
         tax_rule_id: Option<String>,
         price_id: String,
         price_minor: i64,
+        reorder_point: i64,
     }
     let mut to_enqueue: Vec<BulkProductEnqueue> = Vec::new();
 
@@ -1056,6 +1161,7 @@ pub async fn admin_bulk_import_products(
         let primary_barcode = all_barcodes.first().copied(); // stored in products.barcode
 
         let track = row.track_inventory.unwrap_or(true);
+        let reorder = row.reorder_point.unwrap_or(0);
         let product_id = Ulid::new().to_string();
         let price_id = format!("PRC-{}", Ulid::new());
 
@@ -1064,7 +1170,7 @@ pub async fn admin_bulk_import_products(
                (product_id, category_id, name, sku, barcode,
                 track_inventory, allow_decimal_quantity, is_active,
                 tax_rule_id, reorder_point, currency, created_at, updated_at, version)
-             VALUES (?,?,?,?,?,?,0,1,?,0,'BHD',?,?,1)",
+             VALUES (?,?,?,?,?,?,0,1,?,?,'BHD',?,?,1)",
         )
         .bind(&product_id)
         .bind(&category_id)
@@ -1073,6 +1179,7 @@ pub async fn admin_bulk_import_products(
         .bind(primary_barcode)
         .bind(track as i64)
         .bind(&tax_rule_id)
+        .bind(reorder)
         .bind(&now)
         .bind(&now)
         .execute(&mut *tx)
@@ -1148,6 +1255,7 @@ pub async fn admin_bulk_import_products(
             tax_rule_id: tax_rule_id.clone(),
             price_id: price_id.clone(),
             price_minor,
+            reorder_point: reorder,
         });
         inserted += 1;
     }
@@ -1162,7 +1270,7 @@ pub async fn admin_bulk_import_products(
             &item.category_id, &item.name,
             item.sku.as_deref(), item.barcode.as_deref(),
             None, item.track, false, true,
-            item.tax_rule_id.as_deref(), None, "BHD", 0, None, None, &now, &now, 1,
+            item.tax_rule_id.as_deref(), None, "BHD", item.reorder_point, None, None, &now, &now, 1,
         ).await;
         let _ = outbox::enqueue_product_price(
             &state.db, &device_id, &branch_id, &item.price_id, &item.product_id,

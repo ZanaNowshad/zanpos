@@ -903,8 +903,9 @@ pub async fn enqueue_tax_rule(
     inclusive: bool,
     is_active: bool,
     effective_from: &str,
-    updated_at: &str, // used as idem_suffix so updates generate distinct keys from the initial insert
+    updated_at: &str,
     version: i64,
+    effective_to: Option<&str>,
 ) -> AppResult<()> {
     let payload = serde_json::json!({
         "tax_rule_id":       tax_rule_id,
@@ -913,6 +914,7 @@ pub async fn enqueue_tax_rule(
         "inclusive":         inclusive,
         "is_active":         is_active,
         "effective_from":    effective_from,
+        "effective_to":      effective_to,
         "updated_at":        updated_at,
         "version":           version,
         "device_id":         device_id,
@@ -935,6 +937,7 @@ pub async fn enqueue_tax_rule_in_tx(
     effective_from: &str,
     updated_at: &str,
     version: i64,
+    effective_to: Option<&str>,
 ) -> AppResult<()> {
     let payload = serde_json::json!({
         "tax_rule_id":       tax_rule_id,
@@ -943,6 +946,7 @@ pub async fn enqueue_tax_rule_in_tx(
         "inclusive":         inclusive,
         "is_active":         is_active,
         "effective_from":    effective_from,
+        "effective_to":      effective_to,
         "updated_at":        updated_at,
         "version":           version,
         "device_id":         device_id,
@@ -1629,6 +1633,7 @@ pub async fn enqueue_full_catalog(pool: &SqlitePool) -> AppResult<()> {
                 r.get::<i64, _>("is_active") != 0,
                 r.get("effective_from"), &updated_at,
                 r.get::<i64, _>("version"),
+                None,
             ).await;
         }
         tracing::info!("enqueue_full_catalog: {} tax_rules", rows.len());

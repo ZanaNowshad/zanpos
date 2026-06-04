@@ -670,6 +670,36 @@ pub async fn admin_save_tax_rule(
             .execute(&state.db)
             .await?;
 
+            // Enqueue the closed old rule so remote terminals see effective_to
+            let old_dev_id = active_device_id(&state).await;
+            match active_branch_id(&state).await {
+                Ok(old_branch_id) => {
+                    if let Ok(old_row) = sqlx::query(
+                        "SELECT name, rate_basis_points, inclusive, is_active, effective_from, updated_at, version
+                         FROM tax_rules WHERE tax_rule_id = ?",
+                    )
+                    .bind(id)
+                    .fetch_one(&state.db)
+                    .await
+                    {
+                        let old_name: String = old_row.get("name");
+                        let old_rate: i64 = old_row.get("rate_basis_points");
+                        let old_inc: i64 = old_row.get("inclusive");
+                        let old_active: i64 = old_row.get("is_active");
+                        let old_eff_from: String = old_row.get("effective_from");
+                        let old_ver: i64 = old_row.get("version");
+                        let _ = outbox::enqueue_tax_rule(
+                            &state.db, &old_dev_id, &old_branch_id, id,
+                            &old_name, old_rate, old_inc != 0, old_active != 0,
+                            &old_eff_from, &now, old_ver, Some(&now),
+                        ).await;
+                    }
+                }
+                Err(_) => {
+                    tracing::warn!("admin_save_tax_rule: could not get branch_id for old-rule enqueue");
+                }
+            }
+
             // Insert new rule with new rate/inclusive (append-only pattern)
             let new_id = Ulid::new().to_string();
             sqlx::query(
@@ -746,7 +776,7 @@ pub async fn admin_save_tax_rule(
     let branch_id = active_branch_id(&state).await?;
     let _ = outbox::enqueue_tax_rule(
         &state.db, &device_id, &branch_id, &result.tax_rule_id,
-        &result.name, result.rate_basis_points, result.inclusive, result.is_active, &now, &now, 1,
+        &result.name, result.rate_basis_points, result.inclusive, result.is_active, &now, &now, 1, None,
     ).await;
 
     // H8: Audit log — tax rule created/updated

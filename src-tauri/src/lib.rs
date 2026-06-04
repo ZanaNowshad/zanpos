@@ -29,22 +29,45 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            tracing_subscriber::fmt()
-                .with_env_filter(
-                    tracing_subscriber::EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-                )
-                .init();
-
             let app_data = app
                 .path()
                 .app_data_dir()
                 .expect("Could not resolve app data directory");
             std::fs::create_dir_all(&app_data).ok();
+
+            // OBS-01: log to BOTH stdout (dev) and a rolling daily file in the app
+            // data dir (logs/zanpos.log.YYYY-MM-DD), so field issues — sync failures
+            // in particular — can be diagnosed from an installed build with no console.
+            // The guard must live for the whole process, so we leak it intentionally.
+            {
+                use tracing_subscriber::prelude::*;
+                let log_dir = app_data.join("logs");
+                std::fs::create_dir_all(&log_dir).ok();
+                let file_appender =
+                    tracing_appender::rolling::daily(&log_dir, "zanpos.log");
+                let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
+                // Keep the worker guard alive for the entire program lifetime.
+                Box::leak(Box::new(guard));
+
+                let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+                let _ = tracing_subscriber::registry()
+                    .with(env_filter)
+                    .with(tracing_subscriber::fmt::layer()) // stdout
+                    .with(
+                        tracing_subscriber::fmt::layer()
+                            .with_ansi(false)
+                            .with_writer(file_writer),
+                    )
+                    .try_init();
+            }
+
             let db_path = app_data.join("zanpos.db");
             let db_path_str = db_path.to_string_lossy().to_string();
 
             tracing::info!("Database path: {}", db_path_str);
+            tracing::info!("Logs directory: {}", app_data.join("logs").to_string_lossy());
 
             let db = tauri::async_runtime::block_on(async {
                 let pool = db::init_db(&db_path_str)
@@ -176,6 +199,184 @@ pub fn run() {
                 });
             }
 
+            // ── Bootstrap v2: enqueue full catalog + device for new-joiner sync ────────
+            // Runs once (guarded by sync_bootstrap_v2). Ensures products, categories,
+            // tax rules, users, prices, and this device are all in sync_events so a
+            // newly-joining POS 2 pulls the complete store state on first connect.
+            {
+                let db_b2 = db.clone();
+                tauri::async_runtime::spawn(async move {
+                    let done: Option<String> = sqlx::query_scalar(
+                        "SELECT value FROM app_config WHERE key='sync_bootstrap_v2'",
+                    )
+                    .fetch_optional(&db_b2).await.ok().flatten().flatten();
+                    if done.as_deref() == Some("1") { return; }
+
+                    let device_id: String = sqlx::query_scalar(
+                        "SELECT device_id FROM devices WHERE is_active=1 ORDER BY device_code LIMIT 1",
+                    ).fetch_optional(&db_b2).await.ok().flatten().flatten().unwrap_or_default();
+                    let branch_id: String = sqlx::query_scalar(
+                        "SELECT branch_id FROM branches WHERE is_active=1 ORDER BY created_at LIMIT 1",
+                    ).fetch_optional(&db_b2).await.ok().flatten().flatten().unwrap_or_default();
+
+                    if device_id.is_empty() || branch_id.is_empty() { return; }
+
+                    use sqlx::Row as _;
+
+                    // ── Products ──────────────────────────────────────────────────────────
+                    if let Ok(rows) = sqlx::query(
+                        "SELECT product_id, category_id, name, sku, barcode, description,
+                                track_inventory, allow_decimal_quantity, is_active,
+                                tax_rule_id, cost_minor, currency, reorder_point, image_path, default_supplier_id,
+                                created_at, updated_at, version
+                         FROM products"
+                    ).fetch_all(&db_b2).await {
+                        for r in &rows {
+                            let _ = crate::sync::outbox::enqueue_product(
+                                &db_b2, &device_id, &branch_id,
+                                r.get("product_id"),
+                                r.get("category_id"),
+                                r.get("name"),
+                                r.get("sku"),
+                                r.get("barcode"),
+                                r.get("description"),
+                                r.get::<i64, _>("track_inventory") != 0,
+                                r.get::<i64, _>("allow_decimal_quantity") != 0,
+                                r.get::<i64, _>("is_active") != 0,
+                                r.get("tax_rule_id"),
+                                r.get("cost_minor"),
+                                r.get::<String, _>("currency").as_str(),
+                                r.get::<i64, _>("reorder_point"),
+                                r.get("image_path"),
+                                r.get("default_supplier_id"),
+                                r.get("created_at"),
+                                r.get("updated_at"),
+                                r.get::<i64, _>("version"),
+                            ).await;
+                        }
+                        tracing::info!("bootstrap_v2: enqueued {} products", rows.len());
+                    }
+
+                    // ── Categories ────────────────────────────────────────────────────────
+                    if let Ok(rows) = sqlx::query(
+                        "SELECT category_id, name, sort_order, is_active, parent_category_id, created_at, updated_at, version
+                         FROM categories"
+                    ).fetch_all(&db_b2).await {
+                        for r in &rows {
+                            let _ = crate::sync::outbox::enqueue_category(
+                                &db_b2, &device_id, &branch_id,
+                                r.get("category_id"),
+                                r.get("name"),
+                                r.get::<i64, _>("sort_order"),
+                                r.get::<i64, _>("is_active") != 0,
+                                r.get("parent_category_id"),
+                                r.get("created_at"),
+                                r.get("updated_at"),
+                                r.get::<i64, _>("version"),
+                            ).await;
+                        }
+                        tracing::info!("bootstrap_v2: enqueued {} categories", rows.len());
+                    }
+
+                    // ── Tax rules ─────────────────────────────────────────────────────────
+                    if let Ok(rows) = sqlx::query(
+                        "SELECT tax_rule_id, name, rate_basis_points, inclusive, is_active,
+                                effective_from, updated_at, version
+                         FROM tax_rules"
+                    ).fetch_all(&db_b2).await {
+                        for r in &rows {
+                            let updated_at: String = r.get::<Option<String>, _>("updated_at")
+                                .unwrap_or_else(|| r.get::<String, _>("effective_from"));
+                            let _ = crate::sync::outbox::enqueue_tax_rule(
+                                &db_b2, &device_id, &branch_id,
+                                r.get("tax_rule_id"),
+                                r.get("name"),
+                                r.get::<i64, _>("rate_basis_points"),
+                                r.get::<i64, _>("inclusive") != 0,
+                                r.get::<i64, _>("is_active") != 0,
+                                r.get("effective_from"),
+                                &updated_at,
+                                r.get::<i64, _>("version"),
+                                None,
+                            ).await;
+                        }
+                        tracing::info!("bootstrap_v2: enqueued {} tax_rules", rows.len());
+                    }
+
+                    // ── Users ─────────────────────────────────────────────────────────────
+                    if let Ok(rows) = sqlx::query(
+                        "SELECT user_id, display_name, username, role_id, branch_scope,
+                                is_active, created_at, updated_at, version
+                         FROM users"
+                    ).fetch_all(&db_b2).await {
+                        for r in &rows {
+                            let _ = crate::sync::outbox::enqueue_user(
+                                &db_b2, &device_id, &branch_id,
+                                r.get("user_id"),
+                                r.get("display_name"),
+                                r.get("username"),
+                                r.get("role_id"),
+                                r.get::<Option<String>, _>("branch_scope")
+                                    .unwrap_or_else(|| "[]".into()).as_str(),
+                                r.get::<i64, _>("is_active") != 0,
+                                r.get("created_at"),
+                                r.get("updated_at"),
+                                r.get::<i64, _>("version"),
+                            ).await;
+                        }
+                        tracing::info!("bootstrap_v2: enqueued {} users", rows.len());
+                    }
+
+                    // ── Product prices ────────────────────────────────────────────────────
+                    if let Ok(rows) = sqlx::query(
+                        "SELECT price_id, product_id, price_minor, currency,
+                                effective_from, created_by_user_id, created_by_ai_action_id, created_at
+                         FROM product_prices"
+                    ).fetch_all(&db_b2).await {
+                        for r in &rows {
+                            let _ = crate::sync::outbox::enqueue_product_price(
+                                &db_b2, &device_id, &branch_id,
+                                r.get("price_id"),
+                                r.get("product_id"),
+                                r.get::<i64, _>("price_minor"),
+                                r.get::<String, _>("currency").as_str(),
+                                r.get("effective_from"),
+                                r.get::<Option<String>, _>("effective_to").as_deref(),
+                                r.get::<Option<String>, _>("created_by_user_id")
+                                    .unwrap_or_default().as_str(),
+                                r.get("created_by_ai_action_id"),
+                                r.get("created_at"),
+                            ).await;
+                        }
+                        tracing::info!("bootstrap_v2: enqueued {} product_prices", rows.len());
+                    }
+
+                    // ── This device ───────────────────────────────────────────────────────
+                    if let Ok(Some(dev)) = sqlx::query(
+                        "SELECT device_id, branch_id, device_code, name, is_active
+                         FROM devices WHERE is_active=1 ORDER BY device_code LIMIT 1"
+                    ).fetch_optional(&db_b2).await {
+                        let _ = crate::sync::outbox::enqueue_device(
+                            &db_b2,
+                            dev.get("device_id"),
+                            dev.get("branch_id"),
+                            dev.get("device_code"),
+                            dev.get("name"),
+                            dev.get::<i64, _>("is_active") != 0,
+                        ).await;
+                        tracing::info!("bootstrap_v2: enqueued device record");
+                    }
+
+                    // Mark complete
+                    let _ = sqlx::query(
+                        "INSERT INTO app_config(key,value) VALUES('sync_bootstrap_v2','1')
+                         ON CONFLICT(key) DO UPDATE SET value='1'",
+                    ).execute(&db_b2).await;
+
+                    tracing::info!("sync bootstrap v2 complete");
+                });
+            }
+
             // ── Push branch record to Supabase so second terminals can join ──────────
             // Runs on every startup (not guarded). Harmless no-op when no Supabase
             // credentials are configured. Ensures Device 1's branch always exists in
@@ -232,6 +433,24 @@ pub fn run() {
                             tracing::info!("startup: branch record pushed to Supabase");
                         }
                     }
+
+                    // ── Self-heal (sync_bootstrap_v3) ─────────────────────────────────
+                    // One-time repair for installs that completed setup on a build whose
+                    // boot-time bootstrap ran BEFORE the wizard (so users/devices were
+                    // never pushed). If setup is complete and Supabase is configured but
+                    // this heal hasn't run, re-enqueue the full catalog so a joining
+                    // terminal can finally see the real users and this device.
+                    let healed: Option<String> = sqlx::query_scalar(
+                        "SELECT value FROM app_config WHERE key='sync_bootstrap_v3'",
+                    ).fetch_optional(&db_br).await.ok().flatten().flatten();
+                    if healed.as_deref() != Some("1") {
+                        let _ = crate::sync::outbox::enqueue_full_catalog(&db_br).await;
+                        let _ = sqlx::query(
+                            "INSERT INTO app_config(key,value) VALUES('sync_bootstrap_v3','1')
+                             ON CONFLICT(key) DO UPDATE SET value='1'",
+                        ).execute(&db_br).await;
+                        tracing::info!("self-heal: full catalog re-enqueued (sync_bootstrap_v3)");
+                    }
                 });
             }
 
@@ -285,12 +504,13 @@ pub fn run() {
                     #[cfg(target_os = "windows")]
                     {
                         use std::os::windows::process::CommandExt;
-                        // 0x0800_0000 = CREATE_NO_WINDOW
+                        // F-LOW-14: Named constant instead of magic number.
                         // Prevents a console window from appearing when the
                         // sidecar (a Node.js CLI) is spawned or restarted by
                         // the watchdog, which would otherwise steal focus every
                         // ~8 seconds.
-                        cmd.creation_flags(0x0800_0000);
+                        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                        cmd.creation_flags(CREATE_NO_WINDOW);
                     }
 
                     match cmd.spawn() {
@@ -411,6 +631,8 @@ pub fn run() {
             // Auth
             commands::auth_commands::auth_list_users,
             commands::auth_commands::auth_login_pin,
+            commands::auth_commands::auth_verify_owner_pin,
+            commands::auth_commands::auth_validate_manager_pin,
             // Shift
             commands::shift_commands::shift_get_active,
             commands::shift_commands::shift_open,
@@ -420,6 +642,7 @@ pub fn run() {
             commands::pos_commands::pos_add_item,
             commands::pos_commands::pos_add_item_by_barcode,
             commands::pos_commands::pos_update_quantity,
+            commands::pos_commands::pos_set_line_price,
             commands::pos_commands::pos_remove_line,
             commands::pos_commands::pos_finalize_sale,
             commands::pos_commands::pos_cart_summary,
@@ -461,6 +684,8 @@ pub fn run() {
             commands::report_commands::report_sales_list,
             commands::report_commands::report_by_cashier,
             commands::report_commands::report_eod_cashup,
+            commands::report_commands::reports_config_load,
+            commands::report_commands::reports_config_save,
             commands::report_commands::db_integrity_check,
             // Inventory
             commands::inventory_commands::inventory_get_levels,
@@ -489,6 +714,7 @@ pub fn run() {
             // Sync
             commands::sync_commands::sync_status,
             commands::sync_commands::sync_trigger_now,
+            commands::sync_commands::sync_force_full_resync,
             commands::sync_commands::sync_queue_list,
             commands::sync_commands::sync_queue_retry,
             commands::sync_commands::sync_queue_dismiss,
@@ -500,6 +726,8 @@ pub fn run() {
             commands::ai_admin_commands::admin_set_anthropic,
             commands::ai_admin_commands::admin_validate_openai,
             commands::ai_admin_commands::admin_set_openai,
+            commands::ai_admin_commands::admin_validate_gemini,
+            commands::ai_admin_commands::admin_set_gemini,
             // AI Admin — legacy (kept for compat)
             commands::ai_admin_commands::admin_get_api_key_set,
             commands::ai_admin_commands::admin_set_api_key,
@@ -543,6 +771,7 @@ pub fn run() {
             commands::updater_commands::product_pick_image,
             // Auto-updater
             commands::updater_commands::check_for_updates,
+            commands::updater_commands::download_and_install_update,
             // Thermal printer
             commands::thermal_commands::thermal_list_ports,
             commands::thermal_commands::thermal_get_config,

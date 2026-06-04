@@ -13,6 +13,7 @@ pub async fn get_sale_by_receipt(
 ) -> AppResult<SaleForRefund> {
     let sale_row = sqlx::query(
         "SELECT s.sale_id, s.receipt_number, s.net_total_minor, s.currency, s.sold_at, s.status,
+                s.origin_device_id,
                 u.display_name as cashier_name
          FROM sales s JOIN users u ON u.user_id = s.cashier_user_id
          WHERE s.receipt_number = ?",
@@ -51,6 +52,7 @@ pub async fn get_sale_by_receipt(
         sold_at: sale_row.get("sold_at"),
         cashier_name: sale_row.get("cashier_name"),
         status: sale_row.get("status"),
+        origin_device_id: sale_row.get("origin_device_id"),
         items,
     })
 }
@@ -138,6 +140,7 @@ pub async fn create_refund(
     reason: &str,
     reason_code: &str,
     created_by_user_id: &str,
+    override_used: bool,
 ) -> AppResult<RefundResult> {
     if items.is_empty() {
         return Err(AppError::Validation("No items selected for refund".into()));
@@ -246,18 +249,21 @@ pub async fn create_refund(
     let refund_total: i64 = items.iter().map(|i| i.refund_amount_minor).sum();
     let refund_id = Ulid::new().to_string();
 
-    // Generate receipt number inside the IMMEDIATE transaction so it's sequential.
-    let prefix = format!("{}-{}-REF-%", branch_code, device_code);
-    let count: i64 =
-        match sqlx::query_scalar("SELECT COUNT(*) FROM refunds WHERE refund_receipt_number LIKE ?")
-            .bind(&prefix)
-            .fetch_one(&mut *conn)
-            .await
-        {
-            Ok(c) => c,
-            Err(e) => abort!(AppError::Database(e)),
-        };
-    let refund_receipt_number = format!("{}-{}-REF-{:08}", branch_code, device_code, count + 1);
+    // Atomic per-device counter — shared with sales so receipt numbers are a single
+    // device-scoped sequence. UPDATE...RETURNING prevents races.
+    let seq: i64 = match sqlx::query_scalar(
+        "UPDATE devices SET next_receipt_seq = next_receipt_seq + 1
+         WHERE device_id = ?
+         RETURNING next_receipt_seq",
+    )
+    .bind(&device_id)
+    .fetch_one(&mut *conn)
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => abort!(AppError::Database(e)),
+    };
+    let refund_receipt_number = format!("{}-{}-{:08}", branch_code, device_code, seq);
 
     let now = chrono::Utc::now().to_rfc3339();
     let idempotency_key = format!("refund-{}", refund_id);
@@ -269,13 +275,14 @@ pub async fn create_refund(
     };
 
     if let Err(e) = sqlx::query(
-        "INSERT INTO refunds (refund_id, original_sale_id, refund_receipt_number, reason,
+        "INSERT INTO refunds (refund_id, original_sale_id, origin_device_id, refund_receipt_number, reason,
          return_reason_code, refund_total_minor, currency, created_by_user_id, created_at,
          sync_status, idempotency_key)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
     )
     .bind(&refund_id)
     .bind(original_sale_id)
+    .bind(&device_id)
     .bind(&refund_receipt_number)
     .bind(reason)
     .bind(safe_reason_code)
@@ -294,12 +301,13 @@ pub async fn create_refund(
         let refund_item_id = Ulid::new().to_string();
         if let Err(e) = sqlx::query(
             "INSERT INTO refund_items
-             (refund_item_id, refund_id, sale_item_id, product_name_snapshot,
+             (refund_item_id, refund_id, origin_device_id, sale_item_id, product_name_snapshot,
               quantity, unit_price_minor, refund_amount_minor)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&refund_item_id)
         .bind(&refund_id)
+        .bind(&device_id)
         .bind(&item.sale_item_id)
         .bind(&item.product_name_snapshot)
         .bind(&item.quantity)
@@ -312,10 +320,24 @@ pub async fn create_refund(
         }
     }
 
-    if let Err(e) = sqlx::query(
-        "UPDATE sales SET status = 'partially_refunded'
-         WHERE sale_id = ? AND status = 'completed'",
+    // Determine if all non-voided sale items are now fully refunded.
+    let unreffunded_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sale_items
+         WHERE sale_id = ? AND voided = 0
+           AND refunded_amount_minor < line_total_minor",
     )
+    .bind(original_sale_id)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap_or(1); // default to 1 (not fully refunded) on error
+
+    let new_status = if unreffunded_count == 0 { "refunded" } else { "partially_refunded" };
+
+    if let Err(e) = sqlx::query(
+        "UPDATE sales SET status = ?
+         WHERE sale_id = ? AND status IN ('completed', 'partially_refunded')",
+    )
+    .bind(new_status)
     .bind(original_sale_id)
     .execute(&mut *conn)
     .await
@@ -335,18 +357,23 @@ pub async fn create_refund(
         entity_type: "refund",
         entity_id: &refund_id,
         actor_user_id: created_by_user_id,
+        actor_type: "user",
         created_at: &now,
+        before_json: None,
         after_json: Some(&after_json),
+        reason: None,
         previous_hash: &prev_hash,
     });
     if let Err(e) = sqlx::query(
         "INSERT INTO audit_logs (audit_log_id, event_type, entity_type, entity_id,
-         actor_user_id, actor_type, after_json, created_at, hash, previous_hash)
-         VALUES (?, 'refund.created', 'refund', ?, ?, 'user', ?, ?, ?, ?)",
+         actor_user_id, actor_type, device_id, origin_device_id, after_json, created_at, hash, previous_hash, override_used)
+         VALUES (?, 'refund.created', 'refund', ?, ?, 'user', ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&audit_id)
     .bind(&refund_id)
     .bind(created_by_user_id)
+    .bind(&device_id)
+    .bind(&device_id)
     .bind(&after_json)
     .bind(&now)
     .bind(&hash)
@@ -355,6 +382,7 @@ pub async fn create_refund(
     } else {
         Some(prev_hash.clone())
     })
+    .bind(override_used as i64)
     .execute(&mut *conn)
     .await
     {
@@ -503,10 +531,10 @@ mod tests {
     async fn insert_shift(pool: &SqlitePool) -> String {
         let shift_id = ulid::Ulid::new().to_string();
         sqlx::query(
-            "INSERT INTO shifts (shift_id, branch_id, device_id, cashier_user_id, opened_at, status)
-             VALUES (?, ?, ?, ?, datetime('now'), 'open')"
+            "INSERT INTO shifts (shift_id, branch_id, device_id, origin_device_id, cashier_user_id, opened_at, status)
+             VALUES (?, ?, ?, ?, ?, datetime('now'), 'open')"
         )
-        .bind(&shift_id).bind(BRANCH).bind(DEVICE).bind(CASHIER)
+        .bind(&shift_id).bind(BRANCH).bind(DEVICE).bind(DEVICE).bind(CASHIER)
         .execute(pool).await.expect("insert shift");
         shift_id
     }
@@ -588,6 +616,7 @@ mod tests {
             "Defective product",
             "defective",
             CASHIER,
+            false,
         )
         .await
         .expect("create_refund");
@@ -595,8 +624,8 @@ mod tests {
         assert_eq!(result.refund_total_minor, 880);
         assert!(!result.refund_receipt_number.is_empty());
         assert!(
-            result.refund_receipt_number.contains("REF"),
-            "receipt must contain REF"
+            result.refund_receipt_number.starts_with("MAIN-POS01-"),
+            "receipt must be device-scoped: {{branch}}-{{device}}-{{seq}}"
         );
     }
 
@@ -607,7 +636,7 @@ mod tests {
         let shift_id = insert_shift(&pool).await;
         let (sale_id, _) = create_test_sale(&pool, &shift_id, "idem-refund-empty").await;
 
-        let err = create_refund(&pool, &sale_id, vec![], "test", "other", CASHIER)
+        let err = create_refund(&pool, &sale_id, vec![], "test", "other", CASHIER, false)
             .await
             .unwrap_err();
 
@@ -630,7 +659,7 @@ mod tests {
             refund_amount_minor: 100,
         }];
 
-        let err = create_refund(&pool, "FAKE-SALE-ID", items, "test", "other", CASHIER)
+        let err = create_refund(&pool, "FAKE-SALE-ID", items, "test", "other", CASHIER, false)
             .await
             .unwrap_err();
 
@@ -663,6 +692,7 @@ mod tests {
             "reason 1",
             "other",
             CASHIER,
+            false,
         )
         .await
         .expect("refund 1");
@@ -673,6 +703,7 @@ mod tests {
             "reason 2",
             "other",
             CASHIER,
+            false,
         )
         .await
         .expect("refund 2");
@@ -704,6 +735,7 @@ mod tests {
             "partial return",
             "customer_return",
             CASHIER,
+            false,
         )
         .await
         .expect("partial refund");
@@ -734,7 +766,7 @@ mod tests {
             refund_amount_minor: 999, // > 880 line_total
         }];
 
-        let err = create_refund(&pool, &sale_id, items, "test ceiling", "other", CASHIER)
+        let err = create_refund(&pool, &sale_id, items, "test ceiling", "other", CASHIER, false)
             .await
             .unwrap_err();
 
@@ -766,7 +798,7 @@ mod tests {
             refund_amount_minor: 440,
         }];
 
-        let err = create_refund(&pool, &sale_id, items, "refund void", "other", CASHIER)
+        let err = create_refund(&pool, &sale_id, items, "refund void", "other", CASHIER, false)
             .await
             .unwrap_err();
 
@@ -799,6 +831,7 @@ mod tests {
             "first",
             "other",
             CASHIER,
+            false,
         )
         .await
         .expect("first refund should succeed");
@@ -811,6 +844,7 @@ mod tests {
             "second",
             "other",
             CASHIER,
+            false,
         )
         .await
         .unwrap_err();
@@ -836,7 +870,7 @@ mod tests {
             refund_amount_minor: 440,
         }];
 
-        create_refund(&pool, &sale_id, items, "reason", "INVALID_CODE", CASHIER)
+        create_refund(&pool, &sale_id, items, "reason", "INVALID_CODE", CASHIER, false)
             .await
             .expect("refund with invalid code");
 

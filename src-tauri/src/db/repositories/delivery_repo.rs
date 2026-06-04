@@ -48,9 +48,9 @@ pub async fn create_delivery_in_tx(
           contact_number, house_number, area, address_text, delivery_note,
           delivery_staff_name, expected_payment_method, payment_status,
           amount_minor, currency, delivery_status,
-          created_by_user_id, branch_id, device_id, created_at, updated_at,
+          created_by_user_id, branch_id, device_id, origin_device_id, created_at, updated_at,
           sync_status, version)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'unpaid',?,?,'pending',?,?,?,?,?,'pending',1)",
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'unpaid',?,?,'pending',?,?,?,?,?,?,'pending',1)",
     )
     .bind(&delivery_id)
     .bind(sale_id)
@@ -68,6 +68,7 @@ pub async fn create_delivery_in_tx(
     .bind(currency)
     .bind(created_by_user_id)
     .bind(branch_id)
+    .bind(device_id)
     .bind(device_id)
     .bind(now)
     .bind(now)
@@ -265,19 +266,23 @@ pub async fn update_delivery_status(
         entity_type: "delivery_order",
         entity_id: &input.delivery_id,
         actor_user_id: &input.actor_user_id,
+        actor_type: "user",
         created_at: &now,
+        before_json: None,
         after_json: Some(&after_json),
+        reason: None,
         previous_hash: &prev_hash,
     });
     sqlx::query(
         "INSERT INTO audit_logs
          (audit_log_id, event_type, entity_type, entity_id, actor_user_id, actor_type,
-          device_id, branch_id, before_json, after_json, created_at, hash, previous_hash)
+          device_id, origin_device_id, branch_id, before_json, after_json, created_at, hash, previous_hash)
          VALUES (?,'delivery.status_changed','delivery_order',?,?,'user',?,?,?,?,?,?,?)",
     )
     .bind(&audit_id)
     .bind(&input.delivery_id)
     .bind(&input.actor_user_id)
+    .bind(&existing.device_id)
     .bind(&existing.device_id)
     .bind(&existing.branch_id)
     .bind(&before_json)
@@ -356,19 +361,23 @@ pub async fn confirm_payment(
         entity_type: "delivery_order",
         entity_id: &input.delivery_id,
         actor_user_id: &input.confirmed_by_user_id,
+        actor_type: "user",
         created_at: &now,
+        before_json: None,
         after_json: Some(&after_json),
+        reason: None,
         previous_hash: &prev_hash,
     });
     sqlx::query(
         "INSERT INTO audit_logs
          (audit_log_id, event_type, entity_type, entity_id, actor_user_id, actor_type,
-          device_id, branch_id, before_json, after_json, created_at, hash, previous_hash)
+          device_id, origin_device_id, branch_id, before_json, after_json, created_at, hash, previous_hash)
          VALUES (?,'delivery.payment_confirmed','delivery_order',?,?,'user',?,?,?,?,?,?,?)",
     )
     .bind(&audit_id)
     .bind(&input.delivery_id)
     .bind(&input.confirmed_by_user_id)
+    .bind(&existing.device_id)
     .bind(&existing.device_id)
     .bind(&existing.branch_id)
     .bind(&before_json)
@@ -436,19 +445,23 @@ pub async fn cancel_delivery(
         entity_type: "delivery_order",
         entity_id: &input.delivery_id,
         actor_user_id: &input.actor_user_id,
+        actor_type: "user",
         created_at: &now,
+        before_json: None,
         after_json: Some(&after_json),
+        reason: None,
         previous_hash: &prev_hash,
     });
     sqlx::query(
         "INSERT INTO audit_logs
          (audit_log_id, event_type, entity_type, entity_id, actor_user_id, actor_type,
-          device_id, branch_id, before_json, after_json, created_at, hash, previous_hash)
+          device_id, origin_device_id, branch_id, before_json, after_json, created_at, hash, previous_hash)
          VALUES (?,'delivery.cancelled','delivery_order',?,?,'user',?,?,?,?,?,?,?)",
     )
     .bind(&audit_id)
     .bind(&input.delivery_id)
     .bind(&input.actor_user_id)
+    .bind(&existing.device_id)
     .bind(&existing.device_id)
     .bind(&existing.branch_id)
     .bind(&before_json)
@@ -523,19 +536,23 @@ pub async fn revert_payment(
         entity_type: "delivery_order",
         entity_id: &input.delivery_id,
         actor_user_id: &input.actor_user_id,
+        actor_type: "user",
         created_at: &now,
+        before_json: None,
         after_json: Some(&after_json),
+        reason: None,
         previous_hash: &prev_hash,
     });
     sqlx::query(
         "INSERT INTO audit_logs
          (audit_log_id, event_type, entity_type, entity_id, actor_user_id, actor_type,
-          device_id, branch_id, before_json, after_json, created_at, hash, previous_hash)
+          device_id, origin_device_id, branch_id, before_json, after_json, created_at, hash, previous_hash)
          VALUES (?,'delivery.payment_reverted','delivery_order',?,?,'user',?,?,?,?,?,?,?)",
     )
     .bind(&audit_id)
     .bind(&input.delivery_id)
     .bind(&input.actor_user_id)
+    .bind(&existing.device_id)
     .bind(&existing.device_id)
     .bind(&existing.branch_id)
     .bind(&before_json)

@@ -5,6 +5,7 @@ use crate::domain::delivery::DeliveryInput;
 use crate::domain::sale::{PaymentInput, SaleResult};
 use crate::errors::AppError;
 use crate::inventory::movements;
+use crate::sync::outbox;
 use crate::AppState;
 use sqlx::Row;
 use tauri::State;
@@ -26,8 +27,9 @@ pub struct StartCartResult {
 #[tauri::command]
 pub async fn pos_start_cart(
     input: StartCartInput,
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
 ) -> Result<StartCartResult, AppError> {
+    crate::commands::rbac::require_any_role(&state.db, &input.cashier_user_id).await?;
     let cart = Cart::new(
         input.branch_id,
         input.device_id,
@@ -60,6 +62,11 @@ pub async fn pos_add_item(
 
     let qty_str = input.quantity.as_deref().unwrap_or("1");
     let qty_to_add: f64 = qty_str.parse().unwrap_or(1.0);
+    if !qty_to_add.is_finite() || qty_to_add <= 0.0 || qty_to_add > 1_000_000.0 {
+        return Err(AppError::Validation(format!(
+            "Invalid quantity: {qty_str}"
+        )));
+    }
     let mut cart = input.cart;
 
     // Merge with an existing active line for the same product rather than duplicating.
@@ -144,8 +151,10 @@ pub async fn pos_update_quantity(input: UpdateQuantityInput) -> Result<Cart, App
         .quantity
         .parse()
         .map_err(|_| AppError::Validation("Invalid quantity".into()))?;
-    if qty <= 0.0 {
-        return Err(AppError::Validation("Quantity must be positive".into()));
+    if !qty.is_finite() || qty <= 0.0 || qty > 1_000_000.0 {
+        return Err(AppError::Validation(format!(
+            "Quantity must be between 0 and 1,000,000 (got {qty})"
+        )));
     }
     let mut cart = input.cart;
     if let Some(line) = cart
@@ -154,6 +163,30 @@ pub async fn pos_update_quantity(input: UpdateQuantityInput) -> Result<Cart, App
         .find(|l| l.cart_line_id == input.cart_line_id)
     {
         line.quantity = input.quantity;
+        line.recalculate();
+    }
+    Ok(cart)
+}
+
+#[derive(serde::Deserialize)]
+pub struct SetLinePriceInput {
+    pub cart: Cart,
+    pub cart_line_id: String,
+    pub price_minor: i64,
+}
+
+#[tauri::command]
+pub async fn pos_set_line_price(input: SetLinePriceInput) -> Result<Cart, AppError> {
+    if input.price_minor <= 0 {
+        return Err(AppError::Validation("Price must be positive".into()));
+    }
+    let mut cart = input.cart;
+    if let Some(line) = cart
+        .lines
+        .iter_mut()
+        .find(|l| l.cart_line_id == input.cart_line_id && !l.voided)
+    {
+        line.unit_price_minor = input.price_minor;
         line.recalculate();
     }
     Ok(cart)
@@ -190,6 +223,32 @@ pub async fn pos_finalize_sale(
         .idempotency_key
         .unwrap_or_else(|| Ulid::new().to_string());
     let created_offline = !state.sync_worker.state.lock().await.online;
+
+    // Guard: confirm the submitted shift_id is an OPEN shift that belongs to this device.
+    // Prevents stale-cart attacks and cross-device shift forgery from the frontend.
+    let shift_device: Option<String> = sqlx::query_scalar(
+        "SELECT device_id FROM shifts WHERE shift_id = ? AND status = 'open'",
+    )
+    .bind(&input.cart.shift_id)
+    .fetch_optional(&state.db)
+    .await?;
+    match shift_device {
+        Some(ref dev) if dev == &input.cart.device_id => {} // OK
+        Some(_) => {
+            return Err(AppError::Validation(
+                "Shift does not belong to this device.".into(),
+            ))
+        }
+        None => {
+            return Err(AppError::Validation(
+                "No open shift found for this sale. Please open a shift first.".into(),
+            ))
+        }
+    }
+
+    // Guard: verify the cashier_user_id from the cart is an active user.
+    // Prevents a compromised frontend from attributing sales to any user.
+    crate::commands::rbac::require_any_role(&state.db, &input.cart.cashier_user_id).await?;
 
     // Load the allow_negative_stock business flag.
     let flag_val: Option<String> = sqlx::query_scalar(
@@ -263,6 +322,16 @@ pub async fn pos_apply_bill_discount(
     let (require_discount_reason, cashier_can_discount) =
         load_discount_flags(&state.db).await;
 
+    // Upper-bound: discount cannot exceed the cart gross total
+    if discount > 0 {
+        let gross = input.cart.gross_total();
+        if discount > gross {
+            return Err(AppError::Validation(format!(
+                "Discount ({discount}) exceeds cart total ({gross})"
+            )));
+        }
+    }
+
     if discount > 0 && require_discount_reason && input.reason.trim().is_empty() {
         return Err(AppError::Validation(
             "A reason is required when applying a bill discount".into(),
@@ -298,8 +367,11 @@ pub async fn pos_apply_bill_discount(
             entity_type: "cart",
             entity_id: &cart.cart_id,
             actor_user_id: &cart.cashier_user_id,
+            actor_type: "user",
             created_at: &now,
+            before_json: None,
             after_json: Some(&after_json),
+            reason: None,
             previous_hash: &prev_hash,
         });
         let _ = sqlx::query(
@@ -346,6 +418,18 @@ pub async fn pos_apply_line_discount(
     let (require_discount_reason, cashier_can_discount) =
         load_discount_flags(&state.db).await;
 
+    // Upper-bound: discount cannot exceed the line's own subtotal (unit_price × qty)
+    if discount > 0 {
+        if let Some(line) = input.cart.lines.iter().find(|l| l.cart_line_id == input.cart_line_id) {
+            let line_subtotal = crate::domain::money::mul_minor_by_qty(line.unit_price_minor, &line.quantity);
+            if discount > line_subtotal {
+                return Err(AppError::Validation(format!(
+                    "Discount ({discount}) exceeds line subtotal ({line_subtotal})"
+                )));
+            }
+        }
+    }
+
     if discount > 0 && require_discount_reason && input.reason.trim().is_empty() {
         return Err(AppError::Validation(
             "A reason is required when applying a line discount".into(),
@@ -388,8 +472,11 @@ pub async fn pos_apply_line_discount(
                 entity_type: "cart",
                 entity_id: &cart.cart_id,
                 actor_user_id: &cart.cashier_user_id,
+                actor_type: "user",
                 created_at: &now,
+                before_json: None,
                 after_json: Some(&after_json),
+                reason: None,
                 previous_hash: &prev_hash,
             });
             let _ = sqlx::query(
@@ -447,7 +534,10 @@ pub struct AddCustomItemInput {
 }
 
 #[tauri::command]
-pub async fn pos_add_custom_item(input: AddCustomItemInput) -> Result<Cart, AppError> {
+pub async fn pos_add_custom_item(
+    input: AddCustomItemInput,
+    state: State<'_, AppState>,
+) -> Result<Cart, AppError> {
     if input.name.trim().is_empty() {
         return Err(AppError::Validation("Item name is required".into()));
     }
@@ -458,13 +548,15 @@ pub async fn pos_add_custom_item(input: AddCustomItemInput) -> Result<Cart, AppE
     let qty_f: f64 = qty
         .parse()
         .map_err(|_| AppError::Validation("Invalid quantity".into()))?;
-    if qty_f <= 0.0 {
-        return Err(AppError::Validation("Quantity must be positive".into()));
+    if !qty_f.is_finite() || qty_f <= 0.0 || qty_f > 1_000_000.0 {
+        return Err(AppError::Validation(format!(
+            "Invalid quantity: {qty}"
+        )));
     }
     let mut cart = input.cart;
     let line = CartLine::new(
         None, // no product_id — open item
-        input.name,
+        input.name.clone(),
         None, // no sku
         None, // no barcode
         qty,
@@ -474,17 +566,70 @@ pub async fn pos_add_custom_item(input: AddCustomItemInput) -> Result<Cart, AppE
         false,
     );
     cart.lines.push(line);
+
+    // Audit log: custom items bypass the product catalogue so their cashier-set
+    // price would otherwise be invisible. Write an immutable record here.
+    let log_id = Ulid::new().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    let after_json = serde_json::json!({
+        "cart_id":      &cart.cart_id,
+        "name":         &input.name,
+        "price_minor":  input.price_minor,
+        "quantity":     qty,
+    })
+    .to_string();
+    let prev_hash = audit_hash::fetch_last_hash(&state.db, &cart.device_id)
+        .await
+        .unwrap_or_default();
+    let hash = audit_hash::compute_audit_hash(&audit_hash::AuditHashInput {
+        audit_log_id: &log_id,
+        event_type: "CUSTOM_ITEM_ADDED",
+        entity_type: "cart",
+        entity_id: &cart.cart_id,
+        actor_user_id: &cart.cashier_user_id,
+        actor_type: "user",
+        created_at: &now,
+        before_json: None,
+        after_json: Some(&after_json),
+        reason: None,
+        previous_hash: &prev_hash,
+    });
+    let _ = sqlx::query(
+        "INSERT INTO audit_logs
+           (audit_log_id, event_type, entity_type, entity_id,
+            actor_user_id, actor_type, after_json, created_at, hash, previous_hash)
+         VALUES (?, 'CUSTOM_ITEM_ADDED', 'cart', ?, ?, 'user', ?, ?, ?, ?)",
+    )
+    .bind(&log_id)
+    .bind(&cart.cart_id)
+    .bind(&cart.cashier_user_id)
+    .bind(&after_json)
+    .bind(&now)
+    .bind(&hash)
+    .bind(if prev_hash.is_empty() { None } else { Some(prev_hash) })
+    .execute(&state.db)
+    .await;
+
     Ok(cart)
 }
 
 // ─── Void completed sale ──────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+pub struct VoidSaleResult {
+    /// Always true when the command succeeds (sale status changed to voided).
+    pub voided: bool,
+    /// Non-null when stock restoration failed. The void was committed but inventory
+    /// may be inaccurate — the manager should reconcile manually.
+    pub stock_warning: Option<String>,
+}
 
 #[tauri::command]
 pub async fn pos_void_sale(
     sale_id: String,
     voided_by_user_id: String,
     state: State<'_, AppState>,
-) -> Result<(), AppError> {
+) -> Result<VoidSaleResult, AppError> {
     // Voiding a completed sale is a manager/owner operation — not a cashier action.
     rbac::manager_or_owner(&state.db, &voided_by_user_id).await?;
 
@@ -524,8 +669,10 @@ pub async fn pos_void_sale(
     };
 
     // Restore stock for all tracked items sold in the voided sale.
-    // Best-effort: a failure here should not undo the void itself, but we log it.
-    if let Err(e) = movements::return_void_sale(
+    // The void is already committed — if stock restore fails we surface a warning
+    // to the caller instead of silently discarding the error, so the manager knows
+    // to reconcile inventory manually.
+    let stock_warning = match movements::return_void_sale(
         &state.db,
         &sale_id,
         &voided_by_user_id,
@@ -534,8 +681,15 @@ pub async fn pos_void_sale(
     )
     .await
     {
-        tracing::error!("Stock restoration failed after void of sale {sale_id}: {e}");
-    }
+        Ok(_) => None,
+        Err(e) => {
+            tracing::error!("Stock restoration failed after void of sale {sale_id}: {e}");
+            Some(format!(
+                "Sale voided but inventory could not be updated: {e}. \
+                 Please reconcile stock levels manually."
+            ))
+        }
+    };
 
     // Record in audit log — best-effort, non-fatal
     let audit_id = ulid::Ulid::new().to_string();
@@ -548,8 +702,11 @@ pub async fn pos_void_sale(
         entity_type: "sale",
         entity_id: &sale_id,
         actor_user_id: &voided_by_user_id,
+        actor_type: "user",
         created_at: &now,
+        before_json: None,
         after_json: None,
+        reason: None,
         previous_hash: &prev_hash,
     });
     let _ = sqlx::query(
@@ -574,7 +731,43 @@ pub async fn pos_void_sale(
     .execute(&state.db)
     .await;
 
-    Ok(())
+    // Enqueue the void status update for cloud sync.
+    // Fetch minimal sale fields needed for the outbox payload.
+    if let Ok(Some(row)) = sqlx::query(
+        "SELECT receipt_number, shift_id, cashier_user_id,
+                gross_total_minor, discount_total_minor, tax_total_minor, net_total_minor,
+                currency, business_date, sold_at, created_offline, idempotency_key
+         FROM sales WHERE sale_id = ?",
+    )
+    .bind(&sale_id)
+    .fetch_optional(&state.db)
+    .await
+    {
+        let _ = outbox::enqueue_sale(
+            &state.db,
+            &device_id,
+            &branch_id,
+            &sale_id,
+            &row.get::<String, _>("receipt_number"),
+            &row.get::<String, _>("shift_id"),
+            &row.get::<String, _>("cashier_user_id"),
+            "voided",
+            row.get::<i64, _>("gross_total_minor"),
+            row.get::<i64, _>("discount_total_minor"),
+            row.get::<i64, _>("tax_total_minor"),
+            row.get::<i64, _>("net_total_minor"),
+            &row.get::<String, _>("currency"),
+            &row.get::<String, _>("business_date"),
+            &row.get::<String, _>("sold_at"),
+            row.get::<i64, _>("created_offline") != 0,
+            &row.get::<String, _>("idempotency_key"),
+            row.get::<Option<String>, _>("customer_id").as_deref(),
+            row.get::<i64, _>("is_delivery") != 0,
+        )
+        .await;
+    }
+
+    Ok(VoidSaleResult { voided: true, stock_warning })
 }
 
 // ─── Cart summary ─────────────────────────────────────────────────────────────
@@ -633,8 +826,11 @@ pub async fn pos_record_void(
         entity_type: "cart",
         entity_id: &cart_id,
         actor_user_id: &cashier_user_id,
+        actor_type: "user",
         created_at: &now,
+        before_json: None,
         after_json: Some(&detail),
+        reason: None,
         previous_hash: &prev_hash,
     });
 

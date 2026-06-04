@@ -8,18 +8,27 @@ use crate::sync::outbox;
 use sqlx::{Row, SqlitePool};
 use ulid::Ulid;
 
-async fn next_receipt_number(
-    pool: &SqlitePool,
+async fn next_receipt_number<'e, E>(
+    executor: E,
     branch_code: &str,
     device_code: &str,
-) -> AppResult<String> {
-    let prefix = format!("{}-{}-%", branch_code, device_code);
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sales WHERE receipt_number LIKE ?")
-        .bind(&prefix)
-        .fetch_one(pool)
-        .await?;
+    device_id: &str,
+) -> AppResult<String>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    // Atomic per-device counter — UPDATE...RETURNING prevents races.
+    // The counter persists independently of sale rows; pruning old sales cannot cause collisions.
+    let seq: i64 = sqlx::query_scalar(
+        "UPDATE devices SET next_receipt_seq = next_receipt_seq + 1
+         WHERE device_id = ?
+         RETURNING next_receipt_seq",
+    )
+    .bind(device_id)
+    .fetch_one(executor)
+    .await?;
 
-    Ok(format!("{}-{}-{:08}", branch_code, device_code, count + 1))
+    Ok(format!("{}-{}-{:08}", branch_code, device_code, seq))
 }
 
 pub async fn finalize_sale(
@@ -62,12 +71,19 @@ pub async fn finalize_sale(
         ));
     }
 
-    // ── Guard: payment sum must cover the bill ───────────────────────────────
+    // ── Guard: validate quantities and totals are within safe ranges ──────────
+    // Catches f64 overflow / malicious IPC input before any DB writes.
+    cart.validate()?;
+
+    // ── Guard: payment amounts must sum exactly to net_total ────────────────
+    // Cash overpayment is captured in tendered_minor/change_minor — NOT in amount_minor.
+    // This prevents accounting overstatement (multiple full-amount card payments on one sale).
     let total_paid: i64 = payments.iter().map(|p| p.amount_minor).sum();
     let net_total = cart.net_total();
-    if total_paid < net_total {
+    if total_paid != net_total {
         return Err(AppError::Validation(format!(
-            "Total paid ({}) is less than net total ({})",
+            "Payment amounts ({}) must sum exactly to net total ({}). \
+             Use tendered_minor for cash overpayment.",
             total_paid, net_total
         )));
     }
@@ -135,7 +151,6 @@ pub async fn finalize_sale(
         .ok_or_else(|| AppError::NotFound("Cashier not found".into()))?;
     let cashier_name: String = cashier_row.get("display_name");
 
-    let receipt_number = next_receipt_number(pool, &branch_code, &device_code).await?;
     let sale_id = Ulid::new().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     let business_date = chrono::Local::now().format("%Y-%m-%d").to_string();
@@ -144,19 +159,24 @@ pub async fn finalize_sale(
     let discount = cart.discount_total();
     let net = cart.net_total();
 
+    // Open the transaction BEFORE generating the receipt number so that the
+    // UPDATE counter and the sale INSERT are atomic. SQLite serialises writers,
+    // so no two concurrent transactions can use the same counter value.
     let mut tx = pool.begin().await?;
+    let receipt_number = next_receipt_number(&mut *tx, &branch_code, &device_code, &cart.device_id).await?;
 
     sqlx::query(
         "INSERT INTO sales
-         (sale_id, receipt_number, branch_id, device_id, shift_id, cashier_user_id,
+         (sale_id, receipt_number, branch_id, device_id, origin_device_id, shift_id, cashier_user_id,
           status, gross_total_minor, discount_total_minor, tax_total_minor, net_total_minor,
           currency, business_date, sold_at, created_offline, idempotency_key, sync_status,
           customer_id)
-         VALUES (?,?,?,?,?,?,'completed',?,?,?,?,?,?,?,?,?,'pending',?)",
+         VALUES (?,?,?,?,?,?,?,'completed',?,?,?,?,?,?,?,?,?,'pending',?)",
     )
     .bind(&sale_id)
     .bind(&receipt_number)
     .bind(&cart.branch_id)
+    .bind(&cart.device_id)
     .bind(&cart.device_id)
     .bind(&cart.shift_id)
     .bind(&cart.cashier_user_id)
@@ -185,13 +205,14 @@ pub async fn finalize_sale(
 
         sqlx::query(
             "INSERT INTO sale_items
-             (sale_item_id, sale_id, product_id, product_name_snapshot, sku_snapshot,
+             (sale_item_id, sale_id, origin_device_id, product_id, product_name_snapshot, sku_snapshot,
               barcode_snapshot, quantity, unit_price_minor, line_discount_minor,
               tax_rule_snapshot, tax_amount_minor, line_total_minor, note, voided)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0)",
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)",
         )
         .bind(&item_id)
         .bind(&sale_id)
+        .bind(cart.device_id.as_str())
         .bind(&line.product_id)
         .bind(&line.product_name)
         .bind(&line.sku)
@@ -217,20 +238,33 @@ pub async fn finalize_sale(
 
     let mut payment_summaries = Vec::new();
     for payment in &payments {
+        if payment.amount_minor <= 0 {
+            return Err(AppError::Validation(format!(
+                "Payment amount must be positive (got {} for method '{}')",
+                payment.amount_minor, payment.method
+            )));
+        }
         let payment_id = Ulid::new().to_string();
         let change = if payment.method == "cash" {
-            payment.tendered_minor.map(|t| t - payment.amount_minor)
+            let tendered = payment.tendered_minor.unwrap_or(payment.amount_minor);
+            if tendered < payment.amount_minor {
+                return Err(AppError::Validation(format!(
+                    "Cash tendered ({}) is less than payment amount ({})",
+                    tendered, payment.amount_minor
+                )));
+            }
+            Some(tendered - payment.amount_minor)
         } else {
             None
         };
 
         sqlx::query(
             "INSERT INTO payments
-             (payment_id, sale_id, payment_method, amount_minor, currency, status,
+             (payment_id, sale_id, origin_device_id, payment_method, amount_minor, currency, status,
               external_reference, tendered_minor, change_minor, recorded_by_user_id, recorded_at, sync_status)
-             VALUES (?,?,?,?,?,'approved',?,?,?,?,?,'pending')"
+             VALUES (?,?,?,?,?,?,'approved',?,?,?,?,?,'pending')"
         )
-        .bind(&payment_id).bind(&sale_id).bind(&payment.method).bind(payment.amount_minor)
+        .bind(&payment_id).bind(&sale_id).bind(&cart.device_id).bind(&payment.method).bind(payment.amount_minor)
         .bind(&currency).bind(&payment.external_reference).bind(payment.tendered_minor)
         .bind(change).bind(&cart.cashier_user_id).bind(&now)
         .execute(&mut *tx)
@@ -343,19 +377,23 @@ pub async fn finalize_sale(
         entity_type: "sale",
         entity_id: &sale_id,
         actor_user_id: &cart.cashier_user_id,
+        actor_type: "user",
         created_at: &now,
+        before_json: None,
         after_json: Some(&after_json),
+        reason: None,
         previous_hash: &prev_hash,
     });
     sqlx::query(
         "INSERT INTO audit_logs
          (audit_log_id, event_type, entity_type, entity_id, actor_user_id, actor_type,
-          device_id, branch_id, after_json, created_at, hash, previous_hash)
-         VALUES (?,'sale.created','sale',?,?,'user',?,?,?,?,?,?)",
+          device_id, origin_device_id, branch_id, after_json, created_at, hash, previous_hash)
+         VALUES (?,'sale.created','sale',?,?,'user',?,?,?,?,?,?,?)",
     )
     .bind(&audit_id)
     .bind(&sale_id)
     .bind(&cart.cashier_user_id)
+    .bind(&cart.device_id)
     .bind(&cart.device_id)
     .bind(&cart.branch_id)
     .bind(&after_json)
@@ -425,6 +463,8 @@ pub async fn finalize_sale(
         &now,
         false,
         idempotency_key,
+        customer_id,
+        delivery.is_some(),
     )
     .await;
 
@@ -516,6 +556,36 @@ pub async fn finalize_sale(
         }
     }
 
+    // F-HIGH-02: Enqueue the delivery order so other terminals receive it.
+    if let Some(ref d) = delivery_row {
+        let _ = outbox::enqueue_delivery_order(
+            pool,
+            &cart.device_id,
+            &cart.branch_id,
+            &d.delivery_id,
+            &d.sale_id,
+            &d.receipt_number,
+            d.customer_id.as_deref(),
+            d.customer_name.as_deref(),
+            &d.contact_number,
+            &d.address_text,
+            d.house_number.as_deref(),
+            d.area.as_deref(),
+            d.delivery_note.as_deref(),
+            d.delivery_staff_name.as_deref(),
+            &d.expected_payment_method,
+            &d.payment_status,
+            &d.delivery_status,
+            d.amount_minor,
+            &d.currency,
+            d.paid_confirmed_at.as_deref(),
+            &d.created_by_user_id,
+            &d.created_at,
+            &d.updated_at,
+        )
+        .await;
+    }
+
     // Deduct inventory (after commit; failures don't roll back sale).
     // branch_id and device_id come from the cart — always the real active values.
     let low_stock_alerts = movements::deduct_sale(
@@ -604,10 +674,10 @@ mod tests {
     async fn insert_shift(pool: &SqlitePool) -> String {
         let shift_id = ulid::Ulid::new().to_string();
         sqlx::query(
-            "INSERT INTO shifts (shift_id, branch_id, device_id, cashier_user_id, opened_at, status)
-             VALUES (?, ?, ?, ?, datetime('now'), 'open')"
+            "INSERT INTO shifts (shift_id, branch_id, device_id, origin_device_id, cashier_user_id, opened_at, status)
+             VALUES (?, ?, ?, ?, ?, datetime('now'), 'open')"
         )
-        .bind(&shift_id).bind(BRANCH).bind(DEVICE).bind(CASHIER)
+        .bind(&shift_id).bind(BRANCH).bind(DEVICE).bind(DEVICE).bind(CASHIER)
         .execute(pool).await.expect("insert shift");
         shift_id
     }

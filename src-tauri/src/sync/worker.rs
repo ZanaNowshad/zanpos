@@ -441,6 +441,7 @@ impl SyncWorker {
             "payment"        => ("payments",         "payment_id"),
             "stock_level"    => ("stock_levels",     "product_id"),
             "stock_movement" => ("stock_movements",  "movement_id"),
+            "audit_log"      => ("audit_logs",       "audit_log_id"),
             _ => return,
         };
 

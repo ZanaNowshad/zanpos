@@ -1,6 +1,5 @@
 use crate::domain::product::LowStockAlert;
 use crate::errors::AppResult;
-use crate::sync::outbox;
 /// Inventory movement writers.
 /// Each function creates a stock_movement record and updates stock_levels atomically.
 /// Returns a list of LowStockAlert for products that crossed below their reorder point.
@@ -180,33 +179,7 @@ pub async fn deduct_sale(
         .execute(pool)
         .await?;
 
-        // Enqueue to sync
-        let _ = outbox::enqueue_stock_movement(
-            pool,
-            device_id,
-            branch_id,
-            &movement_id,
-            &product_id,
-            "sale",
-            &format_qty(-sold_qty),
-            &format_qty(new_qty),
-            "sale",
-            sale_id,
-            None,
-            Some(cashier_user_id),
-            &now,
-        )
-        .await;
-        let _ = outbox::enqueue_stock_level(
-            pool,
-            device_id,
-            branch_id,
-            &product_id,
-            &format_qty(new_qty),
-            &now,
-            &now,
-        )
-        .await;
+        // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
         if let Some(alert) = check_alert(pool, &product_id, new_qty).await {
             alerts.push(alert);
@@ -280,33 +253,7 @@ pub async fn return_refund(
         .await?;
 
         tx.commit().await?;
-
-        let _ = outbox::enqueue_stock_movement(
-            pool,
-            device_id,
-            branch_id,
-            &movement_id,
-            &product_id,
-            "refund",
-            &format_qty(returned_qty),
-            &format_qty(new_qty),
-            "refund",
-            refund_id,
-            None,
-            Some(created_by_user_id),
-            &now,
-        )
-        .await;
-        let _ = outbox::enqueue_stock_level(
-            pool,
-            device_id,
-            branch_id,
-            &product_id,
-            &format_qty(new_qty),
-            &now,
-            &now,
-        )
-        .await;
+        // sync_status='pending' is set by column DEFAULT — sync worker picks it up
     }
 
     Ok(())
@@ -379,17 +326,7 @@ pub async fn return_void_sale(
         .await?;
 
         tx.commit().await?;
-
-        let _ = outbox::enqueue_stock_level(
-            pool,
-            device_id,
-            branch_id,
-            &product_id,
-            &format_qty(new_qty),
-            &now,
-            &now,
-        )
-        .await;
+        // sync_status='pending' is set by column DEFAULT — sync worker picks it up
     }
 
     Ok(())
@@ -442,33 +379,7 @@ pub async fn manual_adjust(
     .await?;
 
     tx.commit().await?;
-
-    let _ = outbox::enqueue_stock_movement(
-        pool,
-        device_id,
-        branch_id,
-        &movement_id,
-        product_id,
-        "adjustment",
-        &format_qty(quantity_delta),
-        &format_qty(new_qty),
-        "ai_action",
-        ai_action_id.unwrap_or(""),
-        notes,
-        Some(user_id),
-        &now,
-    )
-    .await;
-    let _ = outbox::enqueue_stock_level(
-        pool,
-        device_id,
-        branch_id,
-        product_id,
-        &format_qty(new_qty),
-        &now,
-        &now,
-    )
-    .await;
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     Ok(LowStockAlert {
         product_id: product_id.to_string(),
@@ -525,33 +436,7 @@ pub async fn stock_take(
     .await?;
 
     tx.commit().await?;
-
-    let _ = outbox::enqueue_stock_movement(
-        pool,
-        device_id,
-        branch_id,
-        &movement_id,
-        product_id,
-        "stock_take",
-        &format_qty(delta),
-        &format_qty(new_quantity),
-        "ai_action",
-        ai_action_id.unwrap_or(""),
-        notes,
-        Some(user_id),
-        &now,
-    )
-    .await;
-    let _ = outbox::enqueue_stock_level(
-        pool,
-        device_id,
-        branch_id,
-        product_id,
-        &format_qty(new_quantity),
-        &now,
-        &now,
-    )
-    .await;
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     Ok(())
 }

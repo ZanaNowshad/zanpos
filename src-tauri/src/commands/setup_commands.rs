@@ -1,7 +1,6 @@
 use crate::commands::rbac;
 use crate::db::repositories::{ai_admin_repo, auth_repo};
 use crate::errors::AppError;
-use crate::sync::outbox;
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -329,11 +328,7 @@ pub async fn setup_wizard_complete(
             let _ = client.upsert_branch(&branch_json).await;
         }
 
-        // CRITICAL (multi-terminal): push the full post-setup catalog — including the
-        // real owner user and this device — to the outbox NOW, then sync immediately.
-        // The old boot-time bootstrap ran before the wizard existed, so without this a
-        // second terminal would find no users to log in with and never see this device.
-        let _ = outbox::enqueue_full_catalog(&state.db).await;
+        // Trigger initial sync so the cloud is notified of the newly configured store.
         // Non-blocking: the UI must not block on network calls (offline-first principle).
         let worker = state.sync_worker.clone();
         tauri::async_runtime::spawn(async move {
@@ -665,26 +660,9 @@ pub async fn setup_join_store(
     .execute(&state.db)
     .await?;
 
-    // Bug C fix: create sync_state row for this new device so the watermark can
-    // actually be persisted after pull_new runs. Without this row the UPDATE in
-    // pull_new silently affects 0 rows and POS 2 re-pulls all history every cycle.
-    let sync_state_id = ulid::Ulid::new().to_string();
-    sqlx::query(
-        "INSERT OR IGNORE INTO sync_state (sync_state_id, device_id, last_pulled_central_sequence)
-         VALUES (?, ?, 0)",
-    )
-    .bind(&sync_state_id)
-    .bind(&device_id)
-    .execute(&state.db)
-    .await
-    .ok(); // Non-fatal — UPSERT in pull_new is the safety net
-
-    // Register this terminal in the central store so POS 1 sees it immediately.
-    // This event is pushed to Supabase on the next sync cycle and POS 1 applies
-    // it via inbox "device" handler — no extra tables or REST calls needed.
-    let _ = outbox::enqueue_device(
-        &state.db, &device_id, &branch_id, &device_code, &device_name, true,
-    ).await;
+    // sync_watermark rows are pre-seeded by migration 0010_sync.sql —
+    // the first pull cycle will download all remote changes from 1970-01-01.
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     // Trigger initial sync: push the device event + pull the full catalog from Supabase.
     // Non-blocking: the UI must not block on network calls (offline-first principle).
@@ -723,15 +701,7 @@ pub async fn setup_save_benefit_number(
     .execute(&state.db)
     .await?;
 
-    // Enqueue to sync so other devices receive the BenefitPay number.
-    let device_id: String =
-        sqlx::query_scalar("SELECT device_id FROM devices WHERE is_active=1 ORDER BY device_code LIMIT 1")
-            .fetch_optional(&state.db).await?.flatten().unwrap_or_default();
-    let branch_id: String =
-        sqlx::query_scalar("SELECT branch_id FROM branches WHERE is_active=1 ORDER BY created_at LIMIT 1")
-            .fetch_optional(&state.db).await?.flatten().unwrap_or_default();
-    let _ = outbox::enqueue_app_config(&state.db, &device_id, &branch_id,
-        "whatsapp_benefit_number", &benefit_number).await;
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     Ok(())
 }
@@ -828,22 +798,7 @@ pub async fn business_flags_save(
     write_flag(&state.db, "flag_cashier_can_discount",    input.flags.cashier_can_discount).await?;
     write_flag(&state.db, "flag_auto_print_receipt",      input.flags.auto_print_receipt).await?;
 
-    // Sync business flags to other devices via the outbox.
-    let device_id: String =
-        sqlx::query_scalar("SELECT device_id FROM devices WHERE is_active=1 ORDER BY device_code LIMIT 1")
-            .fetch_optional(&state.db).await?.flatten().unwrap_or_default();
-    let branch_id: String =
-        sqlx::query_scalar("SELECT branch_id FROM branches WHERE is_active=1 ORDER BY created_at LIMIT 1")
-            .fetch_optional(&state.db).await?.flatten().unwrap_or_default();
-
-    let _ = outbox::enqueue_app_config(&state.db, &device_id, &branch_id,
-        "flag_allow_negative_stock",    if input.flags.allow_negative_stock    { "1" } else { "0" }).await;
-    let _ = outbox::enqueue_app_config(&state.db, &device_id, &branch_id,
-        "flag_require_discount_reason", if input.flags.require_discount_reason { "1" } else { "0" }).await;
-    let _ = outbox::enqueue_app_config(&state.db, &device_id, &branch_id,
-        "flag_cashier_can_discount",    if input.flags.cashier_can_discount    { "1" } else { "0" }).await;
-    let _ = outbox::enqueue_app_config(&state.db, &device_id, &branch_id,
-        "flag_auto_print_receipt",      if input.flags.auto_print_receipt      { "1" } else { "0" }).await;
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     Ok(())
 }

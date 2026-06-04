@@ -1,7 +1,6 @@
 use crate::commands::rbac;
 use crate::db::repositories::{audit_hash, auth_repo};
 use crate::errors::{AppError, AppResult};
-use crate::sync::outbox;
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -327,26 +326,10 @@ pub async fn admin_create_product(
         .await?;
     }
 
-    // Enqueue for sync
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
+
     let device_id = active_device_id(&state).await;
     let branch_id = active_branch_id(&state).await?;
-    let _ = outbox::enqueue_product(
-        &state.db, &device_id, &branch_id, &product_id,
-        &input.category_id, &input.name,
-        input.sku.as_deref().filter(|s| !s.is_empty()),
-        input.barcode.as_deref().filter(|s| !s.is_empty()),
-        input.description.as_deref().filter(|s| !s.is_empty()),
-        input.track_inventory, input.allow_decimal_quantity, true,
-        input.tax_rule_id.as_deref(), input.cost_minor, "BHD",
-        input.reorder_point,
-        input.image_path.as_deref(),
-        input.default_supplier_id.as_deref().filter(|s| !s.is_empty()),
-        &now, &now, 1,
-    ).await;
-    let _ = outbox::enqueue_product_price(
-        &state.db, &device_id, &branch_id, &price_id, &product_id,
-        input.price_minor, "BHD", &now, None, &input.created_by_user_id, None, &now,
-    ).await;
 
     // H8: Audit log — product created
     let after = serde_json::json!({
@@ -444,14 +427,6 @@ pub async fn admin_update_product(
         }
     })?;
 
-    // H-4: Fetch the incremented version for outbox
-    let new_version: i64 = sqlx::query_scalar(
-        "SELECT version FROM products WHERE product_id = ?",
-    )
-    .bind(&input.product_id)
-    .fetch_one(&state.db)
-    .await?;
-
     if current_price != Some(input.price_minor) {
         // Close old price
         sqlx::query(
@@ -464,19 +439,7 @@ pub async fn admin_update_product(
         .execute(&state.db)
         .await?;
 
-        // H-8: Re-enqueue the closed price row so sync peers know its effective_to
-        if let Some(ref old) = old_price_row {
-            let old_pid: String = old.get("price_id");
-            let old_price: i64 = old.get("price_minor");
-            let old_eff_from: String = old.get("effective_from");
-            let dev_id = active_device_id(&state).await;
-            let br_id = active_branch_id(&state).await?;
-            let _ = outbox::enqueue_product_price(
-                &state.db, &dev_id, &br_id, &old_pid, &input.product_id,
-                old_price, "BHD", &old_eff_from, Some(&now),
-                &input.updated_by_user_id, None, &now,
-            ).await;
-        }
+        // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
         // Insert new price
         let price_id = Ulid::new().to_string();
@@ -495,13 +458,7 @@ pub async fn admin_update_product(
         .execute(&state.db)
         .await?;
 
-        // Enqueue new price for sync
-        let dev_id = active_device_id(&state).await;
-        let br_id = active_branch_id(&state).await?;
-        let _ = outbox::enqueue_product_price(
-            &state.db, &dev_id, &br_id, &price_id, &input.product_id,
-            input.price_minor, "BHD", &now, None, &input.updated_by_user_id, None, &now,
-        ).await;
+        // sync_status='pending' is set by column DEFAULT — sync worker picks it up
     }
 
     if input.track_inventory {
@@ -520,24 +477,11 @@ pub async fn admin_update_product(
         .await?;
     }
 
-    // Enqueue product for sync — use real version, not hardcoded 1
-    let device_id = active_device_id(&state).await;
-    let branch_id_str = active_branch_id(&state).await?;
-    let _ = outbox::enqueue_product(
-        &state.db, &device_id, &branch_id_str, &input.product_id,
-        &input.category_id, &input.name,
-        input.sku.as_deref().filter(|s| !s.is_empty()),
-        input.barcode.as_deref().filter(|s| !s.is_empty()),
-        input.description.as_deref().filter(|s| !s.is_empty()),
-        input.track_inventory, input.allow_decimal_quantity, input.is_active,
-        input.tax_rule_id.as_deref(), input.cost_minor, "BHD",
-        input.reorder_point,
-        input.image_path.as_deref(),
-        input.default_supplier_id.as_deref().filter(|s| !s.is_empty()),
-        &now, &now, new_version,
-    ).await;
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     // H8: Audit log — product updated
+    let device_id = active_device_id(&state).await;
+    let branch_id_str = active_branch_id(&state).await?;
     let after = serde_json::json!({
         "product_id": input.product_id, "name": input.name,
         "category_id": input.category_id, "sku": input.sku,
@@ -670,35 +614,7 @@ pub async fn admin_save_tax_rule(
             .execute(&state.db)
             .await?;
 
-            // Enqueue the closed old rule so remote terminals see effective_to
-            let old_dev_id = active_device_id(&state).await;
-            match active_branch_id(&state).await {
-                Ok(old_branch_id) => {
-                    if let Ok(old_row) = sqlx::query(
-                        "SELECT name, rate_basis_points, inclusive, is_active, effective_from, updated_at, version
-                         FROM tax_rules WHERE tax_rule_id = ?",
-                    )
-                    .bind(id)
-                    .fetch_one(&state.db)
-                    .await
-                    {
-                        let old_name: String = old_row.get("name");
-                        let old_rate: i64 = old_row.get("rate_basis_points");
-                        let old_inc: i64 = old_row.get("inclusive");
-                        let old_active: i64 = old_row.get("is_active");
-                        let old_eff_from: String = old_row.get("effective_from");
-                        let old_ver: i64 = old_row.get("version");
-                        let _ = outbox::enqueue_tax_rule(
-                            &state.db, &old_dev_id, &old_branch_id, id,
-                            &old_name, old_rate, old_inc != 0, old_active != 0,
-                            &old_eff_from, &now, old_ver, Some(&now),
-                        ).await;
-                    }
-                }
-                Err(_) => {
-                    tracing::warn!("admin_save_tax_rule: could not get branch_id for old-rule enqueue");
-                }
-            }
+            // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
             // Insert new rule with new rate/inclusive (append-only pattern)
             let new_id = Ulid::new().to_string();
@@ -771,15 +687,11 @@ pub async fn admin_save_tax_rule(
         is_active: active != 0,
     };
 
-    // Enqueue for sync
-    let device_id = active_device_id(&state).await;
-    let branch_id = active_branch_id(&state).await?;
-    let _ = outbox::enqueue_tax_rule(
-        &state.db, &device_id, &branch_id, &result.tax_rule_id,
-        &result.name, result.rate_basis_points, result.inclusive, result.is_active, &now, &now, 1, None,
-    ).await;
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     // H8: Audit log — tax rule created/updated
+    let device_id = active_device_id(&state).await;
+    let branch_id = active_branch_id(&state).await?;
     let tax_event = if is_tax_update { "TAX_RULE_UPDATED" } else { "TAX_RULE_CREATED" };
     let after = serde_json::json!({
         "tax_rule_id": result.tax_rule_id, "name": result.name,
@@ -867,25 +779,11 @@ pub async fn admin_save_category(
         parent_category_id: row.get("parent_category_id"),
     };
 
-    // H-5: Fetch the actual category version (incremented on update, 1 on create)
-    let cat_version: i64 = sqlx::query_scalar(
-        "SELECT version FROM categories WHERE category_id = ?",
-    )
-    .bind(&result.category_id)
-    .fetch_one(&state.db)
-    .await?;
-
-    // Enqueue for sync — use real version, not hardcoded 1
-    let device_id = active_device_id(&state).await;
-    let branch_id = active_branch_id(&state).await?;
-    let _ = outbox::enqueue_category(
-        &state.db, &device_id, &branch_id, &result.category_id,
-        &result.name, result.sort_order, result.is_active,
-        result.parent_category_id.as_deref(),
-        &now, &now, cat_version,
-    ).await;
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     // H8: Audit log — category created/updated
+    let device_id = active_device_id(&state).await;
+    let branch_id = active_branch_id(&state).await?;
     let event = if is_update { "CATEGORY_UPDATED" } else { "CATEGORY_CREATED" };
     let after = serde_json::json!({
         "category_id": result.category_id, "name": result.name,
@@ -965,8 +863,6 @@ pub async fn admin_bulk_import_categories(
     let mut inserted = 0usize;
     let mut skipped = 0usize;
     let mut errors: Vec<BulkRowError> = Vec::new();
-    // Collect (category_id, name, sort_order, parent_category_id) for post-commit outbox enqueue
-    let mut to_enqueue: Vec<(String, String, i64, Option<String>)> = Vec::new();
 
     for (idx, row) in rows.iter().enumerate() {
         let name = row.name.trim();
@@ -1006,7 +902,6 @@ pub async fn admin_bulk_import_categories(
         .await
         {
             Ok(_) => {
-                to_enqueue.push((category_id, name.to_string(), sort_order, row.parent_category_id.clone()));
                 inserted += 1;
             }
             Err(e) if e.to_string().contains("UNIQUE") => skipped += 1,
@@ -1018,15 +913,7 @@ pub async fn admin_bulk_import_categories(
         }
     }
 
-    // Enqueue inserted categories for sync
-    let device_id = active_device_id(&state).await;
-    let branch_id = active_branch_id(&state).await?;
-    for (cat_id, cat_name, sort_order, parent_id) in &to_enqueue {
-        let _ = outbox::enqueue_category(
-            &state.db, &device_id, &branch_id, cat_id,
-            cat_name, *sort_order, true, parent_id.as_deref(), &now, &now, 1,
-        ).await;
-    }
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     Ok(BulkImportResult { inserted, skipped, errors })
 }
@@ -1076,20 +963,6 @@ pub async fn admin_bulk_import_products(
     let mut inserted = 0usize;
     let mut skipped = 0usize;
     let mut errors: Vec<BulkRowError> = Vec::new();
-    // Collect inserted products for post-commit outbox enqueue
-    struct BulkProductEnqueue {
-        product_id: String,
-        category_id: String,
-        name: String,
-        sku: Option<String>,
-        barcode: Option<String>,
-        track: bool,
-        tax_rule_id: Option<String>,
-        price_id: String,
-        price_minor: i64,
-        reorder_point: i64,
-    }
-    let mut to_enqueue: Vec<BulkProductEnqueue> = Vec::new();
 
     // Wrap all inserts in a single explicit transaction.
     // Without this SQLite auto-commits each statement individually, meaning
@@ -1275,38 +1148,12 @@ pub async fn admin_bulk_import_products(
             .await;
         }
 
-        to_enqueue.push(BulkProductEnqueue {
-            product_id: product_id.clone(),
-            category_id: category_id.clone(),
-            name: name.to_string(),
-            sku: sku.map(|s| s.to_string()),
-            barcode: primary_barcode.map(|s| s.to_string()),
-            track,
-            tax_rule_id: tax_rule_id.clone(),
-            price_id: price_id.clone(),
-            price_minor,
-            reorder_point: reorder,
-        });
         inserted += 1;
     }
 
     tx.commit().await?;
 
-    // Enqueue inserted products for sync (after transaction committed)
-    let device_id = active_device_id(&state).await;
-    for item in &to_enqueue {
-        let _ = outbox::enqueue_product(
-            &state.db, &device_id, &branch_id, &item.product_id,
-            &item.category_id, &item.name,
-            item.sku.as_deref(), item.barcode.as_deref(),
-            None, item.track, false, true,
-            item.tax_rule_id.as_deref(), None, "BHD", item.reorder_point, None, None, &now, &now, 1,
-        ).await;
-        let _ = outbox::enqueue_product_price(
-            &state.db, &device_id, &branch_id, &item.price_id, &item.product_id,
-            item.price_minor, "BHD", &now, None, &actor_user_id, None, &now,
-        ).await;
-    }
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     Ok(BulkImportResult { inserted, skipped, errors })
 }
@@ -1422,16 +1269,11 @@ pub async fn admin_create_user(
         last_login_at: row.get("last_login_at"),
     };
 
-    // Enqueue for sync (no PIN hash — PINs are device-local)
-    let device_id = active_device_id(&state).await;
-    let branch_id = active_branch_id(&state).await?;
-    let _ = outbox::enqueue_user(
-        &state.db, &device_id, &branch_id, &result.user_id,
-        &result.display_name, &result.username, &result.role_id,
-        "[]", result.is_active, &now, &now, 1,
-    ).await;
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     // H8: Audit log — user created
+    let device_id = active_device_id(&state).await;
+    let branch_id = active_branch_id(&state).await?;
     let after = serde_json::json!({
         "user_id": result.user_id, "display_name": result.display_name,
         "username": result.username, "role_id": result.role_id,
@@ -1643,16 +1485,11 @@ pub async fn admin_update_user(
         last_login_at: row.get("last_login_at"),
     };
 
-    // Enqueue for sync
-    let device_id = active_device_id(&state).await;
-    let branch_id = active_branch_id(&state).await?;
-    let _ = outbox::enqueue_user(
-        &state.db, &device_id, &branch_id, &result.user_id,
-        &result.display_name, &result.username, &result.role_id,
-        "[]", result.is_active, &now, &now, 1,
-    ).await;
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     // H8: Audit log — user updated (pin_changed flag, but never the hash)
+    let device_id = active_device_id(&state).await;
+    let branch_id = active_branch_id(&state).await?;
     let after = serde_json::json!({
         "user_id": result.user_id, "display_name": result.display_name,
         "role_id": result.role_id, "is_active": result.is_active,

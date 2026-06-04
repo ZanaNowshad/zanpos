@@ -3,7 +3,6 @@ use crate::db::repositories::report_repo;
 use crate::domain::report::TodaySummary;
 use crate::errors::{AppError, AppResult};
 use crate::sync::scope::report_scope;
-use crate::sync::outbox;
 use crate::AppState;
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
@@ -692,28 +691,8 @@ pub async fn reports_config_save(
     .execute(&state.db)
     .await?;
 
-    // Propagate to other devices via the existing app_config sync path.
-    let device_id: String = sqlx::query_scalar(
-        "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1",
-    )
-    .fetch_optional(&state.db)
-    .await?
-    .flatten()
-    .unwrap_or_default();
-    let branch_id: String = sqlx::query_scalar(
-        "SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1",
-    )
-    .fetch_optional(&state.db)
-    .await?
-    .flatten()
-    .unwrap_or_default();
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
-    if !device_id.is_empty() && !branch_id.is_empty() {
-        let _ = outbox::enqueue_app_config(
-            &state.db, &device_id, &branch_id,
-            "reports_device_scope", normalized,
-        ).await;
-    }
     Ok(())
 }
 

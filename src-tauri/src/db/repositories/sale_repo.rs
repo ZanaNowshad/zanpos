@@ -4,7 +4,6 @@ use crate::domain::delivery::DeliveryInput;
 use crate::domain::sale::{PaymentInput, PaymentSummary, SaleItemSummary, SaleResult};
 use crate::errors::{AppError, AppResult};
 use crate::inventory::movements;
-use crate::sync::outbox;
 use sqlx::{Row, SqlitePool};
 use ulid::Ulid;
 
@@ -444,147 +443,13 @@ pub async fn finalize_sale(
         }
     }
 
-    // Enqueue full payloads for sync (after commit so failures don't roll back the sale)
-    let _ = outbox::enqueue_sale(
-        pool,
-        &cart.device_id,
-        &cart.branch_id,
-        &sale_id,
-        &receipt_number,
-        &cart.shift_id,
-        &cart.cashier_user_id,
-        "completed",
-        gross,
-        discount,
-        tax,
-        net,
-        &currency,
-        &business_date,
-        &now,
-        false,
-        idempotency_key,
-        customer_id,
-        delivery.is_some(),
-    )
-    .await;
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
-    // Enqueue each sale item
-    for line in cart.lines.iter().filter(|l| !l.voided) {
-        let tax_snapshot = serde_json::json!({
-            "rule_id": line.tax_rule_id,
-            "rate_basis_points": line.tax_rate_basis_points,
-            "inclusive": line.tax_inclusive,
-        })
-        .to_string();
-        // Use the same item_id that was inserted — we need to look it up or regen with same seed.
-        // For simplicity: generate a stable id from sale_id + product_id + quantity.
-        let item_id_seed = format!(
-            "{}-{}-{}",
-            &sale_id,
-            line.product_id.as_deref().unwrap_or("custom"),
-            &line.quantity
-        );
-        let item_id_for_queue = format!(
-            "{:x}",
-            item_id_seed
-                .bytes()
-                .fold(0u64, |a, b| a.wrapping_add(b as u64))
-        );
-        // Re-read the actual item id from db
-        let actual_item_id: Option<String> = sqlx::query_scalar(
-            "SELECT sale_item_id FROM sale_items WHERE sale_id = ? AND product_name_snapshot = ? LIMIT 1"
-        )
-        .bind(&sale_id)
-        .bind(&line.product_name)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten();
-        let item_id_str = actual_item_id.unwrap_or(item_id_for_queue);
-        let _ = outbox::enqueue_sale_item(
-            pool,
-            &cart.device_id,
-            &cart.branch_id,
-            &item_id_str,
-            &sale_id,
-            line.product_id.as_deref(),
-            &line.product_name,
-            line.sku.as_deref(),
-            line.barcode.as_deref(),
-            &line.quantity,
-            line.unit_price_minor,
-            line.line_discount_minor,
-            &tax_snapshot,
-            line.tax_amount_minor,
-            line.line_total_minor,
-            line.note.as_deref(),
-            false,
-        )
-        .await;
-    }
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
-    // Enqueue each payment
-    for (payment, summary) in payments.iter().zip(payment_summaries.iter()) {
-        let pay_id: Option<String> = sqlx::query_scalar(
-            "SELECT payment_id FROM payments WHERE sale_id = ? AND payment_method = ? LIMIT 1",
-        )
-        .bind(&sale_id)
-        .bind(&payment.method)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten();
-        if let Some(payment_id) = pay_id {
-            let change = summary.change_minor;
-            let _ = outbox::enqueue_payment(
-                pool,
-                &cart.device_id,
-                &cart.branch_id,
-                &payment_id,
-                &sale_id,
-                &payment.method,
-                payment.amount_minor,
-                &currency,
-                "approved",
-                payment.external_reference.as_deref(),
-                payment.tendered_minor,
-                change,
-                &cart.cashier_user_id,
-                &now,
-            )
-            .await;
-        }
-    }
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
-    // F-HIGH-02: Enqueue the delivery order so other terminals receive it.
-    if let Some(ref d) = delivery_row {
-        let _ = outbox::enqueue_delivery_order(
-            pool,
-            &cart.device_id,
-            &cart.branch_id,
-            &d.delivery_id,
-            &d.sale_id,
-            &d.receipt_number,
-            d.customer_id.as_deref(),
-            d.customer_name.as_deref(),
-            &d.contact_number,
-            &d.address_text,
-            d.house_number.as_deref(),
-            d.area.as_deref(),
-            d.delivery_note.as_deref(),
-            d.delivery_staff_name.as_deref(),
-            &d.expected_payment_method,
-            &d.payment_status,
-            &d.delivery_status,
-            d.amount_minor,
-            &d.currency,
-            d.paid_confirmed_at.as_deref(),
-            &d.created_by_user_id,
-            &d.created_at,
-            &d.updated_at,
-        )
-        .await;
-    }
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     // Deduct inventory (after commit; failures don't roll back sale).
     // branch_id and device_id come from the cart — always the real active values.

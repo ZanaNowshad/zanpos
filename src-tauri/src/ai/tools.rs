@@ -1,10 +1,10 @@
 use crate::ai::client::ToolDef;
 use crate::db::repositories::{product_repo, report_repo, sync_repo};
+use crate::sync::outbox;
 use crate::domain::ai_admin::{ToolPreview, ToolPreviewField};
 use crate::domain::money;
 use crate::errors::{AppError, AppResult};
 use crate::inventory::{movements, stock_repo};
-use crate::sync::outbox;
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
 
@@ -3524,24 +3524,7 @@ pub async fn execute_mutation(
             )
             .await?;
 
-            // Enqueue price for sync
-            let (dv_id, br_id) = active_device_branch(pool).await?;
-            let _ = outbox::enqueue_product_price(
-                pool,
-                &dv_id,
-                &br_id,
-                &new_price_id,
-                product_id,
-                new_price,
-                "BHD",
-                &now,
-                None,
-                "AI_ADMIN",
-                None,
-                &now,
-            )
-            .await;
-            // Enqueue updated product row (effective_to changed on old price, but product itself didn't change — just the price)
+            // sync_status='pending' is set by column DEFAULT — sync worker picks it up (effective_to changed on old price, but product itself didn't change — just the price)
             // The product entity sync is handled by the price entry above.
 
             Ok(MutationResult {
@@ -3593,48 +3576,7 @@ pub async fn execute_mutation(
             )
             .await?;
 
-            // Enqueue updated product for sync
-            {
-                let now_ts = chrono::Utc::now().to_rfc3339();
-                let updated = product_repo::get_product_by_id(pool, product_id).await;
-                if let Ok(Some(up)) = updated {
-                    let ca = if up.product.created_at.is_empty() {
-                        now_ts.clone()
-                    } else {
-                        up.product.created_at.clone()
-                    };
-                    let ua = if up.product.updated_at.is_empty() {
-                        now_ts.clone()
-                    } else {
-                        up.product.updated_at.clone()
-                    };
-                    let (dv_id, br_id) = active_device_branch(pool).await?;
-                    let _ = outbox::enqueue_product(
-                        pool,
-                        &dv_id,
-                        &br_id,
-                        product_id,
-                        &up.product.category_id,
-                        &up.product.name,
-                        up.product.sku.as_deref(),
-                        up.product.barcode.as_deref(),
-                        up.product.description.as_deref(),
-                        up.product.track_inventory,
-                        up.product.allow_decimal_quantity,
-                        up.product.is_active,
-                        up.product.tax_rule_id.as_deref(),
-                        up.product.cost_minor,
-                        &up.product.currency,
-                        up.product.reorder_point,
-                        up.product.image_path.as_deref(),
-                        None,
-                        &ca,
-                        &ua,
-                        up.product.version,
-                    )
-                    .await;
-                }
-            }
+            // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
             Ok(MutationResult {
                 description: format!(
@@ -3682,48 +3624,7 @@ pub async fn execute_mutation(
             )
             .await?;
 
-            // Enqueue renamed product for sync
-            {
-                let now_ts = chrono::Utc::now().to_rfc3339();
-                let updated = product_repo::get_product_by_id(pool, product_id).await;
-                if let Ok(Some(up)) = updated {
-                    let ca = if up.product.created_at.is_empty() {
-                        now_ts.clone()
-                    } else {
-                        up.product.created_at.clone()
-                    };
-                    let ua = if up.product.updated_at.is_empty() {
-                        now_ts.clone()
-                    } else {
-                        up.product.updated_at.clone()
-                    };
-                    let (dv_id, br_id) = active_device_branch(pool).await?;
-                    let _ = outbox::enqueue_product(
-                        pool,
-                        &dv_id,
-                        &br_id,
-                        product_id,
-                        &up.product.category_id,
-                        &up.product.name,
-                        up.product.sku.as_deref(),
-                        up.product.barcode.as_deref(),
-                        up.product.description.as_deref(),
-                        up.product.track_inventory,
-                        up.product.allow_decimal_quantity,
-                        up.product.is_active,
-                        up.product.tax_rule_id.as_deref(),
-                        up.product.cost_minor,
-                        &up.product.currency,
-                        up.product.reorder_point,
-                        up.product.image_path.as_deref(),
-                        None,
-                        &ca,
-                        &ua,
-                        up.product.version,
-                    )
-                    .await;
-                }
-            }
+            // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
             Ok(MutationResult {
                 description: format!("Product renamed from '{}' to '{}'", old_name, new_name),

@@ -2,7 +2,6 @@ use crate::commands::rbac;
 use crate::db::repositories::audit_hash;
 use crate::errors::{AppError, AppResult};
 use crate::inventory::stock_repo::{self, StockLevel, StockLevelPage, StockMovementRow};
-use crate::sync::outbox;
 use crate::AppState;
 use rust_decimal::Decimal;
 use sqlx::Row;
@@ -189,19 +188,7 @@ pub async fn inventory_receive_stock(
     .execute(&mut *tx)
     .await?;
 
-    // Enqueue movement and level inside the transaction (C-2)
-    if let Err(e) = outbox::enqueue_stock_movement_in_tx(
-        &mut tx, &device_id, &branch_id, &movement_id, &input.product_id,
-        "receive", &delta_str, &new_qty_str, "receive", "",
-        input.notes.as_deref(), Some(&input.received_by_user_id), &now,
-    ).await {
-        tracing::warn!("Failed to enqueue stock movement: {}", e);
-    }
-    if let Err(e) = outbox::enqueue_stock_level_in_tx(
-        &mut tx, &device_id, &branch_id, &input.product_id, &new_qty_str, &now, &now,
-    ).await {
-        tracing::warn!("Failed to enqueue stock level: {}", e);
-    }
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     tx.commit().await?;
 
@@ -333,19 +320,7 @@ pub async fn inventory_adjust_stock(
     .execute(&mut *tx)
     .await?;
 
-    // Enqueue inside transaction
-    if let Err(e) = outbox::enqueue_stock_movement_in_tx(
-        &mut tx, &device_id, &branch_id, &movement_id, &input.product_id,
-        "manual_adjust", &delta_str, &new_qty_str, "manual_adjust", "",
-        input.notes.as_deref(), Some(&input.adjusted_by_user_id), &now,
-    ).await {
-        tracing::warn!("Failed to enqueue stock movement: {}", e);
-    }
-    if let Err(e) = outbox::enqueue_stock_level_in_tx(
-        &mut tx, &device_id, &branch_id, &input.product_id, &new_qty_str, &now, &now,
-    ).await {
-        tracing::warn!("Failed to enqueue stock level: {}", e);
-    }
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     tx.commit().await?;
 
@@ -521,19 +496,7 @@ pub async fn inventory_bulk_stock_take(
             continue;
         }
 
-        // Enqueue inside transaction
-        if let Err(e) = outbox::enqueue_stock_movement_in_tx(
-            &mut tx, &device_id, &branch_id, &movement_id, &entry.product_id,
-            "stock_take", &delta_str, &new_qty_str, "stock_take", "",
-            entry.notes.as_deref(), Some(actor_user_id.as_str()), &now,
-        ).await {
-            tracing::warn!("Failed to enqueue stock movement: {}", e);
-        }
-        if let Err(e) = outbox::enqueue_stock_level_in_tx(
-            &mut tx, &device_id, &branch_id, &entry.product_id, &new_qty_str, &now, &now,
-        ).await {
-            tracing::warn!("Failed to enqueue stock level: {}", e);
-        }
+        // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
         if let Err(e) = tx.commit().await {
             errors.push(format!("Product {}: {e}", entry.product_id));

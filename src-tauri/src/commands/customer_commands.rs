@@ -1,7 +1,6 @@
 use crate::commands::rbac;
 use crate::db::repositories::audit_hash;
 use crate::errors::{AppError, AppResult};
-use crate::sync::outbox;
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -147,18 +146,7 @@ pub async fn customer_create(
     .fetch_one(&state.db)
     .await?;
 
-    // Enqueue for sync — best-effort, don't fail the create if sync write fails.
-    let _ = outbox::enqueue_customer(
-        &state.db, &device_id, &branch_id,
-        &customer_id,
-        input.name.trim(),
-        input.phone.as_deref().filter(|s| !s.is_empty()),
-        input.email.as_deref().filter(|s| !s.is_empty()),
-        0,
-        input.notes.as_deref().filter(|s| !s.is_empty()),
-        &now,
-        &now,
-    ).await;
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     // F-LOW-04: audit trail records who created the customer
     let after = serde_json::json!({
@@ -218,21 +206,7 @@ pub async fn customer_update(
 
     let customer = map_row(&row);
 
-    // Enqueue updated customer for sync.
-    let device_id: String =
-        sqlx::query_scalar("SELECT device_id FROM devices WHERE is_active=1 ORDER BY device_code LIMIT 1")
-            .fetch_optional(&state.db).await?.flatten().unwrap_or_default();
-    let _ = outbox::enqueue_customer(
-        &state.db, &device_id, &customer.branch_id,
-        &customer.customer_id,
-        &customer.name,
-        customer.phone.as_deref(),
-        customer.email.as_deref(),
-        customer.loyalty_points,
-        customer.notes.as_deref(),
-        &customer.created_at,
-        &now,
-    ).await;
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     Ok(customer)
 }
@@ -289,21 +263,7 @@ pub async fn customer_add_loyalty(
     let customer = map_row(&row);
     let new_total = customer.loyalty_points;
 
-    // Enqueue updated customer for sync.
-    let device_id: String =
-        sqlx::query_scalar("SELECT device_id FROM devices WHERE is_active=1 ORDER BY device_code LIMIT 1")
-            .fetch_optional(&state.db).await?.flatten().unwrap_or_default();
-    let _ = outbox::enqueue_customer(
-        &state.db, &device_id, &customer.branch_id,
-        &customer.customer_id,
-        &customer.name,
-        customer.phone.as_deref(),
-        customer.email.as_deref(),
-        customer.loyalty_points,
-        customer.notes.as_deref(),
-        &customer.created_at,
-        &now,
-    ).await;
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     Ok(new_total)
 }

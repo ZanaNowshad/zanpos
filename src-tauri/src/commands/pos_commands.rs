@@ -5,7 +5,6 @@ use crate::domain::delivery::DeliveryInput;
 use crate::domain::sale::{PaymentInput, SaleResult};
 use crate::errors::AppError;
 use crate::inventory::movements;
-use crate::sync::outbox;
 use crate::AppState;
 use sqlx::Row;
 use tauri::State;
@@ -866,41 +865,7 @@ pub async fn pos_void_sale(
     .execute(&state.db)
     .await;
 
-    // Enqueue the void status update for cloud sync.
-    // Fetch minimal sale fields needed for the outbox payload.
-    if let Ok(Some(row)) = sqlx::query(
-        "SELECT receipt_number, shift_id, cashier_user_id,
-                gross_total_minor, discount_total_minor, tax_total_minor, net_total_minor,
-                currency, business_date, sold_at, created_offline, idempotency_key
-         FROM sales WHERE sale_id = ?",
-    )
-    .bind(&sale_id)
-    .fetch_optional(&state.db)
-    .await
-    {
-        let _ = outbox::enqueue_sale(
-            &state.db,
-            &device_id,
-            &branch_id,
-            &sale_id,
-            &row.get::<String, _>("receipt_number"),
-            &row.get::<String, _>("shift_id"),
-            &row.get::<String, _>("cashier_user_id"),
-            "voided",
-            row.get::<i64, _>("gross_total_minor"),
-            row.get::<i64, _>("discount_total_minor"),
-            row.get::<i64, _>("tax_total_minor"),
-            row.get::<i64, _>("net_total_minor"),
-            &row.get::<String, _>("currency"),
-            &row.get::<String, _>("business_date"),
-            &row.get::<String, _>("sold_at"),
-            row.get::<i64, _>("created_offline") != 0,
-            &row.get::<String, _>("idempotency_key"),
-            row.get::<Option<String>, _>("customer_id").as_deref(),
-            row.get::<i64, _>("is_delivery") != 0,
-        )
-        .await;
-    }
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     Ok(VoidSaleResult { voided: true, stock_warning })
 }

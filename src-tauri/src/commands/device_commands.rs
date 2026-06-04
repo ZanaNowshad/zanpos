@@ -1,6 +1,5 @@
 use crate::commands::rbac;
 use crate::errors::{AppError, AppResult};
-use crate::sync::outbox;
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -107,27 +106,7 @@ pub async fn device_create(
         }
     })?;
 
-    // Bug D fix: enqueue device registration so other terminals see it on next sync.
-    // Without this, manually-created devices only exist in the local DB.
-    let active_dev: Option<String> = sqlx::query_scalar(
-        "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1",
-    )
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
-    if let Some(active_dev_id) = active_dev {
-        let _ = outbox::enqueue_device(
-            &state.db,
-            &device_id,
-            &branch_id,
-            input.device_code.trim(),
-            input.device_name.trim(),
-            true,
-        )
-        .await;
-        drop(active_dev_id); // used for context only
-    }
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     let row = sqlx::query(
         "SELECT device_id, device_code, name, is_active,
@@ -165,26 +144,7 @@ pub async fn device_toggle_active(
         )));
     }
 
-    // MEDIUM #10: enqueue the updated device record so other terminals know
-    // about the active/inactive state change without waiting for a manual refresh.
-    let row = sqlx::query(
-        "SELECT device_id, branch_id, device_code, name FROM devices WHERE device_id = ?",
-    )
-    .bind(&device_id)
-    .fetch_optional(&state.db)
-    .await?;
-
-    if let Some(r) = row {
-        let _ = outbox::enqueue_device(
-            &state.db,
-            r.get::<String, _>("device_id").as_str(),
-            r.get::<String, _>("branch_id").as_str(),
-            r.get::<String, _>("device_code").as_str(),
-            r.get::<String, _>("name").as_str(),
-            is_active,
-        )
-        .await;
-    }
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     Ok(())
 }

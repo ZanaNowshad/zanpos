@@ -1,7 +1,6 @@
 use crate::db::repositories::audit_hash;
 use crate::domain::shift::Shift;
 use crate::errors::{AppError, AppResult};
-use crate::sync::outbox;
 use sqlx::{Row, SqlitePool};
 use ulid::Ulid;
 
@@ -290,22 +289,7 @@ pub async fn open_shift(
     .execute(pool)
     .await;
 
-    let _ = outbox::enqueue_shift(
-        pool,
-        device_id,
-        branch_id,
-        &shift_id,
-        cashier_user_id,
-        &shift.opened_at,
-        None,
-        opening_cash_minor,
-        None,
-        "open",
-        None,
-        &shift.opened_at,
-        "create",
-    )
-    .await;
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
     Ok(shift)
 }
 
@@ -455,21 +439,6 @@ pub async fn close_shift(
     .execute(pool)
     .await;
 
-    let _ = outbox::enqueue_shift(
-        pool,
-        &shift.device_id,
-        &shift.branch_id,
-        shift_id,
-        &shift.cashier_user_id,
-        &shift.opened_at,
-        shift.closed_at.as_deref(),
-        shift.opening_cash_minor,
-        counted_cash_minor,
-        "closed",
-        notes.as_deref(),
-        &now,
-        "update",
-    )
-    .await;
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
     Ok(shift)
 }

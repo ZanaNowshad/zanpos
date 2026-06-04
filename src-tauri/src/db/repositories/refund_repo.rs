@@ -3,7 +3,6 @@ use crate::domain::refund::{RefundItemInput, RefundResult, SaleForRefund, SaleIt
 use crate::domain::sale::{PaymentSummary, SaleItemSummary, SaleResult};
 use crate::errors::{AppError, AppResult};
 use crate::inventory::movements;
-use crate::sync::outbox;
 use sqlx::{Row, SqlitePool};
 use ulid::Ulid;
 
@@ -423,53 +422,7 @@ pub async fn create_refund(
         );
     }
 
-    if let Ok(Some(meta)) = sale_meta {
-        let device_id: String = meta.get("device_id");
-        let branch_id_str: String = meta.get("branch_id");
-        let _ = outbox::enqueue_refund(
-            pool,
-            &device_id,
-            &branch_id_str,
-            &refund_id,
-            original_sale_id,
-            &refund_receipt_number,
-            reason,
-            refund_total,
-            &currency,
-            created_by_user_id,
-            &now,
-            &idempotency_key,
-        )
-        .await;
-
-        for item in &items {
-            let ri_id: Option<String> = sqlx::query_scalar(
-                "SELECT refund_item_id FROM refund_items WHERE refund_id = ? AND sale_item_id = ? LIMIT 1"
-            )
-            .bind(&refund_id)
-            .bind(&item.sale_item_id)
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten();
-
-            if let Some(refund_item_id) = ri_id {
-                let _ = outbox::enqueue_refund_item(
-                    pool,
-                    &device_id,
-                    &branch_id_str,
-                    &refund_item_id,
-                    &refund_id,
-                    &item.sale_item_id,
-                    &item.product_name_snapshot,
-                    &item.quantity,
-                    item.unit_price_minor,
-                    item.refund_amount_minor,
-                )
-                .await;
-            }
-        }
-    }
+    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     Ok(RefundResult {
         refund_id,

@@ -106,12 +106,29 @@ pub fn run() {
                     }
                     Err(e) => {
                         tracing::error!("DB init failed: {}. Nuking and retrying.", e);
-                        // Delete all SQLite sidecar files so nothing survives to confuse the retry.
-                        std::fs::remove_file(&db_path).ok();
-                        std::fs::remove_file(format!("{db_path_str}-wal")).ok();
-                        std::fs::remove_file(format!("{db_path_str}-shm")).ok();
-                        std::fs::remove_file(format!("{db_path_str}-journal")).ok();
-                        db::init_db(&db_path_str)
+                        // Delete all SQLite sidecar files. If deletion fails (file
+                        // locked by another process), fall back to an alternate name.
+                        let files = [
+                            db_path.clone(),
+                            std::path::PathBuf::from(format!("{db_path_str}-wal")),
+                            std::path::PathBuf::from(format!("{db_path_str}-shm")),
+                            std::path::PathBuf::from(format!("{db_path_str}-journal")),
+                        ];
+                        for f in &files {
+                            if let Err(rm) = std::fs::remove_file(f) {
+                                tracing::warn!("Could not delete old DB file {}: {}", f.display(), rm);
+                            }
+                        }
+                        // If the main DB file survived deletion (locked), use a
+                        // fallback path so the app can still start.
+                        let effective_path = if db_path.exists() {
+                            let alt = app_data.join("zanpos_v2.db");
+                            tracing::warn!("Original DB still locked — using fallback: {}", alt.display());
+                            alt.to_string_lossy().to_string()
+                        } else {
+                            db_path_str.clone()
+                        };
+                        db::init_db(&effective_path)
                             .await
                             .expect("Failed to initialize database after nuke")
                     }

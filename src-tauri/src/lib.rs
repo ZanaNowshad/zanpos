@@ -71,33 +71,43 @@ pub fn run() {
             tracing::info!("Logs directory: {}", app_data.join("logs").to_string_lossy());
 
             let db = tauri::async_runtime::block_on(async {
-                match db::init_db(&db_path_str).await {
-                    Ok(pool) => {
-                        if let Err(e) = db::repositories::auth_repo::rehash_plain_pins(&pool).await {
-                            tracing::warn!("PIN rehash step failed: {:?}", e);
+                // If the database file already exists, check whether it's from the old
+                // architecture (pre-sync_v2). The old schema has a `sync_queue` table;
+                // the new one doesn't. If detected, delete it and start fresh.
+                if db_path.exists() {
+                    // Quick check: does the old sync_queue table exist?
+                    let is_old_schema = {
+                        let tmp_url = format!("sqlite:{}?mode=ro", db_path_str);
+                        if let Ok(conn) = sqlx::SqlitePool::connect(&tmp_url).await {
+                            let row: Result<String, _> =
+                                sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table' AND name='sync_queue'")
+                                    .fetch_one(&conn)
+                                    .await;
+                            conn.close().await;
+                            row.is_ok()
+                        } else {
+                            false
                         }
-                        pool
-                    }
-                    Err(e) => {
-                        // Old DB is incompatible — delete and start fresh.
-                        tracing::warn!(
-                            "Database init failed: {}. Deleting old DB and recreating.",
-                            e
+                    };
+                    if is_old_schema {
+                        tracing::info!(
+                            "Old database detected at {} — deleting for fresh start",
+                            db_path_str
                         );
-                        if let Err(rm) = std::fs::remove_file(&db_path) {
-                            tracing::error!("Failed to remove old DB: {}", rm);
-                        }
-                        if let Err(rm) = std::fs::remove_file(format!("{db_path_str}-wal")) {
-                            tracing::error!("Failed to remove old WAL: {}", rm);
-                        }
-                        if let Err(rm) = std::fs::remove_file(format!("{db_path_str}-shm")) {
-                            tracing::error!("Failed to remove old SHM: {}", rm);
-                        }
-                        db::init_db(&db_path_str)
-                            .await
-                            .expect("Failed to initialize database after deleting old one")
+                        let _ = std::fs::remove_file(&db_path);
+                        let _ = std::fs::remove_file(format!("{db_path_str}-wal"));
+                        let _ = std::fs::remove_file(format!("{db_path_str}-shm"));
                     }
                 }
+
+                let pool = db::init_db(&db_path_str)
+                    .await
+                    .expect("Failed to initialize database");
+
+                if let Err(e) = db::repositories::auth_repo::rehash_plain_pins(&pool).await {
+                    tracing::warn!("PIN rehash step failed: {:?}", e);
+                }
+                pool
             });
 
             // Spawn background sync worker

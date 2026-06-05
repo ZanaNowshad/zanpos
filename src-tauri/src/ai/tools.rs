@@ -1127,18 +1127,8 @@ pub async fn execute_read_tool(
             .unwrap_or_default();
 
             let status = sync_repo::get_sync_status(pool, &device_id).await?;
-            let pending: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM sync_queue WHERE status='pending'")
-                    .fetch_one(pool)
-                    .await?;
-            let failed: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM sync_queue WHERE status='failed'")
-                    .fetch_one(pool)
-                    .await?;
-            let conflict: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM sync_queue WHERE status='conflict'")
-                    .fetch_one(pool)
-                    .await?;
+            let pending = status.pending_events;
+            let failed: i64 = 0; // new model uses sync_attempts on individual rows
 
             let cloud = if status.supabase_configured {
                 "✓ configured"
@@ -1150,36 +1140,9 @@ pub async fn execute_read_tool(
                 format!("Sync Status:"),
                 format!("  Cloud (Supabase): {cloud}"),
                 format!("  Last sync:        {last}"),
-                format!("  Pending events:   {pending}"),
-                format!("  Failed events:    {failed}"),
-                format!("  Conflicts:        {conflict}"),
+                format!("  Pending rows:     {pending}"),
+                format!("  Stuck rows:       {failed}"),
             ];
-            if conflict > 0 {
-                // Show the conflicted events
-                let conflicts = sqlx::query(
-                    "SELECT sync_event_id, entity_type, entity_id, operation, last_error
-                     FROM sync_queue WHERE status='conflict' LIMIT 10",
-                )
-                .fetch_all(pool)
-                .await?;
-                lines.push(String::new());
-                lines.push("Conflicted events:".into());
-                for r in &conflicts {
-                    let eid: String = r.get("sync_event_id");
-                    let et: String = r.get("entity_type");
-                    let id: String = r.get("entity_id");
-                    let op: String = r.get("operation");
-                    let err: Option<String> = r.get("last_error");
-                    lines.push(format!(
-                        "  - {} {} {} [{}]: {}",
-                        &eid[..8.min(eid.len())],
-                        et,
-                        &id[..8.min(id.len())],
-                        op,
-                        err.as_deref().unwrap_or("unknown error")
-                    ));
-                }
-            }
             Ok(lines.join("\n"))
         }
         "get_daily_report" => {

@@ -102,22 +102,16 @@ impl SyncWorker {
             (Ok(_), Ok(_)) => {
                 state.online = true;
                 state.last_error = None;
-                // Record last successful sync
+                // Record last successful sync timestamp in sync_watermark
                 let now = chrono::Utc::now().to_rfc3339();
-                let ss_id = ulid::Ulid::new().to_string();
                 if let Err(e) = sqlx::query(
-                    "INSERT INTO sync_state (sync_state_id, device_id, last_successful_sync_at)
-                     VALUES (?, ?, ?)
-                     ON CONFLICT(device_id) DO UPDATE SET
-                       last_successful_sync_at = excluded.last_successful_sync_at",
+                    "UPDATE sync_watermark SET last_pushed_at = ? WHERE table_name = 'sales'",
                 )
-                .bind(&ss_id)
-                .bind(&device_id)
                 .bind(&now)
                 .execute(&self.pool)
                 .await
                 {
-                    tracing::warn!("Sync v2: failed to record last_successful_sync_at: {e}");
+                    tracing::warn!("Sync v2: failed to record last_pushed_at: {e}");
                 }
             }
             (Err(e), _) | (_, Err(e)) => {

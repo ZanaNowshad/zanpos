@@ -28,9 +28,9 @@ INSERT OR IGNORE INTO users (user_id, branch_id, display_name, username, pin_has
     ('01JUSER000000000000CASH01', '01JBRANCH0000000000000001', 'Cashier 1', 'cashier1',
      'PLAIN:0000', '01JROLES000000000000000003', 1, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z');
 
--- Seed device (placeholder, made active during setup)
+-- Seed device (placeholder, updated during setup)
 INSERT OR IGNORE INTO devices (device_id, branch_id, device_code, name, status, is_active, created_at, updated_at)
-VALUES ('01JDEVICE0000000000000001', '01JBRANCH0000000000000001', 'POS01', 'Main Terminal', 'offline', 0, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z');
+VALUES ('01JDEVICE0000000000000001', '01JBRANCH0000000000000001', 'POS01', 'Main Terminal', 'offline', 1, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z');
 
 -- Seed business flags
 INSERT OR IGNORE INTO app_config (key, value, updated_at) VALUES

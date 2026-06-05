@@ -414,13 +414,14 @@ pub async fn whatsapp_import_contacts(
 
         let rows = sqlx::query(
             "INSERT OR IGNORE INTO customers \
-             (customer_id, branch_id, name, phone, loyalty_points, created_at) \
-             VALUES (?, ?, ?, ?, 0, ?)",
+             (customer_id, branch_id, name, phone, loyalty_points, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, 0, ?, ?)",
         )
         .bind(&customer_id)
         .bind(&branch_id)
         .bind(&contact.name)
         .bind(&phone)
+        .bind(&now)
         .bind(&now)
         .execute(&state.db)
         .await?

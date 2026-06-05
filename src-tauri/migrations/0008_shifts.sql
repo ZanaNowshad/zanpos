@@ -8,10 +8,15 @@ CREATE TABLE shifts (
     closed_at TEXT,
     opening_cash_minor INTEGER NOT NULL DEFAULT 0,
     counted_cash_minor INTEGER,
+    expected_cash_minor INTEGER,
+    cash_difference_minor INTEGER,
+    business_date TEXT,
     status TEXT NOT NULL DEFAULT 'open',
     close_notes TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    deleted_at TEXT,
+    version INTEGER NOT NULL DEFAULT 1,
     sync_status TEXT NOT NULL DEFAULT 'pending',
     sync_attempts INTEGER NOT NULL DEFAULT 0
 );
@@ -19,6 +24,8 @@ CREATE TABLE shifts (
 CREATE TABLE cash_events (
     cash_event_id TEXT PRIMARY KEY,
     shift_id TEXT NOT NULL REFERENCES shifts(shift_id),
+    branch_id TEXT,
+    device_id TEXT,
     event_type TEXT NOT NULL,
     amount_minor INTEGER,
     note TEXT,

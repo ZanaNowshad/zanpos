@@ -61,8 +61,8 @@ async fn upsert_level_tx(
     let id = format!("SL-{}-{}", product_id, branch_id);
 
     sqlx::query(
-        "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, last_movement_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+        "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, last_movement_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(product_id, branch_id) DO UPDATE SET
            quantity_on_hand = excluded.quantity_on_hand,
            last_movement_at = excluded.last_movement_at,
@@ -72,6 +72,7 @@ async fn upsert_level_tx(
     .bind(product_id)
     .bind(branch_id)
     .bind(&qty_str)
+    .bind(movement_at)
     .bind(movement_at)
     .bind(movement_at)
     .execute(&mut **tx)
@@ -465,17 +466,40 @@ mod tests {
             .run(&pool)
             .await
             .expect("migrations");
-        // Migration 0018 removes demo data; re-seed products needed as FK refs.
+        // Activate seed device and branch
+        sqlx::query("UPDATE devices SET is_active = 1 WHERE device_id = '01JDEVICE0000000000000001'")
+            .execute(&pool).await.ok();
+        sqlx::query("UPDATE branches SET is_active = 1 WHERE branch_id = '01JBRANCH0000000000000001'")
+            .execute(&pool).await.ok();
+
+        // Seed tax rules needed by the test products
         sqlx::query(
-            "INSERT OR IGNORE INTO categories (category_id, name, sort_order, is_active, created_at, updated_at)
-             VALUES ('01JCAT000000000000DRINK01', 'Drinks', 1, 1, datetime('now'), datetime('now'))"
+            "INSERT OR IGNORE INTO tax_rules (tax_rule_id, name, rate_basis_points, inclusive, is_active, effective_from, created_at, updated_at, version)
+             VALUES
+             ('01JTAX000000000000VAT001', 'VAT 10%', 1000, 0, 1, datetime('now'), datetime('now'), datetime('now'), 1),
+             ('01JTAX000000000000ZERO01', 'Zero-rated', 0, 0, 1, datetime('now'), datetime('now'), datetime('now'), 1)"
+        ).execute(&pool).await.expect("seed test tax rules");
+
+        // Seed admin user (needed by stock movements created_by_user_id)
+        sqlx::query(
+            "INSERT OR IGNORE INTO users (user_id, branch_id, display_name, username, pin_hash, role_id, is_active, created_at, updated_at, version)
+             VALUES ('01JUSER000000000000ADMIN1', '01JBRANCH0000000000000001', 'Admin', 'admin1', 'PLAIN:0000', '01JROLES000000000000000001', 1, datetime('now'), datetime('now'), 1)"
+        ).execute(&pool).await.expect("seed test admin");
+        // Ensure admin is active (seed may have created it as inactive)
+        sqlx::query("UPDATE users SET is_active = 1 WHERE user_id = '01JUSER000000000000ADMIN1'")
+            .execute(&pool).await.ok();
+
+        // Re-seed products needed as FK refs.
+        sqlx::query(
+            "INSERT OR IGNORE INTO categories (category_id, name, sort_order, is_active, created_at, updated_at, version)
+             VALUES ('01JCAT000000000000DRINK01', 'Drinks', 1, 1, datetime('now'), datetime('now'), 1)"
         ).execute(&pool).await.expect("seed test category");
         sqlx::query(
             "INSERT OR IGNORE INTO products
-             (product_id, category_id, name, sku, barcode, track_inventory, reorder_point, is_active, tax_rule_id, currency, created_at, updated_at)
+             (product_id, category_id, name, sku, barcode, description, track_inventory, reorder_point, is_active, tax_rule_id, currency, created_at, updated_at, version)
              VALUES
-             ('01JPROD00000000000COLA001', '01JCAT000000000000DRINK01', 'Coca-Cola 330ml', 'COLA-330', '5449000000996', 1, 5, 1, '01JTAX000000000000VAT001', 'BHD', datetime('now'), datetime('now')),
-             ('01JPROD00000000000WATR001', '01JCAT000000000000DRINK01', 'Water 500ml',     'WATR-500', '6281001511222', 1, 10, 1, '01JTAX000000000000ZERO01', 'BHD', datetime('now'), datetime('now'))"
+             ('01JPROD00000000000COLA001', '01JCAT000000000000DRINK01', 'Coca-Cola 330ml', 'COLA-330', '5449000000996', NULL, 1, 5, 1, '01JTAX000000000000VAT001', 'BHD', datetime('now'), datetime('now'), 1),
+             ('01JPROD00000000000WATR001', '01JCAT000000000000DRINK01', 'Water 500ml',     'WATR-500', '6281001511222', NULL, 1, 10, 1, '01JTAX000000000000ZERO01', 'BHD', datetime('now'), datetime('now'), 1)"
         ).execute(&pool).await.expect("seed test products");
         pool
     }
@@ -493,8 +517,8 @@ mod tests {
         };
         let id = format!("SL-{}", product_id);
         sqlx::query(
-            "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at)
-             VALUES (?, ?, ?, ?, datetime('now'))
+            "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at)
+             VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
              ON CONFLICT(product_id, branch_id) DO UPDATE SET quantity_on_hand = excluded.quantity_on_hand"
         )
         .bind(&id).bind(product_id).bind(BRANCH).bind(&qty_str)

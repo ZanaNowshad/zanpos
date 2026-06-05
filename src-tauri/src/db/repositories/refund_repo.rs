@@ -275,9 +275,9 @@ pub async fn create_refund(
 
     if let Err(e) = sqlx::query(
         "INSERT INTO refunds (refund_id, original_sale_id, origin_device_id, refund_receipt_number, reason,
-         return_reason_code, refund_total_minor, currency, created_by_user_id, created_at,
-         sync_status, idempotency_key)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+         return_reason_code, refund_total_minor, currency, created_by_user_id, idempotency_key,
+         created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&refund_id)
     .bind(original_sale_id)
@@ -288,8 +288,9 @@ pub async fn create_refund(
     .bind(refund_total)
     .bind(&currency)
     .bind(created_by_user_id)
-    .bind(&now)
     .bind(&idempotency_key)
+    .bind(&now)
+    .bind(&now)
     .execute(&mut *conn)
     .await
     {
@@ -301,8 +302,8 @@ pub async fn create_refund(
         if let Err(e) = sqlx::query(
             "INSERT INTO refund_items
              (refund_item_id, refund_id, origin_device_id, sale_item_id, product_name_snapshot,
-              quantity, unit_price_minor, refund_amount_minor)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              quantity, unit_price_minor, refund_amount_minor, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&refund_item_id)
         .bind(&refund_id)
@@ -312,6 +313,8 @@ pub async fn create_refund(
         .bind(&item.quantity)
         .bind(item.unit_price_minor)
         .bind(item.refund_amount_minor)
+        .bind(&now)
+        .bind(&now)
         .execute(&mut *conn)
         .await
         {
@@ -460,22 +463,39 @@ mod tests {
             .run(&pool)
             .await
             .expect("migrations");
-        // 0018_remove_demo_data.sql deleted the sample products; re-seed the
-        // product this test module needs so FK constraints are satisfied.
+        // Activate seed device and branch
+        sqlx::query("UPDATE devices SET is_active = 1 WHERE device_id = '01JDEVICE0000000000000001'")
+            .execute(&pool).await.ok();
+        sqlx::query("UPDATE branches SET is_active = 1 WHERE branch_id = '01JBRANCH0000000000000001'")
+            .execute(&pool).await.ok();
+
+        // Seed tax rules needed by the test product
         sqlx::query(
-            "INSERT OR IGNORE INTO categories (category_id, name, sort_order, is_active, created_at, updated_at)
-             VALUES ('01JCAT000000000000DRINK01', 'Drinks', 1, 1, datetime('now'), datetime('now'))"
+            "INSERT OR IGNORE INTO tax_rules (tax_rule_id, name, rate_basis_points, inclusive, is_active, effective_from, created_at, updated_at, version)
+             VALUES ('01JTAX000000000000VAT001', 'VAT 10%', 1000, 0, 1, datetime('now'), datetime('now'), datetime('now'), 1)"
+        ).execute(&pool).await.expect("seed test tax rule");
+
+        // Seed cashier user
+        sqlx::query(
+            "INSERT OR IGNORE INTO users (user_id, branch_id, display_name, username, pin_hash, role_id, is_active, created_at, updated_at, version)
+             VALUES ('01JUSER000000000000CASH01', '01JBRANCH0000000000000001', 'Test Cashier', 'cashier_test', 'PLAIN:1234', '01JROLES000000000000000003', 1, datetime('now'), datetime('now'), 1)"
+        ).execute(&pool).await.expect("seed test cashier");
+
+        // Product this test module needs
+        sqlx::query(
+            "INSERT OR IGNORE INTO categories (category_id, name, sort_order, is_active, created_at, updated_at, version)
+             VALUES ('01JCAT000000000000DRINK01', 'Drinks', 1, 1, datetime('now'), datetime('now'), 1)"
         ).execute(&pool).await.expect("seed test category");
 
         sqlx::query(
             "INSERT OR IGNORE INTO products
-             (product_id, category_id, name, sku, barcode, track_inventory, is_active, tax_rule_id, currency, created_at, updated_at)
-             VALUES ('01JPROD00000000000COLA001', '01JCAT000000000000DRINK01', 'Coca-Cola 330ml', 'COLA-330', '5449000000996', 1, 1, '01JTAX000000000000VAT001', 'BHD', datetime('now'), datetime('now'))"
+             (product_id, category_id, name, sku, barcode, description, track_inventory, is_active, tax_rule_id, currency, created_at, updated_at, version)
+             VALUES ('01JPROD00000000000COLA001', '01JCAT000000000000DRINK01', 'Coca-Cola 330ml', 'COLA-330', '5449000000996', NULL, 1, 1, '01JTAX000000000000VAT001', 'BHD', datetime('now'), datetime('now'), 1)"
         ).execute(&pool).await.expect("seed test product");
 
         sqlx::query(
-            "INSERT OR IGNORE INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at)
-             VALUES ('SL-TEST-COLA', '01JPROD00000000000COLA001', '01JBRANCH0000000000000001', '1000', datetime('now'))"
+            "INSERT OR IGNORE INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at, created_at, sync_status, sync_attempts)
+             VALUES ('SL-TEST-COLA', '01JPROD00000000000COLA001', '01JBRANCH0000000000000001', '1000', datetime('now'), datetime('now'), 'synced', 0)"
         ).execute(&pool).await.expect("seed test stock");
 
         pool
@@ -484,8 +504,8 @@ mod tests {
     async fn insert_shift(pool: &SqlitePool) -> String {
         let shift_id = ulid::Ulid::new().to_string();
         sqlx::query(
-            "INSERT INTO shifts (shift_id, branch_id, device_id, origin_device_id, cashier_user_id, opened_at, status)
-             VALUES (?, ?, ?, ?, ?, datetime('now'), 'open')"
+            "INSERT INTO shifts (shift_id, branch_id, device_id, origin_device_id, cashier_user_id, opened_at, status, created_at, updated_at, version, sync_status, sync_attempts)
+             VALUES (?, ?, ?, ?, ?, datetime('now'), 'open', datetime('now'), datetime('now'), 1, 'pending', 0)"
         )
         .bind(&shift_id).bind(BRANCH).bind(DEVICE).bind(DEVICE).bind(CASHIER)
         .execute(pool).await.expect("insert shift");

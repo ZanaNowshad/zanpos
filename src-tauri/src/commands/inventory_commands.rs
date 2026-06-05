@@ -153,8 +153,8 @@ pub async fn inventory_receive_stock(
 
     // Upsert stock_levels with the computed string (include PK so ON CONFLICT fires)
     sqlx::query(
-        "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at)
-         VALUES (?, ?, ?, ?, ?)
+        "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(product_id, branch_id) DO UPDATE SET
            quantity_on_hand = excluded.quantity_on_hand,
            updated_at = excluded.updated_at",
@@ -163,6 +163,7 @@ pub async fn inventory_receive_stock(
     .bind(&input.product_id)
     .bind(&branch_id)
     .bind(&new_qty_str)
+    .bind(&now)
     .bind(&now)
     .execute(&mut *tx)
     .await?;
@@ -285,8 +286,8 @@ pub async fn inventory_adjust_stock(
 
     // Upsert stock_levels (include PK)
     sqlx::query(
-        "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at)
-         VALUES (?, ?, ?, ?, ?)
+        "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(product_id, branch_id) DO UPDATE SET
            quantity_on_hand = excluded.quantity_on_hand,
            updated_at = excluded.updated_at",
@@ -295,6 +296,7 @@ pub async fn inventory_adjust_stock(
     .bind(&input.product_id)
     .bind(&branch_id)
     .bind(&new_qty_str)
+    .bind(&now)
     .bind(&now)
     .execute(&mut *tx)
     .await?;
@@ -451,8 +453,8 @@ pub async fn inventory_bulk_stock_take(
 
         // Upsert stock level (include PK)
         if let Err(e) = sqlx::query(
-            "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at)
-             VALUES (?, ?, ?, ?, ?)
+            "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)
              ON CONFLICT(product_id, branch_id) DO UPDATE SET
                quantity_on_hand = excluded.quantity_on_hand,
                updated_at = excluded.updated_at",
@@ -461,6 +463,7 @@ pub async fn inventory_bulk_stock_take(
         .bind(&entry.product_id)
         .bind(&branch_id)
         .bind(&new_qty_str)
+        .bind(&now)
         .bind(&now)
         .execute(&mut *tx)
         .await

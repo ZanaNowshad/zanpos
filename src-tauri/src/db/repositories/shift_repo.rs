@@ -61,9 +61,9 @@ mod tests {
             "INSERT INTO sales (sale_id, receipt_number, branch_id, device_id, origin_device_id, shift_id,
              cashier_user_id, status, gross_total_minor, discount_total_minor,
              tax_total_minor, net_total_minor, currency, business_date,
-             sold_at, created_offline, idempotency_key, sync_status)
+             sold_at, created_offline, idempotency_key, sync_status, created_at, updated_at)
              VALUES (?,?,?,?,?,?,?,'completed',5000,0,0,5000,'BHD','2026-01-01',
-                     datetime('now'),0,'sale-t4-1','pending')",
+                     datetime('now'),0,'sale-t4-1','pending',datetime('now'),datetime('now'))",
         )
         .bind(&sale_id)
         .bind("MAIN-POS01-00000001")
@@ -79,8 +79,8 @@ mod tests {
         sqlx::query(
             "INSERT INTO payments
              (payment_id, sale_id, origin_device_id, payment_method, amount_minor, currency,
-              recorded_by_user_id, recorded_at, sync_status)
-             VALUES (?,?,?,'cash',5000,'BHD',?,datetime('now'),'pending')",
+              recorded_by_user_id, recorded_at, created_at, updated_at)
+             VALUES (?,?,?,'cash',5000,'BHD',?,datetime('now'),datetime('now'),datetime('now'))",
         )
         .bind(ulid::Ulid::new().to_string())
         .bind(&sale_id)
@@ -96,8 +96,8 @@ mod tests {
             "INSERT INTO refunds
              (refund_id, original_sale_id, origin_device_id, refund_receipt_number, reason,
               return_reason_code, refund_total_minor, currency,
-              created_by_user_id, created_at, sync_status, idempotency_key)
-             VALUES (?,?,?,?,?,?,1000,'BHD',?,datetime('now'),'pending',?)",
+              created_by_user_id, idempotency_key, created_at, updated_at)
+             VALUES (?,?,?,?,?,?,1000,'BHD',?,?,datetime('now'),datetime('now'))",
         )
         .bind(&refund_id)
         .bind(&sale_id)
@@ -220,12 +220,12 @@ pub async fn open_shift(
 
     sqlx::query(
         "INSERT INTO shifts (shift_id, branch_id, device_id, origin_device_id, cashier_user_id, opened_at,
-                             opening_cash_minor, business_date, status, sync_status, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', 'pending', ?)"
+                             opening_cash_minor, business_date, status, sync_status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', 'pending', ?, ?)"
     )
     .bind(&shift_id).bind(branch_id).bind(device_id).bind(device_id)
     .bind(cashier_user_id).bind(&now).bind(opening_cash_minor)
-    .bind(&business_date).bind(&now)
+    .bind(&business_date).bind(&now).bind(&now)
     .execute(pool)
     .await?;
 

@@ -4093,8 +4093,8 @@ pub async fn execute_mutation(
                 // Upsert stock level
                 let stock_level_id = format!("SL-{}-{}", product_id, branch_id);
                 sqlx::query(
-                    "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at)
-                     VALUES (?, ?, ?, ?, ?)
+                    "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at)
+                     VALUES (?, ?, ?, ?, ?, ?)
                      ON CONFLICT(product_id, branch_id)
                      DO UPDATE SET quantity_on_hand = excluded.quantity_on_hand, updated_at = excluded.updated_at",
                 )
@@ -4102,6 +4102,7 @@ pub async fn execute_mutation(
                 .bind(product_id)
                 .bind(&branch_id)
                 .bind(new_qty)
+                .bind(&now)
                 .bind(&now)
                 .execute(pool)
                 .await?;

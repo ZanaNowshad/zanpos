@@ -935,8 +935,8 @@ async fn recompute_stock_level(
 
     sqlx::query(
         "INSERT INTO stock_levels
-            (stock_level_id, product_id, branch_id, quantity_on_hand, last_movement_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+            (stock_level_id, product_id, branch_id, quantity_on_hand, last_movement_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(product_id, branch_id) DO UPDATE SET
             quantity_on_hand = excluded.quantity_on_hand,
             last_movement_at = excluded.last_movement_at,
@@ -946,6 +946,7 @@ async fn recompute_stock_level(
     .bind(product_id)
     .bind(branch_id)
     .bind(&qty_str)
+    .bind(applied_at)
     .bind(applied_at)
     .bind(applied_at)
     .execute(pool)

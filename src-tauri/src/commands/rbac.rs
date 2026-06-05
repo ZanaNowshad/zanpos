@@ -145,7 +145,7 @@ mod tests {
         // 2. Apply the wizard's fixed UPDATE (now includes is_active=1).
         sqlx::query(
             "UPDATE users SET display_name='Owner', pin_hash='$argon2id$real$hash',
-                              role_id='01JROLE00000000000OWNER001', is_active=1,
+                              role_id='01JROLES000000000000000001', is_active=1,
                               updated_at=datetime('now')
              WHERE user_id='01JUSER000000000000ADMIN1'",
         )

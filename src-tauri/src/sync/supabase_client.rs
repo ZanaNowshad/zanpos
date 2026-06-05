@@ -1,51 +1,8 @@
 use crate::errors::{AppError, AppResult};
 use reqwest::{Client, StatusCode};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::json;
 
-/// R-05: Stable marker prefixed to transient (retryable) sync errors so the
-/// worker can distinguish them from permanent failures without fragile substring
-/// matching of OS-specific network error text.
-pub const TRANSIENT_TAG: &str = "[TRANSIENT]";
-
-// ── Row types returned by pull ─────────────────────────────────────────────────
-
-// Fields marked allow(dead_code) are deserialized from Supabase pull responses
-// and will be used in Phase 3 conflict-resolution logic.
-#[derive(Debug, Deserialize, Clone)]
-pub struct SyncEventRow {
-    pub global_sequence: i64,
-    #[allow(dead_code)]
-    pub device_id: String,
-    #[allow(dead_code)]
-    pub branch_id: String,
-    pub entity_type: String,
-    #[allow(dead_code)]
-    pub entity_id: String,
-    #[allow(dead_code)]
-    pub operation: String,
-    pub payload_json: Value,
-    #[allow(dead_code)]
-    pub idempotency_key: String,
-    #[allow(dead_code)]
-    pub local_sequence: i64,
-    #[allow(dead_code)]
-    pub created_at: String,
-}
-
-// ── Local sync_queue row (subset needed for push) ─────────────────────────────
-
-#[derive(Debug, Serialize)]
-pub struct PushEvent {
-    pub entity_type: String,
-    pub operation: String,
-    pub payload_json: Value,
-    pub idempotency_key: String,
-    pub payload_hash: String,
-    pub local_sequence: i64,
-}
-
-// ── Client ────────────────────────────────────────────────────────────────────
+// ── Client ──────────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
 pub struct SupabaseClient {
@@ -56,9 +13,6 @@ pub struct SupabaseClient {
 
 impl SupabaseClient {
     pub fn new(base_url: String, service_key: String) -> Self {
-        // Apply a conservative timeout so a network outage doesn't stall the
-        // 30-second sync loop indefinitely. The connect timeout covers TCP
-        // handshake; the overall timeout covers the full request lifecycle.
         let http = Client::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
             .timeout(std::time::Duration::from_secs(30))
@@ -72,7 +26,7 @@ impl SupabaseClient {
         }
     }
 
-    // ── Validation ─────────────────────────────────────────────────────────────
+    // ── Validation ───────────────────────────────────────────────────────────
 
     pub async fn validate(&self) -> AppResult<()> {
         let resp = self
@@ -85,14 +39,11 @@ impl SupabaseClient {
             .map_err(|e| AppError::Internal(format!("Supabase connect error: {e}")))?;
 
         if resp.status().is_success() || resp.status() == StatusCode::NOT_FOUND {
-            // 404 on /rest/v1/ is normal for Supabase — it means auth passed
             Ok(())
         } else if resp.status() == StatusCode::UNAUTHORIZED
             || resp.status() == StatusCode::FORBIDDEN
         {
-            Err(AppError::Internal(
-                "Invalid Supabase service role key".into(),
-            ))
+            Err(AppError::Internal("Invalid Supabase service role key".into()))
         } else {
             Err(AppError::Internal(format!(
                 "Supabase validation failed: {}",
@@ -101,7 +52,7 @@ impl SupabaseClient {
         }
     }
 
-    // ── One-time schema migration via Management API ───────────────────────────
+    // ── One-time schema migration via Management API ─────────────────────────
 
     pub async fn migrate(&self, pat: &str, project_ref: &str, sql: &str) -> AppResult<()> {
         let url = format!("https://api.supabase.com/v1/projects/{project_ref}/database/query");
@@ -124,105 +75,8 @@ impl SupabaseClient {
         }
     }
 
-    // ── Push one event via RPC ─────────────────────────────────────────────────
+    // ── Branch registry helpers ──────────────────────────────────────────────
 
-    pub async fn push_event(&self, event: &PushEvent) -> AppResult<()> {
-        let body = json!({
-            "p_entity_type":  event.entity_type,
-            "p_operation":    event.operation,
-            "p_payload":      event.payload_json,
-            "p_idem_key":     event.idempotency_key,
-            "p_payload_hash": event.payload_hash,
-            "p_local_seq":    event.local_sequence,
-        });
-
-        // R-05: A send() failure is always network-transient (connect/timeout/DNS).
-        // Tag it with a stable, case-stable marker so the worker's retry logic does
-        // not rely on fragile substring matching of OS-specific error text.
-        let resp = self
-            .http
-            .post(format!("{}/rest/v1/rpc/apply_sync_event", self.base_url))
-            .header("apikey", &self.service_key)
-            .header("Authorization", format!("Bearer {}", self.service_key))
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| AppError::Internal(format!("{TRANSIENT_TAG} Supabase push error: {e}")))?;
-
-        let status = resp.status();
-        if status.is_success() || status == StatusCode::CONFLICT {
-            // 409 Conflict = idempotency key already applied on server — treat as success
-            let body = resp.text().await.unwrap_or_default();
-            if !body.contains("\"ok\"") && body.trim_matches('\"') != "ok" {
-                tracing::warn!("sync push: unexpected RPC response: {}", &body[..body.len().min(200)]);
-            }
-            Ok(())
-        } else if status == StatusCode::NOT_FOUND {
-            Err(AppError::Internal(format!(
-                "Push failed (404): RPC 'apply_sync_event' not found. \
-                 The central Supabase schema has not been migrated yet. \
-                 To fix: re-enter your Supabase credentials WITH a Personal \
-                 Access Token in Back Office → Sync to run the one-time schema setup."
-            )))
-        } else {
-            let body = resp.text().await.unwrap_or_default();
-            // 5xx and 429 (rate limit) are server-transient — tag for retry.
-            let transient = status.is_server_error()
-                || status == StatusCode::TOO_MANY_REQUESTS;
-            let tag = if transient { TRANSIENT_TAG } else { "" };
-            Err(AppError::Internal(format!(
-                "{tag} Push failed ({status}): {body}"
-            )))
-        }
-    }
-
-    // ── Pull events since watermark, excluding this device ────────────────────
-
-    pub async fn pull_events(
-        &self,
-        since_seq: i64,
-        exclude_device: &str,
-    ) -> AppResult<Vec<SyncEventRow>> {
-        let url = format!(
-            "{}/rest/v1/sync_events?global_sequence=gt.{}&device_id=neq.{}&order=global_sequence.asc&limit=100",
-            self.base_url, since_seq, exclude_device
-        );
-
-        let resp = self
-            .http
-            .get(&url)
-            .header("apikey", &self.service_key)
-            .header("Authorization", format!("Bearer {}", self.service_key))
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .map_err(|e| AppError::Internal(format!("{TRANSIENT_TAG} Supabase pull error: {e}")))?;
-
-        if resp.status().is_success() {
-            let rows: Vec<SyncEventRow> = resp
-                .json()
-                .await
-                .map_err(|e| AppError::Internal(format!("Pull parse error: {e}")))?;
-            Ok(rows)
-        } else {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            // 5xx and 429 are server-transient — tag for retry. 4xx is permanent.
-            let transient = status.is_server_error()
-                || status == StatusCode::TOO_MANY_REQUESTS;
-            let tag = if transient { TRANSIENT_TAG } else { "" };
-            Err(AppError::Internal(format!(
-                "{tag} Pull failed ({status}): {body}"
-            )))
-        }
-    }
-
-    // ── Branch registry helpers ────────────────────────────────────────────────
-
-    /// Fetch the first active branch from the central `branches` table.
-    /// Returns `None` if the table exists but has no rows.
-    /// Returns an error if the request fails or the table doesn't exist.
     pub async fn pull_branch(&self) -> AppResult<Option<serde_json::Value>> {
         let url = format!(
             "{}/rest/v1/branches?is_active=eq.true&order=created_at.asc&limit=1",
@@ -253,8 +107,6 @@ impl SupabaseClient {
         }
     }
 
-    /// Upsert a branch record into the central `branches` table.
-    /// Used when a new store completes setup with Supabase configured.
     pub async fn upsert_branch(&self, branch: &serde_json::Value) -> AppResult<()> {
         let url = format!("{}/rest/v1/branches", self.base_url);
         let resp = self
@@ -279,22 +131,15 @@ impl SupabaseClient {
             )))
         }
     }
-} // end impl SupabaseClient
+}
 
-// ── Extract project ref from Supabase URL ─────────────────────────────────────
+// ── Extract project ref from Supabase URL ───────────────────────────────────
 
-/// Extracts the project ref from a Supabase URL or returns the input as-is when
-/// it is already a bare project ref (e.g. "abcdefgh").
-///
-/// Examples:
-/// * `"https://xyz.supabase.co"` → `Some("xyz")`
-/// * `"xyz"` (bare ref) → `Some("xyz")`
 pub fn extract_project_ref(url: &str) -> Option<String> {
     let url = url.trim_end_matches('/');
     if url.is_empty() {
         return None;
     }
-    // Strip scheme; if there's no scheme treat the whole string as the project ref.
     let after_scheme = match url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))
@@ -302,7 +147,6 @@ pub fn extract_project_ref(url: &str) -> Option<String> {
         Some(s) => s,
         None => return Some(url.to_string()),
     };
-    // First component before '.'
     let ref_part = after_scheme.split('.').next()?;
     if ref_part.is_empty() {
         None

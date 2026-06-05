@@ -218,8 +218,8 @@ impl SyncWorker {
                         let mut map = serde_json::Map::new();
                         for col in row.columns() {
                             let col_name = col.name();
-                            // Skip local-only tracking columns
-                            if col_name == "sync_status" || col_name == "sync_attempts" {
+                            // Skip local-only columns that must never sync
+                            if col_name == "sync_status" || col_name == "sync_attempts" || col_name == "pin_hash" {
                                 continue;
                             }
                             let val = value_from_row_column(row, col_name);

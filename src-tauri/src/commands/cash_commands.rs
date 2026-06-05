@@ -188,9 +188,11 @@ pub async fn cash_event_create(
 
 #[tauri::command]
 pub async fn cash_events_list(
+    actor_user_id: String,
     shift_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<CashEventRow>> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     let rows = sqlx::query(
         "SELECT cash_event_id, shift_id, event_type, amount_minor, note,
                 created_by_user_id, created_at
@@ -340,9 +342,11 @@ async fn drawer_summary_inner(
 
 #[tauri::command]
 pub async fn cash_drawer_summary(
+    actor_user_id: String,
     shift_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<CashDrawerSummary> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     drawer_summary_inner(&state.db, &shift_id).await
 }
 

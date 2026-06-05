@@ -45,7 +45,11 @@ fn parse_qty(s: &str) -> AppResult<Decimal> {
 // ── inventory_get_levels ──────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn inventory_get_levels(state: State<'_, AppState>) -> Result<Vec<StockLevel>, AppError> {
+pub async fn inventory_get_levels(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<StockLevel>, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     let branch_id = active_branch_id(&state).await?;
     stock_repo::get_all_levels(&state.db, &branch_id).await
 }
@@ -54,11 +58,13 @@ pub async fn inventory_get_levels(state: State<'_, AppState>) -> Result<Vec<Stoc
 
 #[tauri::command]
 pub async fn inventory_get_levels_paged(
+    actor_user_id: String,
     search: Option<String>,
     offset: Option<i64>,
     limit: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<StockLevelPage, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     let branch_id = active_branch_id(&state).await?;
     let limit = limit.unwrap_or(100).min(500);
     let offset = offset.unwrap_or(0).max(0);
@@ -69,8 +75,10 @@ pub async fn inventory_get_levels_paged(
 
 #[tauri::command]
 pub async fn inventory_get_low_stock(
+    actor_user_id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<StockLevel>, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     let branch_id = active_branch_id(&state).await?;
     stock_repo::get_low_stock(&state.db, &branch_id).await
 }
@@ -79,9 +87,11 @@ pub async fn inventory_get_low_stock(
 
 #[tauri::command]
 pub async fn inventory_get_movements(
+    actor_user_id: String,
     state: State<'_, AppState>,
     product_id: String,
 ) -> Result<Vec<StockMovementRow>, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     stock_repo::get_movements(&state.db, &product_id).await
 }
 

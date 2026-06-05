@@ -106,9 +106,11 @@ pub fn run() {
                     }
                     Err(e) => {
                         tracing::error!("DB init failed: {}. Nuking and retrying.", e);
+                        // Delete all SQLite sidecar files so nothing survives to confuse the retry.
                         std::fs::remove_file(&db_path).ok();
                         std::fs::remove_file(format!("{db_path_str}-wal")).ok();
                         std::fs::remove_file(format!("{db_path_str}-shm")).ok();
+                        std::fs::remove_file(format!("{db_path_str}-journal")).ok();
                         db::init_db(&db_path_str)
                             .await
                             .expect("Failed to initialize database after nuke")

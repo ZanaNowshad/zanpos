@@ -1,3 +1,4 @@
+use crate::commands::rbac;
 use crate::db::repositories::audit_hash;
 use crate::db::repositories::report_repo;
 use crate::domain::report::TodaySummary;
@@ -60,10 +61,12 @@ pub struct SaleListPage {
 
 #[tauri::command]
 pub async fn report_today(
+    actor_user_id: String,
     branch_id: String,
     business_date: String,
     state: State<'_, AppState>,
 ) -> Result<TodaySummary, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     report_repo::today_summary(&state.db, &branch_id, &business_date).await
 }
 
@@ -71,11 +74,13 @@ pub async fn report_today(
 
 #[tauri::command]
 pub async fn report_date_range(
+    actor_user_id: String,
     branch_id: String,
     from_date: String,
     to_date: String,
     state: State<'_, AppState>,
 ) -> Result<RangeSummary, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     // M6: Run the 5 independent range aggregation queries concurrently.
     // E: apply the device-scope filter uniformly: scope='all' short-circuits
     // the OR; scope='origin' requires origin_device_id to match this device.
@@ -172,11 +177,13 @@ pub async fn report_date_range(
 
 #[tauri::command]
 pub async fn report_top_products(
+    actor_user_id: String,
     branch_id: String,
     from_date: String,
     to_date: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<TopProduct>, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     let pool = &state.db;
     let (scope, origin_device_id) = report_scope(pool).await;
     let rows = sqlx::query(
@@ -214,6 +221,7 @@ pub async fn report_top_products(
 
 #[tauri::command]
 pub async fn report_sales_list(
+    actor_user_id: String,
     branch_id: String,
     from_date: String,
     to_date: String,
@@ -221,6 +229,7 @@ pub async fn report_sales_list(
     limit: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<SaleListPage, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     let limit = limit.unwrap_or(200).clamp(1, 500);
     let offset = offset.unwrap_or(0).max(0);
 
@@ -308,11 +317,13 @@ pub struct CashierSummaryRow {
 /// Single CTE query — avoids the prior N+1 (4 queries per cashier).
 #[tauri::command]
 pub async fn report_by_cashier(
+    actor_user_id: String,
     branch_id: String,
     from_date: String,
     to_date: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<CashierSummaryRow>, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     let pool = &state.db;
     let (scope, origin_device_id) = report_scope(pool).await;
     let scope_str = scope.as_str();
@@ -567,10 +578,12 @@ pub(crate) async fn report_eod_cashup_inner(
 /// End-of-day cash-up: Tauri command wrapper around `report_eod_cashup_inner`.
 #[tauri::command]
 pub async fn report_eod_cashup(
+    actor_user_id: String,
     branch_id: String,
     date: String,
     state: State<'_, AppState>,
 ) -> Result<EodCashupReport, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     report_eod_cashup_inner(&state.db, &branch_id, &date, &date).await
 }
 

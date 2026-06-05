@@ -154,12 +154,14 @@ pub struct AdminProductPage {
 
 #[tauri::command]
 pub async fn admin_list_products(
+    actor_user_id: String,
     search: Option<String>,
     category_id: Option<String>,
     offset: Option<i64>,
     limit: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<AdminProductPage, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     let limit = limit.unwrap_or(100).min(500);
     let offset = offset.unwrap_or(0).max(0);
 
@@ -508,8 +510,10 @@ pub async fn admin_update_product(
 
 #[tauri::command]
 pub async fn admin_list_categories(
+    actor_user_id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<CategoryRow>, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     // Returns ALL categories (active + inactive) for the back-office admin view
     // so managers can re-activate archived categories. Product-grid and POS
     // code paths use a separate query filtered to is_active=1.
@@ -536,7 +540,11 @@ pub async fn admin_list_categories(
 }
 
 #[tauri::command]
-pub async fn admin_list_tax_rules(state: State<'_, AppState>) -> Result<Vec<TaxRuleRow>, AppError> {
+pub async fn admin_list_tax_rules(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<TaxRuleRow>, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     let rows = sqlx::query(
         "SELECT tax_rule_id, name, rate_basis_points, inclusive, is_active
          FROM tax_rules ORDER BY name",
@@ -1168,8 +1176,10 @@ pub async fn admin_bulk_import_products(
 
 #[tauri::command]
 pub async fn admin_list_users_all(
+    actor_user_id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<AdminUserRow>, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     let rows = sqlx::query(
         "SELECT u.user_id, u.display_name, u.username, u.role_id, u.is_active, u.last_login_at,
                 r.name AS role_name
@@ -1197,7 +1207,11 @@ pub async fn admin_list_users_all(
 }
 
 #[tauri::command]
-pub async fn admin_list_roles(state: State<'_, AppState>) -> Result<Vec<RoleRow>, AppError> {
+pub async fn admin_list_roles(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<RoleRow>, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     let rows = sqlx::query("SELECT role_id, name FROM roles ORDER BY name")
         .fetch_all(&state.db)
         .await?;
@@ -1400,9 +1414,11 @@ pub async fn product_barcode_remove(
 
 #[tauri::command]
 pub async fn product_barcodes_list(
+    actor_user_id: String,
     product_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ProductBarcodeRow>> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     let rows = sqlx::query(
         "SELECT barcode_id, product_id, barcode, created_at
          FROM product_barcodes WHERE product_id = ? ORDER BY created_at",

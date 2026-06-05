@@ -55,6 +55,7 @@ pub async fn pos_add_item(
     input: AddItemInput,
     state: State<'_, AppState>,
 ) -> Result<Cart, AppError> {
+    crate::commands::rbac::require_any_role(&state.db, &input.cart.cashier_user_id).await?;
     let product = product_repo::get_product_by_id(&state.db, &input.product_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Product {} not found", input.product_id)))?;
@@ -110,6 +111,7 @@ pub async fn pos_add_item_by_barcode(
     input: AddItemByBarcodeInput,
     state: State<'_, AppState>,
 ) -> Result<Cart, AppError> {
+    crate::commands::rbac::require_any_role(&state.db, &input.cart.cashier_user_id).await?;
     let product = match product_repo::get_product_by_barcode(&state.db, &input.barcode).await? {
         Some(p) => p,
         None => {
@@ -672,6 +674,7 @@ pub async fn pos_add_custom_item(
     input: AddCustomItemInput,
     state: State<'_, AppState>,
 ) -> Result<Cart, AppError> {
+    crate::commands::rbac::require_any_role(&state.db, &input.cart.cashier_user_id).await?;
     if input.name.trim().is_empty() {
         return Err(AppError::Validation("Item name is required".into()));
     }
@@ -904,6 +907,7 @@ pub async fn pos_record_void(
     net_total_minor: i64,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
+    crate::commands::rbac::require_any_role(&state.db, &cashier_user_id).await?;
     if line_count == 0 {
         return Ok(());
     } // nothing to record for empty carts

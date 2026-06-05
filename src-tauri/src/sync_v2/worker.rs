@@ -437,14 +437,18 @@ impl SyncWorker {
 
             // ── Users (LWW but exclude pin_hash) ─────────────────────────────
             "users" => {
-                // Handle username collision: DELETE local stub if different user_id
+                // Handle username collision: soft-deactivate local stub so
+                // FK references (refunds, sales, audit) survive. Hard-DELETE
+                // would orphan receipts and break refund lookups.
                 if let (Some(user_id), Some(username)) = (
                     obj.get("user_id").and_then(|v| v.as_str()),
                     obj.get("username").and_then(|v| v.as_str()),
                 ) {
+                    let now = chrono::Utc::now().to_rfc3339();
                     let _ = sqlx::query(
-                        "DELETE FROM users WHERE username = ? AND user_id <> ?",
+                        "UPDATE users SET is_active = 0, deleted_at = ? WHERE username = ? AND user_id <> ?",
                     )
+                    .bind(&now)
                     .bind(username)
                     .bind(user_id)
                     .execute(&self.pool)

@@ -13,7 +13,7 @@ interface Props {
   onClose: () => void;
 }
 
-type DiscountMode = "pct" | "flat" | "price";
+type DiscountMode = "pct" | "flat";
 
 export default function LineEditModal({
   line,
@@ -31,7 +31,7 @@ export default function LineEditModal({
   const fmt = (n: number) => `${cur} ${formatMoney(n, exp)}`;
 
   const [qty, setQty] = useState(line.quantity);
-  const [discountMode, setDiscountMode] = useState<DiscountMode>("price");
+  const [discountMode, setDiscountMode] = useState<DiscountMode>("pct");
   const [discountValue, setDiscountValue] = useState(
     line.line_discount_minor > 0 ? "" : ""
   );
@@ -50,14 +50,9 @@ export default function LineEditModal({
       const bp = Math.round(parseFloat(discountValue || "0") * 100);
       if (isNaN(bp) || bp <= 0) return 0;
       return Math.round(lineSubtotal * Math.min(bp, 10000) / 10000);
-    } else if (discountMode === "flat") {
-      return Math.min(parseMoney(discountValue, exp), lineSubtotal);
-    } else {
-      // price override: discount = (unit_price - new_price) × qty
-      const newPriceMinor = parseMoney(discountValue, exp);
-      if (newPriceMinor >= line.unit_price_minor) return 0;
-      return Math.round((line.unit_price_minor - newPriceMinor) * (qtyNum || 1));
     }
+    // flat discount
+    return Math.min(parseMoney(discountValue, exp), lineSubtotal);
   }
 
   const discountPreview = computeDiscountMinor();
@@ -134,10 +129,6 @@ export default function LineEditModal({
             className={`discount-mode-tab ${discountMode === "flat" ? "discount-mode-tab-active" : ""}`}
             onClick={() => { setDiscountMode("flat"); setDiscountValue(""); }}
           >Flat</button>
-          <button
-            className={`discount-mode-tab ${discountMode === "price" ? "discount-mode-tab-active" : ""}`}
-            onClick={() => { setDiscountMode("price"); setDiscountValue(""); }}
-          >Price</button>
         </div>
         <div className="discount-input-row">
           {discountMode === "pct" ? (
@@ -163,9 +154,7 @@ export default function LineEditModal({
                 inputMode="decimal"
                 min="0"
                 step={Math.pow(10, -exp).toFixed(exp)}
-                placeholder={discountMode === "price"
-                  ? formatMoney(line.unit_price_minor, exp)
-                  : `0.${"0".repeat(exp)}`}
+                placeholder={`0.${"0".repeat(exp)}`}
                 value={discountValue}
                 onChange={e => setDiscountValue(e.target.value)}
               />

@@ -11,6 +11,7 @@ export interface PosShortcutHandlers {
   onPay: () => void;
   onPayFast: () => void;
   onDiscount: () => void;
+  onLineDiscount: () => void;
   onRefund: () => void;
   onClearCart: () => void;
   onReprintLast: () => void;
@@ -95,7 +96,7 @@ export function usePosShortcuts(h: PosShortcutHandlers) {
       // ── Ctrl combos — checked BEFORE barcode early-return so they always fire ──
       if (e.ctrlKey) {
         switch (e.key.toLowerCase()) {
-          case "d": e.preventDefault(); if (h.lineCount > 0) h.onDiscount(); return;
+          case "d": e.preventDefault(); if (h.lineCount > 0 && h.hasRecentLine) h.onLineDiscount(); return;
           case "r": e.preventDefault(); h.onRefund(); return;
           case "h": e.preventDefault(); h.onHelp?.(); return;
           case "l": e.preventDefault(); h.onLock(); return;
@@ -155,7 +156,7 @@ export function usePosShortcuts(h: PosShortcutHandlers) {
   }, [
     h.noModalOpen, h.lineCount, h.hasRecentLine, h.lastReceiptNumber,
     h.onFocusBarcode, h.onHold, h.onResumeHeld, h.onPay, h.onPayFast,
-    h.onDiscount, h.onRefund, h.onClearCart, h.onReprintLast, h.onNoSale,
+    h.onDiscount, h.onLineDiscount, h.onRefund, h.onClearCart, h.onReprintLast, h.onNoSale,
     h.onXReport, h.onIncrementRecent, h.onDecrementRecent, h.onRemoveRecent,
     h.onLock, h.onReport, h.onCustomItem, h.onHelp,
   ]);

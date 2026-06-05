@@ -19,7 +19,8 @@ const SECTIONS: { heading: string; rows: { keys: string; action: string }[] }[] 
       { keys: "Backspace",      action: "Remove most-recent item (barcode field empty)" },
       { keys: "Ctrl+Delete",    action: "Clear entire cart (confirmation required)" },
       { keys: "Ctrl+Backspace", action: "Clear entire cart (confirmation required)" },
-      { keys: "F8 / Ctrl+D",   action: "Apply bill-level discount (cart must have items)" },
+      { keys: "F8",             action: "Apply bill-level discount (cart must have items)" },
+      { keys: "Ctrl+D",         action: "Discount the last scanned item" },
     ],
   },
   {

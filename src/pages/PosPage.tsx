@@ -19,6 +19,7 @@ import Dialpad, { applyDialpadKey } from "../components/Dialpad";
 import CartPanel from "../components/CartPanel";
 import BackOfficeModal from "../components/BackOfficeModal";
 import DiscountModal from "../components/DiscountModal";
+import LineDiscountModal from "../components/LineDiscountModal";
 import PaymentModal from "../components/PaymentModal";
 import ReceiptPreview from "../components/ReceiptPreview";
 import ShiftModal from "../components/ShiftModal";
@@ -50,6 +51,7 @@ type ActiveModal =
   | { kind: "refund" }
   | { kind: "report" }
   | { kind: "discount" }
+  | { kind: "lineDiscount"; lineId: string }
   | { kind: "backOffice" }
   | { kind: "customItem" }
   | { kind: "cashEvent" }
@@ -498,6 +500,7 @@ export default function PosPage({
     onPay:               openPay,
     onPayFast:           handlePayFast,
     onDiscount:          () => setActiveModal({ kind: "discount" }),
+    onLineDiscount:      () => { if (recentLineId) setActiveModal({ kind: "lineDiscount", lineId: recentLineId }); },
     onRefund:            () => canRefund && setActiveModal({ kind: "refund" }),
     onClearCart:         handleClearCartRequest,
     onReprintLast:       handleReprintLast,
@@ -981,6 +984,24 @@ export default function PosPage({
           }}
           onCancel={() => { setActiveModal({ kind: "none" }); focusBarcode(); }}
         />
+      )}
+
+      {activeModal.kind === "lineDiscount" && (
+        (() => {
+          const line = cart.lines.find(l => l.cart_line_id === activeModal.lineId && !l.voided);
+          if (!line) return null;
+          return (
+            <LineDiscountModal
+              line={line}
+              onApply={async (discount_minor, reason) => {
+                await applyLineDiscount(line.cart_line_id, discount_minor, reason);
+                setActiveModal({ kind: "none" });
+                focusBarcode();
+              }}
+              onCancel={() => { setActiveModal({ kind: "none" }); focusBarcode(); }}
+            />
+          );
+        })()
       )}
 
       {activeModal.kind === "payment" && (

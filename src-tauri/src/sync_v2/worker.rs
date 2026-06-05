@@ -97,30 +97,36 @@ impl SyncWorker {
         let push_result = self.push_pending(&client).await;
         let pull_result = self.pull_changes(&client, &device_id).await;
 
-        let mut state = self.state.lock().await;
-        match (&push_result, &pull_result) {
-            (Ok(_), Ok(_)) => {
-                state.online = true;
-                state.last_error = None;
-                // Record last successful sync timestamp in sync_watermark
-                let now = chrono::Utc::now().to_rfc3339();
-                if let Err(e) = sqlx::query(
-                    "UPDATE sync_watermark SET last_pushed_at = ? WHERE table_name = 'sales'",
-                )
-                .bind(&now)
-                .execute(&self.pool)
-                .await
-                {
-                    tracing::warn!("Sync v2: failed to record last_pushed_at: {e}");
+        // H2: Update state quickly, then release the lock before any DB writes.
+        // Holding a tokio::sync::Mutex across .await serializes all sync_status reads.
+        {
+            let mut state = self.state.lock().await;
+            match (&push_result, &pull_result) {
+                (Ok(_), Ok(_)) => {
+                    state.online = true;
+                    state.last_error = None;
+                }
+                (Err(e), _) | (_, Err(e)) => {
+                    state.online = false;
+                    state.last_error = Some(e.to_string());
+                    tracing::warn!("Sync v2 cycle error: {e}");
                 }
             }
-            (Err(e), _) | (_, Err(e)) => {
-                state.online = false;
-                state.last_error = Some(e.to_string());
-                tracing::warn!("Sync v2 cycle error: {e}");
+        }
+
+        // DB write outside the lock — no contention with sync_status reads
+        if push_result.is_ok() && pull_result.is_ok() {
+            let now = chrono::Utc::now().to_rfc3339();
+            if let Err(e) = sqlx::query(
+                "UPDATE sync_watermark SET last_pushed_at = ? WHERE table_name = 'sales'",
+            )
+            .bind(&now)
+            .execute(&self.pool)
+            .await
+            {
+                tracing::warn!("Sync v2: failed to record last_pushed_at: {e}");
             }
         }
-        drop(state);
 
         // Run daily pruning pass
         self.prune_old_data().await;

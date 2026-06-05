@@ -52,6 +52,18 @@ pub async fn sync_status(state: State<'_, AppState>) -> Result<serde_json::Value
     let device_id = active_device_id(&state).await?;
     let pending = count_pending(&state.db).await.unwrap_or(0);
 
+    // Check Supabase configuration (two-phase: OS keyring, then DB fallback)
+    let supabase_configured = {
+        let url: Option<String> =
+            sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'supabase_url'")
+                .fetch_optional(&state.db)
+                .await?
+                .flatten();
+        let key = crate::secure_store::get_secret("supabase_service_key")
+            .unwrap_or_default();
+        url.as_deref().is_some_and(|u| !u.is_empty()) && !key.is_empty()
+    };
+
     // Read last successful sync from watermark table
     let last_sync: Option<String> = sqlx::query_scalar(
         "SELECT last_pushed_at FROM sync_watermark WHERE table_name = 'sales'",
@@ -63,7 +75,7 @@ pub async fn sync_status(state: State<'_, AppState>) -> Result<serde_json::Value
 
     Ok(serde_json::json!({
         "online": online,
-        "supabase_configured": false,  // resolved below
+        "supabase_configured": supabase_configured,
         "pending_events": pending,
         "last_successful_sync_at": last_sync,
         "days_since_last_sync": null,

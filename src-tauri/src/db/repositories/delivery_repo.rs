@@ -55,8 +55,8 @@ pub async fn create_delivery_in_tx(
           delivery_staff_name, expected_payment_method, payment_status,
           amount_minor, currency, delivery_status,
           created_by_user_id, branch_id, device_id, origin_device_id, created_at, updated_at,
-          sync_status, version)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'unpaid',?,?,'pending',?,?,?,?,?,?,'pending',1)",
+          sync_status, sync_attempts)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'unpaid',?,?,'pending',?,?,?,?,?,?,'pending',0)",
     )
     .bind(&delivery_id)
     .bind(sale_id)

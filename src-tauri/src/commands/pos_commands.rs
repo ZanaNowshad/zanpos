@@ -769,7 +769,7 @@ pub async fn pos_void_sale(
 
     let now = chrono::Utc::now().to_rfc3339();
     let affected = sqlx::query(
-        "UPDATE sales SET status = 'voided', updated_at = ?
+        "UPDATE sales SET status = 'voided', updated_at = ?, sync_status = 'pending'
          WHERE sale_id = ? AND status = 'completed'",
     )
     .bind(&now)

@@ -245,7 +245,7 @@ pub async fn customer_add_loyalty(
     }
 
     let now = chrono::Utc::now().to_rfc3339();
-    sqlx::query("UPDATE customers SET loyalty_points = loyalty_points + ?, updated_at = ? WHERE customer_id = ?")
+    sqlx::query("UPDATE customers SET loyalty_points = loyalty_points + ?, updated_at = ?, sync_status = 'pending' WHERE customer_id = ?")
         .bind(points)
         .bind(&now)
         .bind(&customer_id)

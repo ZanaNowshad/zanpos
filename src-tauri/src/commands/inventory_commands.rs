@@ -156,6 +156,7 @@ pub async fn inventory_receive_stock(
         "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(product_id, branch_id) DO UPDATE SET
+           sync_status = 'pending',
            quantity_on_hand = excluded.quantity_on_hand,
            updated_at = excluded.updated_at",
     )
@@ -289,6 +290,7 @@ pub async fn inventory_adjust_stock(
         "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(product_id, branch_id) DO UPDATE SET
+           sync_status = 'pending',
            quantity_on_hand = excluded.quantity_on_hand,
            updated_at = excluded.updated_at",
     )
@@ -456,6 +458,7 @@ pub async fn inventory_bulk_stock_take(
             "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, ?)
              ON CONFLICT(product_id, branch_id) DO UPDATE SET
+           sync_status = 'pending',
                quantity_on_hand = excluded.quantity_on_hand,
                updated_at = excluded.updated_at",
         )

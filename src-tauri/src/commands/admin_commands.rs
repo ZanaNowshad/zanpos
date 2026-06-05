@@ -400,7 +400,8 @@ pub async fn admin_update_product(
            category_id=?, name=?, sku=?, barcode=?, tax_rule_id=?,
            track_inventory=?, allow_decimal_quantity=?,
            reorder_point=?, is_active=?, image_path=?, cost_minor=?, description=?,
-           default_supplier_id=?, updated_at=?, version = version + 1
+           default_supplier_id=?, updated_at=?, version = version + 1,
+           sync_status = 'pending'
          WHERE product_id=?",
     )
     .bind(&input.category_id)
@@ -431,7 +432,7 @@ pub async fn admin_update_product(
     if current_price != Some(input.price_minor) {
         // Close old price
         sqlx::query(
-            "UPDATE product_prices SET effective_to = ?
+            "UPDATE product_prices SET effective_to = ?, sync_status = 'pending'
              WHERE product_id = ? AND branch_id IS NULL
                AND price_type = 'selling' AND effective_to IS NULL",
         )
@@ -608,7 +609,7 @@ pub async fn admin_save_tax_rule(
         if rate_changed {
             // Close old rule by setting effective_to
             sqlx::query(
-                "UPDATE tax_rules SET effective_to = ?, updated_at = ? WHERE tax_rule_id = ?",
+                "UPDATE tax_rules SET effective_to = ?, updated_at = ?, sync_status = 'pending' WHERE tax_rule_id = ?",
             )
             .bind(&now)
             .bind(&now)
@@ -640,7 +641,7 @@ pub async fn admin_save_tax_rule(
         } else {
             // Non-rate change: normal UPDATE (name, is_active only)
             sqlx::query(
-                "UPDATE tax_rules SET name=?, is_active=?, updated_at=?
+                "UPDATE tax_rules SET name=?, is_active=?, updated_at=?, sync_status='pending'
                  WHERE tax_rule_id=?",
             )
             .bind(&name)
@@ -737,7 +738,7 @@ pub async fn admin_save_category(
         // H-5: version = version + 1 on UPDATE
         sqlx::query(
             "UPDATE categories SET name=?, sort_order=?, is_active=?, parent_category_id=?, updated_at=?,
-             version = version + 1
+             version = version + 1, sync_status = 'pending'
              WHERE category_id=?",
         )
         .bind(&input.name)
@@ -1447,7 +1448,8 @@ pub async fn admin_update_user(
     if let Some(pin) = &input.pin {
         let pin_hash = auth_repo::hash_pin(pin)?;
         sqlx::query(
-            "UPDATE users SET display_name=?, pin_hash=?, role_id=?, is_active=?, updated_at=?
+            "UPDATE users SET display_name=?, pin_hash=?, role_id=?, is_active=?, updated_at=?,
+             sync_status='pending'
              WHERE user_id=?",
         )
         .bind(&input.display_name)
@@ -1460,7 +1462,8 @@ pub async fn admin_update_user(
         .await?;
     } else {
         sqlx::query(
-            "UPDATE users SET display_name=?, role_id=?, is_active=?, updated_at=?
+            "UPDATE users SET display_name=?, role_id=?, is_active=?, updated_at=?,
+             sync_status='pending'
              WHERE user_id=?",
         )
         .bind(&input.display_name)

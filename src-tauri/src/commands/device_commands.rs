@@ -132,8 +132,10 @@ pub async fn device_toggle_active(
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
-    let affected = sqlx::query("UPDATE devices SET is_active = ? WHERE device_id = ?")
+    let now = chrono::Utc::now().to_rfc3339();
+    let affected = sqlx::query("UPDATE devices SET is_active = ?, updated_at = ?, sync_status = 'pending' WHERE device_id = ?")
         .bind(is_active as i64)
+        .bind(&now)
         .bind(&device_id)
         .execute(&state.db)
         .await?

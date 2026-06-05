@@ -71,43 +71,49 @@ pub fn run() {
             tracing::info!("Logs directory: {}", app_data.join("logs").to_string_lossy());
 
             let db = tauri::async_runtime::block_on(async {
-                // If the database file already exists, check whether it's from the old
-                // architecture (pre-sync_v2). The old schema has a `sync_queue` table;
-                // the new one doesn't. If detected, delete it and start fresh.
+                // If the database file exists and isn't ours, nuke it.
+                // The old architecture (pre-sync_v2) had a sync_queue table;
+                // the new one has sync_watermark. If neither is detected, or
+                // if the old marker is found, start fresh.
                 if db_path.exists() {
-                    // Quick check: does the old sync_queue table exist?
-                    let is_old_schema = {
+                    let is_ours = {
                         let tmp_url = format!("sqlite:{}?mode=ro", db_path_str);
                         if let Ok(conn) = sqlx::SqlitePool::connect(&tmp_url).await {
-                            let row: Result<String, _> =
-                                sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table' AND name='sync_queue'")
-                                    .fetch_one(&conn)
-                                    .await;
+                            let ok: Result<String, _> = sqlx::query_scalar(
+                                "SELECT name FROM sqlite_master WHERE type='table' AND name='sync_watermark'"
+                            ).fetch_one(&conn).await;
                             conn.close().await;
-                            row.is_ok()
+                            ok.is_ok()
                         } else {
-                            false
+                            false // can't even open — assume corrupt
                         }
                     };
-                    if is_old_schema {
-                        tracing::info!(
-                            "Old database detected at {} — deleting for fresh start",
-                            db_path_str
-                        );
-                        let _ = std::fs::remove_file(&db_path);
-                        let _ = std::fs::remove_file(format!("{db_path_str}-wal"));
-                        let _ = std::fs::remove_file(format!("{db_path_str}-shm"));
+                    if !is_ours {
+                        tracing::info!("Removing incompatible database at {}", db_path_str);
+                        std::fs::remove_file(&db_path).ok();
+                        std::fs::remove_file(format!("{db_path_str}-wal")).ok();
+                        std::fs::remove_file(format!("{db_path_str}-shm")).ok();
                     }
                 }
 
-                let pool = db::init_db(&db_path_str)
-                    .await
-                    .expect("Failed to initialize database");
-
-                if let Err(e) = db::repositories::auth_repo::rehash_plain_pins(&pool).await {
-                    tracing::warn!("PIN rehash step failed: {:?}", e);
+                // Try init. If it fails, nuke whatever is there and retry once.
+                match db::init_db(&db_path_str).await {
+                    Ok(pool) => {
+                        if let Err(e) = db::repositories::auth_repo::rehash_plain_pins(&pool).await {
+                            tracing::warn!("PIN rehash step failed: {:?}", e);
+                        }
+                        pool
+                    }
+                    Err(e) => {
+                        tracing::error!("DB init failed: {}. Nuking and retrying.", e);
+                        std::fs::remove_file(&db_path).ok();
+                        std::fs::remove_file(format!("{db_path_str}-wal")).ok();
+                        std::fs::remove_file(format!("{db_path_str}-shm")).ok();
+                        db::init_db(&db_path_str)
+                            .await
+                            .expect("Failed to initialize database after nuke")
+                    }
                 }
-                pool
             });
 
             // Spawn background sync worker

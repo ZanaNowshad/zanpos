@@ -71,14 +71,28 @@ pub fn run() {
             tracing::info!("Logs directory: {}", app_data.join("logs").to_string_lossy());
 
             let db = tauri::async_runtime::block_on(async {
-                let pool = db::init_db(&db_path_str)
-                    .await
-                    .expect("Failed to initialize database");
-                // Migrate any legacy PLAIN: PINs to argon2id on first launch
-                if let Err(e) = db::repositories::auth_repo::rehash_plain_pins(&pool).await {
-                    tracing::warn!("PIN rehash step failed: {:?}", e);
+                match db::init_db(&db_path_str).await {
+                    Ok(pool) => {
+                        if let Err(e) = db::repositories::auth_repo::rehash_plain_pins(&pool).await {
+                            tracing::warn!("PIN rehash step failed: {:?}", e);
+                        }
+                        pool
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Database init failed ({}) — deleting old DB and starting fresh",
+                            e
+                        );
+                        // The old database is incompatible with the new schema.
+                        // Delete it and re-initialise so the setup wizard runs on a clean slate.
+                        let _ = std::fs::remove_file(&db_path);
+                        let _ = std::fs::remove_file(format!("{}-wal", &db_path_str));
+                        let _ = std::fs::remove_file(format!("{}-shm", &db_path_str));
+                        db::init_db(&db_path_str)
+                            .await
+                            .expect("Failed to initialize database after deleting old one")
+                    }
                 }
-                pool
             });
 
             // Spawn background sync worker

@@ -112,6 +112,7 @@ interface Props {
 
 export default function BackOfficeModal({ sessionUser, onClose }: Props) {
   const [tab, setTab]                             = useState<Tab>("products");
+  const [collapsed, setCollapsed]                 = useState(false);
   const [showBulkStockTake, setShowBulkStockTake] = useState(false);
   const [showSyncQueue, setShowSyncQueue]         = useState(false);
   const [ghostSum, setGhostSum] = useState<GhostSummary>({ pending: 0, found: 0, not_found: 0 });
@@ -164,28 +165,36 @@ export default function BackOfficeModal({ sessionUser, onClose }: Props) {
         <div className="bo-shell">
 
           {/* ── Left Sidebar ─────────────────────────────────────────── */}
-          <aside className="bo-sidebar">
+          <aside className={`bo-sidebar${collapsed ? " bo-sidebar-collapsed" : ""}`}>
 
-            {/* Brand */}
+            {/* Brand + Toggle */}
             <div className="bo-sidebar-logo">
-              <span className="bo-sidebar-brand">ZAN<span>POS</span></span>
-              <span className="bo-sidebar-subtitle">Back Office</span>
+              {!collapsed && <span className="bo-sidebar-brand">ZAN<span>POS</span></span>}
+              <button
+                className="bo-sidebar-toggle"
+                onClick={() => setCollapsed(c => !c)}
+                title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              >
+                {collapsed ? "☰" : "◀"}
+              </button>
+              {!collapsed && <span className="bo-sidebar-subtitle">Back Office</span>}
             </div>
 
             {/* Navigation */}
             <nav className="bo-nav">
               {sections.map(section => (
                 <div key={section.label} className="bo-nav-section">
-                  <div className="bo-nav-section-label">{section.label}</div>
+                  {!collapsed && <div className="bo-nav-section-label">{section.label}</div>}
                   {section.items.map(item => (
                     <button
                       key={item.id}
                       className={`bo-nav-item${tab === item.id ? " bo-nav-item-active" : ""}`}
                       onClick={() => setTab(item.id)}
+                      title={collapsed ? item.label : undefined}
                     >
                       <span className="bo-nav-icon">{TAB_ICON[item.id]}</span>
-                      <span className="bo-nav-label">{item.label}</span>
-                      {item.id === "products" && isManager && (ghostSum.pending + ghostSum.found) > 0 && (
+                      {!collapsed && <span className="bo-nav-label">{item.label}</span>}
+                      {!collapsed && item.id === "products" && isManager && (ghostSum.pending + ghostSum.found) > 0 && (
                         <span className="bo-nav-ghost-badge">
                           {ghostSum.pending + ghostSum.found}
                         </span>
@@ -202,31 +211,33 @@ export default function BackOfficeModal({ sessionUser, onClose }: Props) {
               {(isManager || isOwner) && (
                 <div className="bo-sidebar-actions">
                   {isManager && (
-                    <button className="bo-sidebar-action-btn" onClick={() => setShowBulkStockTake(true)}>
-                      <IcoStocktake /> Stock-Take
+                    <button className="bo-sidebar-action-btn" onClick={() => setShowBulkStockTake(true)} title="Stock Take">
+                      <IcoStocktake /> {!collapsed && "Stock-Take"}
                     </button>
                   )}
                   {isOwner && (
-                    <button className="bo-sidebar-action-btn" onClick={() => setShowSyncQueue(true)}>
-                      <IcoSync /> Sync Queue
+                    <button className="bo-sidebar-action-btn" onClick={() => setShowSyncQueue(true)} title="Sync Queue">
+                      <IcoSync /> {!collapsed && "Sync Queue"}
                     </button>
                   )}
                 </div>
               )}
 
               {/* User card */}
-              <div className="bo-user-card">
-                <div className="bo-user-avatar">{initials}</div>
-                <div className="bo-user-info">
-                  <div className="bo-user-name">{sessionUser.display_name}</div>
-                  <div className="bo-user-role">{roleLabel}</div>
+              {!collapsed && (
+                <div className="bo-user-card">
+                  <div className="bo-user-avatar">{initials}</div>
+                  <div className="bo-user-info">
+                    <div className="bo-user-name">{sessionUser.display_name}</div>
+                    <div className="bo-user-role">{roleLabel}</div>
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Close */}
-              <button className="bo-close-sidebar-btn" onClick={onClose}>
+              <button className="bo-close-sidebar-btn" onClick={onClose} title="Close Back Office">
                 <IcoClose size={13} />
-                Close Back Office
+                {!collapsed && "Close Back Office"}
               </button>
             </div>
           </aside>

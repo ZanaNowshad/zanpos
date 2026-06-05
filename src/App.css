@@ -4686,6 +4686,12 @@ textarea.field-input { resize: vertical; }
   border-right: 1px solid var(--border);
   background: var(--surface);
 }
+/* Full-width mode — no form pane alongside */
+.bo-list-full {
+  width: 100%;
+  max-width: none;
+  border-right: none;
+}
 
 /* ── List header ──────────────────────────────────────────────────── */
 .bo-list-header {
@@ -4948,6 +4954,65 @@ textarea.field-input { resize: vertical; }
 }
 
 .bo-change-pin-toggle { margin-top: 12px; }
+
+/* ── Form modal (widget-style popup) ──────────────────────────────── */
+.bo-form-modal {
+  max-width: 620px;
+  width: 95vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: 0 24px 60px rgba(0,0,0,0.45);
+}
+.bo-form-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.bo-form-modal-header h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.bo-form-modal-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.bo-form-modal-close:hover { background: var(--surface2); color: var(--text); }
+.bo-form-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+.bo-form-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 24px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--surface2);
+}
+.bo-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 16px;
+}
+.bo-form-field { margin-bottom: 6px; }
+.bo-form-field-full { grid-column: 1 / -1; }
+.bo-form-field .bo-label { margin-top: 8px; }
 .bo-pin-toggle-btn { padding: 6px 12px; font-size: 0.82rem; }
 
 /* ── Phase 7: Reports tab ────────────────────────────────────────────────────── */
@@ -9665,16 +9730,38 @@ label {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: width 0.2s ease, min-width 0.2s ease, max-width 0.2s ease;
+}
+.bo-sidebar-collapsed {
+  width: 56px;
+  min-width: 56px;
+  max-width: 56px;
 }
 
 .bo-sidebar-logo {
-  padding: 22px 18px 16px;
+  padding: 14px 12px;
   border-bottom: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   flex-shrink: 0;
+  align-items: center;
 }
+.bo-sidebar-collapsed .bo-sidebar-logo { padding: 10px 8px; }
+
+.bo-sidebar-toggle {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  transition: color 0.12s;
+  align-self: flex-end;
+}
+.bo-sidebar-toggle:hover { color: var(--accent); border-color: var(--accent); }
+.bo-sidebar-collapsed .bo-sidebar-toggle { align-self: center; }
 
 .bo-sidebar-brand {
   font-size: 1.35rem;

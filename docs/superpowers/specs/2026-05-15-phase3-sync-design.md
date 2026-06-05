@@ -1,7 +1,7 @@
 # Phase 3 — Central Sync Design
 **Date:** 2026-05-15  
 **Project:** ZANPOS  
-**Status:** Approved
+**Status:** SUPERSEDED by sync_v2 (2026-06-05). This spec describes the v1 event-sourcing architecture (sync_events, apply_sync_event RPC, outbox/inbox). See `src-tauri/src/sync_v2/` for the current direct row-based sync implementation.
 
 ---
 

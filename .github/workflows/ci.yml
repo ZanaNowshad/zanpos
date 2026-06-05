@@ -205,7 +205,7 @@ jobs:
           echo ""
           echo "Manual gates still required before production:"
           echo "  P0 • Backup/restore drill on real retail hardware (sign-off template: docs/backup-restore-ops.md)"
-          echo "  P0 • verify apply_sync_event Supabase RPC is idempotent (ON CONFLICT DO NOTHING)"
+          echo "  P0 • verify upsert_rows Supabase REST idempotency (resolution=merge-duplicates)"
           echo "  P0 • Receipt VAT breakdown + TRN review by finance/tax adviser"
           echo "  P0 • Card terminal PCI P2PE certificate on file"
           echo "  P0 • BitLocker enabled on all POS hardware"

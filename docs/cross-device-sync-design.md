@@ -1,6 +1,6 @@
 # ZANPOS — Cross-Device Sync Design (Ship 2 & 3)
 
-**Status:** Implementation plan. Supersedes the "device owns; NOT imported" model in `sync-conflict-resolution.md` §2 Class B.
+**Status:** SUPERSEDED by sync_v2 (2026-06-05). This document describes the v1 event-sourcing architecture (sync_events, apply_sync_event RPC, outbox/inbox). The active implementation uses direct row-based sync with `sync_status` dirty flags and Supabase REST API upserts. See `src-tauri/src/sync_v2/` for the current architecture.
 
 **Scope:** Single Supabase project serving multiple POS devices in one branch. NOT multi-branch, NOT multi-tenant.
 

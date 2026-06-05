@@ -1,8 +1,6 @@
 # ZANPOS — Sync Conflict Resolution
 
-**Status:** Updated for cross-device sync (Ships 1–3). Original single-device model documented for historical reference in the Post-Migration Model section below.
-
-**Version:** Updated 2026-06-02 — cross-device model active (migrations 0032–0034).
+**Status:** SUPERSEDED by sync_v2 (2026-06-05). This document describes the v1 event-sourcing conflict resolution (apply_sync_event RPC, inbox.rs LWW dispatch). The active implementation handles conflicts via direct row-level LWW (`WHERE updated_at < excluded.updated_at`) and `INSERT OR IGNORE` in `src-tauri/src/sync_v2/worker.rs`.
 
 ---
 

@@ -1,4 +1,5 @@
 # ZANPOS Spec Fixes — Full Implementation Plan
+> **Status:** EXECUTED & SUPERSEDED (2026-06-05). All 74 deviations fixed. The outbox::enqueue_* calls referenced in this plan no longer exist — replaced by sync_status dirty-flag tracking in sync_v2.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

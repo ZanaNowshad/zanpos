@@ -118,7 +118,7 @@
 | 4 | UI review: manager PIN required for price override | QA | P0 |
 | 5 | Enforce BitLocker (full-disk encryption) on all POS hardware | Ops | P0 |
 | 6 | Verify card terminal vendor's PCI certification (SAQ P2PE) | Ops | P0 |
-| 7 | Verify `apply_sync_event` Supabase RPC idempotency | Dev | P0 |
+| 7 | Verify `upsert_rows` Supabase REST idempotency (sync_v2) | Dev | P0 |
 | 8 | Complete restore drill on real hardware; fill in sign-off template | Ops | P0 |
 | 9 | Permanently-failed sync event alerting | Dev | P1 |
 | 10 | Atomic receipt number (no gap on crash) | Dev | P2 |

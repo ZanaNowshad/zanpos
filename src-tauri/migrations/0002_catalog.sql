@@ -9,7 +9,7 @@ CREATE TABLE categories (
     updated_at TEXT NOT NULL,
     deleted_at TEXT,
     version INTEGER NOT NULL DEFAULT 1,
-    sync_status TEXT NOT NULL DEFAULT 'synced',
+    sync_status TEXT NOT NULL DEFAULT 'pending',
     sync_attempts INTEGER NOT NULL DEFAULT 0
 );
 
@@ -26,7 +26,7 @@ CREATE TABLE tax_rules (
     updated_at TEXT NOT NULL,
     deleted_at TEXT,
     version INTEGER NOT NULL DEFAULT 1,
-    sync_status TEXT NOT NULL DEFAULT 'synced',
+    sync_status TEXT NOT NULL DEFAULT 'pending',
     sync_attempts INTEGER NOT NULL DEFAULT 0
 );
 
@@ -51,7 +51,7 @@ CREATE TABLE products (
     updated_at TEXT NOT NULL,
     deleted_at TEXT,
     version INTEGER NOT NULL DEFAULT 1,
-    sync_status TEXT NOT NULL DEFAULT 'synced',
+    sync_status TEXT NOT NULL DEFAULT 'pending',
     sync_attempts INTEGER NOT NULL DEFAULT 0
 );
 
@@ -68,7 +68,7 @@ CREATE TABLE product_prices (
     created_by_user_id TEXT NOT NULL,
     created_by_ai_action_id TEXT,
     created_at TEXT NOT NULL,
-    sync_status TEXT NOT NULL DEFAULT 'synced',
+    sync_status TEXT NOT NULL DEFAULT 'pending',
     sync_attempts INTEGER NOT NULL DEFAULT 0
 );
 

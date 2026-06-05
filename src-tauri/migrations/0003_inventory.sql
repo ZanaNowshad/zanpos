@@ -7,7 +7,7 @@ CREATE TABLE stock_levels (
     last_movement_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    sync_status TEXT NOT NULL DEFAULT 'synced',
+    sync_status TEXT NOT NULL DEFAULT 'pending',
     sync_attempts INTEGER NOT NULL DEFAULT 0,
     UNIQUE(product_id, branch_id)
 );

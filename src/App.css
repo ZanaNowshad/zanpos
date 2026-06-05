@@ -11175,89 +11175,12 @@ label {
   cursor: pointer;
 }
 .pm-cancel-btn:hover { background: var(--surface2); color: var(--text); }
-  text-align: center;
-}
-.pm-remaining-ok     { color: #22c55e; background: rgba(34,197,94,0.12); }
-.pm-remaining-change { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
-/* Accordion sections */
-.pm-accordions { display: flex; flex-direction: column; gap: 4px; }
-
-.pm-accord-toggle {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 7px 11px;
-  border: 1.5px solid var(--border);
-  border-radius: 7px;
-  background: transparent;
-  color: var(--text);
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: border-color 0.12s;
-  text-align: left;
-}
-.pm-accord-toggle:hover  { border-color: var(--accent); }
-.pm-accord-add  { color: var(--accent); border-style: dashed; }
-.pm-accord-filled { border-color: var(--accent); }
-.pm-accord-arrow { font-size: 0.6rem; color: var(--text-dim); }
-.pm-accord-body  { padding: 6px 2px 2px; }
-
-/* Dialpad right panel */
-.pm-field-indicator {
-  text-align: center;
-  font-size: 0.68rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: var(--accent);
-  padding: 2px 0 0;
-}
-
-.pm-actions { display: flex; flex-direction: column; gap: 7px; margin-top: auto; }
-
-.pm-confirm-btn {
-  width: 100%;
-  padding: 13px 10px;
-  border: none;
-  border-radius: 10px;
-  background: var(--accent);
-  color: #fff;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
-  transition: filter 0.15s, opacity 0.15s;
-}
-.pm-confirm-btn:disabled { opacity: 0.38; cursor: not-allowed; }
-.pm-confirm-btn:not(:disabled):hover { filter: brightness(1.12); }
-.pm-confirm-btn:focus-visible { outline: 3px solid rgba(255,255,255,0.7); outline-offset: 2px; }
-.pm-confirm-check  { font-size: 1.35rem; line-height: 1; }
-.pm-confirm-label  { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.82; }
-.pm-confirm-total  { font-size: 1.1rem; font-weight: 800; font-variant-numeric: tabular-nums; }
-
-.pm-cancel-btn {
-  width: 100%;
-  padding: 8px;
-  border: 1.5px solid var(--border);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-  font-size: 0.8rem;
-  font-weight: 600;
-  transition: border-color 0.12s;
-}
-.pm-cancel-btn:hover { border-color: var(--text-dim); color: var(--text); }
-
-/* Delivery form hint label — sits right-side of the label row */
+/* Delivery form hint label */
 .delivery-label-hint {
   font-size: 0.64rem;
   font-weight: 400;
-  color: var(--text-muted);   /* was accent — too prominent for a hint */
+  color: var(--text-muted);
   margin-left: auto;
   text-transform: none;
   letter-spacing: 0;

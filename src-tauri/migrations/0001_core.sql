@@ -39,7 +39,7 @@ CREATE TABLE devices (
     updated_at TEXT NOT NULL,
     deleted_at TEXT,
     version INTEGER NOT NULL DEFAULT 1,
-    sync_status TEXT NOT NULL DEFAULT 'synced',
+    sync_status TEXT NOT NULL DEFAULT 'pending',
     sync_attempts INTEGER NOT NULL DEFAULT 0,
     UNIQUE(branch_id, device_code)
 );
@@ -61,7 +61,7 @@ CREATE TABLE users (
     updated_at TEXT NOT NULL,
     deleted_at TEXT,
     version INTEGER NOT NULL DEFAULT 1,
-    sync_status TEXT NOT NULL DEFAULT 'synced',
+    sync_status TEXT NOT NULL DEFAULT 'pending',
     sync_attempts INTEGER NOT NULL DEFAULT 0
     -- NOTE: pin_hash is NEVER synced to cloud. The sync worker must exclude it.
 );

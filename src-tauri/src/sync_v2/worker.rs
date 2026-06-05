@@ -534,18 +534,26 @@ impl SyncWorker {
 
         let has_updated_at = obj.contains_key("updated_at");
 
-        let sql = if has_updated_at && !set_clause.is_empty() {
+        // Always set sync_status = 'synced' on pulled rows so they aren't
+        // picked up as pending on the next push cycle.
+        let set_with_sync = if set_clause.is_empty() {
+            "sync_status = 'synced'".to_string()
+        } else {
+            format!("{}, sync_status = 'synced'", set_clause)
+        };
+
+        let sql = if has_updated_at && !set_with_sync.is_empty() {
             format!(
                 "INSERT INTO {} ({}) VALUES ({})
                  ON CONFLICT({}) DO UPDATE SET {}
                  WHERE datetime({0}.updated_at) < datetime(excluded.updated_at)",
-                table, col_list, val_list, pk, set_clause,
+                table, col_list, val_list, pk, set_with_sync,
             )
         } else {
             format!(
                 "INSERT INTO {} ({}) VALUES ({})
                  ON CONFLICT({}) DO UPDATE SET {}",
-                table, col_list, val_list, pk, set_clause,
+                table, col_list, val_list, pk, set_with_sync,
             )
         };
 
@@ -592,7 +600,7 @@ impl SyncWorker {
             })
             .collect();
 
-        let set_clause = set_parts.join(", ");
+        let set_clause = format!("{}, sync_status = 'synced'", set_parts.join(", "));
 
         let has_updated_at = obj.contains_key("updated_at");
 
@@ -639,8 +647,10 @@ impl SyncWorker {
             .collect::<Vec<_>>()
             .join(", ");
 
+        // Pulled rows are already on Supabase — mark them synced so they
+        // aren't pushed back on the next cycle.
         let sql = format!(
-            "INSERT OR IGNORE INTO {} ({}) VALUES ({})",
+            "INSERT OR IGNORE INTO {} ({}, sync_status) VALUES ({}, 'synced')",
             table, col_list, val_list,
         );
 

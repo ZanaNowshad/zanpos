@@ -71,28 +71,36 @@ pub fn run() {
             tracing::info!("Logs directory: {}", app_data.join("logs").to_string_lossy());
 
             let db = tauri::async_runtime::block_on(async {
-                match db::init_db(&db_path_str).await {
-                    Ok(pool) => {
-                        if let Err(e) = db::repositories::auth_repo::rehash_plain_pins(&pool).await {
-                            tracing::warn!("PIN rehash step failed: {:?}", e);
-                        }
-                        pool
+                // Try the primary path first.
+                if let Ok(pool) = db::init_db(&db_path_str).await {
+                    if let Err(e) = db::repositories::auth_repo::rehash_plain_pins(&pool).await {
+                        tracing::warn!("PIN rehash step failed: {:?}", e);
                     }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Database init failed ({}) — deleting old DB and starting fresh",
-                            e
-                        );
-                        // The old database is incompatible with the new schema.
-                        // Delete it and re-initialise so the setup wizard runs on a clean slate.
-                        let _ = std::fs::remove_file(&db_path);
-                        let _ = std::fs::remove_file(format!("{}-wal", &db_path_str));
-                        let _ = std::fs::remove_file(format!("{}-shm", &db_path_str));
-                        db::init_db(&db_path_str)
-                            .await
-                            .expect("Failed to initialize database after deleting old one")
-                    }
+                    return pool;
                 }
+
+                // Primary path failed — the old DB may be incompatible or locked.
+                // Try deleting it and re-creating.
+                tracing::warn!(
+                    "Database init at {} failed — removing old DB and retrying",
+                    db_path_str
+                );
+                let _ = std::fs::remove_file(&db_path);
+                let _ = std::fs::remove_file(format!("{db_path_str}-wal"));
+                let _ = std::fs::remove_file(format!("{db_path_str}-shm"));
+
+                if let Ok(pool) = db::init_db(&db_path_str).await {
+                    tracing::info!("Database re-created successfully at {}", db_path_str);
+                    return pool;
+                }
+
+                // Both failed — try a completely fresh path as last resort.
+                let fallback = app_data.join("zanpos_v2.db");
+                let fallback_str = fallback.to_string_lossy().to_string();
+                tracing::warn!("Retrying with fallback path: {}", fallback_str);
+                db::init_db(&fallback_str)
+                    .await
+                    .expect("Failed to initialize database at fallback path")
             });
 
             // Spawn background sync worker

@@ -398,7 +398,7 @@ pub async fn create_refund(
     tracing::info!("Refund created: {} ({})", refund_id, refund_receipt_number);
 
     // Fetch the original sale's branch_id and device_id for inventory and sync.
-    // We do this once and reuse for both stock return and outbox enqueue.
+    // We do this once and reuse for both stock return and sync tracking.
     let sale_meta = sqlx::query("SELECT device_id, branch_id FROM sales WHERE sale_id = ?")
         .bind(original_sale_id)
         .fetch_optional(pool)

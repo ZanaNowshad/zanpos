@@ -130,7 +130,7 @@ pub async fn inventory_receive_stock(
     let before_json =
         serde_json::json!({"quantity_on_hand": old_qty_str}).to_string();
 
-    // ── Transaction: read old qty → compute new → upsert → movement → outbox ──
+    // ── Transaction: read old qty → compute new → upsert → movement → sync_status ──
     let mut tx = state.db.begin().await?;
 
     // Re-read inside tx for correctness (the snapshot above is for audit only)

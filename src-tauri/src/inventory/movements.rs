@@ -122,7 +122,7 @@ async fn check_alert(pool: &SqlitePool, product_id: &str, new_qty: f64) -> Optio
 
 /// Called AFTER finalize_sale commits. Stock levels have already been atomically
 /// deducted within the sale transaction. This function only writes movement
-/// records and enqueues outbox events — it does NOT touch stock_levels again.
+/// writes movement records and sets sync_status — it does NOT touch stock_levels again.
 /// Returns alerts for products that crossed below their reorder point.
 pub async fn deduct_sale(
     pool: &SqlitePool,

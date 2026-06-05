@@ -36,3 +36,17 @@ CREATE INDEX idx_audit_entity ON audit_logs(entity_type, entity_id);
 CREATE INDEX idx_audit_device ON audit_logs(device_id);
 CREATE INDEX idx_audit_created ON audit_logs(created_at);
 CREATE INDEX idx_ghost_barcode ON ghost_barcodes(barcode);
+
+CREATE TABLE IF NOT EXISTS unknown_barcodes (
+    id TEXT PRIMARY KEY,
+    barcode TEXT NOT NULL UNIQUE,
+    scan_count INTEGER NOT NULL DEFAULT 1,
+    first_seen_at INTEGER NOT NULL,
+    last_seen_at INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    product_name TEXT,
+    brand TEXT,
+    category TEXT,
+    image_url TEXT,
+    raw_json TEXT
+);

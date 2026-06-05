@@ -34,6 +34,7 @@ CREATE TABLE devices (
     status TEXT NOT NULL DEFAULT 'online',
     is_active INTEGER NOT NULL DEFAULT 1,
     next_receipt_seq INTEGER NOT NULL DEFAULT 1,
+    last_seen_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     deleted_at TEXT,

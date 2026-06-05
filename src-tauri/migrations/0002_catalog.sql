@@ -74,8 +74,10 @@ CREATE TABLE product_prices (
 
 -- product_barcodes: additional barcodes per product
 CREATE TABLE product_barcodes (
+    barcode_id TEXT,
     product_id TEXT NOT NULL REFERENCES products(product_id),
     barcode TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (product_id, barcode)
 );
 

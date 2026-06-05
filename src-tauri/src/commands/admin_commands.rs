@@ -315,12 +315,13 @@ pub async fn admin_create_product(
         let sl_id = format!("SL-{}", product_id);
         sqlx::query(
             "INSERT OR IGNORE INTO stock_levels
-               (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at)
-             VALUES (?,?,?,'0',?)",
+               (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at)
+             VALUES (?,?,?,'0',?,?)",
         )
         .bind(&sl_id)
         .bind(&product_id)
         .bind(&branch_id)
+        .bind(&now)
         .bind(&now)
         .execute(&state.db)
         .await?;
@@ -466,12 +467,13 @@ pub async fn admin_update_product(
         let sl_id = format!("SL-{}", input.product_id);
         sqlx::query(
             "INSERT OR IGNORE INTO stock_levels
-               (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at)
-             VALUES (?,?,?,'0',?)",
+               (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at)
+             VALUES (?,?,?,'0',?,?)",
         )
         .bind(&sl_id)
         .bind(&input.product_id)
         .bind(&branch_id)
+        .bind(&now)
         .bind(&now)
         .execute(&state.db)
         .await?;
@@ -1225,14 +1227,16 @@ pub async fn admin_create_user(
     let user_id = Ulid::new().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     let pin_hash = auth_repo::hash_pin(&input.pin)?;
+    let branch_id = active_branch_id(&state).await?;
 
     sqlx::query(
         "INSERT INTO users
-           (user_id, display_name, username, pin_hash, role_id,
+           (user_id, branch_id, display_name, username, pin_hash, role_id,
             branch_scope, is_active, created_at, updated_at, version)
-         VALUES (?,?,?,?,?,'[]',1,?,?,1)",
+         VALUES (?,?,?,?,?,?,'[]',1,?,?,1)",
     )
     .bind(&user_id)
+    .bind(&branch_id)
     .bind(&input.display_name)
     .bind(&input.username)
     .bind(&pin_hash)

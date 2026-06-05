@@ -2184,18 +2184,18 @@ pub async fn execute_read_tool(
         // ── Devices ───────────────────────────────────────────────────────────
         "list_devices" => {
             let rows = sqlx::query(
-                "SELECT device_id, device_code, is_active, last_seen_at, created_at FROM devices ORDER BY device_code"
+                "SELECT device_id, device_code, is_active, created_at FROM devices ORDER BY device_code"
             ).fetch_all(pool).await?;
             if rows.is_empty() { return Ok("[DB] No devices registered.".into()); }
             let lines: Vec<String> = rows.iter().map(|r| {
                 let id: String = r.get("device_id");
                 let code: String = r.get("device_code");
                 let active: bool = r.get("is_active");
-                let last: Option<String> = r.get("last_seen_at");
-                format!("- {} ({}) — {} — Last seen: {}",
+                let created: Option<String> = r.get("created_at");
+                format!("- {} ({}) — {} — Created: {}",
                     code, &id[..8.min(id.len())],
                     if active { "Active" } else { "Inactive" },
-                    last.as_deref().map(|s| &s[..10.min(s.len())]).unwrap_or("never"))
+                    created.as_deref().map(|s| &s[..10.min(s.len())]).unwrap_or("never"))
             }).collect();
             Ok(format!("[DB] {} device(s):\n{}", rows.len(), lines.join("\n")))
         }
@@ -3844,8 +3844,8 @@ pub async fn execute_mutation(
             let customer_id = ulid::Ulid::new().to_string();
             let now = chrono::Utc::now().to_rfc3339();
             sqlx::query(
-                "INSERT INTO customers (customer_id, branch_id, name, phone, email, notes, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO customers (customer_id, branch_id, name, phone, email, notes, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&customer_id)
             .bind(&branch_id)
@@ -3853,6 +3853,7 @@ pub async fn execute_mutation(
             .bind(phone)
             .bind(email)
             .bind(notes)
+            .bind(&now)
             .bind(&now)
             .execute(pool)
             .await?;
@@ -4098,8 +4099,8 @@ pub async fn execute_mutation(
             let sort = input.get("sort_order").and_then(|v| v.as_i64()).unwrap_or(0);
             let category_id = ulid::Ulid::new().to_string();
             let now = chrono::Utc::now().to_rfc3339();
-            sqlx::query("INSERT INTO categories (category_id, name, sort_order, is_active, created_at) VALUES (?, ?, ?, 1, ?)")
-                .bind(&category_id).bind(name).bind(sort).bind(&now).execute(pool).await?;
+            sqlx::query("INSERT INTO categories (category_id, name, sort_order, is_active, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)")
+                .bind(&category_id).bind(name).bind(sort).bind(&now).bind(&now).execute(pool).await?;
             write_audit(pool, "AI_ADMIN", "category.create", &category_id, &json!({"name":name,"sort_order":sort})).await?;
             Ok(MutationResult {
                 description: format!("Category '{}' created", name),
@@ -4141,8 +4142,9 @@ pub async fn execute_mutation(
             let user_id = ulid::Ulid::new().to_string();
             let now = chrono::Utc::now().to_rfc3339();
             let pin_hash = crate::db::repositories::auth_repo::hash_pin(pin)?;
-            sqlx::query("INSERT INTO users (user_id, display_name, username, pin_hash, role_id, is_active, created_at) VALUES (?,?,?,?,?,1,?)")
-                .bind(&user_id).bind(display).bind(username).bind(&pin_hash).bind(role_id).bind(&now).execute(pool).await?;
+            let branch_id = active_branch_id(pool).await?;
+            sqlx::query("INSERT INTO users (user_id, branch_id, display_name, username, pin_hash, role_id, is_active, created_at, updated_at) VALUES (?,?,?,?,?,?,1,?,?)")
+                .bind(&user_id).bind(&branch_id).bind(display).bind(username).bind(&pin_hash).bind(role_id).bind(&now).bind(&now).execute(pool).await?;
             write_audit(pool, "AI_ADMIN", "user.create", &user_id, &json!({"display_name":display,"username":username})).await?;
             Ok(MutationResult {
                 description: format!("Staff '{}' (@{}) created", display, username),
@@ -4195,8 +4197,8 @@ pub async fn execute_mutation(
             let inclusive = input.get("inclusive").and_then(|v| v.as_bool()).unwrap_or(true);
             let tax_rule_id = ulid::Ulid::new().to_string();
             let now = chrono::Utc::now().to_rfc3339();
-            sqlx::query("INSERT INTO tax_rules (tax_rule_id, name, rate_basis_points, inclusive, is_active, created_at) VALUES (?,?,?,?,1,?)")
-                .bind(&tax_rule_id).bind(name).bind(bp).bind(inclusive).bind(&now).execute(pool).await?;
+            sqlx::query("INSERT INTO tax_rules (tax_rule_id, name, rate_basis_points, inclusive, is_active, effective_from, created_at, updated_at) VALUES (?,?,?,?,1,?,?,?)")
+                .bind(&tax_rule_id).bind(name).bind(bp).bind(inclusive).bind(&now).bind(&now).bind(&now).execute(pool).await?;
             write_audit(pool, "AI_ADMIN", "tax_rule.create", &tax_rule_id, &json!({"name":name,"rate_basis_points":bp})).await?;
             Ok(MutationResult {
                 description: format!("Tax rule '{}' created ({} bp {})", name, bp, if inclusive {"inclusive"} else {"exclusive"}),
@@ -4255,8 +4257,8 @@ pub async fn execute_mutation(
             if let Some(new_price) = price {
                 sqlx::query("UPDATE product_prices SET effective_to=? WHERE product_id=? AND price_type='selling' AND effective_to IS NULL").bind(&now).bind(product_id).execute(pool).await?;
                 let pid = ulid::Ulid::new().to_string();
-                sqlx::query("INSERT INTO product_prices (price_id,product_id,branch_id,price_type,price_minor,currency,effective_from,created_by_user_id) VALUES (?,?,NULL,'selling',?,'BHD',?,'AI_ADMIN')")
-                    .bind(&pid).bind(product_id).bind(new_price).bind(&now).execute(pool).await?;
+                sqlx::query("INSERT INTO product_prices (price_id,product_id,branch_id,price_type,price_minor,currency,effective_from,created_by_user_id,created_at) VALUES (?,?,NULL,'selling',?,'BHD',?,'AI_ADMIN',?)")
+                    .bind(&pid).bind(product_id).bind(new_price).bind(&now).bind(&now).execute(pool).await?;
             }
             write_audit(pool, "AI_ADMIN", "product.update_full", product_id, &json!({"name":name})).await?;
             Ok(MutationResult {

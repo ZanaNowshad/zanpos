@@ -25,6 +25,7 @@ CREATE TABLE delivery_orders (
     created_by_user_id TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
     sync_status TEXT NOT NULL DEFAULT 'synced',
     sync_attempts INTEGER NOT NULL DEFAULT 0
 );

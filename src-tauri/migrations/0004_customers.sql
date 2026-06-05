@@ -6,6 +6,7 @@ CREATE TABLE customers (
     email TEXT,
     loyalty_points INTEGER NOT NULL DEFAULT 0,
     notes TEXT,
+    origin_device_id TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     deleted_at TEXT,

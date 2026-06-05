@@ -89,13 +89,15 @@ pub async fn device_create(
 
     sqlx::query(
         "INSERT INTO devices
-           (device_id, branch_id, device_code, name, status, is_active)
-         VALUES (?,?,?,?,'offline',1)",
+           (device_id, branch_id, device_code, name, status, is_active, created_at, updated_at)
+         VALUES (?,?,?,?,'offline',1,?,?)",
     )
     .bind(&device_id)
     .bind(&branch_id)
     .bind(input.device_code.trim())
     .bind(input.device_name.trim())
+    .bind(&now)
+    .bind(&now)
     .execute(&state.db)
     .await
     .map_err(|e| {

@@ -259,10 +259,12 @@ pub async fn whatsapp_save_config(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     crate::commands::rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
-        "INSERT OR REPLACE INTO app_config (key, value) VALUES ('whatsapp_benefit_number', ?)",
+        "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('whatsapp_benefit_number', ?, ?)",
     )
     .bind(&benefit_number)
+    .bind(&now)
     .execute(&state.db)
     .await?;
     Ok(())

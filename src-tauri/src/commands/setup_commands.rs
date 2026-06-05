@@ -234,13 +234,20 @@ pub async fn setup_wizard_complete(
     } else {
         // Create new owner user
         let user_id = ulid::Ulid::new().to_string();
+        let branch_id: String = sqlx::query_scalar(
+            "SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1",
+        )
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| AppError::Internal("No active branch found".into()))?;
         sqlx::query(
             "INSERT INTO users
-               (user_id, display_name, username, pin_hash, role_id,
+               (user_id, branch_id, display_name, username, pin_hash, role_id,
                 branch_scope, is_active, created_at, updated_at, version)
-             VALUES (?,?,?,?,?,'[]',1,?,?,1)",
+             VALUES (?,?,?,?,?,?,'[]',1,?,?,1)",
         )
         .bind(&user_id)
+        .bind(&branch_id)
         .bind(&input.owner_display_name)
         .bind(&input.owner_username)
         .bind(&pin_hash)
@@ -694,10 +701,12 @@ pub async fn setup_save_benefit_number(
         let uid = actor_user_id.as_deref().unwrap_or("");
         crate::commands::rbac::manager_or_owner(&state.db, uid).await?;
     }
+    let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
-        "INSERT OR REPLACE INTO app_config (key, value) VALUES ('whatsapp_benefit_number', ?)",
+        "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('whatsapp_benefit_number', ?, ?)",
     )
     .bind(&benefit_number)
+    .bind(&now)
     .execute(&state.db)
     .await?;
 
@@ -755,12 +764,14 @@ async fn write_flag(
     key: &str,
     value: bool,
 ) -> crate::errors::AppResult<()> {
+    let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
-        "INSERT INTO app_config (key, value) VALUES (?, ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        "INSERT INTO app_config (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
     )
     .bind(key)
     .bind(if value { "1" } else { "0" })
+    .bind(&now)
     .execute(pool)
     .await?;
     Ok(())

@@ -16,6 +16,9 @@ INSERT INTO sync_watermark (table_name) VALUES
 -- held_carts: local-only, never synced
 CREATE TABLE held_carts (
     held_cart_id TEXT PRIMARY KEY,
+    branch_id TEXT NOT NULL DEFAULT '',
+    device_id TEXT NOT NULL DEFAULT '',
+    shift_id TEXT,
     cart_json TEXT NOT NULL,
     note TEXT,
     cashier_user_id TEXT NOT NULL,

@@ -2334,7 +2334,7 @@ async fn insert_stock_level(
         .unwrap_or_else(|| "0".to_string());
 
     let result = sqlx::query(
-        "INSERT OR IGNORE INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at) VALUES (?, ?, ?, ?, datetime('now'))"
+        "INSERT OR IGNORE INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))"
     )
     .bind(&stock_level_id)
     .bind(&product_id)
@@ -2445,13 +2445,14 @@ async fn insert_sale(
     let receipt_number = format!("IMP-{}", legacy_receipt);
     let idempotency_key = format!("import-sale-{}-{}", legacy_receipt, sale_id);
 
+    let now = chrono::Utc::now().to_rfc3339();
     let res = sqlx::query(
         "INSERT OR IGNORE INTO sales
            (sale_id, receipt_number, branch_id, device_id, origin_device_id, shift_id, cashier_user_id,
             status, gross_total_minor, discount_total_minor, tax_total_minor,
             net_total_minor, currency, business_date, sold_at, created_offline,
-            idempotency_key, sync_status)
-         VALUES (?,?,?,?,?,?,?, 'completed', ?,?,?,?, 'BHD', ?,?, 0, ?, 'pending')",
+            idempotency_key, created_at, updated_at, sync_status)
+         VALUES (?,?,?,?,?,?,?, 'completed', ?,?,?,?, 'BHD', ?,?, 0, ?, ?, ?, 'pending')",
     )
     .bind(&sale_id)
     .bind(&receipt_number)
@@ -2467,6 +2468,8 @@ async fn insert_sale(
     .bind(&business_date)
     .bind(&sold_at)
     .bind(&idempotency_key)
+    .bind(&now)
+    .bind(&now)
     .execute(&mut **tx)
     .await?;
 
@@ -2530,8 +2533,8 @@ async fn insert_sale_item(
         "INSERT INTO sale_items
            (sale_item_id, sale_id, origin_device_id, product_id, product_name_snapshot,
             quantity, unit_price_minor, line_discount_minor, tax_rule_snapshot,
-            tax_amount_minor, line_total_minor, voided)
-         VALUES (?,?,?,?,?,?,?,0,'{}',?,?,0)",
+            tax_amount_minor, line_total_minor, voided, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,0,'{}',?,?,0,datetime('now'),datetime('now'))",
     )
     .bind(&sale_item_id)
     .bind(&sale_id)

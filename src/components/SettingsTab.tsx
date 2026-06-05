@@ -354,7 +354,7 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
         <button role="tab" aria-selected={settingsSubTab === 'maintenance'}
           className={`settings-sub-tab${settingsSubTab === 'maintenance' ? ' active' : ''}`}
           onClick={() => setSettingsSubTab('maintenance')}>
-          🔒 Maintenance
+          <IcoSystem /> Maintenance
         </button>
       </div>
 

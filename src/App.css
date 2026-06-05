@@ -9555,24 +9555,17 @@ label {
 .bo-overlay {
   position: fixed !important;
   inset: 0 !important;
-  background: rgba(0, 0, 0, 0.65) !important;
+  background: rgba(0, 0, 0, 0.7) !important;
+  backdrop-filter: blur(2px);
   z-index: var(--z-modal) !important;
   display: flex !important;
   align-items: stretch !important;
   justify-content: stretch !important;
   padding: 0 !important;
+  overflow: hidden !important;
 }
 
 /* Shell: side-by-side sidebar + main */
-.bo-shell {
-  display: flex;
-  flex-direction: row;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  background: var(--bg);
-}
-
 /* ── Sidebar ──────────────────────────────────────────────────────────── */
 .bo-sidebar {
   width: 224px;
@@ -13401,13 +13394,24 @@ label {
   min-height: 0;
 }
 
+.settings-root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
 /* Branch meta bar at top */
 .settings-meta-bar {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  padding-bottom: 4px;
+  padding: 12px 20px 10px;
+  border-bottom: 1px solid var(--border2);
+  flex-shrink: 0;
+  background: var(--bg);
 }
 .settings-meta-chip {
   display: inline-flex;
@@ -13437,28 +13441,33 @@ label {
 /* ── Sub-tab bar ──────────────────────────────────────────────── */
 .settings-sub-tabs {
   display: flex;
-  gap: 2px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--border);
+  gap: 0;
+  padding: 0 20px;
+  border-bottom: 1.5px solid var(--border);
   flex-shrink: 0;
   overflow-x: auto;
-  margin-bottom: 2px;
+  background: var(--surface);
 }
-.settings-sub-tabs::-webkit-scrollbar { height: 2px; }
+.settings-sub-tabs::-webkit-scrollbar { height: 3px; }
 .settings-sub-tabs::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
 .settings-sub-tab {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 14px;
+  gap: 7px;
+  padding: 10px 18px;
   background: none;
   border: none;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
+  border-bottom: 2.5px solid transparent;
+  margin-bottom: -1.5px;
   color: var(--text-dim);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   font-weight: 600;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
   cursor: pointer;
   white-space: nowrap;
   transition: color 0.12s, border-color 0.12s;

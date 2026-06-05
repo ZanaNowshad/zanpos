@@ -621,13 +621,15 @@ pub async fn setup_join_store(
     .execute(&state.db)
     .await?;
     sqlx::query(
-        "INSERT OR REPLACE INTO devices (device_id, branch_id, device_code, name, status, is_active)
-         VALUES (?,?,?,?,'online',1)"
+        "INSERT OR REPLACE INTO devices (device_id, branch_id, device_code, name, status, is_active, created_at, updated_at)
+         VALUES (?,?,?,?,'online',1,?,?)"
     )
     .bind(&device_id)
     .bind(&branch_id)
     .bind(&device_code)
     .bind(&device_name)
+    .bind(&now)
+    .bind(&now)
     .execute(&state.db)
     .await?;
 

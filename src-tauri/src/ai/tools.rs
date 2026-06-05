@@ -3466,12 +3466,13 @@ pub async fn execute_mutation(
 
             sqlx::query(
                 "INSERT INTO product_prices (price_id, product_id, branch_id, price_type, price_minor,
-                 currency, effective_from, effective_to, created_by_user_id)
-                 VALUES (?, ?, NULL, 'selling', ?, 'BHD', ?, NULL, 'AI_ADMIN')"
+                 currency, effective_from, effective_to, created_by_user_id, created_at)
+                 VALUES (?, ?, NULL, 'selling', ?, 'BHD', ?, NULL, 'AI_ADMIN', ?)"
             )
             .bind(&new_price_id)
             .bind(product_id)
             .bind(new_price)
+            .bind(&now)
             .bind(&now)
             .execute(pool)
             .await?;
@@ -3748,12 +3749,13 @@ pub async fn execute_mutation(
             sqlx::query(
                 "INSERT INTO product_prices
                    (price_id, product_id, branch_id, price_type, price_minor,
-                    currency, effective_from, effective_to, created_by_user_id)
-                 VALUES (?, ?, NULL, 'selling', ?, 'BHD', ?, NULL, 'AI_ADMIN')",
+                    currency, effective_from, effective_to, created_by_user_id, created_at)
+                 VALUES (?, ?, NULL, 'selling', ?, 'BHD', ?, NULL, 'AI_ADMIN', ?)",
             )
             .bind(&price_id)
             .bind(&product_id)
             .bind(price_minor)
+            .bind(&now)
             .bind(&now)
             .execute(pool)
             .await?;

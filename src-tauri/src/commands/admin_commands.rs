@@ -623,14 +623,15 @@ pub async fn admin_save_tax_rule(
             sqlx::query(
                 "INSERT INTO tax_rules
                    (tax_rule_id, name, rate_basis_points, inclusive, is_active,
-                    effective_from, updated_at, version)
-                 VALUES (?,?,?,?,?,?,?,1)",
+                    effective_from, created_at, updated_at, version)
+                 VALUES (?,?,?,?,?,?,?,?,1)",
             )
             .bind(&new_id)
             .bind(&name)
             .bind(rate_basis_points)
             .bind(input.inclusive as i64)
             .bind(input.is_active as i64)
+            .bind(&now)
             .bind(&now)
             .bind(&now)
             .execute(&state.db)
@@ -656,14 +657,15 @@ pub async fn admin_save_tax_rule(
         sqlx::query(
             "INSERT INTO tax_rules
                (tax_rule_id, name, rate_basis_points, inclusive, is_active, effective_from,
-                updated_at)
-             VALUES (?,?,?,?,?,?,?)",
+                created_at, updated_at)
+             VALUES (?,?,?,?,?,?,?,?)",
         )
         .bind(&id)
         .bind(&name)
         .bind(rate_basis_points)
         .bind(input.inclusive as i64)
         .bind(input.is_active as i64)
+        .bind(&now)
         .bind(&now)
         .bind(&now)
         .execute(&state.db)
@@ -1139,12 +1141,13 @@ pub async fn admin_bulk_import_products(
             let sl_id = format!("SL-{}", product_id);
             let _ = sqlx::query(
                 "INSERT OR IGNORE INTO stock_levels
-                   (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at)
-                 VALUES (?,?,?,'0',?)",
+                   (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at)
+                 VALUES (?,?,?,'0',?,?)",
             )
             .bind(&sl_id)
             .bind(&product_id)
             .bind(&branch_id)
+            .bind(&now)
             .bind(&now)
             .execute(&mut *tx)
             .await;

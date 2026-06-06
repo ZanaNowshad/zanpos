@@ -14,7 +14,7 @@ export default function CategoriesTab({ sessionUserId }: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    cmd.adminListCategories().then(data => { if (!cancelled) setCategories(data); });
+    cmd.adminListCategories(sessionUserId).then(data => { if (!cancelled) setCategories(data); });
     return () => { cancelled = true; };
   }, []);
 
@@ -25,7 +25,7 @@ export default function CategoriesTab({ sessionUserId }: Props) {
   const showingForm = creating || selected !== null;
 
   async function refreshCategories() {
-    const cats = await cmd.adminListCategories();
+    const cats = await cmd.adminListCategories(sessionUserId);
     setCategories(cats);
   }
 

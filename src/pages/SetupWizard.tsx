@@ -343,7 +343,7 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
     // Match by username first; fall back to the first ACTIVE owner-role user (never a
     // deactivated row) so CSV import always runs as a valid owner.
     try {
-      const users = await adminListUsersAll();
+      const users = await adminListUsersAll("");
       const owner =
         users.find(u => u.username === ownerUsername.trim() && u.is_active) ??
         users.find(u => u.is_active && u.role_name === "owner") ??

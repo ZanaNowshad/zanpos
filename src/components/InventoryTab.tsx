@@ -48,7 +48,7 @@ export default function InventoryTab({ sessionUserId }: Props) {
   const fetchPage = useCallback(async (q: string, off: number) => {
     setLoading(true);
     try {
-      const page = await cmd.inventoryGetLevelsPaged(q, off, PAGE_SIZE);
+      const page = await cmd.inventoryGetLevelsPaged(sessionUserId, q, off, PAGE_SIZE);
       setLevels(page.items);
       setTotal(page.total);
       setOffset(off);
@@ -69,7 +69,7 @@ export default function InventoryTab({ sessionUserId }: Props) {
     setMode("movements");
     setMovLoading(true);
     try {
-      const m = await cmd.inventoryGetMovements(level.product_id);
+      const m = await cmd.inventoryGetMovements(sessionUserId, level.product_id);
       setMovements(m);
     } finally {
       setMovLoading(false);

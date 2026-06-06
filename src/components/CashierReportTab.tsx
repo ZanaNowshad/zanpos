@@ -10,7 +10,7 @@ function fmt(n: number) { return `${CUR} ${formatMoney(n, EXP)}`; }
 
 function isoDate(d: Date) { return d.toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" }); }
 
-export default function CashierReportTab({ sessionUserId: _sid }: { sessionUserId: string }) {
+export default function CashierReportTab({ sessionUserId }: { sessionUserId: string }) {
   const today = isoDate(new Date());
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(today);
@@ -23,7 +23,7 @@ export default function CashierReportTab({ sessionUserId: _sid }: { sessionUserI
     setLoading(true);
     setError(null);
     try {
-      const data = await reportByCashier(DEVICE.branch_id, from, to);
+      const data = await reportByCashier(sessionUserId, DEVICE.branch_id, from, to);
       setRows(data);
       setLoaded(true);
     } catch (e: unknown) {

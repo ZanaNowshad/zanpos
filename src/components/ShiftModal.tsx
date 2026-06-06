@@ -91,11 +91,11 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
     if (mode !== "close") return;
     let cancelled = false;
     const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" });
-    reportToday(DEVICE.branch_id, today)
+    reportToday(user.user_id, DEVICE.branch_id, today)
       .then(data => { if (!cancelled) setTodaySummary(data); })
       .catch(() => {}); // non-fatal
     if (shift) {
-      cashDrawerSummary(shift.shift_id)
+      cashDrawerSummary(user.user_id, shift.shift_id)
         .then(data => { if (!cancelled) setDrawerSummary(data); })
         .catch(() => {}); // non-fatal
     }

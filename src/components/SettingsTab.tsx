@@ -135,7 +135,7 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
         cashier_can_discount: false,
         auto_print_receipt: false,
       })),
-      adminListTaxRules().catch(() => [] as TaxRuleRow[]),
+      adminListTaxRules(sessionUserId).catch(() => [] as TaxRuleRow[]),
     ])
       .then(([s, minutes, tc, bf, rules]) => {
         const branch = s as BranchSettings;

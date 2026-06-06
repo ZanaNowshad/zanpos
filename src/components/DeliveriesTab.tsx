@@ -110,7 +110,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
   // ── Load user map on mount (admins only) ──
   useEffect(() => {
     if (!isManager) return;
-    cmd.adminListUsersAll().then((users: AdminUserRow[]) => {
+    cmd.adminListUsersAll(sessionUser.user_id).then((users: AdminUserRow[]) => {
       const map = new Map<string, string>();
       users.forEach(u => map.set(u.user_id, u.display_name));
       setUserMap(map);

@@ -290,19 +290,20 @@ export const receiptReprint = (receipt_number: string, requesting_user_id: strin
 
 // ─── Report commands ──────────────────────────────────────────────────────────
 
-export const reportToday = (branch_id: string, business_date: string): Promise<TodaySummary> =>
-  invoke("report_today", { branchId: branch_id, businessDate: business_date });
+export const reportToday = (actor_user_id: string, branch_id: string, business_date: string): Promise<TodaySummary> =>
+  invoke("report_today", { actorUserId: actor_user_id, branchId: branch_id, businessDate: business_date });
 
-export const reportDateRange = (branch_id: string, from_date: string, to_date: string): Promise<RangeSummary> =>
-  invoke("report_date_range", { branchId: branch_id, fromDate: from_date, toDate: to_date });
+export const reportDateRange = (actor_user_id: string, branch_id: string, from_date: string, to_date: string): Promise<RangeSummary> =>
+  invoke("report_date_range", { actorUserId: actor_user_id, branchId: branch_id, fromDate: from_date, toDate: to_date });
 
-export const reportTopProducts = (branch_id: string, from_date: string, to_date: string): Promise<TopProduct[]> =>
-  invoke("report_top_products", { branchId: branch_id, fromDate: from_date, toDate: to_date });
+export const reportTopProducts = (actor_user_id: string, branch_id: string, from_date: string, to_date: string): Promise<TopProduct[]> =>
+  invoke("report_top_products", { actorUserId: actor_user_id, branchId: branch_id, fromDate: from_date, toDate: to_date });
 
 /** Fetch paginated sales list. Returns total count alongside items so callers
  *  can detect truncation and implement paging (F-BIZ-002 / F-INT-001).
  *  Defaults: limit=200, offset=0 (backwards-compatible). */
 export const reportSalesList = (
+  actor_user_id: string,
   branch_id: string,
   from_date: string,
   to_date: string,
@@ -310,6 +311,7 @@ export const reportSalesList = (
   limit?: number,
 ): Promise<SaleListPage> =>
   invoke("report_sales_list", {
+    actorUserId: actor_user_id,
     branchId: branch_id,
     fromDate: from_date,
     toDate: to_date,
@@ -441,9 +443,11 @@ export interface AdminProductPage {
 }
 
 export const adminListProducts = (
+  actor_user_id: string,
   opts?: { search?: string; categoryId?: string; offset?: number; limit?: number }
 ): Promise<AdminProductPage> =>
   invoke("admin_list_products", {
+    actorUserId: actor_user_id,
     search: opts?.search ?? null,
     categoryId: opts?.categoryId ?? null,
     offset: opts?.offset ?? 0,
@@ -468,11 +472,11 @@ export const adminUpdateProduct = (input: {
 }): Promise<AdminProduct> =>
   invoke("admin_update_product", { input });
 
-export const adminListCategories = (): Promise<CategoryRow[]> =>
-  invoke("admin_list_categories");
+export const adminListCategories = (actor_user_id: string): Promise<CategoryRow[]> =>
+  invoke("admin_list_categories", { actorUserId: actor_user_id });
 
-export const adminListTaxRules = (): Promise<TaxRuleRow[]> =>
-  invoke("admin_list_tax_rules");
+export const adminListTaxRules = (actor_user_id: string): Promise<TaxRuleRow[]> =>
+  invoke("admin_list_tax_rules", { actorUserId: actor_user_id });
 
 export const adminSaveTaxRule = (input: {
   tax_rule_id?: string;
@@ -507,11 +511,11 @@ export const adminBulkImportCategories = (rows: BulkCategoryRow[], actorUserId: 
 export const adminBulkImportProducts = (rows: BulkProductRow[], actorUserId: string): Promise<BulkImportResult> =>
   invoke("admin_bulk_import_products", { rows, actorUserId });
 
-export const adminListUsersAll = (): Promise<AdminUserRow[]> =>
-  invoke("admin_list_users_all");
+export const adminListUsersAll = (actor_user_id: string): Promise<AdminUserRow[]> =>
+  invoke("admin_list_users_all", { actorUserId: actor_user_id });
 
-export const adminListRoles = (): Promise<RoleRow[]> =>
-  invoke("admin_list_roles");
+export const adminListRoles = (actor_user_id: string): Promise<RoleRow[]> =>
+  invoke("admin_list_roles", { actorUserId: actor_user_id });
 
 export const adminCreateUser = (input: {
   display_name: string; username: string; pin: string; role_id: string; actor_user_id: string;
@@ -532,21 +536,22 @@ export interface StockLevelPage {
   limit: number;
 }
 
-export const inventoryGetLevels = (): Promise<StockLevel[]> =>
-  invoke("inventory_get_levels");
+export const inventoryGetLevels = (actor_user_id: string): Promise<StockLevel[]> =>
+  invoke("inventory_get_levels", { actorUserId: actor_user_id });
 
 export const inventoryGetLevelsPaged = (
+  actor_user_id: string,
   search: string,
   offset: number,
   limit: number,
 ): Promise<StockLevelPage> =>
-  invoke("inventory_get_levels_paged", { search: search || null, offset, limit });
+  invoke("inventory_get_levels_paged", { actorUserId: actor_user_id, search: search || null, offset, limit });
 
-export const inventoryGetLowStock = (): Promise<StockLevel[]> =>
-  invoke("inventory_get_low_stock");
+export const inventoryGetLowStock = (actor_user_id: string): Promise<StockLevel[]> =>
+  invoke("inventory_get_low_stock", { actorUserId: actor_user_id });
 
-export const inventoryGetMovements = (productId: string): Promise<StockMovementRow[]> =>
-  invoke("inventory_get_movements", { productId });
+export const inventoryGetMovements = (actor_user_id: string, productId: string): Promise<StockMovementRow[]> =>
+  invoke("inventory_get_movements", { actorUserId: actor_user_id, productId });
 
 export const inventoryReceiveStock = (
   product_id: string,
@@ -586,12 +591,12 @@ export const dbBackup = (destPath: string, actorUserId: string): Promise<string>
   invoke("db_backup", { destPath, actorUserId });
 
 export const reportTaxByDay = (
+  actor_user_id: string,
   branch_id: string,
   from_date: string,
   to_date: string,
-  actor_user_id: string
 ): Promise<Array<{ day: string; transaction_count: number; tax_minor: number; cumulative_minor: number }>> =>
-  invoke("report_tax_by_day", { branchId: branch_id, fromDate: from_date, toDate: to_date, actorUserId: actor_user_id });
+  invoke("report_tax_by_day", { actorUserId: actor_user_id, branchId: branch_id, fromDate: from_date, toDate: to_date });
 
 export const auditLogList = (
   from: string,
@@ -713,11 +718,11 @@ export const cashEventCreate = (
 ): Promise<CashEventRow> =>
   invoke("cash_event_create", { shiftId: shift_id, eventType: event_type, amountMinor: amount_minor, note, createdByUserId: created_by_user_id });
 
-export const cashEventsList = (shift_id: string): Promise<CashEventRow[]> =>
-  invoke("cash_events_list", { shiftId: shift_id });
+export const cashEventsList = (actor_user_id: string, shift_id: string): Promise<CashEventRow[]> =>
+  invoke("cash_events_list", { actorUserId: actor_user_id, shiftId: shift_id });
 
-export const cashDrawerSummary = (shift_id: string): Promise<CashDrawerSummary> =>
-  invoke("cash_drawer_summary", { shiftId: shift_id });
+export const cashDrawerSummary = (actor_user_id: string, shift_id: string): Promise<CashDrawerSummary> =>
+  invoke("cash_drawer_summary", { actorUserId: actor_user_id, shiftId: shift_id });
 
 export const cashXReport = (shift_id: string, actor_user_id: string): Promise<CashDrawerSummary> =>
   invoke("cash_x_report", { shiftId: shift_id, actorUserId: actor_user_id });
@@ -737,23 +742,25 @@ export const productBarcodeAdd = (actorUserId: string, product_id: string, barco
 export const productBarcodeRemove = (actorUserId: string, barcode_id: string): Promise<void> =>
   invoke("product_barcode_remove", { actorUserId, barcodeId: barcode_id });
 
-export const productBarcodesList = (product_id: string): Promise<ProductBarcodeRow[]> =>
-  invoke("product_barcodes_list", { productId: product_id });
+export const productBarcodesList = (actor_user_id: string, product_id: string): Promise<ProductBarcodeRow[]> =>
+  invoke("product_barcodes_list", { actorUserId: actor_user_id, productId: product_id });
 
 // ─── New pilot-hardening commands ─────────────────────────────────────────────
 
 export const reportByCashier = (
+  actor_user_id: string,
   branch_id: string,
   from_date: string,
   to_date: string,
 ): Promise<CashierSummaryRow[]> =>
-  invoke("report_by_cashier", { branchId: branch_id, fromDate: from_date, toDate: to_date });
+  invoke("report_by_cashier", { actorUserId: actor_user_id, branchId: branch_id, fromDate: from_date, toDate: to_date });
 
 export const reportEodCashup = (
+  actor_user_id: string,
   branch_id: string,
   business_date: string,
 ): Promise<EodCashupReport> =>
-  invoke("report_eod_cashup", { branchId: branch_id, date: business_date });
+  invoke("report_eod_cashup", { actorUserId: actor_user_id, branchId: branch_id, date: business_date });
 
 export const inventoryBulkStockTake = (
   entries: Array<{ product_id: string; new_quantity: number; notes?: string }>,

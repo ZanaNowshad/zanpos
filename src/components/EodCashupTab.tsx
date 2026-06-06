@@ -11,7 +11,7 @@ function fmtOpt(n: number | null | undefined) { return n != null ? fmt(n) : "—
 
 function isoDate(d: Date) { return d.toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" }); }
 
-export default function EodCashupTab({ sessionUserId: _sid }: { sessionUserId: string }) {
+export default function EodCashupTab({ sessionUserId }: { sessionUserId: string }) {
   const [date, setDate] = useState(isoDate(new Date()));
   const [report, setReport] = useState<EodCashupReport | null>(null);
   const [loading, setLoading] = useState(false);
@@ -21,7 +21,7 @@ export default function EodCashupTab({ sessionUserId: _sid }: { sessionUserId: s
     setLoading(true);
     setError(null);
     try {
-      const data = await reportEodCashup(DEVICE.branch_id, date);
+      const data = await reportEodCashup(sessionUserId, DEVICE.branch_id, date);
       setReport(data);
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to load EOD report");

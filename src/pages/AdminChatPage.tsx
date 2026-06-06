@@ -953,8 +953,8 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
     setKpi(prev => ({ ...prev, loading: true, error: null }));
     try {
       const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" });
-      const todaySummary = await reportToday(DEVICE.branch_id, today).catch(() => null);
-      const levels = await inventoryGetLevels().catch(() => [] as StockLevel[]);
+      const todaySummary = await reportToday(sessionUser.user_id, DEVICE.branch_id, today).catch(() => null);
+      const levels = await inventoryGetLevels(sessionUser.user_id).catch(() => [] as StockLevel[]);
       const syncStat = await syncStatus().catch(() => null);
       const lowStockCount  = levels.filter(l => l.is_low_stock && !l.is_out_of_stock).length;
       const outOfStockCount = levels.filter(l => l.is_out_of_stock).length;

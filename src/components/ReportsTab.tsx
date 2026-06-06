@@ -70,10 +70,10 @@ export default function ReportsTab({ sessionUserId }: Props) {
     setLoadError(null);
     try {
       const [s, tp, sl, tx] = await Promise.all([
-        cmd.reportDateRange(BRANCH_ID, from, to),
-        cmd.reportTopProducts(BRANCH_ID, from, to),
-        cmd.reportSalesList(BRANCH_ID, from, to),
-        cmd.reportTaxByDay(BRANCH_ID, from, to, sessionUserId),
+        cmd.reportDateRange(sessionUserId, BRANCH_ID, from, to),
+        cmd.reportTopProducts(sessionUserId, BRANCH_ID, from, to),
+        cmd.reportSalesList(sessionUserId, BRANCH_ID, from, to),
+        cmd.reportTaxByDay(sessionUserId, BRANCH_ID, from, to),
       ]);
       setSummary(s); setTopProducts(tp); setSalesPage(sl); setTaxRows(tx as TaxRow[]);
     } catch (e: unknown) {

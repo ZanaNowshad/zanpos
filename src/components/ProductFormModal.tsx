@@ -52,7 +52,7 @@ export default function ProductFormModal({
 
   useEffect(() => {
     if (mode === "edit" && product) {
-      cmd.productBarcodesList(product.product_id).then(setExtraBarcodes).catch(() => {});
+      cmd.productBarcodesList(sessionUserId, product.product_id).then(setExtraBarcodes).catch(() => {});
     }
   }, [mode, product]);
 

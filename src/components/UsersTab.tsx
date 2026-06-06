@@ -18,7 +18,7 @@ export default function UsersTab({ sessionUserId }: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([cmd.adminListUsersAll(), cmd.adminListRoles()])
+    Promise.all([cmd.adminListUsersAll(sessionUserId), cmd.adminListRoles(sessionUserId)])
       .then(([u, r]) => { if (!cancelled) { setUsers(u); setRoles(r); } });
     return () => { cancelled = true; };
   }, []);

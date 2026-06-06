@@ -31,7 +31,7 @@ export default function RecentSalesModal({ onReprint, onEdit, onClose }: Props) 
     setError(null);
     setSales([]);
     setSelected(null);
-    cmd.reportSalesList(DEVICE.branch_id, date, date)
+    cmd.reportSalesList("", DEVICE.branch_id, date, date)
       .then(page => { if (!cancelled) setSales(page.items); })
       .catch((e: unknown) => {
         if (!cancelled) setError(typeof e === "string" ? e : "Failed to load sales");

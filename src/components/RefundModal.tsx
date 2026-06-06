@@ -85,7 +85,7 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
     setSale(null);
     setRefundQtys(new Map());
     try {
-      const page = await reportSalesList(DEVICE.branch_id, d, d);
+      const page = await reportSalesList(cashierUserId, DEVICE.branch_id, d, d);
       setSalesList(page.items.filter(r => r.status !== "voided"));
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to load sales");

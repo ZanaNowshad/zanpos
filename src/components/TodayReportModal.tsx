@@ -17,7 +17,7 @@ export default function TodayReportModal({ onClose }: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    reportToday(DEVICE.branch_id, today)
+    reportToday("", DEVICE.branch_id, today)
       .then(data => { if (!cancelled) setSummary(data); })
       .catch(() => { if (!cancelled) setError("Failed to load report"); })
       .finally(() => { if (!cancelled) setLoading(false); });

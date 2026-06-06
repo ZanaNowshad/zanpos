@@ -52,7 +52,7 @@ export default function ProductsTab({
   const fetchProducts = useCallback(async (q: string, off: number) => {
     setLoading(true);
     try {
-      const page = await cmd.adminListProducts({ search: q, offset: off, limit: PAGE_SIZE });
+      const page = await cmd.adminListProducts(sessionUserId, { search: q, offset: off, limit: PAGE_SIZE });
       setProducts(page.items);
       setTotal(page.total);
       setOffset(off);
@@ -66,7 +66,7 @@ export default function ProductsTab({
   }, [search, offset]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    Promise.all([cmd.adminListCategories(), cmd.adminListTaxRules()])
+    Promise.all([cmd.adminListCategories(sessionUserId), cmd.adminListTaxRules(sessionUserId)])
       .then(([cats, taxes]) => {
         setCategories(cats.filter(c => c.is_active));
         setTaxRules(taxes);

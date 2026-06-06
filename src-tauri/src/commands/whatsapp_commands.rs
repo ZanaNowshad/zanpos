@@ -177,7 +177,11 @@ pub fn build_delivery_whatsapp_message(p: &WhatsAppDeliveryParams) -> String {
 #[tauri::command]
 pub async fn whatsapp_status(state: State<'_, AppState>) -> AppResult<WhatsAppStatus> {
     let token = read_sidecar_token(&state);
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_default();
     match client
         .get(format!("{}/status", SIDECAR_URL))
         .header("X-Sidecar-Token", &token)
@@ -243,7 +247,11 @@ pub async fn whatsapp_disconnect(
 ) -> AppResult<bool> {
     crate::commands::rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let token = read_sidecar_token(&state);
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_default();
     Ok(client
         .post(format!("{}/disconnect", SIDECAR_URL))
         .header("X-Sidecar-Token", &token)
@@ -369,7 +377,11 @@ pub async fn whatsapp_import_contacts(
 
     // Fetch contacts from the Node sidecar.
     let token = read_sidecar_token(&state);
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_default();
     let resp = client
         .get(format!("{}/contacts", SIDECAR_URL))
         .header("X-Sidecar-Token", &token)
@@ -595,6 +607,7 @@ pub(crate) async fn whatsapp_payment_reminder_impl(
 async fn send_raw(to: &str, message: &str, token: &str) -> AppResult<bool> {
     // Apply a bounded timeout so a stuck sidecar can't hang the caller.
     let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(20))
         .build()
         .unwrap_or_default();

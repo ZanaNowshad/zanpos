@@ -2232,6 +2232,7 @@ async fn duckduckgo_search(query: &str, max_results: usize) -> AppResult<String>
 
     let http = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| AppError::Internal(format!("HTTP client error: {e}")))?;
@@ -2346,6 +2347,7 @@ async fn jina_fetch(url: &str) -> AppResult<String> {
 
     let http = reqwest::Client::builder()
         .user_agent("ZANPOS/1.0 (POS AI assistant)")
+        .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(20))
         .build()
         .map_err(|e| AppError::Internal(format!("HTTP client error: {e}")))?;
@@ -2387,6 +2389,7 @@ async fn open_food_facts_lookup(barcode: &str) -> AppResult<String> {
 
     let http = reqwest::Client::builder()
         .user_agent("ZANPOS/1.0 (POS barcode lookup; contact zanabal.nowshad@gmail.com)")
+        .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| AppError::Internal(format!("HTTP client error: {e}")))?;
@@ -2478,6 +2481,7 @@ async fn frankfurter_rates(currencies: &[String]) -> AppResult<String> {
 
     let http = reqwest::Client::builder()
         .user_agent("ZANPOS/1.0")
+        .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| AppError::Internal(format!("HTTP client error: {e}")))?;
@@ -2543,6 +2547,7 @@ async fn aladhan_prayer_times(date_str: &str) -> AppResult<String> {
 
     let http = reqwest::Client::builder()
         .user_agent("ZANPOS/1.0")
+        .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| AppError::Internal(format!("HTTP client error: {e}")))?;
@@ -2605,6 +2610,7 @@ async fn nager_bahrain_holidays(year: u16) -> AppResult<String> {
 
     let http = reqwest::Client::builder()
         .user_agent("ZANPOS/1.0")
+        .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| AppError::Internal(format!("HTTP client error: {e}")))?;

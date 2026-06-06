@@ -432,6 +432,7 @@ pub async fn ghost_resolve(
     }
 
     let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| AppError::Internal(format!("HTTP client build failed: {e}")))?;

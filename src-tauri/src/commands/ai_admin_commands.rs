@@ -121,12 +121,15 @@ pub async fn admin_validate_anthropic(
     _state: State<'_, AppState>,
     api_key: String,
 ) -> AppResult<ValidateProviderResult> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_default();
     let resp = client
         .get("https://api.anthropic.com/v1/models")
         .header("x-api-key", &api_key)
         .header("anthropic-version", "2023-06-01")
-        .timeout(std::time::Duration::from_secs(10))
         .send()
         .await;
 

@@ -413,15 +413,18 @@ impl SyncWorker {
                 self.apply_lww("products", "product_id", obj, &[]).await
             }
             "devices" => {
-                // Handle device_code collision (like old inbox)
+                // Handle device_code collision: soft-deactivate local stub so
+                // we don't orphan any references. Hard-DELETE would lose data.
                 if let (Some(device_id), Some(branch_id), Some(device_code)) = (
                     obj.get("device_id").and_then(|v| v.as_str()),
                     obj.get("branch_id").and_then(|v| v.as_str()),
                     obj.get("device_code").and_then(|v| v.as_str()),
                 ) {
+                    let now = chrono::Utc::now().to_rfc3339();
                     let _ = sqlx::query(
-                        "DELETE FROM devices WHERE branch_id = ? AND device_code = ? AND device_id <> ?",
+                        "UPDATE devices SET is_active = 0, deleted_at = ? WHERE branch_id = ? AND device_code = ? AND device_id <> ?",
                     )
+                    .bind(&now)
                     .bind(branch_id)
                     .bind(device_code)
                     .bind(device_id)

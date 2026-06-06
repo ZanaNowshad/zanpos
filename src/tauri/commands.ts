@@ -772,10 +772,10 @@ export const syncQueueList = (): Promise<SyncQueueItem[]> =>
   invoke("sync_queue_list");
 
 export const syncQueueRetry = (actorUserId: string, syncEventId: string): Promise<void> =>
-  invoke("sync_queue_retry", { syncEventId, actorUserId });
+  invoke("sync_queue_retry", { id: syncEventId, actorUserId });
 
 export const syncQueueDismiss = (actorUserId: string, syncEventId: string): Promise<void> =>
-  invoke("sync_queue_dismiss", { syncEventId, actorUserId });
+  invoke("sync_queue_dismiss", { id: syncEventId, actorUserId });
 
 // ─── Delivery commands ────────────────────────────────────────────────────────
 

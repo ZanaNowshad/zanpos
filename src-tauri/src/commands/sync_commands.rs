@@ -26,6 +26,29 @@ const SYNC_TABLES: &[&str] = &[
     "stock_movements", "audit_logs", "delivery_orders", "product_prices",
 ];
 
+/// Maps each sync table to its primary key column.
+fn table_pk(table: &str) -> &str {
+    match table {
+        "categories" => "category_id",
+        "tax_rules" => "tax_rule_id",
+        "products" => "product_id",
+        "devices" => "device_id",
+        "users" => "user_id",
+        "customers" => "customer_id",
+        "shifts" => "shift_id",
+        "sales" => "sale_id",
+        "sale_items" => "sale_item_id",
+        "payments" => "payment_id",
+        "refunds" => "refund_id",
+        "refund_items" => "refund_item_id",
+        "stock_movements" => "movement_id",
+        "audit_logs" => "audit_log_id",
+        "delivery_orders" => "delivery_id",
+        "product_prices" => "price_id",
+        _ => "id",
+    }
+}
+
 /// Count pending rows across all syncable tables.
 async fn count_pending(pool: &sqlx::SqlitePool) -> AppResult<i64> {
     let mut total: i64 = 0;
@@ -249,6 +272,7 @@ pub async fn admin_setup_supabase_creds_only(
 
 #[derive(Serialize)]
 pub struct SyncQueueItem {
+    #[serde(rename = "sync_event_id")]
     pub id: String,            // composite: {table}:{row_id}
     pub entity_type: String,
     pub entity_id: String,
@@ -264,17 +288,17 @@ pub async fn sync_queue_list(state: State<'_, AppState>) -> Result<Vec<SyncQueue
     let mut items = Vec::new();
 
     for table in SYNC_TABLES {
+        let pk = table_pk(table);
         let sql = format!(
-            "SELECT id, sync_status, sync_attempts, '', created_at
-             FROM {} WHERE sync_status IN ('pending', 'failed')
+            "SELECT {pk} AS _pk, sync_status, sync_attempts, '' AS _err, created_at
+             FROM {table} WHERE sync_status IN ('pending', 'failed')
              LIMIT 200",
-            table
         );
         if let Ok(rows) = sqlx::query(&sql).fetch_all(&state.db).await {
             for r in &rows {
-                let row_id: String = r.get("id");
+                let row_id: String = r.get("_pk");
                 items.push(SyncQueueItem {
-                    id: format!("{}:{}", table, row_id),
+                    id: format!("{table}:{row_id}"),
                     entity_type: table.to_string(),
                     entity_id: row_id,
                     operation: "upsert".to_string(),
@@ -306,10 +330,10 @@ pub async fn sync_queue_retry(
 
     let (table, row_id) = id.split_once(':')
         .ok_or_else(|| AppError::Validation("Invalid sync item id format. Expected table:id".into()))?;
+    let pk = table_pk(table);
 
     let sql = format!(
-        "UPDATE {} SET sync_status = 'pending', sync_attempts = 0 WHERE id = ? AND sync_status = 'failed'",
-        table
+        "UPDATE {table} SET sync_status = 'pending', sync_attempts = 0 WHERE {pk} = ? AND sync_status = 'failed'",
     );
     let rows = sqlx::query(&sql).bind(row_id).execute(&state.db).await?.rows_affected();
 
@@ -333,8 +357,9 @@ pub async fn sync_queue_dismiss(
 
     let (table, row_id) = id.split_once(':')
         .ok_or_else(|| AppError::Validation("Invalid sync item id format. Expected table:id".into()))?;
+    let pk = table_pk(table);
 
-    let sql = format!("UPDATE {} SET sync_status = 'synced' WHERE id = ?", table);
+    let sql = format!("UPDATE {table} SET sync_status = 'synced' WHERE {pk} = ?");
     let rows = sqlx::query(&sql).bind(row_id).execute(&state.db).await?.rows_affected();
 
     if rows == 0 {

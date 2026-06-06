@@ -1068,7 +1068,7 @@ export default function PosPage({
       )}
 
       {activeModal.kind === "report" && (
-        <TodayReportModal onClose={() => { setActiveModal({ kind: "none" }); focusBarcode(); }} />
+        <TodayReportModal sessionUserId={sessionUser.user_id} onClose={() => { setActiveModal({ kind: "none" }); focusBarcode(); }} />
       )}
 
       {activeModal.kind === "backOffice" && (
@@ -1092,6 +1092,7 @@ export default function PosPage({
 
       {activeModal.kind === "recent" && (
         <RecentSalesModal
+          sessionUserId={sessionUser.user_id}
           onReprint={async (receiptNumber) => {
             try {
               const reprinted = await receiptReprint(receiptNumber, sessionUser.user_id);

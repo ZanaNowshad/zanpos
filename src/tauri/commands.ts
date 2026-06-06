@@ -939,8 +939,9 @@ export const migrationZanposStats = (): Promise<ZanposStats> =>
 
 export const migrationRollback = (
   sinceIso: string,
+  user_id: string,
 ): Promise<RollbackResult> =>
-  invoke("migration_rollback", { sinceIso });
+  invoke("migration_rollback", { sinceIso, userId: user_id });
 
 export const migrationAgentChat = (
   history: ChatMessage[],

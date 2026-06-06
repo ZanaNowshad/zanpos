@@ -6,9 +6,10 @@ import { formatMoney } from "../money";
 
 interface Props {
   onClose: () => void;
+  sessionUserId: string;
 }
 
-export default function TodayReportModal({ onClose }: Props) {
+export default function TodayReportModal({ onClose, sessionUserId }: Props) {
   const [summary, setSummary] = useState<TodaySummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -17,7 +18,7 @@ export default function TodayReportModal({ onClose }: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    reportToday("", DEVICE.branch_id, today)
+    reportToday(sessionUserId, DEVICE.branch_id, today)
       .then(data => { if (!cancelled) setSummary(data); })
       .catch(() => { if (!cancelled) setError("Failed to load report"); })
       .finally(() => { if (!cancelled) setLoading(false); });

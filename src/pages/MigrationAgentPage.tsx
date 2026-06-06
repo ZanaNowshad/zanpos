@@ -820,7 +820,7 @@ export default function MigrationAgentPage({ onDone, sessionUserId = "" }: Props
     setQuickBusy("rollback");
     const msgId = addMsg("assistant", `↩ Rolling back records created since ${rollbackTs}…`);
     try {
-      const r = await migrationRollback(rollbackTs.trim());
+      const r = await migrationRollback(rollbackTs.trim(), sessionUserId);
       if (r.total_deleted === 0) {
         setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text: `No records found after ${rollbackTs}. Nothing was deleted.` } : m));
       } else {

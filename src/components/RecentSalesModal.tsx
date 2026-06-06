@@ -8,13 +8,14 @@ interface Props {
   onReprint: (receiptNumber: string) => Promise<void>;
   onEdit: (sale: SaleListRow) => Promise<void>;
   onClose: () => void;
+  sessionUserId: string;
 }
 
 function todayStr() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" });
 }
 
-export default function RecentSalesModal({ onReprint, onEdit, onClose }: Props) {
+export default function RecentSalesModal({ onReprint, onEdit, onClose, sessionUserId }: Props) {
   const [date, setDate]         = useState(todayStr());
   const [sales, setSales]       = useState<SaleListRow[]>([]);
   const [loading, setLoading]   = useState(false);
@@ -31,7 +32,7 @@ export default function RecentSalesModal({ onReprint, onEdit, onClose }: Props) 
     setError(null);
     setSales([]);
     setSelected(null);
-    cmd.reportSalesList("", DEVICE.branch_id, date, date)
+    cmd.reportSalesList(sessionUserId, DEVICE.branch_id, date, date)
       .then(page => { if (!cancelled) setSales(page.items); })
       .catch((e: unknown) => {
         if (!cancelled) setError(typeof e === "string" ? e : "Failed to load sales");

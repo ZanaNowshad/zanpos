@@ -28,6 +28,9 @@ CREATE TABLE branches (
 );
 CREATE UNIQUE INDEX idx_branches_code ON branches (branch_code) WHERE is_active;
 
+-- sync_status index for fast push queries
+CREATE INDEX idx_branches_sync_status ON branches(sync_status);
+
 CREATE TABLE roles (
     role_id    TEXT PRIMARY KEY,
     name       TEXT NOT NULL UNIQUE,
@@ -53,6 +56,9 @@ CREATE TABLE devices (
 );
 CREATE INDEX idx_devices_branch ON devices(branch_id);
 
+-- sync_status index for fast push queries
+CREATE INDEX idx_devices_sync_status ON devices(sync_status);
+
 CREATE TABLE users (
     user_id              TEXT PRIMARY KEY,
     branch_id            TEXT NOT NULL,
@@ -76,6 +82,9 @@ CREATE TABLE users (
 );
 CREATE INDEX idx_users_username ON users(username);
 CREATE INDEX idx_users_role ON users(role_id);
+
+-- sync_status index for fast push queries
+CREATE INDEX idx_users_sync_status ON users(sync_status);
 
 CREATE TABLE app_config (
     key        TEXT PRIMARY KEY,
@@ -101,6 +110,9 @@ CREATE TABLE categories (
     sync_attempts      INTEGER NOT NULL DEFAULT 0
 );
 
+-- sync_status index for fast push queries
+CREATE INDEX idx_categories_sync_status ON categories(sync_status);
+
 CREATE TABLE tax_rules (
     tax_rule_id       TEXT PRIMARY KEY,
     name              TEXT NOT NULL,
@@ -117,6 +129,9 @@ CREATE TABLE tax_rules (
     sync_attempts     INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_tax_rules_active ON tax_rules(is_active);
+
+-- sync_status index for fast push queries
+CREATE INDEX idx_tax_rules_sync_status ON tax_rules(sync_status);
 
 CREATE TABLE products (
     product_id              TEXT PRIMARY KEY,
@@ -146,6 +161,9 @@ CREATE INDEX idx_products_barcode  ON products(barcode);
 CREATE INDEX idx_products_name     ON products(name);
 CREATE INDEX idx_products_sku      ON products(sku);
 
+-- sync_status index for fast push queries
+CREATE INDEX idx_products_sync_status ON products(sync_status);
+
 CREATE TABLE product_prices (
     price_id              TEXT PRIMARY KEY,
     product_id            TEXT NOT NULL REFERENCES products(product_id),
@@ -163,6 +181,9 @@ CREATE TABLE product_prices (
 );
 CREATE INDEX idx_prices_product   ON product_prices(product_id);
 CREATE INDEX idx_prices_effective ON product_prices(product_id, effective_from);
+
+-- sync_status index for fast push queries
+CREATE INDEX idx_product_prices_sync_status ON product_prices(sync_status);
 
 CREATE TABLE product_barcodes (
     barcode_id TEXT,
@@ -191,6 +212,9 @@ CREATE TABLE stock_levels (
 CREATE INDEX idx_stock_levels_product ON stock_levels(product_id);
 CREATE INDEX idx_stock_levels_branch  ON stock_levels(branch_id);
 
+-- sync_status index for fast push queries
+CREATE INDEX idx_stock_levels_sync_status ON stock_levels(sync_status);
+
 CREATE TABLE stock_movements (
     movement_id       TEXT PRIMARY KEY,
     product_id        TEXT NOT NULL REFERENCES products(product_id),
@@ -210,6 +234,9 @@ CREATE TABLE stock_movements (
 );
 CREATE INDEX idx_stock_movements_product ON stock_movements(product_id);
 CREATE INDEX idx_stock_movements_created ON stock_movements(created_at);
+
+-- sync_status index for fast push queries
+CREATE INDEX idx_stock_movements_sync_status ON stock_movements(sync_status);
 
 -- ══════════════════════════════════════════════════════════════════════════════
 -- CUSTOMERS
@@ -233,6 +260,9 @@ CREATE TABLE customers (
 );
 CREATE INDEX idx_customers_branch ON customers(branch_id);
 CREATE INDEX idx_customers_phone  ON customers(phone);
+
+-- sync_status index for fast push queries
+CREATE INDEX idx_customers_sync_status ON customers(sync_status);
 
 -- ══════════════════════════════════════════════════════════════════════════════
 -- SALES: sales, sale_items, payments
@@ -267,6 +297,9 @@ CREATE INDEX idx_sales_shift         ON sales(shift_id);
 CREATE INDEX idx_sales_business_date ON sales(business_date);
 CREATE INDEX idx_sales_receipt       ON sales(receipt_number);
 
+-- sync_status index for fast push queries
+CREATE INDEX idx_sales_sync_status ON sales(sync_status);
+
 CREATE TABLE sale_items (
     sale_item_id          TEXT PRIMARY KEY,
     sale_id               TEXT NOT NULL REFERENCES sales(sale_id),
@@ -291,6 +324,9 @@ CREATE TABLE sale_items (
 );
 CREATE INDEX idx_sale_items_sale ON sale_items(sale_id);
 
+-- sync_status index for fast push queries
+CREATE INDEX idx_sale_items_sync_status ON sale_items(sync_status);
+
 CREATE TABLE payments (
     payment_id          TEXT PRIMARY KEY,
     sale_id             TEXT NOT NULL REFERENCES sales(sale_id),
@@ -310,6 +346,9 @@ CREATE TABLE payments (
     sync_attempts       INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_payments_sale ON payments(sale_id);
+
+-- sync_status index for fast push queries
+CREATE INDEX idx_payments_sync_status ON payments(sync_status);
 
 -- ══════════════════════════════════════════════════════════════════════════════
 -- REFUNDS
@@ -333,6 +372,9 @@ CREATE TABLE refunds (
 );
 CREATE INDEX idx_refunds_sale ON refunds(original_sale_id);
 
+-- sync_status index for fast push queries
+CREATE INDEX idx_refunds_sync_status ON refunds(sync_status);
+
 CREATE TABLE refund_items (
     refund_item_id        TEXT PRIMARY KEY,
     refund_id             TEXT NOT NULL REFERENCES refunds(refund_id),
@@ -348,6 +390,9 @@ CREATE TABLE refund_items (
     sync_attempts         INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_refund_items_refund ON refund_items(refund_id);
+
+-- sync_status index for fast push queries
+CREATE INDEX idx_refund_items_sync_status ON refund_items(sync_status);
 
 -- ══════════════════════════════════════════════════════════════════════════════
 -- DELIVERY
@@ -387,6 +432,9 @@ CREATE TABLE delivery_orders (
 CREATE INDEX idx_delivery_branch ON delivery_orders(branch_id, delivery_status);
 CREATE INDEX idx_delivery_sale   ON delivery_orders(sale_id);
 
+-- sync_status index for fast push queries
+CREATE INDEX idx_delivery_orders_sync_status ON delivery_orders(sync_status);
+
 -- ══════════════════════════════════════════════════════════════════════════════
 -- SHIFTS & CASH EVENTS
 -- ══════════════════════════════════════════════════════════════════════════════
@@ -415,6 +463,9 @@ CREATE TABLE shifts (
 );
 CREATE INDEX idx_shifts_device ON shifts(device_id);
 CREATE INDEX idx_shifts_status ON shifts(status);
+
+-- sync_status index for fast push queries
+CREATE INDEX idx_shifts_sync_status ON shifts(sync_status);
 
 CREATE TABLE cash_events (
     cash_event_id     TEXT PRIMARY KEY,
@@ -457,6 +508,9 @@ CREATE TABLE audit_logs (
 CREATE INDEX idx_audit_entity  ON audit_logs(entity_type, entity_id);
 CREATE INDEX idx_audit_device  ON audit_logs(device_id);
 CREATE INDEX idx_audit_created ON audit_logs(created_at);
+
+-- sync_status index for fast push queries
+CREATE INDEX idx_audit_logs_sync_status ON audit_logs(sync_status);
 
 CREATE TABLE ghost_barcodes (
     ghost_id             TEXT PRIMARY KEY,

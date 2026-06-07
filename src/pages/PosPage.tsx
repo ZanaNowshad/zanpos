@@ -484,6 +484,8 @@ export default function PosPage({
       } catch {
         barcodeRef.current?.flashError();
         void ghostRecord(sessionUser.user_id, barcode); // fire-and-forget, never throws
+        // T21: give cashier an actionable message, not a void flash
+        setError(`Barcode "${barcode}" not found — flagged for your manager. Keep selling.`);
         focusBarcode();
       }
     });

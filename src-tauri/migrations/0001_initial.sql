@@ -466,6 +466,8 @@ CREATE INDEX idx_shifts_status ON shifts(status);
 
 -- sync_status index for fast push queries
 CREATE INDEX idx_shifts_sync_status ON shifts(sync_status);
+-- Prevent ghost shifts: only one open shift per device at any time (T01)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shifts_one_open_per_device ON shifts(device_id) WHERE status = 'open';
 
 CREATE TABLE cash_events (
     cash_event_id     TEXT PRIMARY KEY,

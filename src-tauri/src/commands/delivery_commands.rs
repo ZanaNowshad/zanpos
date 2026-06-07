@@ -55,7 +55,7 @@ pub async fn delivery_update_status(
     let exp = super::setup_commands::currency_exponent(&result.currency);
     match input.delivery_status.as_str() {
         "dispatched" => {
-            let _ = super::whatsapp_commands::whatsapp_send_delivery_impl(
+            if let Err(e) = super::whatsapp_commands::whatsapp_send_delivery_impl(
                 &state,
                 &result.contact_number,
                 &result.receipt_number,
@@ -66,15 +66,21 @@ pub async fn delivery_update_status(
                 result.area.as_deref(),
                 None,
             )
-            .await;
+            .await
+            {
+                tracing::warn!("T12: WA dispatch notification failed for delivery {}: {:?}", result.receipt_number, e);
+            }
         }
         "delivered" => {
-            let _ = super::whatsapp_commands::whatsapp_notify_arrival_impl(
+            if let Err(e) = super::whatsapp_commands::whatsapp_notify_arrival_impl(
                 &state,
                 &result.contact_number,
                 &result.receipt_number,
             )
-            .await;
+            .await
+            {
+                tracing::warn!("T12: WA arrival notification failed for delivery {}: {:?}", result.receipt_number, e);
+            }
         }
         _ => {}
     }
@@ -92,7 +98,7 @@ pub async fn delivery_confirm_payment(
 
     // Trigger WhatsApp payment reminder
     let exp = super::setup_commands::currency_exponent(&result.currency);
-    let _ = super::whatsapp_commands::whatsapp_payment_reminder_impl(
+    if let Err(e) = super::whatsapp_commands::whatsapp_payment_reminder_impl(
         &state,
         &result.contact_number,
         &result.receipt_number,
@@ -100,7 +106,10 @@ pub async fn delivery_confirm_payment(
         exp,
         &result.currency,
     )
-    .await;
+    .await
+    {
+        tracing::warn!("T12: WA payment reminder failed for delivery {}: {:?}", result.receipt_number, e);
+    }
 
     Ok(result)
 }

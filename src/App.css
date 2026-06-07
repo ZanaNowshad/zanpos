@@ -58,6 +58,13 @@
   --radius-xl: 28px;
   --radius-pill: 999px;
 
+  /* ── Transition tokens (T28) ── */
+  --t-fast:   80ms ease;
+  --t-base:  120ms ease;
+  --t-slow:  150ms ease;
+  /* T34: spring easing — slight overshoot for tactile feel */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
   /* ── Typography ── */
   --font:         'DM Sans', 'Segoe UI Variable Text', system-ui, sans-serif;
   --font-display: 'Bricolage Grotesque', 'Syne', system-ui, sans-serif;
@@ -806,9 +813,18 @@ body {
   box-shadow: 0 0 0 3px rgba(34,197,94,0.18);
   animation: scan-flash 0.5s ease-out forwards;
 }
+/* T31: shake transform gives haptic-like error feedback on scan failure */
+@keyframes scan-error-shake {
+  0%,100% { transform: translateX(0); }
+  20%     { transform: translateX(-5px); }
+  40%     { transform: translateX(5px); }
+  60%     { transform: translateX(-3px); }
+  80%     { transform: translateX(3px); }
+}
 .barcode-input.scan-error {
   border-color: var(--error);
   box-shadow: 0 0 0 3px rgba(239,68,68,0.18);
+  animation: scan-error-shake 0.32s var(--ease-spring);
 }
 @keyframes scan-flash {
   0%   { box-shadow: 0 0 0 4px rgba(34,197,94,0.3); }
@@ -2206,7 +2222,7 @@ kbd.kbd-primary {
   font-size: 0.82rem;
   font-family: var(--font-mono);
   font-weight: 600;
-  transition: all 0.1s;
+  transition: background-color var(--t-fast), color var(--t-fast), border-color var(--t-fast), box-shadow var(--t-fast), opacity var(--t-fast), transform var(--t-fast);
 }
 
 .quick-amt-btn:hover { background: var(--accent); border-color: var(--accent); color: var(--accent-t); }
@@ -2315,7 +2331,7 @@ kbd.kbd-primary {
   padding: 8px;
   width: 100%;
   margin-top: 6px;
-  transition: all 0.12s;
+  transition: background-color var(--t-base), color var(--t-base), border-color var(--t-base), box-shadow var(--t-base), opacity var(--t-base), transform var(--t-base);
 }
 .split-add-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(240,165,0,0.05); }
 
@@ -2398,7 +2414,7 @@ kbd.kbd-primary {
   color: var(--text);
   cursor: pointer;
   font-size: 0.9rem;
-  transition: all 0.15s;
+  transition: background-color var(--t-slow), color var(--t-slow), border-color var(--t-slow), box-shadow var(--t-slow), opacity var(--t-slow), transform var(--t-slow);
 }
 
 .method-btn.active { border-color: var(--accent); background: rgba(240,165,0,0.12); color: var(--accent); font-weight: 600; }
@@ -3114,7 +3130,7 @@ kbd.kbd-primary {
   font-size: 1rem;
   padding: 4px 8px;
   line-height: 1;
-  transition: all 0.12s;
+  transition: background-color var(--t-base), color var(--t-base), border-color var(--t-base), box-shadow var(--t-base), opacity var(--t-base), transform var(--t-base);
 }
 .modal-close:hover { border-color: var(--error); color: var(--error); background: rgba(239,68,68,0.08); }
 
@@ -3952,7 +3968,7 @@ textarea.field-input { resize: vertical; }
   padding: 6px 10px;
   cursor: pointer;
   text-align: center;
-  transition: all 0.12s;
+  transition: background-color var(--t-base), color var(--t-base), border-color var(--t-base), box-shadow var(--t-base), opacity var(--t-base), transform var(--t-base);
   white-space: nowrap;
 }
 .rd-radio-btn:hover { border-color: var(--accent); color: var(--text); }
@@ -4712,7 +4728,7 @@ textarea.field-input { resize: vertical; }
   font-weight: 600;
   white-space: nowrap;
   flex-shrink: 0;
-  transition: all 0.12s;
+  transition: background-color var(--t-base), color var(--t-base), border-color var(--t-base), box-shadow var(--t-base), opacity var(--t-base), transform var(--t-base);
   display: flex;
   align-items: center;
   gap: 5px;
@@ -4818,7 +4834,7 @@ textarea.field-input { resize: vertical; }
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
-  transition: all 0.12s;
+  transition: background-color var(--t-base), color var(--t-base), border-color var(--t-base), box-shadow var(--t-base), opacity var(--t-base), transform var(--t-base);
 }
 .bo-pagination-btn:disabled { opacity: 0.3; cursor: default; }
 .bo-pagination-btn:not(:disabled):hover { border-color: var(--accent); color: var(--accent); background: var(--bg); }
@@ -4847,7 +4863,7 @@ textarea.field-input { resize: vertical; }
   padding: 12px 12px;
   text-align: left;
   gap: 10px;
-  transition: all 0.15s;
+  transition: background-color var(--t-slow), color var(--t-slow), border-color var(--t-slow), box-shadow var(--t-slow), opacity var(--t-slow), transform var(--t-slow);
   margin-bottom: 2px;
 }
 .bo-list-row:hover { background: var(--surface2); border-color: var(--border); }
@@ -5104,7 +5120,7 @@ textarea.field-input { resize: vertical; }
   color: var(--text-dim);
   cursor: pointer;
   font-size: 0.82rem;
-  transition: all 0.12s;
+  transition: background-color var(--t-base), color var(--t-base), border-color var(--t-base), box-shadow var(--t-base), opacity var(--t-base), transform var(--t-base);
 }
 .rpt-preset-btn:hover { color: var(--text); border-color: var(--text-dim); }
 .rpt-preset-active { background: var(--surface2); color: var(--text); border-color: var(--accent); font-weight: 600; }
@@ -5322,7 +5338,7 @@ textarea.field-input { resize: vertical; }
   font-size: 0.85rem;
   color: var(--text-dim);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color var(--t-slow), color var(--t-slow), border-color var(--t-slow), box-shadow var(--t-slow), opacity var(--t-slow), transform var(--t-slow);
 }
 .lock-logout-btn:hover {
   border-color: var(--text-dim);
@@ -5448,7 +5464,7 @@ textarea.field-input { resize: vertical; }
   padding: 3px 10px;
   cursor: pointer;
   white-space: nowrap;
-  transition: all 0.15s;
+  transition: background-color var(--t-slow), color var(--t-slow), border-color var(--t-slow), box-shadow var(--t-slow), opacity var(--t-slow), transform var(--t-slow);
 }
 .rpt-void-btn:hover:not(:disabled) {
   background: rgba(244,67,54,0.12);
@@ -5508,7 +5524,7 @@ textarea.field-input { resize: vertical; }
   font-size: 0.75rem;
   cursor: pointer;
   color: var(--text);
-  transition: all 0.15s;
+  transition: background-color var(--t-slow), color var(--t-slow), border-color var(--t-slow), box-shadow var(--t-slow), opacity var(--t-slow), transform var(--t-slow);
 }
 .inv-btn:hover { background: var(--surface3); }
 .inv-btn-adj  { color: var(--warning); border-color: var(--warning); }
@@ -8634,7 +8650,7 @@ label {
   font-size: 0.81rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.12s;
+  transition: background-color var(--t-base), color var(--t-base), border-color var(--t-base), box-shadow var(--t-base), opacity var(--t-base), transform var(--t-base);
 }
 .dlv-preset-btn.active {
   background: var(--accent);
@@ -8667,7 +8683,7 @@ label {
   font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.12s;
+  transition: background-color var(--t-base), color var(--t-base), border-color var(--t-base), box-shadow var(--t-base), opacity var(--t-base), transform var(--t-base);
   white-space: nowrap;
 }
 .dlv-filter-toggle:hover { border-color: var(--accent); color: var(--accent); }
@@ -8684,7 +8700,7 @@ label {
   color: var(--text-dim);
   font-size: 1rem;
   cursor: pointer;
-  transition: all 0.12s;
+  transition: background-color var(--t-base), color var(--t-base), border-color var(--t-base), box-shadow var(--t-base), opacity var(--t-base), transform var(--t-base);
 }
 .dlv-refresh-btn:hover { color: var(--accent); border-color: var(--accent); }
 
@@ -8734,7 +8750,7 @@ label {
   font-weight: 600;
   cursor: pointer;
   align-self: flex-end;
-  transition: all 0.12s;
+  transition: background-color var(--t-base), color var(--t-base), border-color var(--t-base), box-shadow var(--t-base), opacity var(--t-base), transform var(--t-base);
 }
 .dlv-filter-clear:hover { background: rgba(239,68,68,0.15); }
 
@@ -9017,7 +9033,7 @@ label {
   font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.12s;
+  transition: background-color var(--t-base), color var(--t-base), border-color var(--t-base), box-shadow var(--t-base), opacity var(--t-base), transform var(--t-base);
 }
 .dlv-action-btn:hover { border-color: var(--accent); color: var(--accent); }
 .dlv-action-pay {
@@ -9206,7 +9222,7 @@ label {
   font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.12s;
+  transition: background-color var(--t-base), color var(--t-base), border-color var(--t-base), box-shadow var(--t-base), opacity var(--t-base), transform var(--t-base);
   flex-shrink: 0;
 }
 .dlv-modal-close:hover { background: var(--surface3); border-color: var(--accent); color: var(--accent); }
@@ -9458,7 +9474,7 @@ label {
   font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color var(--t-slow), color var(--t-slow), border-color var(--t-slow), box-shadow var(--t-slow), opacity var(--t-slow), transform var(--t-slow);
 }
 .wame-lang-btn:hover { border-color: var(--accent); color: var(--text); }
 .wame-lang-active {
@@ -9511,7 +9527,7 @@ label {
   color: var(--text-dim);
   font-size: 0.78rem;
   cursor: pointer;
-  transition: all 0.12s;
+  transition: background-color var(--t-base), color var(--t-base), border-color var(--t-base), box-shadow var(--t-base), opacity var(--t-base), transform var(--t-base);
 }
 .wame-reset-btn:hover { border-color: var(--warning); color: var(--warning); }
 .wame-reset-btn-warn { border-color: var(--error) !important; color: var(--error) !important; font-weight: 600; }
@@ -9550,7 +9566,7 @@ label {
   align-items: center;
   justify-content: center;
   color: var(--text-dim);
-  transition: all 0.12s;
+  transition: background-color var(--t-base), color var(--t-base), border-color var(--t-base), box-shadow var(--t-base), opacity var(--t-base), transform var(--t-base);
 }
 .wame-toggle-on {
   border-color: var(--accent);
@@ -9605,7 +9621,7 @@ label {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.1s;
+  transition: background-color var(--t-fast), color var(--t-fast), border-color var(--t-fast), box-shadow var(--t-fast), opacity var(--t-fast), transform var(--t-fast);
   padding: 0;
 }
 .wame-ctrl-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
@@ -9626,7 +9642,7 @@ label {
   font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.12s;
+  transition: background-color var(--t-base), color var(--t-base), border-color var(--t-base), box-shadow var(--t-base), opacity var(--t-base), transform var(--t-base);
 }
 .wame-add-btn:hover { border-color: var(--accent); color: var(--accent); }
 
@@ -9662,7 +9678,7 @@ label {
   font-size: 0.72rem;
   font-family: var(--font-mono);
   cursor: pointer;
-  transition: all 0.12s;
+  transition: background-color var(--t-base), color var(--t-base), border-color var(--t-base), box-shadow var(--t-base), opacity var(--t-base), transform var(--t-base);
 }
 .wame-var-chip:hover { background: rgba(240,165,0,0.18); border-color: var(--accent); }
 .wame-var-chip-label {
@@ -10075,7 +10091,7 @@ label {
   font-weight: 500;
   color: var(--text-dim);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color var(--t-slow), color var(--t-slow), border-color var(--t-slow), box-shadow var(--t-slow), opacity var(--t-slow), transform var(--t-slow);
   white-space: nowrap;
 }
 .rpt-preset2-btn:hover { color: var(--text); background: var(--surface2); }
@@ -10124,7 +10140,7 @@ label {
   font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color var(--t-slow), color var(--t-slow), border-color var(--t-slow), box-shadow var(--t-slow), opacity var(--t-slow), transform var(--t-slow);
   display: flex;
   align-items: center;
   gap: 7px;
@@ -10266,7 +10282,7 @@ label {
   border-radius: 5px;
   color: var(--error, #ef4444);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color var(--t-slow), color var(--t-slow), border-color var(--t-slow), box-shadow var(--t-slow), opacity var(--t-slow), transform var(--t-slow);
   white-space: nowrap;
 }
 .rpt-void-btn:hover {
@@ -10321,7 +10337,7 @@ label {
   border: 2px solid var(--border);
   border-radius: 10px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color var(--t-slow), color var(--t-slow), border-color var(--t-slow), box-shadow var(--t-slow), opacity var(--t-slow), transform var(--t-slow);
   color: var(--text-dim);
   font-size: 0.8rem;
   font-weight: 500;
@@ -10435,7 +10451,7 @@ label {
   font-weight: 600;
   color: var(--text);
   cursor: pointer;
-  transition: all 0.1s;
+  transition: background-color var(--t-fast), color var(--t-fast), border-color var(--t-fast), box-shadow var(--t-fast), opacity var(--t-fast), transform var(--t-fast);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -10554,7 +10570,7 @@ label {
   color: var(--text-dim);
   font-size: 0.8rem;
   font-weight: 500;
-  transition: all 0.15s;
+  transition: background-color var(--t-slow), color var(--t-slow), border-color var(--t-slow), box-shadow var(--t-slow), opacity var(--t-slow), transform var(--t-slow);
   min-height: 62px;
 }
 .ce-type-tab:hover { border-color: var(--accent); color: var(--text); background: rgba(240,165,0,0.05); }
@@ -10773,7 +10789,7 @@ label {
   text-align: center;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  transition: all 0.15s;
+  transition: background-color var(--t-slow), color var(--t-slow), border-color var(--t-slow), box-shadow var(--t-slow), opacity var(--t-slow), transform var(--t-slow);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -11102,7 +11118,7 @@ label {
   border-radius: 10px;
   background: var(--bg);
   cursor: pointer;
-  transition: all 0.12s;
+  transition: background-color var(--t-base), color var(--t-base), border-color var(--t-base), box-shadow var(--t-base), opacity var(--t-base), transform var(--t-base);
   color: var(--text-dim);
 }
 .pm-method:hover { border-color: var(--accent); color: var(--text); }
@@ -11183,7 +11199,7 @@ label {
   font-weight: 700;
   color: var(--text);
   cursor: pointer;
-  transition: all 0.1s;
+  transition: background-color var(--t-fast), color var(--t-fast), border-color var(--t-fast), box-shadow var(--t-fast), opacity var(--t-fast), transform var(--t-fast);
 }
 .pm-quick-exact {
   border-color: var(--accent);
@@ -11284,7 +11300,7 @@ label {
   font-weight: 600;
   color: var(--text-dim);
   cursor: pointer;
-  transition: all 0.1s;
+  transition: background-color var(--t-fast), color var(--t-fast), border-color var(--t-fast), box-shadow var(--t-fast), opacity var(--t-fast), transform var(--t-fast);
 }
 .pm-extra-btn:hover { border-color: var(--accent); color: var(--text); }
 .pm-extra-active { border-color: var(--accent); color: var(--accent); }

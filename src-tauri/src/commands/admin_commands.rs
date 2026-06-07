@@ -1086,8 +1086,8 @@ pub async fn admin_bulk_import_products(
             .await;
         }
 
-        // Insert price
-        let _ = sqlx::query(
+        // Insert price — critical: product without price cannot be sold; capture failure (T07)
+        if let Err(e) = sqlx::query(
             "INSERT INTO product_prices
                (price_id, product_id, price_type, price_minor, currency,
                 effective_from, created_by_user_id, created_at)
@@ -1100,9 +1100,13 @@ pub async fn admin_bulk_import_products(
         .bind(&actor_user_id)
         .bind(&now)
         .execute(&mut *tx)
-        .await;
+        .await
+        {
+            errors.push(BulkRowError { row: idx + 1, name: row.name.clone(), reason: format!("Price write failed: {}", e) });
+            continue;
+        }
 
-        // Init stock level
+        // Init stock level (INSERT OR IGNORE — duplicate safe)
         if track {
         let sl_id = format!("SL-{}-{}", product_id, branch_id);
             let _ = sqlx::query(

@@ -38,14 +38,15 @@ impl AppError {
     /// Returns a user-safe error message that does not include internal details.
     pub fn user_message(&self) -> &str {
         match self {
-            AppError::Database(_) => "A database error occurred. Check the application log for details.",
-            AppError::Migration(_) => "A database migration error occurred. Check the application log for details.",
+            // T22: operational English — cashiers do not know what "the log" is
+            AppError::Database(_) => "Something went wrong — please try again. If the problem persists, restart the app.",
+            AppError::Migration(_) => "The app needs to update its database — please restart the app.",
             AppError::Validation(m) => m,
             AppError::NotFound(m) => m,
             AppError::Permission(m) => m,
             AppError::Conflict(m) => m,
             AppError::GhostBarcode(barcode) => barcode,
-            AppError::Internal(_) => "An internal error occurred. Check the application log for details.",
+            AppError::Internal(_) => "An unexpected error occurred — please try again.",
         }
     }
 }

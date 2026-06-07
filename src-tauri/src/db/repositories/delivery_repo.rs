@@ -22,7 +22,7 @@ pub async fn create_delivery_in_tx(
     now: &str,
 ) -> AppResult<DeliveryRow> {
     // Validate expected_payment_method
-    if !["cash", "card"].contains(&input.expected_payment_method.as_str()) {
+    if !["cash", "card", "wallet"].contains(&input.expected_payment_method.as_str()) {
         return Err(AppError::Validation(format!(
             "Invalid expected_payment_method: {}",
             input.expected_payment_method
@@ -211,7 +211,7 @@ pub async fn update_delivery_status(
     pool: &SqlitePool,
     input: &UpdateDeliveryStatusInput,
 ) -> AppResult<DeliveryRow> {
-    let valid = ["pending", "dispatched", "delivered", "cancelled"];
+    let valid = ["pending", "dispatched", "out_for_delivery", "delivered", "cancelled"];
     if !valid.contains(&input.delivery_status.as_str()) {
         return Err(AppError::Validation(format!(
             "Invalid delivery_status: {}",

@@ -157,6 +157,11 @@ pub fn all_tool_definitions() -> Vec<ToolDef> {
             description: "Check the cloud sync status: whether Supabase is configured, last sync time, pending queue count, and any failed or conflicted events.".into(),
             input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
         },
+        ToolDef {
+            name: "get_sync_diagnostics".into(),
+            description: "Full sync diagnostics: per-table breakdown showing pending vs stuck (attempts>=10) rows, max/avg attempt counts, last error, whether Supabase is reachable. Use when sync appears stuck or when debugging why events aren't syncing.".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
+        },
         // ── Extended analytics & audit tools ──────────────────────────────────
         ToolDef {
             name: "get_daily_report".into(),
@@ -752,6 +757,128 @@ pub fn all_tool_definitions() -> Vec<ToolDef> {
                 "required": ["product_name"]
             }),
         },
+        // ── Sync repair tools ─────────────────────────────────────────────────
+        ToolDef {
+            name: "sync_reset_stuck".into(),
+            description: "Reset ALL stuck rows (sync_attempts >= 10) across all tables back to pending with 0 attempts. Use when sync diagnostic shows stuck events blocking the queue. After fixing the root cause (e.g. re-entering Supabase credentials), call this to unblock sync.".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
+        },
+        ToolDef {
+            name: "sync_queue_list".into(),
+            description: "List up to 200 pending/failed sync events with their table, entity ID, status, attempt count, and error message. Use to inspect individual stuck events.".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
+        },
+        ToolDef {
+            name: "sync_queue_retry".into(),
+            description: "Retry a specific failed sync event by its composite ID (format: table:entity_id). Resets attempts to 0 and status to pending.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "event_id": { "type": "string", "description": "Composite event ID in format 'table:entity_id' (e.g. 'shifts:01KTEVBEKM91V1YE5TK6MKFS49')" }
+                },
+                "required": ["event_id"]
+            }),
+        },
+        ToolDef {
+            name: "sync_queue_dismiss".into(),
+            description: "Dismiss a pending/failed sync event — marks it as 'synced' so it stops retrying. Use for events that can't or shouldn't be synced (e.g., test data, duplicate rows).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "event_id": { "type": "string", "description": "Composite event ID in format 'table:entity_id'" }
+                },
+                "required": ["event_id"]
+            }),
+        },
+        // ── Shift management tools ────────────────────────────────────────────
+        ToolDef {
+            name: "get_active_shift".into(),
+            description: "Check the currently active (open) shift for the POS terminal. Returns shift ID, cashier, opening time, opening float, and status.".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
+        },
+        // ── Void / Refund tools ───────────────────────────────────────────────
+        ToolDef {
+            name: "void_sale".into(),
+            description: "Void a completed sale by receipt number. Requires manager/owner PIN. The sale must exist and not already be voided. This is irreversible!".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "receipt_number": { "type": "string", "description": "Receipt number to void" },
+                    "reason": { "type": "string", "description": "Reason for voiding (required)" }
+                },
+                "required": ["receipt_number", "reason"]
+            }),
+        },
+        // ── Delete / Deactivate tools ─────────────────────────────────────────
+        ToolDef {
+            name: "delete_customer".into(),
+            description: "Permanently delete a customer record. USE WITH CAUTION — this removes the customer and all their loyalty points. Consider deactivating instead.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "customer_id": { "type": "string", "description": "Customer ID to delete" }
+                },
+                "required": ["customer_id"]
+            }),
+        },
+        ToolDef {
+            name: "set_device_active".into(),
+            description: "Activate or deactivate a POS terminal device. Deactivated devices cannot log in or process sales.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "device_id": { "type": "string", "description": "Device ID to modify" },
+                    "is_active": { "type": "boolean", "description": "True to activate, false to deactivate" }
+                },
+                "required": ["device_id", "is_active"]
+            }),
+        },
+        // ── Stock / Inventory tools ───────────────────────────────────────────
+        ToolDef {
+            name: "receive_stock".into(),
+            description: "Receive incoming stock for a product — adds quantity to on-hand and creates a stock movement record with receipt notes (PO number, supplier info).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "product_id": { "type": "string", "description": "Product ID to receive stock for" },
+                    "quantity": { "type": "string", "description": "Quantity to receive (e.g. '5' or '2.5')" },
+                    "notes": { "type": "string", "description": "Optional notes (PO number, supplier, batch, etc.)" }
+                },
+                "required": ["product_id", "quantity"]
+            }),
+        },
+        // ── Loyalty / Customer tools ──────────────────────────────────────────
+        ToolDef {
+            name: "add_loyalty_points".into(),
+            description: "Add loyalty points to a customer's account. Points can be used for rewards or discounts.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "customer_id": { "type": "string", "description": "Customer ID" },
+                    "points": { "type": "integer", "description": "Number of points to add (positive or negative)" }
+                },
+                "required": ["customer_id", "points"]
+            }),
+        },
+        // ── Bulk tools ────────────────────────────────────────────────────────
+        ToolDef {
+            name: "bulk_update_prices".into(),
+            description: "Bulk update selling prices for multiple products at once. Provide a list of product_id:price_minor pairs. Prices in fils (1000 fils = 1 BHD).".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "updates": { "type": "array", "items": {
+                        "type": "object",
+                        "properties": {
+                            "product_id": { "type": "string" },
+                            "price_minor": { "type": "integer", "description": "New price in fils (minor units)" }
+                        },
+                        "required": ["product_id", "price_minor"]
+                    }, "description": "Array of {product_id, price_minor} pairs" }
+                },
+                "required": ["updates"]
+            }),
+        },
     ]
 }
 
@@ -783,6 +910,15 @@ pub const MUTATION_TOOLS: &[&str] = &[
     "confirm_delivery_payment",
     "cancel_delivery",
     "backup_database",
+    "sync_reset_stuck",
+    "sync_queue_retry",
+    "sync_queue_dismiss",
+    "void_sale",
+    "delete_customer",
+    "set_device_active",
+    "receive_stock",
+    "add_loyalty_points",
+    "bulk_update_prices",
 ];
 
 pub fn is_mutation_tool(name: &str) -> bool {
@@ -1144,6 +1280,85 @@ pub async fn execute_read_tool(
                 format!("  Stuck rows:       {failed}"),
             ];
             Ok(lines.join("\n"))
+        }
+        "get_sync_diagnostics" => {
+            let mut lines = vec!["[DB] Sync Diagnostics:".to_string()];
+
+            let url: Option<String> =
+                sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'supabase_url'")
+                    .fetch_optional(pool).await?.flatten();
+            let key = crate::secure_store::get_secret("supabase_service_key").unwrap_or_default();
+            let configured = url.as_deref().is_some_and(|u| !u.is_empty()) && !key.is_empty();
+            lines.push(format!("  Supabase: {}", if configured { "✓ configured" } else { "✗ NOT configured" }));
+
+            let last_sync: Option<String> = sqlx::query_scalar(
+                "SELECT last_pushed_at FROM sync_watermark WHERE table_name = 'sales'",
+            ).fetch_optional(pool).await.ok().flatten();
+            lines.push(format!("  Last Sync: {}", last_sync.as_deref().unwrap_or("never")));
+
+            lines.push("".to_string());
+            lines.push("  Per-table breakdown — pending / stuck (attempts>=10) / max-att / avg-att:".to_string());
+
+            for table in crate::commands::sync_commands::SYNC_TABLES {
+                let pending: i64 = sqlx::query_scalar(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending' AND sync_attempts < 10"),
+                ).fetch_one(pool).await.unwrap_or(0);
+                let stuck: i64 = sqlx::query_scalar(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending' AND sync_attempts >= 10"),
+                ).fetch_one(pool).await.unwrap_or(0);
+                if pending == 0 && stuck == 0 { continue; }
+                let max_att: i64 = sqlx::query_scalar(
+                    &format!("SELECT COALESCE(MAX(sync_attempts),0) FROM {table}"),
+                ).fetch_one(pool).await.unwrap_or(0);
+                let avg = sqlx::query_scalar::<_, f64>(
+                    &format!("SELECT COALESCE(AVG(CAST(sync_attempts AS REAL)),0) FROM {table} WHERE sync_status = 'pending'"),
+                ).fetch_one(pool).await.unwrap_or(0.0);
+                let flag = if stuck > 0 { " ⚠ STUCK" } else if pending > 0 { " ⏳ pending" } else { " ✓ clean" };
+                lines.push(format!(
+                    "    {table}: {pending} pending, {stuck} stuck, max {max_att} att, avg {avg:.1}{flag}"
+                ));
+            }
+
+            Ok(lines.join("\n"))
+        }
+        "sync_queue_list" => {
+            let mut items = Vec::new();
+            for table in crate::commands::sync_commands::SYNC_TABLES {
+                let pk = crate::commands::sync_commands::table_pk(table);
+                let sql = format!(
+                    "SELECT {pk} AS _pk, sync_status, sync_attempts, created_at
+                     FROM {table} WHERE sync_status IN ('pending', 'failed')
+                     LIMIT 50",
+                );
+                if let Ok(rows) = sqlx::query(&sql).fetch_all(pool).await {
+                    for r in &rows {
+                        let id: String = r.get("_pk");
+                        let status: String = r.get("sync_status");
+                        let att: i64 = r.get("sync_attempts");
+                        let at: String = r.get("created_at");
+                        items.push(format!("{}|{}|{}|{}|{}", table, &id[..12.min(id.len())], status, att, &at[11..19]));
+                    }
+                }
+            }
+            if items.is_empty() { return Ok("[DB] Sync queue is empty — all events synced.".into()); }
+            items.truncate(50);
+            Ok(format!("[DB] Sync Queue (top 50):\n  table|entity|status|att|created\n  {}", items.join("\n  ")))
+        }
+        "get_active_shift" => {
+            let shift: Option<(String, String, String, i64, String)> = sqlx::query_as(
+                "SELECT s.shift_id, u.display_name, s.opened_at, s.opening_cash_minor, s.status
+                 FROM shifts s JOIN users u ON u.user_id = s.cashier_user_id
+                 WHERE s.status = 'open' AND s.device_id = (SELECT device_id FROM devices WHERE is_active=1 LIMIT 1)
+                 ORDER BY s.opened_at DESC LIMIT 1",
+            )
+            .fetch_optional(pool).await?;
+            match shift {
+                Some((id, name, opened, float, status)) => {
+                    Ok(format!("[DB] Active Shift: {} | Cashier: {} | Opened: {} | Float: {} fils | Status: {}",
+                        &id[..12], name, &opened[11..19], float, status))
+                }
+                None => Ok("No active shift found. A shift must be opened before processing sales.".into()),
+            }
         }
         "get_daily_report" => {
             let date = input
@@ -3273,6 +3488,76 @@ pub async fn dry_run_mutation(
                 ToolPreviewField { label: "New status".into(), value: "cancelled".into() },
             ]})
         }
+        // ── Sync repair dry-runs ──────────────────────────────────────────────
+        "sync_reset_stuck" => {
+            let mut stuck = 0i64;
+            for table in crate::commands::sync_commands::SYNC_TABLES {
+                let n: i64 = sqlx::query_scalar(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE sync_status='pending' AND sync_attempts>=10"),
+                ).fetch_one(pool).await.unwrap_or(0);
+                stuck += n;
+            }
+            Ok(ToolPreview { tool_name: tool_name.into(),
+                description: format!("Reset {stuck} stuck rows across all tables back to pending with 0 attempts"),
+                fields: vec![ToolPreviewField { label: "Stuck rows".into(), value: stuck.to_string() }] })
+        }
+        "sync_queue_retry" => {
+            let event_id = input.get("event_id").and_then(|v| v.as_str()).unwrap_or("");
+            Ok(ToolPreview { tool_name: tool_name.into(),
+                description: format!("Retry sync event: {event_id}"),
+                fields: vec![ToolPreviewField { label: "Event".into(), value: event_id.to_string() }] })
+        }
+        "sync_queue_dismiss" => {
+            let event_id = input.get("event_id").and_then(|v| v.as_str()).unwrap_or("");
+            Ok(ToolPreview { tool_name: tool_name.into(),
+                description: format!("Dismiss sync event: {event_id}"),
+                fields: vec![ToolPreviewField { label: "Event".into(), value: event_id.to_string() }] })
+        }
+        "void_sale" => {
+            let receipt = input.get("receipt_number").and_then(|v| v.as_str()).unwrap_or("");
+            let reason = input.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+            Ok(ToolPreview { tool_name: tool_name.into(),
+                description: format!("Void sale {receipt}: {reason}"),
+                fields: vec![
+                    ToolPreviewField { label: "Receipt".into(), value: receipt.to_string() },
+                    ToolPreviewField { label: "Reason".into(), value: reason.to_string() },
+                ] })
+        }
+        "delete_customer" => {
+            let cid = input.get("customer_id").and_then(|v| v.as_str()).unwrap_or("");
+            let name: Option<String> = sqlx::query_scalar("SELECT name FROM customers WHERE customer_id=?").bind(cid).fetch_optional(pool).await?.flatten();
+            Ok(ToolPreview { tool_name: tool_name.into(),
+                description: format!("Delete customer: {}", name.as_deref().unwrap_or(cid)),
+                fields: vec![ToolPreviewField { label: "Customer".into(), value: name.unwrap_or_else(|| cid.to_string()) }] })
+        }
+        "set_device_active" => {
+            let did = input.get("device_id").and_then(|v| v.as_str()).unwrap_or("");
+            let active = input.get("is_active").and_then(|v| v.as_bool()).unwrap_or(true);
+            Ok(ToolPreview { tool_name: tool_name.into(),
+                description: format!("Set device {did} active={active}"),
+                fields: vec![ToolPreviewField { label: "Device".into(), value: did.to_string() }] })
+        }
+        "receive_stock" => {
+            let pid = input.get("product_id").and_then(|v| v.as_str()).unwrap_or("");
+            let qty = input.get("quantity").and_then(|v| v.as_str()).unwrap_or("0");
+            let pname: Option<String> = sqlx::query_scalar("SELECT name FROM products WHERE product_id=?").bind(pid).fetch_optional(pool).await?.flatten();
+            Ok(ToolPreview { tool_name: tool_name.into(),
+                description: format!("Receive {qty} of {}", pname.as_deref().unwrap_or(pid)),
+                fields: vec![ToolPreviewField { label: "Product".into(), value: pname.unwrap_or_else(|| pid.to_string()) }] })
+        }
+        "add_loyalty_points" => {
+            let cid = input.get("customer_id").and_then(|v| v.as_str()).unwrap_or("");
+            let pts = input.get("points").and_then(|v| v.as_i64()).unwrap_or(0);
+            Ok(ToolPreview { tool_name: tool_name.into(),
+                description: format!("Add {pts} loyalty points to customer"),
+                fields: vec![ToolPreviewField { label: "Points".into(), value: pts.to_string() }] })
+        }
+        "bulk_update_prices" => {
+            let count = input.get("updates").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            Ok(ToolPreview { tool_name: tool_name.into(),
+                description: format!("Bulk update prices for {count} products"),
+                fields: vec![ToolPreviewField { label: "Products".into(), value: count.to_string() }] })
+        }
         // ── Backup dry-run ─────────────────────────────────────────────────────
         "backup_database" => {
             Ok(ToolPreview { tool_name: tool_name.into(), description: "Create full database backup".into(), fields: vec![ToolPreviewField { label: "Action".into(), value: "Backup to app data directory".into() }] })
@@ -3461,7 +3746,7 @@ pub async fn execute_mutation(
             let new_price_id = ulid::Ulid::new().to_string();
 
             sqlx::query(
-                "UPDATE product_prices SET effective_to = ?
+                "UPDATE product_prices SET effective_to = ?, sync_status = 'pending'
                  WHERE product_id = ? AND branch_id IS NULL AND price_type = 'selling'
                    AND effective_to IS NULL",
             )
@@ -3529,9 +3814,10 @@ pub async fn execute_mutation(
             let old_active = p.product.is_active;
 
             sqlx::query(
-                "UPDATE products SET is_active = ?, version = version + 1 WHERE product_id = ?",
+                "UPDATE products SET is_active = ?, updated_at = ?, version = version + 1, sync_status = 'pending' WHERE product_id = ?",
             )
             .bind(is_active as i64)
+            .bind(chrono::Utc::now().to_rfc3339())
             .bind(product_id)
             .execute(pool)
             .await?;
@@ -3578,8 +3864,9 @@ pub async fn execute_mutation(
                 .ok_or_else(|| AppError::NotFound("Product not found".into()))?;
             let old_name = p.product.name.clone();
 
-            sqlx::query("UPDATE products SET name = ?, version = version + 1 WHERE product_id = ?")
+            sqlx::query("UPDATE products SET name = ?, updated_at = ?, version = version + 1, sync_status = 'pending' WHERE product_id = ?")
                 .bind(new_name)
+                .bind(chrono::Utc::now().to_rfc3339())
                 .bind(product_id)
                 .execute(pool)
                 .await?;
@@ -3807,7 +4094,7 @@ pub async fn execute_mutation(
                 .unwrap_or(0.0);
 
             sqlx::query(
-                "UPDATE products SET reorder_point = ?, updated_at = ? WHERE product_id = ?",
+                "UPDATE products SET reorder_point = ?, updated_at = ?, sync_status = 'pending' WHERE product_id = ?",
             )
             .bind(new_point)
             .bind(chrono::Utc::now().to_rfc3339())
@@ -3905,13 +4192,15 @@ pub async fn execute_mutation(
             let new_notes = input.get("notes").and_then(|v| v.as_str());
             sqlx::query(
                 "UPDATE customers SET name = ?, phone = COALESCE(?, phone),
-                  email = COALESCE(?, email), notes = COALESCE(?, notes)
+                  email = COALESCE(?, email), notes = COALESCE(?, notes),
+                  updated_at = ?, sync_status = 'pending'
                   WHERE customer_id = ?",
             )
             .bind(new_name)
             .bind(new_phone)
             .bind(new_email)
             .bind(new_notes)
+            .bind(chrono::Utc::now().to_rfc3339())
             .bind(customer_id)
             .execute(pool)
             .await?;
@@ -3978,9 +4267,9 @@ pub async fn execute_mutation(
                 .get("new_status")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Validation("Missing new_status".into()))?;
-            // Map AI-facing "in_transit" → DB column value "out_for_delivery"
+            // Map AI-facing "in_transit" → DB column value "dispatched"
             let db_new_status = if new_status_input == "in_transit" {
-                "out_for_delivery"
+                "dispatched"
             } else {
                 new_status_input
             };
@@ -3994,7 +4283,7 @@ pub async fn execute_mutation(
             let old_status: String = row.get("delivery_status");
             let now = chrono::Utc::now().to_rfc3339();
             sqlx::query(
-                "UPDATE delivery_orders SET delivery_status = ?, updated_at = ? WHERE delivery_id = ?",
+                "UPDATE delivery_orders SET delivery_status = ?, updated_at = ?, sync_status = 'pending', version = version + 1 WHERE delivery_id = ?",
             )
             .bind(db_new_status)
             .bind(&now)
@@ -4129,7 +4418,7 @@ pub async fn execute_mutation(
             let name = input.get("name").and_then(|v| v.as_str()).unwrap_or(&old_name);
             let sort = input.get("sort_order").and_then(|v| v.as_i64()).unwrap_or(old_sort);
             let active_val = input.get("is_active").and_then(|v| v.as_bool()).unwrap_or(old_active);
-            sqlx::query("UPDATE categories SET name=?, sort_order=?, is_active=?, updated_at=? WHERE category_id=?")
+            sqlx::query("UPDATE categories SET name=?, sort_order=?, is_active=?, updated_at=?, version = version + 1, sync_status = 'pending' WHERE category_id=?")
                 .bind(name).bind(sort).bind(active_val as i64).bind(chrono::Utc::now().to_rfc3339()).bind(category_id).execute(pool).await?;
             write_audit(pool, "AI_ADMIN", "category.update", category_id, &json!({"name":name,"is_active":active_val})).await?;
             Ok(MutationResult {
@@ -4184,7 +4473,7 @@ pub async fn execute_mutation(
                 sets.push("pin_hash = ?"); binds.push(SqlBind::S(pin_hash));
             }
             if !sets.is_empty() {
-                let sql = format!("UPDATE users SET {} WHERE user_id = ?", sets.join(", "));
+                let sql = format!("UPDATE users SET {}, sync_status = 'pending' WHERE user_id = ?", sets.join(", "));
                 let mut q = sqlx::query(&sql);
                 for b in &binds { q = b.apply(q); }
                 q.bind(user_id).execute(pool).await?;
@@ -4229,7 +4518,7 @@ pub async fn execute_mutation(
             let bp = input.get("rate_basis_points").and_then(|v| v.as_i64()).unwrap_or(old_bp);
             let inc = input.get("inclusive").and_then(|v| v.as_bool()).unwrap_or(old_inclusive);
             let active_val = input.get("is_active").and_then(|v| v.as_bool()).unwrap_or(old_active);
-            sqlx::query("UPDATE tax_rules SET name=?, rate_basis_points=?, inclusive=?, is_active=?, updated_at=? WHERE tax_rule_id=?")
+            sqlx::query("UPDATE tax_rules SET name=?, rate_basis_points=?, inclusive=?, is_active=?, updated_at=?, sync_status = 'pending' WHERE tax_rule_id=?")
                 .bind(name).bind(bp).bind(inc).bind(active_val as i64).bind(chrono::Utc::now().to_rfc3339()).bind(tax_rule_id).execute(pool).await?;
             write_audit(pool, "AI_ADMIN", "tax_rule.update", tax_rule_id, &json!({"name":name,"rate_basis_points":bp})).await?;
             Ok(MutationResult {
@@ -4256,14 +4545,14 @@ pub async fn execute_mutation(
             let rp = input.get("reorder_point").and_then(|v| v.as_f64());
             let active = input.get("is_active").and_then(|v| v.as_bool()).unwrap_or(p.product.is_active);
             let now = chrono::Utc::now().to_rfc3339();
-            sqlx::query("UPDATE products SET name=?,category_id=?,sku=COALESCE(?,sku),barcode=COALESCE(?,barcode),tax_rule_id=COALESCE(?,tax_rule_id),track_inventory=?,allow_decimal_quantity=?,is_active=?,version=version+1,updated_at=? WHERE product_id=?")
+            sqlx::query("UPDATE products SET name=?,category_id=?,sku=COALESCE(?,sku),barcode=COALESCE(?,barcode),tax_rule_id=COALESCE(?,tax_rule_id),track_inventory=?,allow_decimal_quantity=?,is_active=?,version=version+1,updated_at=?, sync_status = 'pending' WHERE product_id=?")
                 .bind(name).bind(cat_id).bind(sku).bind(barcode).bind(tax).bind(track as i64).bind(decimal as i64).bind(active as i64).bind(&now).bind(product_id).execute(pool).await?;
             if let Some(rp_val) = rp {
-                sqlx::query("UPDATE products SET reorder_point = ?, updated_at = ? WHERE product_id = ?")
+                sqlx::query("UPDATE products SET reorder_point = ?, updated_at = ?, sync_status = 'pending' WHERE product_id = ?")
                     .bind(rp_val as i64).bind(&now).bind(product_id).execute(pool).await?;
             }
             if let Some(new_price) = price {
-                sqlx::query("UPDATE product_prices SET effective_to=? WHERE product_id=? AND price_type='selling' AND effective_to IS NULL").bind(&now).bind(product_id).execute(pool).await?;
+                sqlx::query("UPDATE product_prices SET effective_to=?, sync_status = 'pending' WHERE product_id=? AND price_type='selling' AND effective_to IS NULL").bind(&now).bind(product_id).execute(pool).await?;
                 let pid = ulid::Ulid::new().to_string();
                 sqlx::query("INSERT INTO product_prices (price_id,product_id,branch_id,price_type,price_minor,currency,effective_from,created_by_user_id,created_at) VALUES (?,?,NULL,'selling',?,'BHD',?,'AI_ADMIN',?)")
                     .bind(&pid).bind(product_id).bind(new_price).bind(&now).bind(&now).execute(pool).await?;
@@ -4327,7 +4616,7 @@ pub async fn execute_mutation(
                 .bind(delivery_id).fetch_optional(pool).await?
                 .ok_or_else(|| AppError::NotFound("Delivery not found".into()))?;
             let old_payment: String = row.get("payment_status");
-            sqlx::query("UPDATE delivery_orders SET payment_status='paid', updated_at=? WHERE delivery_id=?")
+            sqlx::query("UPDATE delivery_orders SET payment_status='paid', updated_at=?, sync_status = 'pending', version = version + 1 WHERE delivery_id=?")
                 .bind(chrono::Utc::now().to_rfc3339()).bind(delivery_id).execute(pool).await?;
             write_audit(pool, "AI_ADMIN", "delivery.payment_confirmed", delivery_id, &json!({})).await?;
             Ok(MutationResult {
@@ -4344,7 +4633,7 @@ pub async fn execute_mutation(
                 .bind(delivery_id).fetch_optional(pool).await?
                 .ok_or_else(|| AppError::NotFound("Delivery not found".into()))?;
             let old_status: String = row.get("delivery_status");
-            sqlx::query("UPDATE delivery_orders SET delivery_status='cancelled', updated_at=? WHERE delivery_id=?")
+            sqlx::query("UPDATE delivery_orders SET delivery_status='cancelled', updated_at=?, sync_status = 'pending', version = version + 1 WHERE delivery_id=?")
                 .bind(chrono::Utc::now().to_rfc3339()).bind(delivery_id).execute(pool).await?;
             write_audit(pool, "AI_ADMIN", "delivery.cancelled", delivery_id, &json!({})).await?;
             Ok(MutationResult {
@@ -4353,6 +4642,157 @@ pub async fn execute_mutation(
                 rollback_tool: "advance_delivery_status".into(),
                 rollback_input_json: json!({"delivery_id":delivery_id,"new_status":if old_status=="out_for_delivery"{"in_transit"}else{old_status.as_str()}}).to_string(),
                 entity_type: "delivery_order".into(), entity_id: delivery_id.into(),
+            })
+        }
+        // ── Sync repair executors ───────────────────────────────────────────
+        "sync_reset_stuck" => {
+            let mut total = 0u32;
+            for table in crate::commands::sync_commands::SYNC_TABLES {
+                let rows = sqlx::query(
+                    &format!("UPDATE {table} SET sync_attempts = 0 WHERE sync_status = 'pending' AND sync_attempts >= 10"),
+                ).execute(pool).await?.rows_affected();
+                total += rows as u32;
+            }
+            write_audit(pool, "AI_ADMIN", "sync.reset_stuck", "sync", &json!({"reset":total})).await?;
+            Ok(MutationResult {
+                description: format!("Reset {total} stuck rows — sync worker will retry on next cycle"),
+                undo_snapshot_json: "{}".into(), rollback_tool: "_no_undo".into(), rollback_input_json: "{}".into(),
+                entity_type: "sync".into(), entity_id: "reset_stuck".into(),
+            })
+        }
+        "sync_queue_retry" => {
+            let event_id = input.get("event_id").and_then(|v| v.as_str()).unwrap_or("");
+            let (table, row_id) = event_id.split_once(':').ok_or_else(|| AppError::Validation("Expected format table:entity_id".into()))?;
+            let pk = crate::commands::sync_commands::table_pk(table);
+            let sql = format!("UPDATE {table} SET sync_status='pending', sync_attempts=0 WHERE {pk}=?");
+            let rows = sqlx::query(&sql).bind(row_id).execute(pool).await?.rows_affected();
+            write_audit(pool, "AI_ADMIN", "sync.queue_retry", "sync", &json!({"event":event_id})).await?;
+            Ok(MutationResult {
+                description: format!("Retried sync event {event_id} ({rows} row reset)"),
+                undo_snapshot_json: "{}".into(), rollback_tool: "_no_undo".into(), rollback_input_json: "{}".into(),
+                entity_type: "sync".into(), entity_id: event_id.into(),
+            })
+        }
+        "sync_queue_dismiss" => {
+            let event_id = input.get("event_id").and_then(|v| v.as_str()).unwrap_or("");
+            let (table, row_id) = event_id.split_once(':').ok_or_else(|| AppError::Validation("Expected format table:entity_id".into()))?;
+            let pk = crate::commands::sync_commands::table_pk(table);
+            let sql = format!("UPDATE {table} SET sync_status='synced', sync_attempts=0 WHERE {pk}=?");
+            let rows = sqlx::query(&sql).bind(row_id).execute(pool).await?.rows_affected();
+            write_audit(pool, "AI_ADMIN", "sync.queue_dismiss", "sync", &json!({"event":event_id})).await?;
+            Ok(MutationResult {
+                description: format!("Dismissed sync event {event_id} ({rows} row dismissed)"),
+                undo_snapshot_json: "{}".into(), rollback_tool: "_no_undo".into(), rollback_input_json: "{}".into(),
+                entity_type: "sync".into(), entity_id: event_id.into(),
+            })
+        }
+        "void_sale" => {
+            let receipt = input.get("receipt_number").and_then(|v| v.as_str()).unwrap_or("");
+            let reason = input.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+            if reason.trim().is_empty() { return Err(AppError::Validation("Reason is required for void".into())); }
+            let sale_id: Option<String> = sqlx::query_scalar("SELECT sale_id FROM sales WHERE receipt_number=? AND status='completed'").bind(receipt).fetch_optional(pool).await?.flatten();
+            let sale_id = sale_id.ok_or_else(|| AppError::NotFound(format!("Sale {receipt} not found or already voided")))?;
+            let now = chrono::Utc::now().to_rfc3339();
+            sqlx::query("UPDATE sales SET status='voided', updated_at=?, sync_status='pending' WHERE sale_id=?")
+                .bind(&now).bind(&sale_id).execute(pool).await?;
+            sqlx::query("UPDATE sale_items SET voided=1 WHERE sale_id=?")
+                .bind(&sale_id).execute(pool).await?;
+            write_audit(pool, "AI_ADMIN", "sale.voided", "sale", &json!({"sale_id":sale_id,"reason":reason})).await?;
+            Ok(MutationResult {
+                description: format!("Voided sale {receipt}: {reason}"),
+                undo_snapshot_json: json!({"sale_id":sale_id,"receipt":receipt}).to_string(),
+                rollback_tool: "_no_undo".into(), rollback_input_json: "{}".into(),
+                entity_type: "sale".into(), entity_id: sale_id,
+            })
+        }
+        "delete_customer" => {
+            let cid = input.get("customer_id").and_then(|v| v.as_str()).unwrap_or("");
+            let name: Option<String> = sqlx::query_scalar("SELECT name FROM customers WHERE customer_id=?").bind(cid).fetch_optional(pool).await?.flatten();
+            let name = name.ok_or_else(|| AppError::NotFound("Customer not found".into()))?;
+            let snapshot = json!({"customer_id": cid, "name": name});
+            sqlx::query("DELETE FROM customers WHERE customer_id=?").bind(cid).execute(pool).await?;
+            write_audit(pool, "AI_ADMIN", "customer.deleted", "customer", &snapshot).await?;
+            Ok(MutationResult {
+                description: format!("Deleted customer: {name}"),
+                undo_snapshot_json: snapshot.to_string(),
+                rollback_tool: "create_customer".into(), rollback_input_json: snapshot.to_string(),
+                entity_type: "customer".into(), entity_id: cid.into(),
+            })
+        }
+        "set_device_active" => {
+            let did = input.get("device_id").and_then(|v| v.as_str()).unwrap_or("");
+            let active = input.get("is_active").and_then(|v| v.as_bool()).unwrap_or(true);
+            let name: Option<String> = sqlx::query_scalar("SELECT name FROM devices WHERE device_id=?").bind(did).fetch_optional(pool).await?.flatten();
+            let name = name.unwrap_or_else(|| did.to_string());
+            let now = chrono::Utc::now().to_rfc3339();
+            sqlx::query("UPDATE devices SET is_active=?, updated_at=?, sync_status='pending' WHERE device_id=?")
+                .bind(active as i64).bind(&now).bind(did).execute(pool).await?;
+            write_audit(pool, "AI_ADMIN", "device.toggle", "device", &json!({"device_id":did,"active":active})).await?;
+            Ok(MutationResult {
+                description: format!("Device '{name}' set to active={active}"),
+                undo_snapshot_json: json!({"device_id":did,"is_active":!active}).to_string(),
+                rollback_tool: "set_device_active".into(), rollback_input_json: json!({"device_id":did,"is_active":!active}).to_string(),
+                entity_type: "device".into(), entity_id: did.into(),
+            })
+        }
+        "receive_stock" => {
+            let pid = input.get("product_id").and_then(|v| v.as_str()).unwrap_or("");
+            let qty = input.get("quantity").and_then(|v| v.as_str()).unwrap_or("0");
+            let notes = input.get("notes").and_then(|v| v.as_str()).unwrap_or("");
+            let pname: Option<String> = sqlx::query_scalar("SELECT name FROM products WHERE product_id=?").bind(pid).fetch_optional(pool).await?.flatten();
+            let _ = pname.ok_or_else(|| AppError::NotFound("Product not found".into()))?;
+            let branch_id: String = sqlx::query_scalar("SELECT branch_id FROM branches WHERE is_active=1 LIMIT 1").fetch_one(pool).await?;
+            let now = chrono::Utc::now().to_rfc3339();
+            let level_id = format!("SL-{}-{}", pid, branch_id);
+            sqlx::query("INSERT INTO stock_levels (stock_level_id,product_id,branch_id,quantity_on_hand,last_movement_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(product_id,branch_id) DO UPDATE SET quantity_on_hand = CAST(CAST(stock_levels.quantity_on_hand AS REAL) + CAST(? AS REAL) AS TEXT), last_movement_at=?, updated_at=?, sync_status='pending'")
+                .bind(&level_id).bind(pid).bind(&branch_id).bind(qty).bind(&now).bind(&now).bind(&now).bind(qty).bind(&now).bind(&now).execute(pool).await?;
+            let mid = ulid::Ulid::new().to_string();
+            let qty_after: String = sqlx::query_scalar("SELECT quantity_on_hand FROM stock_levels WHERE product_id=? AND branch_id=?").bind(pid).bind(&branch_id).fetch_one(pool).await?;
+            sqlx::query("INSERT INTO stock_movements (movement_id,product_id,branch_id,device_id,origin_device_id,movement_type,quantity_delta,quantity_after,reference_type,notes,created_by_user_id,created_at) VALUES (?,?,?,?,(SELECT device_id FROM devices WHERE is_active=1 LIMIT 1),'receive',?,?,'receive',?,'AI_ADMIN',?)")
+                .bind(&mid).bind(pid).bind(&branch_id).bind(&branch_id).bind(qty).bind(&qty_after).bind(notes).bind(&now).execute(pool).await?;
+            write_audit(pool, "AI_ADMIN", "stock.receive", "product", &json!({"product_id":pid,"qty":qty,"notes":notes})).await?;
+            Ok(MutationResult {
+                description: format!("Received {qty} of product {pid}"),
+                undo_snapshot_json: json!({"product_id":pid,"qty":qty}).to_string(),
+                rollback_tool: "adjust_stock".into(), rollback_input_json: json!({"product_id":pid,"delta":format!("-{}",qty)}).to_string(),
+                entity_type: "stock".into(), entity_id: mid,
+            })
+        }
+        "add_loyalty_points" => {
+            let cid = input.get("customer_id").and_then(|v| v.as_str()).unwrap_or("");
+            let pts = input.get("points").and_then(|v| v.as_i64()).unwrap_or(0);
+            let now = chrono::Utc::now().to_rfc3339();
+            sqlx::query("UPDATE customers SET loyalty_points = loyalty_points + ?, updated_at = ?, sync_status = 'pending' WHERE customer_id = ?")
+                .bind(pts).bind(&now).bind(cid).execute(pool).await?;
+            let new_total: i64 = sqlx::query_scalar("SELECT loyalty_points FROM customers WHERE customer_id=?").bind(cid).fetch_one(pool).await?;
+            write_audit(pool, "AI_ADMIN", "customer.loyalty", "customer", &json!({"customer_id":cid,"added":pts,"total":new_total})).await?;
+            Ok(MutationResult {
+                description: format!("Added {pts} loyalty points, new total: {new_total}"),
+                undo_snapshot_json: json!({"customer_id":cid,"points":-pts}).to_string(),
+                rollback_tool: "add_loyalty_points".into(), rollback_input_json: json!({"customer_id":cid,"points":-pts}).to_string(),
+                entity_type: "customer".into(), entity_id: cid.into(),
+            })
+        }
+        "bulk_update_prices" => {
+            let updates = input.get("updates").and_then(|v| v.as_array()).ok_or_else(|| AppError::Validation("updates array required".into()))?;
+            let now = chrono::Utc::now().to_rfc3339();
+            let mut updated = 0;
+            for item in updates {
+                let pid = item.get("product_id").and_then(|v| v.as_str()).unwrap_or("");
+                let price = item.get("price_minor").and_then(|v| v.as_i64()).unwrap_or(0);
+                if pid.is_empty() { continue; }
+                sqlx::query("UPDATE product_prices SET effective_to=?, sync_status='pending' WHERE product_id=? AND price_type='selling' AND effective_to IS NULL")
+                    .bind(&now).bind(pid).execute(pool).await?;
+                let npid = ulid::Ulid::new().to_string();
+                sqlx::query("INSERT INTO product_prices (price_id,product_id,branch_id,price_type,price_minor,currency,effective_from,created_by_user_id,created_at) VALUES (?,?,NULL,'selling',?,'BHD',?,'AI_ADMIN',?)")
+                    .bind(&npid).bind(pid).bind(price).bind(&now).bind(&now).execute(pool).await?;
+                updated += 1;
+            }
+            write_audit(pool, "AI_ADMIN", "product.bulk_price", "product", &json!({"count":updated})).await?;
+            Ok(MutationResult {
+                description: format!("Updated prices for {updated} products"),
+                undo_snapshot_json: "{}".into(), rollback_tool: "_no_undo".into(), rollback_input_json: "{}".into(),
+                entity_type: "product".into(), entity_id: "bulk".into(),
             })
         }
         // ── Database backup ────────────────────────────────────────────────────
@@ -4409,8 +4849,8 @@ async fn write_audit(
     sqlx::query(
         "INSERT INTO audit_logs
          (audit_log_id, event_type, entity_type, entity_id, actor_user_id,
-          actor_type, after_json, created_at, hash)
-         VALUES (?, ?, 'product', ?, ?, 'ai_agent', ?, ?, ?)",
+          actor_type, after_json, created_at, hash, device_id, origin_device_id, branch_id, previous_hash)
+         VALUES (?, ?, 'product', ?, ?, 'ai_agent', ?, ?, ?, NULL, NULL, NULL, NULL)",
     )
     .bind(&id)
     .bind(event_type)

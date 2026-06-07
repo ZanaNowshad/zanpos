@@ -162,13 +162,16 @@ pub async fn inventory_receive_stock(
     let delta_str = qty.to_string();
 
     // Upsert stock_levels with the computed string (include PK so ON CONFLICT fires)
+    let movement_id = Ulid::new().to_string();
     sqlx::query(
-        "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+        "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at, last_movement_at, reference_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(product_id, branch_id) DO UPDATE SET
            sync_status = 'pending',
            quantity_on_hand = excluded.quantity_on_hand,
-           updated_at = excluded.updated_at",
+           updated_at = excluded.updated_at,
+           last_movement_at = excluded.last_movement_at,
+           reference_id = excluded.reference_id",
     )
     .bind(&stock_level_id)
     .bind(&input.product_id)
@@ -176,10 +179,11 @@ pub async fn inventory_receive_stock(
     .bind(&new_qty_str)
     .bind(&now)
     .bind(&now)
+    .bind(&now)
+    .bind(&movement_id)
     .execute(&mut *tx)
     .await?;
 
-    let movement_id = Ulid::new().to_string();
     // Record movement — M-6: reference_type and movement_type are 'receive'
     sqlx::query(
         "INSERT INTO stock_movements
@@ -296,13 +300,16 @@ pub async fn inventory_adjust_stock(
     let delta_str = delta_dec.to_string();
 
     // Upsert stock_levels (include PK)
+    let movement_id = Ulid::new().to_string();
     sqlx::query(
-        "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+        "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at, last_movement_at, reference_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(product_id, branch_id) DO UPDATE SET
            sync_status = 'pending',
            quantity_on_hand = excluded.quantity_on_hand,
-           updated_at = excluded.updated_at",
+           updated_at = excluded.updated_at,
+           last_movement_at = excluded.last_movement_at,
+           reference_id = excluded.reference_id",
     )
     .bind(&stock_level_id)
     .bind(&input.product_id)
@@ -310,10 +317,11 @@ pub async fn inventory_adjust_stock(
     .bind(&new_qty_str)
     .bind(&now)
     .bind(&now)
+    .bind(&now)
+    .bind(&movement_id)
     .execute(&mut *tx)
     .await?;
 
-    let movement_id = Ulid::new().to_string();
     // M-7: movement_type and reference_type are 'manual_adjust'
     sqlx::query(
         "INSERT INTO stock_movements
@@ -464,13 +472,16 @@ pub async fn inventory_bulk_stock_take(
         let delta_str = delta_dec.to_string();
 
         // Upsert stock level (include PK)
+        let movement_id = Ulid::new().to_string();
         if let Err(e) = sqlx::query(
-            "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?)
+            "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at, last_movement_at, reference_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(product_id, branch_id) DO UPDATE SET
-           sync_status = 'pending',
+               sync_status = 'pending',
                quantity_on_hand = excluded.quantity_on_hand,
-               updated_at = excluded.updated_at",
+               updated_at = excluded.updated_at,
+               last_movement_at = excluded.last_movement_at,
+               reference_id = excluded.reference_id",
         )
         .bind(&stock_level_id)
         .bind(&entry.product_id)
@@ -478,6 +489,8 @@ pub async fn inventory_bulk_stock_take(
         .bind(&new_qty_str)
         .bind(&now)
         .bind(&now)
+        .bind(&now)
+        .bind(&movement_id)
         .execute(&mut *tx)
         .await
         {
@@ -486,7 +499,6 @@ pub async fn inventory_bulk_stock_take(
             continue;
         }
 
-        let movement_id = Ulid::new().to_string();
         // M-8: movement_type and reference_type are 'stock_take'
         if let Err(e) = sqlx::query(
             "INSERT INTO stock_movements

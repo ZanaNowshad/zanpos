@@ -152,13 +152,14 @@ pub async fn cash_event_create(
     sqlx::query(
         "INSERT INTO audit_logs
            (audit_log_id, event_type, entity_type, entity_id,
-            actor_user_id, actor_type, device_id, branch_id, after_json, created_at, hash, previous_hash)
-         VALUES (?, ?, 'shift', ?, ?, 'user', ?, ?, ?, ?, ?, ?)",
+            actor_user_id, actor_type, device_id, origin_device_id, branch_id, after_json, created_at, hash, previous_hash)
+         VALUES (?, ?, 'shift', ?, ?, 'user', ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&audit_id)
     .bind(format!("CASH_{}", event_type.to_uppercase()))
     .bind(&shift_id)
     .bind(&created_by_user_id)
+    .bind(&device_id)
     .bind(&device_id)
     .bind(&branch_id)
     .bind(&after_json)
@@ -404,13 +405,15 @@ pub async fn cash_no_sale(
     sqlx::query(
         "INSERT INTO audit_logs
            (audit_log_id, event_type, entity_type, entity_id,
-            actor_user_id, actor_type, device_id, created_at, hash, previous_hash)
-         VALUES (?, 'NO_SALE', 'shift', ?, ?, 'user', ?, ?, ?, ?)",
+            actor_user_id, actor_type, device_id, origin_device_id, branch_id, created_at, hash, previous_hash)
+         VALUES (?, 'NO_SALE', 'shift', ?, ?, 'user', ?, ?, ?, ?, ?, ?)",
     )
     .bind(&log_id)
     .bind(&shift_id)
     .bind(&actor_user_id)
     .bind(&device_id)
+    .bind(&device_id)
+    .bind(&branch_id)
     .bind(&now)
     .bind(&hash)
     .bind(if prev_hash.is_empty() {
@@ -534,7 +537,7 @@ pub async fn cash_x_report(
     // Audit trail for X-Report generation with hash chain
     let log_id = Ulid::new().to_string();
     let now = chrono::Utc::now().to_rfc3339();
-    let (_, device_id) = resolve_branch_device(&state).await.unwrap_or_default();
+    let (branch_id, device_id) = resolve_branch_device(&state).await.unwrap_or_default();
     let prev_hash = audit_hash::fetch_last_hash(&state.db, &device_id)
         .await
         .unwrap_or_default();
@@ -555,13 +558,15 @@ pub async fn cash_x_report(
     sqlx::query(
         "INSERT INTO audit_logs
            (audit_log_id, event_type, entity_type, entity_id,
-            actor_user_id, actor_type, device_id, created_at, hash, previous_hash)
-         VALUES (?, 'X_REPORT', 'shift', ?, ?, 'user', ?, ?, ?, ?)",
+            actor_user_id, actor_type, device_id, origin_device_id, branch_id, created_at, hash, previous_hash)
+         VALUES (?, 'X_REPORT', 'shift', ?, ?, 'user', ?, ?, ?, ?, ?, ?)",
     )
     .bind(&log_id)
     .bind(&shift_id)
     .bind(&actor_user_id)
     .bind(&device_id)
+    .bind(&device_id)
+    .bind(&branch_id)
     .bind(&now)
     .bind(&hash)
     .bind(if prev_hash.is_empty() {

@@ -1,4 +1,5 @@
 use crate::commands::rbac;
+use crate::db::helpers;
 use crate::db::repositories::{audit_hash, product_repo, sale_repo};
 use crate::domain::cart::{Cart, CartLine};
 use crate::domain::delivery::DeliveryInput;
@@ -513,12 +514,15 @@ pub async fn pos_apply_bill_discount(
         let _ = sqlx::query(
             "INSERT INTO audit_logs
                (audit_log_id, event_type, entity_type, entity_id,
-                actor_user_id, actor_type, after_json, created_at, hash, previous_hash)
-             VALUES (?, 'BILL_DISCOUNT_APPLIED', 'cart', ?, ?, 'user', ?, ?, ?, ?)",
+                actor_user_id, actor_type, device_id, origin_device_id, branch_id, after_json, created_at, hash, previous_hash)
+             VALUES (?, 'BILL_DISCOUNT_APPLIED', 'cart', ?, ?, 'user', ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&log_id)
         .bind(&cart.cart_id)
         .bind(&cart.cashier_user_id)
+        .bind(&cart.device_id)
+        .bind(&cart.device_id)
+        .bind(&cart.branch_id)
         .bind(&after_json)
         .bind(&now)
         .bind(&hash)
@@ -618,12 +622,15 @@ pub async fn pos_apply_line_discount(
             let _ = sqlx::query(
                 "INSERT INTO audit_logs
                    (audit_log_id, event_type, entity_type, entity_id,
-                    actor_user_id, actor_type, after_json, created_at, hash, previous_hash)
-                 VALUES (?, 'LINE_DISCOUNT_APPLIED', 'cart', ?, ?, 'user', ?, ?, ?, ?)",
+                    actor_user_id, actor_type, device_id, origin_device_id, branch_id, after_json, created_at, hash, previous_hash)
+                 VALUES (?, 'LINE_DISCOUNT_APPLIED', 'cart', ?, ?, 'user', ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&log_id)
             .bind(&cart.cart_id)
             .bind(&cart.cashier_user_id)
+            .bind(&cart.device_id)
+            .bind(&cart.device_id)
+            .bind(&cart.branch_id)
             .bind(&after_json)
             .bind(&now)
             .bind(&hash)
@@ -734,12 +741,15 @@ pub async fn pos_add_custom_item(
     let _ = sqlx::query(
         "INSERT INTO audit_logs
            (audit_log_id, event_type, entity_type, entity_id,
-            actor_user_id, actor_type, after_json, created_at, hash, previous_hash)
-         VALUES (?, 'CUSTOM_ITEM_ADDED', 'cart', ?, ?, 'user', ?, ?, ?, ?)",
+            actor_user_id, actor_type, device_id, origin_device_id, branch_id, after_json, created_at, hash, previous_hash)
+         VALUES (?, 'CUSTOM_ITEM_ADDED', 'cart', ?, ?, 'user', ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&log_id)
     .bind(&cart.cart_id)
     .bind(&cart.cashier_user_id)
+    .bind(&cart.device_id)
+    .bind(&cart.device_id)
+    .bind(&cart.branch_id)
     .bind(&after_json)
     .bind(&now)
     .bind(&hash)
@@ -849,8 +859,8 @@ pub async fn pos_void_sale(
     let _ = sqlx::query(
         "INSERT INTO audit_logs
            (audit_log_id, event_type, entity_type, entity_id,
-            actor_user_id, actor_type, created_at, hash, previous_hash)
-         VALUES (?,?,?,?,?,?,?,?,?)",
+            actor_user_id, actor_type, device_id, origin_device_id, branch_id, created_at, hash, previous_hash)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
     )
     .bind(&audit_id)
     .bind("sale.voided")
@@ -858,6 +868,9 @@ pub async fn pos_void_sale(
     .bind(&sale_id)
     .bind(&voided_by_user_id)
     .bind("user")
+    .bind(&device_id)
+    .bind(&device_id)
+    .bind(&branch_id)
     .bind(&now)
     .bind(&hash)
     .bind(if prev_hash.is_empty() {
@@ -914,6 +927,7 @@ pub async fn pos_record_void(
 
     let log_id = Ulid::new().to_string();
     let now = chrono::Utc::now().to_rfc3339();
+    let branch_id = helpers::active_branch_id(&state.db).await?;
     let detail = serde_json::json!({
         "cart_id": cart_id,
         "line_count": line_count,
@@ -941,12 +955,15 @@ pub async fn pos_record_void(
     sqlx::query(
         "INSERT INTO audit_logs
            (audit_log_id, event_type, entity_type, entity_id,
-            actor_user_id, actor_type, after_json, created_at, hash, previous_hash)
-         VALUES (?, 'CART_VOID', 'cart', ?, ?, 'user', ?, ?, ?, ?)",
+            actor_user_id, actor_type, device_id, origin_device_id, branch_id, after_json, created_at, hash, previous_hash)
+         VALUES (?, 'CART_VOID', 'cart', ?, ?, 'user', ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&log_id)
     .bind(&cart_id)
     .bind(&cashier_user_id)
+    .bind(&device_id)
+    .bind(&device_id)
+    .bind(&branch_id)
     .bind(&detail)
     .bind(&now)
     .bind(&hash)

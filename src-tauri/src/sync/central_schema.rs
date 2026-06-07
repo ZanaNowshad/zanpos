@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS tax_rules (
     is_active          BOOLEAN NOT NULL DEFAULT TRUE,
     effective_from     TEXT NOT NULL,
     effective_to       TEXT,
-    -- updated_at is required for sync watermark; patched for older projects
+    -- updated_at is required for sync watermark, patched for older projects
     -- that were created before the column was added to the CREATE TABLE.
     updated_at         TEXT,
     version            BIGINT NOT NULL DEFAULT 1
@@ -400,6 +400,81 @@ ALTER TABLE delivery_orders DROP CONSTRAINT IF EXISTS delivery_orders_origin_nn;
 ALTER TABLE delivery_orders ADD CONSTRAINT delivery_orders_origin_nn CHECK (origin_device_id <> '');
 CREATE INDEX IF NOT EXISTS idx_delivery_branch  ON delivery_orders (branch_id, delivery_status);
 CREATE INDEX IF NOT EXISTS idx_delivery_sale    ON delivery_orders (sale_id);
+
+-- ===========================================================================
+-- 11b. SCHEMA ADDITIONS — columns added after initial deployment
+--       Safe to re-run: ADD COLUMN IF NOT EXISTS is idempotent.
+-- ===========================================================================
+-- deleted_at (local soft-delete marker)
+ALTER TABLE categories ADD COLUMN IF NOT EXISTS deleted_at TEXT;
+ALTER TABLE tax_rules ADD COLUMN IF NOT EXISTS deleted_at TEXT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS deleted_at TEXT;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS deleted_at TEXT;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS deleted_at TEXT;
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS deleted_at TEXT;
+
+-- tax_rules — missing created_at
+ALTER TABLE tax_rules ADD COLUMN IF NOT EXISTS created_at TEXT;
+
+-- devices — missing metadata columns
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS next_receipt_seq BIGINT NOT NULL DEFAULT 1;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_seen_at TEXT;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS created_at TEXT;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1;
+
+-- users — columns added for cross-device sync compatibility
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS branch_id TEXT;
+
+-- customers — missing version
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1;
+
+-- shifts — missing operational columns
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS expected_cash_minor BIGINT;
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS cash_difference_minor BIGINT;
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS business_date TEXT;
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS created_at TEXT;
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1;
+
+-- sales — missing timestamps
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS created_at TEXT;
+ALTER TABLE sales ADD COLUMN IF NOT EXISTS updated_at TEXT;
+
+-- sale_items — missing timestamps + refund tracking
+ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS refunded_amount_minor BIGINT;
+ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS created_at TEXT;
+ALTER TABLE sale_items ADD COLUMN IF NOT EXISTS updated_at TEXT;
+
+-- payments — missing timestamps
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS created_at TEXT;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS updated_at TEXT;
+
+-- refunds — missing return_reason + timestamp
+ALTER TABLE refunds ADD COLUMN IF NOT EXISTS return_reason_code TEXT;
+ALTER TABLE refunds ADD COLUMN IF NOT EXISTS updated_at TEXT;
+
+-- refund_items — missing timestamps
+ALTER TABLE refund_items ADD COLUMN IF NOT EXISTS created_at TEXT;
+ALTER TABLE refund_items ADD COLUMN IF NOT EXISTS updated_at TEXT;
+
+-- audit_logs — missing override flag
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS override_used BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- delivery_orders — missing metadata columns
+ALTER TABLE delivery_orders ADD COLUMN IF NOT EXISTS paid_confirmed_by_user_id TEXT;
+ALTER TABLE delivery_orders ADD COLUMN IF NOT EXISTS payment_reference TEXT;
+ALTER TABLE delivery_orders ADD COLUMN IF NOT EXISTS payment_note TEXT;
+ALTER TABLE delivery_orders ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 1;
+
+-- stock_movements, audit_logs, product_prices — missing updated_at (sync watermark)
+ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS updated_at TEXT;
+ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS updated_at TEXT;
+ALTER TABLE product_prices ADD COLUMN IF NOT EXISTS updated_at TEXT;
+
+-- stock_levels — missing timestamp columns
+ALTER TABLE stock_levels ADD COLUMN IF NOT EXISTS created_at TEXT;
+ALTER TABLE stock_levels ADD COLUMN IF NOT EXISTS updated_at TEXT;
+-- pin_hash is intentionally absent from central (never synced).
 
 -- ===========================================================================
 -- 12. PERMISSIONS

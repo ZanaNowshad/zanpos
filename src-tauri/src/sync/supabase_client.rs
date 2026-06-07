@@ -1,6 +1,7 @@
 use crate::errors::{AppError, AppResult};
 use reqwest::{Client, StatusCode};
 use serde_json::json;
+use tracing;
 
 // ── Client ──────────────────────────────────────────────────────────────────
 
@@ -57,22 +58,47 @@ impl SupabaseClient {
     pub async fn migrate(&self, pat: &str, project_ref: &str, sql: &str) -> AppResult<()> {
         let url = format!("https://api.supabase.com/v1/projects/{project_ref}/database/query");
 
-        let resp = self
-            .http
-            .post(&url)
-            .header("Authorization", format!("Bearer {pat}"))
-            .header("Content-Type", "application/json")
-            .json(&json!({ "query": sql }))
-            .send()
-            .await
-            .map_err(|e| AppError::Internal(format!("Migration HTTP error: {e}")))?;
+        // Strip ALL comment lines BEFORE splitting by ; — prevents
+        // semicolons inside comments from creating bogus statement boundaries.
+        let clean_sql: String = sql
+            .lines()
+            .filter(|l| !l.trim().starts_with("--"))
+            .collect::<Vec<_>>()
+            .join("\n");
 
-        if resp.status().is_success() {
-            Ok(())
-        } else {
-            let body = resp.text().await.unwrap_or_default();
-            Err(AppError::Internal(format!("Migration failed: {body}")))
+        let statements: Vec<String> = clean_sql
+            .split(';')
+            .map(|s| s.trim().replace('\r', ""))
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("{s};"))
+            .collect();
+
+        for (i, stmt) in statements.iter().enumerate() {
+            tracing::info!("Migration [{}/{}]: {:.80}...", i + 1, statements.len(), stmt);
+            let resp = self
+                .http
+                .post(&url)
+                .header("Authorization", format!("Bearer {pat}"))
+                .header("Content-Type", "application/json")
+                .json(&json!({ "query": stmt }))
+                .send()
+                .await
+                .map_err(|e| AppError::Internal(format!(
+                    "Migration HTTP error on statement {}: {e}", i + 1
+                )))?;
+
+            if !resp.status().is_success() {
+                let body = resp.text().await.unwrap_or_default();
+                let body_lower = body.to_lowercase();
+                if body_lower.contains("already exists") || body_lower.contains("does not exist") {
+                    continue;
+                }
+                return Err(AppError::Internal(format!(
+                    "Migration statement {} failed: {body}", i + 1
+                )));
+            }
         }
+        Ok(())
     }
 
     // ── Branch registry helpers ──────────────────────────────────────────────

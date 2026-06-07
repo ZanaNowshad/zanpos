@@ -336,10 +336,11 @@ pub async fn create_refund(
     let new_status = if unreffunded_count == 0 { "refunded" } else { "partially_refunded" };
 
     if let Err(e) = sqlx::query(
-        "UPDATE sales SET status = ?
+        "UPDATE sales SET status = ?, updated_at = ?, sync_status = 'pending'
          WHERE sale_id = ? AND status IN ('completed', 'partially_refunded')",
     )
     .bind(new_status)
+    .bind(&now)
     .bind(original_sale_id)
     .execute(&mut *conn)
     .await

@@ -65,26 +65,30 @@ const SyncChip = memo(function SyncChip({ status }: Props) {
   ].filter(Boolean).join(" — ");
 
   return (
-    <span
-      className={`sync-chip ${stale ? "sync-stale" : "sync-offline"}`}
-      title={title}
-    >
-      ○  Offline{stale ? ` — ${staleDays}d` : ""}{status.pending_events > 0 ? ` (${status.pending_events})` : ""}
-      {err && <span className="sync-chip-error-marker" aria-label="sync error">!</span>}
-      {err && errorSuffix && (
-        <span className="sync-error-inline" style={{ fontSize: '0.75em', marginLeft: 4, opacity: 0.85 }}>
-          — {errorSuffix}
-        </span>
-      )}
-      {/* Retry button always visible when offline so operator can manually trigger sync */}
-      <button
-        className="sync-retry-btn"
-        onClick={handleRetry}
-        disabled={retrying}
-        title={errorSuffix ? `Retry sync now — last error: ${err}` : "Retry sync now"}
+    <span className="sync-offline-wrap">
+      <span
+        className={`sync-chip ${stale ? "sync-stale" : "sync-offline"}`}
+        title={title}
       >
-        {retrying ? "…" : "⟳"}
-      </button>
+        ○  Offline{stale ? ` — ${staleDays}d` : ""}{status.pending_events > 0 ? ` (${status.pending_events})` : ""}
+        {err && <span className="sync-chip-error-marker" aria-label="sync error">!</span>}
+        {err && errorSuffix && (
+          <span className="sync-error-inline" style={{ fontSize: '0.75em', marginLeft: 4, opacity: 0.85 }}>
+            — {errorSuffix}
+          </span>
+        )}
+        {/* Retry button always visible when offline so operator can manually trigger sync */}
+        <button
+          className="sync-retry-btn"
+          onClick={handleRetry}
+          disabled={retrying}
+          title={errorSuffix ? `Retry sync now — last error: ${err}` : "Retry sync now"}
+        >
+          {retrying ? "…" : "⟳"}
+        </button>
+      </span>
+      {/* T05: reassure cashier that sales are safe while offline */}
+      <span className="sync-offline-hint">Your sales are saved — keep selling</span>
     </span>
   );
 });

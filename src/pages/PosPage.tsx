@@ -36,6 +36,7 @@ import WhatsAppQRModal from "../components/WhatsAppQRModal";
 import StickyNotesPanel from "../components/StickyNotesPanel";
 import DeliveriesTab from "../components/DeliveriesTab";
 import QuranToggle from "../components/QuranToggle";
+import SyncChip from "../components/SyncChip";
 
 // ── Modal state machine ───────────────────────────────────────────────────────
 // A discriminated union ensures only ONE blocking modal can be active at a time,
@@ -625,8 +626,9 @@ export default function PosPage({
           <QuranToggle />
         </div>
 
-        {/* Right: reprint + close shift + logout */}
+        {/* Right: sync status + reprint + close shift + logout */}
         <div className="top-bar-right" data-tauri-drag-region="true">
+          <SyncChip status={syncStatus} />
           {lastReceiptNumber && (
             <button className="top-bar-btn" onClick={handleReprintLast} title={`Reprint #${lastReceiptNumber} (Ctrl+P)`} data-tauri-drag-region="false">
               Reprint

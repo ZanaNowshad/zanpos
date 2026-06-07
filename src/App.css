@@ -31,6 +31,9 @@
   --warning: #FBBF24;
   --error:   #DC2626;
   --info:    #60A5FA;
+  /* T16: AI-chat tool-card category colors — mapped to semantic roles */
+  --ai-indigo: #6366f1;  /* analytics / reporting */
+  --ai-purple: #8b5cf6;  /* admin / people */
 
   /* ── Text ── */
   --text:       #F4F5FA;

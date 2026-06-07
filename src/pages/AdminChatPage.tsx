@@ -1,4 +1,13 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import {
+  AlarmClock, AlertTriangle, ArrowLeftRight, Banknote, BarChart2,
+  Building2, CalendarDays, ClipboardList, Clock, Cloud, Database,
+  Flag, FolderOpen, Globe, Link, Lock, Monitor, Package, Pencil,
+  PlusCircle, QrCode, Receipt, RefreshCw, Search, Settings,
+  ShoppingCart, Store, Tag, TrendingUp, Truck, Undo2, User,
+  Users, Wallet, Trophy,
+} from "lucide-react";
+import type { LucideProps } from "lucide-react";
 import type {
   SessionUser,
   ChatMessage,
@@ -72,73 +81,75 @@ interface ToolCallEntry {
   duration?: number; // ms
 }
 
-const TOOL_META: Record<string, { icon: string; label: string; color: string }> = {
-  get_today_summary:       { icon: "📊", label: "Today's Summary",        color: "#6366f1" },
-  list_products:           { icon: "🏷",  label: "Product List",           color: "#0ea5e9" },
-  search_products:         { icon: "🔍", label: "Product Search",          color: "#0ea5e9" },
-  get_product:             { icon: "🏷",  label: "Product Details",        color: "#0ea5e9" },
-  update_product_price:    { icon: "💲", label: "Updating Price",          color: "#f59e0b" },
-  set_product_active:      { icon: "🔄", label: "Toggling Product",        color: "#f59e0b" },
-  update_product_name:     { icon: "✏",  label: "Renaming Product",        color: "#f59e0b" },
-  get_stock_levels:        { icon: "📦", label: "Stock Levels",            color: "#22c55e" },
-  get_low_stock:           { icon: "⚠",  label: "Low Stock Check",         color: "#f59e0b" },
-  get_cash_summary:        { icon: "💵", label: "Cash Drawer",             color: "#10b981" },
-  get_recent_refunds:      { icon: "↩",  label: "Recent Refunds",          color: "#8b5cf6" },
-  get_audit_log:           { icon: "📋", label: "Audit Log",               color: "#ef4444" },
-  get_sync_status:         { icon: "☁",  label: "Sync Status",             color: "#0ea5e9" },
-  get_daily_report:        { icon: "📅", label: "Daily Report",            color: "#6366f1" },
-  get_date_range_report:   { icon: "📈", label: "Date Range Report",       color: "#6366f1" },
-  get_top_products:        { icon: "🏆", label: "Top Products",            color: "#f59e0b" },
-  get_shift_history:       { icon: "🕐", label: "Shift History",           color: "#8b5cf6" },
-  list_categories:         { icon: "📂", label: "Categories",              color: "#0ea5e9" },
-  list_safe_drops:         { icon: "💰", label: "Safe Drops",              color: "#10b981" },
-  list_no_sale_events:     { icon: "🔒", label: "No-Sale Events",          color: "#ef4444" },
-  get_audit_chain_status:  { icon: "🔗", label: "Audit Chain",             color: "#ef4444" },
-  get_hourly_sales:        { icon: "⏰", label: "Hourly Sales",            color: "#6366f1" },
-  get_sales_by_category:   { icon: "📊", label: "Sales by Category",      color: "#6366f1" },
-  get_cashier_performance: { icon: "👤", label: "Cashier Performance",     color: "#8b5cf6" },
-  update_reorder_point:    { icon: "📦", label: "Update Reorder Point",    color: "#f59e0b" },
-  create_product:          { icon: "➕", label: "Creating Product",        color: "#f59e0b" },
-  list_customers:          { icon: "👥", label: "Customer List",           color: "#8b5cf6" },
-  get_customer:            { icon: "👤", label: "Customer Details",        color: "#8b5cf6" },
-  create_customer:         { icon: "👤", label: "Creating Customer",       color: "#f59e0b" },
-  update_customer:         { icon: "✏",  label: "Updating Customer",       color: "#f59e0b" },
-  list_deliveries:         { icon: "🚚", label: "Deliveries",              color: "#f59e0b" },
-  list_users:              { icon: "👥", label: "Users",                   color: "#8b5cf6" },
-  get_stock_movements:     { icon: "📦", label: "Stock Movements",         color: "#22c55e" },
-  get_tax_report:          { icon: "🧾", label: "Tax Report",              color: "#6366f1" },
-  search_market_prices:    { icon: "🌐", label: "Market Prices",           color: "#0ea5e9" },
-  get_exchange_rates:      { icon: "💱", label: "Exchange Rates",          color: "#0ea5e9" },
-  get_prayer_times:        { icon: "🕌", label: "Prayer Times",            color: "#0ea5e9" },
-  get_bahrain_holidays:    { icon: "🇧🇭", label: "Bahrain Holidays",       color: "#0ea5e9" },
-  list_roles:               { icon: "👥", label: "Roles",                    color: "#8b5cf6" },
-  list_tax_rules:           { icon: "🧾", label: "Tax Rules",                color: "#6366f1" },
-  get_store_settings:       { icon: "🏪", label: "Store Settings",           color: "#6366f1" },
-  get_business_rules:       { icon: "⚙", label: "Business Rules",           color: "#6366f1" },
-  list_devices:             { icon: "🖥", label: "Devices",                  color: "#0ea5e9" },
-  get_session_timeout:      { icon: "🕐", label: "Session Timeout",          color: "#8b5cf6" },
-  create_category:          { icon: "📂", label: "Creating Category",        color: "#f59e0b" },
-  update_category:          { icon: "📂", label: "Updating Category",        color: "#f59e0b" },
-  create_user:              { icon: "👤", label: "Creating User",            color: "#f59e0b" },
-  update_user:              { icon: "👤", label: "Updating User",            color: "#f59e0b" },
-  create_tax_rule:          { icon: "🧾", label: "Creating Tax Rule",        color: "#f59e0b" },
-  update_tax_rule:          { icon: "🧾", label: "Updating Tax Rule",        color: "#f59e0b" },
-  update_product_full:      { icon: "🏷", label: "Updating Product",         color: "#f59e0b" },
-  update_store_settings:    { icon: "🏪", label: "Updating Store",           color: "#f59e0b" },
-  update_business_rules:    { icon: "⚙", label: "Updating Business Rules",  color: "#f59e0b" },
-  confirm_delivery_payment: { icon: "🚚", label: "Confirming Payment",       color: "#f59e0b" },
-  cancel_delivery:          { icon: "🚚", label: "Cancelling Delivery",      color: "#ef4444" },
-  backup_database:          { icon: "💾", label: "Database Backup",          color: "#f59e0b" },
-  smart_barcode_lookup:      { icon: "📷", label: "Scanning Barcode",          color: "#0ea5e9" },
-  compare_store_prices:      { icon: "🏬", label: "Price Comparison",          color: "#0ea5e9" },
-  bahrain_market_price_check:{ icon: "🛒", label: "Market Check",              color: "#0ea5e9" },
+// T16: colors now reference CSS design-system tokens (no more hardcoded hex).
+// T17: icon field replaced with Lucide React component references.
+const TOOL_META: Record<string, { Icon: React.FC<LucideProps>; label: string; color: string }> = {
+  get_today_summary:          { Icon: BarChart2,       label: "Today's Summary",          color: "var(--ai-indigo)" },
+  list_products:              { Icon: Tag,             label: "Product List",             color: "var(--info)"      },
+  search_products:            { Icon: Search,          label: "Product Search",           color: "var(--info)"      },
+  get_product:                { Icon: Tag,             label: "Product Details",          color: "var(--info)"      },
+  update_product_price:       { Icon: Pencil,          label: "Updating Price",           color: "var(--warning)"   },
+  set_product_active:         { Icon: RefreshCw,       label: "Toggling Product",         color: "var(--warning)"   },
+  update_product_name:        { Icon: Pencil,          label: "Renaming Product",         color: "var(--warning)"   },
+  get_stock_levels:           { Icon: Package,         label: "Stock Levels",             color: "var(--success)"   },
+  get_low_stock:              { Icon: AlertTriangle,   label: "Low Stock Check",          color: "var(--warning)"   },
+  get_cash_summary:           { Icon: Banknote,        label: "Cash Drawer",              color: "var(--success)"   },
+  get_recent_refunds:         { Icon: Undo2,           label: "Recent Refunds",           color: "var(--ai-purple)" },
+  get_audit_log:              { Icon: ClipboardList,   label: "Audit Log",                color: "var(--error)"     },
+  get_sync_status:            { Icon: Cloud,           label: "Sync Status",              color: "var(--info)"      },
+  get_daily_report:           { Icon: CalendarDays,    label: "Daily Report",             color: "var(--ai-indigo)" },
+  get_date_range_report:      { Icon: TrendingUp,      label: "Date Range Report",        color: "var(--ai-indigo)" },
+  get_top_products:           { Icon: Trophy,          label: "Top Products",             color: "var(--warning)"   },
+  get_shift_history:          { Icon: Clock,           label: "Shift History",            color: "var(--ai-purple)" },
+  list_categories:            { Icon: FolderOpen,      label: "Categories",               color: "var(--info)"      },
+  list_safe_drops:            { Icon: Wallet,          label: "Safe Drops",               color: "var(--success)"   },
+  list_no_sale_events:        { Icon: Lock,            label: "No-Sale Events",           color: "var(--error)"     },
+  get_audit_chain_status:     { Icon: Link,            label: "Audit Chain",              color: "var(--error)"     },
+  get_hourly_sales:           { Icon: AlarmClock,      label: "Hourly Sales",             color: "var(--ai-indigo)" },
+  get_sales_by_category:      { Icon: BarChart2,       label: "Sales by Category",        color: "var(--ai-indigo)" },
+  get_cashier_performance:    { Icon: User,            label: "Cashier Performance",      color: "var(--ai-purple)" },
+  update_reorder_point:       { Icon: Package,         label: "Update Reorder Point",     color: "var(--warning)"   },
+  create_product:             { Icon: PlusCircle,      label: "Creating Product",         color: "var(--warning)"   },
+  list_customers:             { Icon: Users,           label: "Customer List",            color: "var(--ai-purple)" },
+  get_customer:               { Icon: User,            label: "Customer Details",         color: "var(--ai-purple)" },
+  create_customer:            { Icon: User,            label: "Creating Customer",        color: "var(--warning)"   },
+  update_customer:            { Icon: Pencil,          label: "Updating Customer",        color: "var(--warning)"   },
+  list_deliveries:            { Icon: Truck,           label: "Deliveries",               color: "var(--warning)"   },
+  list_users:                 { Icon: Users,           label: "Users",                    color: "var(--ai-purple)" },
+  get_stock_movements:        { Icon: Package,         label: "Stock Movements",          color: "var(--success)"   },
+  get_tax_report:             { Icon: Receipt,         label: "Tax Report",               color: "var(--ai-indigo)" },
+  search_market_prices:       { Icon: Globe,           label: "Market Prices",            color: "var(--info)"      },
+  get_exchange_rates:         { Icon: ArrowLeftRight,  label: "Exchange Rates",           color: "var(--info)"      },
+  get_prayer_times:           { Icon: Building2,       label: "Prayer Times",             color: "var(--info)"      },
+  get_bahrain_holidays:       { Icon: Flag,            label: "Bahrain Holidays",         color: "var(--info)"      },
+  list_roles:                 { Icon: Users,           label: "Roles",                    color: "var(--ai-purple)" },
+  list_tax_rules:             { Icon: Receipt,         label: "Tax Rules",                color: "var(--ai-indigo)" },
+  get_store_settings:         { Icon: Store,           label: "Store Settings",           color: "var(--ai-indigo)" },
+  get_business_rules:         { Icon: Settings,        label: "Business Rules",           color: "var(--ai-indigo)" },
+  list_devices:               { Icon: Monitor,         label: "Devices",                  color: "var(--info)"      },
+  get_session_timeout:        { Icon: Clock,           label: "Session Timeout",          color: "var(--ai-purple)" },
+  create_category:            { Icon: FolderOpen,      label: "Creating Category",        color: "var(--warning)"   },
+  update_category:            { Icon: FolderOpen,      label: "Updating Category",        color: "var(--warning)"   },
+  create_user:                { Icon: User,            label: "Creating User",            color: "var(--warning)"   },
+  update_user:                { Icon: User,            label: "Updating User",            color: "var(--warning)"   },
+  create_tax_rule:            { Icon: Receipt,         label: "Creating Tax Rule",        color: "var(--warning)"   },
+  update_tax_rule:            { Icon: Receipt,         label: "Updating Tax Rule",        color: "var(--warning)"   },
+  update_product_full:        { Icon: Tag,             label: "Updating Product",         color: "var(--warning)"   },
+  update_store_settings:      { Icon: Store,           label: "Updating Store",           color: "var(--warning)"   },
+  update_business_rules:      { Icon: Settings,        label: "Updating Business Rules",  color: "var(--warning)"   },
+  confirm_delivery_payment:   { Icon: Truck,           label: "Confirming Payment",       color: "var(--warning)"   },
+  cancel_delivery:            { Icon: Truck,           label: "Cancelling Delivery",      color: "var(--error)"     },
+  backup_database:            { Icon: Database,        label: "Database Backup",          color: "var(--warning)"   },
+  smart_barcode_lookup:       { Icon: QrCode,          label: "Scanning Barcode",         color: "var(--info)"      },
+  compare_store_prices:       { Icon: ShoppingCart,    label: "Price Comparison",         color: "var(--info)"      },
+  bahrain_market_price_check: { Icon: ShoppingCart,    label: "Market Check",             color: "var(--info)"      },
 };
 
 function toolMeta(name: string) {
   return TOOL_META[name] ?? {
-    icon: "⚙",
+    Icon: Settings,
     label: name.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
-    color: "#6b7280",
+    color: "var(--text-dim)",
   };
 }
 
@@ -164,8 +175,8 @@ function ToolCallCard({ entry }: { entry: ToolCallEntry }) {
       {/* Colored left accent strip */}
       <div className="ai-tool-strip" style={{ background: meta.color }} />
 
-      {/* Icon */}
-      <div className="ai-tool-icon">{meta.icon}</div>
+      {/* Icon — Lucide component (T17) */}
+      <div className="ai-tool-icon"><meta.Icon size={16} /></div>
 
       {/* Text body */}
       <div className="ai-tool-body">
@@ -255,7 +266,7 @@ function LiveActivityBar({
           {phase === "thinking" && <span className="lab-status">Thinking…</span>}
           {phase === "tool" && meta && (
             <span className="lab-status">
-              <span className="lab-tool-icon">{meta.icon}</span>
+              <span className="lab-tool-icon"><meta.Icon size={14} /></span>
               {" Calling "}<strong>{meta.label}</strong>
             </span>
           )}

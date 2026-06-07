@@ -572,9 +572,18 @@ impl SyncWorker {
                     .execute(&self.pool)
                     .await;
                 }
-                // branch_id is NOT NULL locally but absent from central schema.
-                // Provide fallback from active branch so fresh INSERTs don't fail.
-                if !obj.contains_key("branch_id") {
+
+                // Normalise the incoming row before any INSERT:
+                // 1. branch_id: NOT NULL locally but absent from central Supabase schema.
+                //    Provide fallback from the active branch so fresh INSERTs don't fail.
+                // 2. pin_hash: NOT NULL locally but absent/null in Supabase (local-only
+                //    secret). Use a sentinel that cannot match any real argon2id hash so
+                //    the row can be inserted for FK integrity without granting login access.
+                //    The ON CONFLICT path excludes pin_hash from SET so existing local
+                //    credentials are always preserved.
+                let mut obj_norm = obj.clone();
+
+                if !obj_norm.contains_key("branch_id") {
                     let fallback_branch: Option<String> = sqlx::query_scalar(
                         "SELECT branch_id FROM branches WHERE is_active=1 LIMIT 1",
                     )
@@ -582,14 +591,22 @@ impl SyncWorker {
                     .await
                     .ok()
                     .flatten();
-                    if let Some(ref b) = fallback_branch {
-                        let mut obj_mut = obj.clone();
-                        obj_mut.insert("branch_id".to_string(), Value::String(b.clone()));
-                        self.apply_lww("users", "user_id", &obj_mut, &["pin_hash"]).await?;
-                        return Ok(());
+                    if let Some(b) = fallback_branch {
+                        obj_norm.insert("branch_id".to_string(), Value::String(b));
                     }
                 }
-                self.apply_lww("users", "user_id", obj, &["pin_hash"]).await
+
+                if !obj_norm.contains_key("pin_hash")
+                    || obj_norm.get("pin_hash") == Some(&Value::Null)
+                {
+                    // Sentinel: valid UTF-8, not a real argon2id hash — cannot match any PIN.
+                    obj_norm.insert(
+                        "pin_hash".to_string(),
+                        Value::String("*REMOTE-ONLY*".to_string()),
+                    );
+                }
+
+                self.apply_lww("users", "user_id", &obj_norm, &["pin_hash"]).await
             }
 
             // ── Customers (LWW + loyalty_points GREATEST) ────────────────────

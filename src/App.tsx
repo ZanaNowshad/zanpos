@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import type { AppConfig, SessionUser, Shift } from "./types";
 import { DEVICE } from "./types";
-import { appConfigLoad, appConfigGetTimeout, shiftGetActive } from "./tauri/commands";
+import { appConfigLoad, appConfigGetTimeout, shiftGetActive, shiftOpen } from "./tauri/commands";
 import LoginScreen from "./pages/LoginScreen";
 import PosPage from "./pages/PosPage";
 import ShiftModal from "./components/ShiftModal";
@@ -124,7 +124,15 @@ export default function App() {
         setShift(active);
         setView("pos");
       } else {
-        setView("shift_open");
+        // T10: auto-open a 0-float shift so cashiers skip the ShiftModal step on cold start.
+        // Fall back to ShiftModal if the auto-open fails (e.g. UNIQUE conflict — T11).
+        try {
+          const opened = await shiftOpen(DEVICE.branch_id, DEVICE.device_id, user.user_id, 0);
+          setShift(opened);
+          setView("pos");
+        } catch {
+          setView("shift_open");
+        }
       }
     } catch {
       setView("shift_open");

@@ -270,15 +270,6 @@ pub async fn setup_wizard_complete(
         uid
     };
 
-    // Mark setup complete
-    sqlx::query(
-        "INSERT INTO app_config(key, value, updated_at) VALUES ('setup_complete','1',?)
-         ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at",
-    )
-    .bind(&now)
-    .execute(&state.db)
-    .await?;
-
     // Check if Supabase is already configured
     let sb_url: Option<String> =
         sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'supabase_url'")
@@ -292,6 +283,8 @@ pub async fn setup_wizard_complete(
         // The admin_setup_supabase command sets schema_migrated='1' after running
         // CENTRAL_SCHEMA_SQL via Management API. If this flag is missing, the central
         // RPC doesn't exist and every push will 404 — a silent dead-end (§7.1, §8).
+        // NOTE: this check runs BEFORE writing setup_complete='1' so that a failure
+        // here does not permanently lock the user out of retrying setup.
         let schema_migrated: Option<String> =
             sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'schema_migrated'")
                 .fetch_optional(&state.db)
@@ -299,9 +292,9 @@ pub async fn setup_wizard_complete(
                 .flatten();
         if schema_migrated.as_deref() != Some("1") {
             return Err(AppError::Permission(
-                "Supabase is configured but the central schema has not been migrated. \
-                 Re-run setup with a Personal Access Token to complete the one-time schema setup. \
-                 Without this, multi-terminal sync cannot work.".into(),
+                "Supabase is configured but the schema migration did not complete. \
+                 Go back to the Cloud step and reconnect with a valid Personal Access Token."
+                    .into(),
             ));
         }
 
@@ -371,6 +364,48 @@ pub async fn setup_wizard_complete(
         .bind(&now)
         .execute(&state.db)
         .await?;
+    }
+
+    // All checks passed — mark setup complete now (after Supabase validation, not before).
+    // Writing this before the schema_migrated check caused permanent lockout: a failed
+    // check would leave setup_complete='1' set, making every retry hit "already complete".
+    sqlx::query(
+        "INSERT INTO app_config(key, value, updated_at) VALUES ('setup_complete','1',?)
+         ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at",
+    )
+    .bind(&now)
+    .execute(&state.db)
+    .await?;
+
+    // Guard: the background run_once() triggered by adminSetupSupabase (Cloud step) may
+    // have pulled devices from Supabase and deactivated the local seed device via the
+    // device_code collision guard, leaving zero active devices. Reactivate it now so
+    // app_config_load can find a device for this first terminal.
+    let active_device_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE is_active = 1")
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0);
+    if active_device_count == 0 {
+        let candidate: Option<String> = sqlx::query_scalar(
+            "SELECT device_id FROM devices
+             WHERE device_code = 'POS01' OR device_id = '01JDEVICE0000000000000001'
+             ORDER BY created_at LIMIT 1",
+        )
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten();
+        if let Some(did) = candidate {
+            let _ = sqlx::query(
+                "UPDATE devices SET is_active = 1, status = 'online', updated_at = ?, sync_status = 'pending'
+                 WHERE device_id = ?",
+            )
+            .bind(&now)
+            .bind(&did)
+            .execute(&state.db)
+            .await;
+        }
     }
 
     // Return updated config with owner user_id so the frontend can

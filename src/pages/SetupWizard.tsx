@@ -324,7 +324,8 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
       return cfg;
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Setup failed — please try again");
-      setStep(6);
+      // Stay on step 7 — the existing {error && ...} div shows the message inline.
+      // Sending the user to step 6 hides the error and causes an infinite retry loop.
       return null;
     } finally {
       setLoading(false);

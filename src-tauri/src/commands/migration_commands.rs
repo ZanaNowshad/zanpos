@@ -856,11 +856,11 @@ pub async fn migration_execute(
                 "rows_imported": total_rows_imported,
             })
             .to_string();
-            let _ = audit_hash::insert_audit_entry(
+            if let Err(e) = audit_hash::insert_audit_entry(
                 &pool, "MIGRATION_EXECUTED", "migration", &migration_id,
                 &actor_user_id, "user", &device_id, &branch_id,
                 None, Some(&after), None,
-            ).await;
+            ).await { tracing::error!("AUDIT WRITE FAILED [MIGRATION_EXECUTED]: {:?}", e); }
         }
     }
 

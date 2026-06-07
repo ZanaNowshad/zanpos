@@ -314,7 +314,7 @@ pub async fn admin_create_product(
 
     if input.track_inventory {
         let branch_id = active_branch_id(&state).await?;
-        let sl_id = format!("SL-{}", product_id);
+        let sl_id = format!("SL-{}-{}", product_id, branch_id);
         sqlx::query(
             "INSERT OR IGNORE INTO stock_levels
                (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at)
@@ -340,11 +340,11 @@ pub async fn admin_create_product(
         "category_id": input.category_id, "sku": input.sku,
         "price_minor": input.price_minor, "is_active": true,
     }).to_string();
-    let _ = audit_hash::insert_audit_entry(
+    if let Err(e) = audit_hash::insert_audit_entry(
         &state.db, "PRODUCT_CREATED", "product", &product_id,
         &input.created_by_user_id, "user", &device_id, &branch_id,
         None, Some(&after), None,
-    ).await;
+    ).await { tracing::error!("AUDIT WRITE FAILED [PRODUCT_CREATED]: {:?}", e); }
 
     // Return the newly created product
     let sql = format!("{} WHERE p.product_id = ?", ADMIN_PRODUCT_QUERY);
@@ -467,7 +467,7 @@ pub async fn admin_update_product(
 
     if input.track_inventory {
         let branch_id = active_branch_id(&state).await?;
-        let sl_id = format!("SL-{}", input.product_id);
+        let sl_id = format!("SL-{}-{}", input.product_id, branch_id);
         sqlx::query(
             "INSERT OR IGNORE INTO stock_levels
                (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at)
@@ -492,11 +492,11 @@ pub async fn admin_update_product(
         "category_id": input.category_id, "sku": input.sku,
         "price_minor": input.price_minor, "is_active": input.is_active,
     }).to_string();
-    let _ = audit_hash::insert_audit_entry(
+    if let Err(e) = audit_hash::insert_audit_entry(
         &state.db, "PRODUCT_UPDATED", "product", &input.product_id,
         &input.updated_by_user_id, "user", &device_id, &branch_id_str,
         None, Some(&after), None,
-    ).await;
+    ).await { tracing::error!("AUDIT WRITE FAILED [PRODUCT_UPDATED]: {:?}", e); }
 
     let sql = format!("{} WHERE p.product_id = ?", ADMIN_PRODUCT_QUERY);
     let row = sqlx::query(&sql)
@@ -600,66 +600,23 @@ pub async fn admin_save_tax_rule(
     let is_tax_update = input.tax_rule_id.is_some();
 
     let tax_rule_id = if let Some(ref id) = input.tax_rule_id {
-        // H-6: Check if rate or inclusive changed — tax rules are append-only
-        let existing = sqlx::query(
-            "SELECT rate_basis_points, inclusive FROM tax_rules WHERE tax_rule_id = ?",
+        // Update existing tax rule in-place — sale_items.tax_rule_snapshot
+        // preserves the rate that was used at sale time, so in-place
+        // updates don't corrupt historical data.
+        sqlx::query(
+            "UPDATE tax_rules SET name=?, rate_basis_points=?, inclusive=?, is_active=?,
+             updated_at=?, version = version + 1, sync_status='pending'
+             WHERE tax_rule_id=?",
         )
+        .bind(&name)
+        .bind(rate_basis_points)
+        .bind(input.inclusive as i64)
+        .bind(input.is_active as i64)
+        .bind(&now)
         .bind(id)
-        .fetch_optional(&state.db)
+        .execute(&state.db)
         .await?;
-
-        let rate_changed = existing.as_ref().map_or(true, |r| {
-            let old_rate: i64 = r.get("rate_basis_points");
-            let old_inclusive: i64 = r.get("inclusive");
-            old_rate != rate_basis_points || old_inclusive != (input.inclusive as i64)
-        });
-
-        if rate_changed {
-            // Close old rule by setting effective_to
-            sqlx::query(
-                "UPDATE tax_rules SET effective_to = ?, updated_at = ?, sync_status = 'pending' WHERE tax_rule_id = ?",
-            )
-            .bind(&now)
-            .bind(&now)
-            .bind(id)
-            .execute(&state.db)
-            .await?;
-
-            // sync_status='pending' is set by column DEFAULT — sync worker picks it up
-
-            // Insert new rule with new rate/inclusive (append-only pattern)
-            let new_id = Ulid::new().to_string();
-            sqlx::query(
-                "INSERT INTO tax_rules
-                   (tax_rule_id, name, rate_basis_points, inclusive, is_active,
-                    effective_from, created_at, updated_at, version)
-                 VALUES (?,?,?,?,?,?,?,?,1)",
-            )
-            .bind(&new_id)
-            .bind(&name)
-            .bind(rate_basis_points)
-            .bind(input.inclusive as i64)
-            .bind(input.is_active as i64)
-            .bind(&now)
-            .bind(&now)
-            .bind(&now)
-            .execute(&state.db)
-            .await?;
-            new_id
-        } else {
-            // Non-rate change: normal UPDATE (name, is_active only)
-            sqlx::query(
-                "UPDATE tax_rules SET name=?, is_active=?, updated_at=?, sync_status='pending'
-                 WHERE tax_rule_id=?",
-            )
-            .bind(&name)
-            .bind(input.is_active as i64)
-            .bind(&now)
-            .bind(id)
-            .execute(&state.db)
-            .await?;
-            id.clone()
-        }
+        id.clone()
     } else {
         // Create new
         let id = Ulid::new().to_string();
@@ -711,11 +668,11 @@ pub async fn admin_save_tax_rule(
         "rate_basis_points": result.rate_basis_points, "inclusive": result.inclusive,
         "is_active": result.is_active,
     }).to_string();
-    let _ = audit_hash::insert_audit_entry(
+    if let Err(e) = audit_hash::insert_audit_entry(
         &state.db, tax_event, "tax_rule", &result.tax_rule_id,
         &input.actor_user_id, "user", &device_id, &branch_id,
         None, Some(&after), None,
-    ).await;
+    ).await { tracing::error!("AUDIT WRITE FAILED [TAX_RULE]: {:?}", e); }
 
     Ok(result)
 }
@@ -803,11 +760,11 @@ pub async fn admin_save_category(
         "sort_order": result.sort_order, "is_active": result.is_active,
         "parent_category_id": result.parent_category_id,
     }).to_string();
-    let _ = audit_hash::insert_audit_entry(
+    if let Err(e) = audit_hash::insert_audit_entry(
         &state.db, event, "category", &result.category_id,
         &input.actor_user_id, "user", &device_id, &branch_id,
         None, Some(&after), None,
-    ).await;
+    ).await { tracing::error!("AUDIT WRITE FAILED [CATEGORY]: {:?}", e); }
 
     Ok(result)
 }
@@ -1147,7 +1104,7 @@ pub async fn admin_bulk_import_products(
 
         // Init stock level
         if track {
-            let sl_id = format!("SL-{}", product_id);
+        let sl_id = format!("SL-{}-{}", product_id, branch_id);
             let _ = sqlx::query(
                 "INSERT OR IGNORE INTO stock_levels
                    (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at)
@@ -1301,11 +1258,11 @@ pub async fn admin_create_user(
         "username": result.username, "role_id": result.role_id,
         "is_active": result.is_active,
     }).to_string();
-    let _ = audit_hash::insert_audit_entry(
+    if let Err(e) = audit_hash::insert_audit_entry(
         &state.db, "USER_CREATED", "user", &result.user_id,
         &input.actor_user_id, "user", &device_id, &branch_id,
         None, Some(&after), None,
-    ).await;
+    ).await { tracing::error!("AUDIT WRITE FAILED [USER_CREATED]: {:?}", e); }
 
     Ok(result)
 }
@@ -1347,11 +1304,11 @@ pub async fn product_barcode_add(
     let after = serde_json::json!({
         "barcode_id": barcode_id, "product_id": product_id, "barcode": barcode,
     }).to_string();
-    let _ = audit_hash::insert_audit_entry(
+    if let Err(e) = audit_hash::insert_audit_entry(
         &state.db, "BARCODE_ADDED", "product", &product_id,
         &actor_user_id, "user", &device_id, &branch_id,
         None, Some(&after), None,
-    ).await;
+    ).await { tracing::error!("AUDIT WRITE FAILED [BARCODE_ADDED]: {:?}", e); }
     // Also re-enqueue the product so other terminals pick up the new barcode field
     // (product_barcodes is a separate table but barcode on products is the primary one)
     drop((device_id, branch_id));
@@ -1402,11 +1359,11 @@ pub async fn product_barcode_remove(
         let after = serde_json::json!({
             "barcode_id": barcode_id, "product_id": product_id, "barcode": barcode_val, "removed": true,
         }).to_string();
-        let _ = audit_hash::insert_audit_entry(
+        if let Err(e) = audit_hash::insert_audit_entry(
             &state.db, "BARCODE_REMOVED", "product", &product_id,
             &actor_user_id, "user", &device_id, &branch_id,
             None, Some(&after), None,
-        ).await;
+        ).await { tracing::error!("AUDIT WRITE FAILED [BARCODE_REMOVED]: {:?}", e); }
     }
 
     Ok(())
@@ -1521,11 +1478,11 @@ pub async fn admin_update_user(
         "role_id": result.role_id, "is_active": result.is_active,
         "pin_changed": input.pin.is_some(),
     }).to_string();
-    let _ = audit_hash::insert_audit_entry(
+    if let Err(e) = audit_hash::insert_audit_entry(
         &state.db, "USER_UPDATED", "user", &result.user_id,
         &input.actor_user_id, "user", &device_id, &branch_id,
         None, Some(&after), None,
-    ).await;
+    ).await { tracing::error!("AUDIT WRITE FAILED [USER_UPDATED]: {:?}", e); }
 
     Ok(result)
 }

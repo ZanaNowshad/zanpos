@@ -153,11 +153,11 @@ pub async fn customer_create(
         "customer_id": customer_id, "name": input.name.trim(),
         "phone": input.phone, "email": input.email,
     }).to_string();
-    let _ = audit_hash::insert_audit_entry(
+    if let Err(e) = audit_hash::insert_audit_entry(
         &state.db, "CUSTOMER_CREATED", "customer", &customer_id,
         &input.actor_user_id, "user", &device_id, &branch_id,
         None, Some(&after), None,
-    ).await;
+    ).await { tracing::error!("AUDIT WRITE FAILED [CUSTOMER_CREATED]: {:?}", e); }
 
     Ok(map_row(&row))
 }
@@ -176,7 +176,7 @@ pub async fn customer_update(
     let now = chrono::Utc::now().to_rfc3339();
     let affected = sqlx::query(
         "UPDATE customers
-         SET name=?, phone=?, email=?, notes=?, updated_at=?
+         SET name=?, phone=?, email=?, notes=?, updated_at=?, sync_status = 'pending'
          WHERE customer_id=?",
     )
     .bind(input.name.trim())

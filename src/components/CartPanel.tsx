@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { Cart, CartLine } from "../types";
 import { formatMoney } from "../money";
 import { DEVICE } from "../types";
@@ -33,7 +33,19 @@ export default memo(function CartPanel({
   paymentStarted, recentLineId, onBumpLine, compact,
 }: Props) {
   const [editingLine, setEditingLine] = useState<CartLine | null>(null);
+  const [saleFlash, setSaleFlash] = useState(false);
   const activeLines = cart.lines.filter(l => !l.voided);
+
+  // T23: flash success when cart transitions from items → empty (sale completed)
+  const prevLineCnt = useRef(activeLines.length);
+  useEffect(() => {
+    if (prevLineCnt.current > 0 && activeLines.length === 0) {
+      setSaleFlash(true);
+      const t = setTimeout(() => setSaleFlash(false), 750);
+      return () => clearTimeout(t);
+    }
+    prevLineCnt.current = activeLines.length;
+  });
   const fmt = (n: number) => `${DEVICE.currency} ${formatMoney(n, DEVICE.currency_exponent)}`;
   const grossTotal = activeLines.reduce((s, l) => s + l.line_total_minor, 0);
   const totalDiscount = cart.bill_discount_minor + activeLines.reduce((s, l) => s + l.line_discount_minor, 0);
@@ -42,7 +54,7 @@ export default memo(function CartPanel({
 
 
   return (
-    <div className={`cart-panel ${activeLines.length > 0 ? "cart-panel-active" : "cart-panel-idle"} ${isPaymentLocked ? "cart-panel-locked" : ""}`}>
+    <div className={`cart-panel ${activeLines.length > 0 ? "cart-panel-active" : "cart-panel-idle"} ${isPaymentLocked ? "cart-panel-locked" : ""}${saleFlash ? " cart-sale-flash" : ""}`}>
       {/* Lines */}
       <div className="cart-lines">
         {isPaymentLocked && (

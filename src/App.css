@@ -1326,6 +1326,14 @@ kbd.kbd-primary {
 /* Locked cart */
 .cart-panel-locked .cart-lines { opacity: 0.6; pointer-events: none; }
 
+/* T23: Sale success flash — pulses green glow when cart clears after payment */
+@keyframes sale-flash-pulse {
+  0%   { box-shadow: 0 0 0 0   var(--success); }
+  40%  { box-shadow: 0 0 0 6px rgba(34,197,94,0.5); }
+  100% { box-shadow: 0 0 0 0   var(--success); }
+}
+.cart-sale-flash { animation: sale-flash-pulse 0.75s ease-out forwards; }
+
 /* ── Numpad panel (right column) ── */
 .numpad-panel {
   display: flex;
@@ -1505,7 +1513,7 @@ kbd.kbd-primary {
 /* keys stretch to fill their grid cell — no fixed px height */
 .numpad-panel .dialpad-key {
   height: unset;
-  min-height: 44px; /* touch minimum */
+  min-height: 56px; /* T25: WCAG AA touch target for 15-inch touchscreen */
   font-size: 1.3rem;
   font-weight: 700;
   border-radius: var(--radius-sm);

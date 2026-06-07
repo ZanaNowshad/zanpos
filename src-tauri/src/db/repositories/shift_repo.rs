@@ -218,6 +218,9 @@ pub async fn open_shift(
     // for Bahrain (UTC+3) even when a shift is opened after midnight local time.
     let business_date = chrono::Local::now().format("%Y-%m-%d").to_string();
 
+    // T11: map UNIQUE constraint violation to a friendly Conflict error.
+    // With T01's partial index, a concurrent open_shift that slipped past the
+    // SELECT check above will fail here instead of creating a ghost shift.
     sqlx::query(
         "INSERT INTO shifts (shift_id, branch_id, device_id, origin_device_id, cashier_user_id, opened_at,
                              opening_cash_minor, business_date, status, sync_status, created_at, updated_at)
@@ -227,7 +230,14 @@ pub async fn open_shift(
     .bind(cashier_user_id).bind(&now).bind(opening_cash_minor)
     .bind(&business_date).bind(&now).bind(&now)
     .execute(pool)
-    .await?;
+    .await
+    .map_err(|e| {
+        if e.to_string().to_lowercase().contains("unique") {
+            AppError::Conflict("A shift is already open for this device — please close it before opening a new one.".into())
+        } else {
+            AppError::from(e)
+        }
+    })?;
 
     let row = sqlx::query(
         "SELECT s.shift_id, s.branch_id, s.device_id, s.cashier_user_id,
@@ -356,7 +366,8 @@ pub async fn close_shift(
 
     let affected = sqlx::query(
         "UPDATE shifts SET status = 'closed', closed_at = ?, counted_cash_minor = ?,
-         expected_cash_minor = ?, cash_difference_minor = ?, close_notes = ?, updated_at = ?
+         expected_cash_minor = ?, cash_difference_minor = ?, close_notes = ?, updated_at = ?,
+         sync_status = 'pending', version = version + 1
          WHERE shift_id = ? AND status = 'open'",
     )
     .bind(&now)

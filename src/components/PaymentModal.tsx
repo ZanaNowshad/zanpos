@@ -205,9 +205,8 @@ export default function PaymentModal({
       : undefined;
     onConfirm(payments, selectedCust?.customer_id, delivery, selectedCust ?? undefined);
   };
-  // Keep ref current so Enter-key handler always calls the latest handleConfirm (T03)
+  // Keep ref current so Enter-key handler always calls the latest handleConfirm
   useEffect(() => { handleConfirmRef.current = handleConfirm; });
-  // T03: Enter / NumpadEnter confirms payment when the form is valid
   useEffect(() => {
     const onEnterKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
@@ -234,16 +233,14 @@ export default function PaymentModal({
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onCancel()}>
       <div className="pm-shell" role="dialog" aria-modal="true" aria-labelledby="pm-dialog-title" ref={containerRef}>
 
-        {/* ── LEFT: Main payment area ────────────────────────────────── */}
+        {/* ── PANEL 1: Payment type + amounts + change ─────────────────── */}
         <div className="pm-left">
 
-          {/* Total — big and clear */}
           <div className="pm-header">
             <span className="pm-title">Checkout</span>
-            <span className="pm-total-badge">{DEVICE.currency} {fmt(netTotal)}</span>
+            <span id="pm-dialog-title" className="pm-total-badge">{DEVICE.currency} {fmt(netTotal)}</span>
           </div>
 
-          {/* Method selector — compact icon bar */}
           <div className="pm-methods">
             {METHODS.map(m => (
               <button
@@ -257,7 +254,6 @@ export default function PaymentModal({
             ))}
           </div>
 
-          {/* Amount — the big touch target */}
           <div
             className={`pm-amount-box${activeField?.kind === "amount" ? " pm-field-active" : ""}`}
             onClick={() => setActiveField({ kind: "amount", lineId: mainLine.id })}
@@ -269,7 +265,6 @@ export default function PaymentModal({
             </span>
           </div>
 
-          {/* Tendered — only for cash, shown inline */}
           {mainLine.method === "cash" && (
             <div
               className={`pm-amount-box pm-tendered-box${activeField?.kind === "tendered" ? " pm-field-active" : ""}`}
@@ -280,13 +275,16 @@ export default function PaymentModal({
                 {mainLine.tenderedStr || mainLine.amountStr || "0"}
                 {activeField?.kind === "tendered" && <span className="pm-cursor">|</span>}
               </span>
-              {change > 0 && (
-                <span className="pm-change-badge">+ {DEVICE.currency} {fmt(change)}</span>
-              )}
             </div>
           )}
 
-          {/* Quick round amounts — cash only */}
+          {/* Change pill — prominent green bar below tendered */}
+          {change > 0 && (
+            <div className="pm-change-pill">
+              Change: {DEVICE.currency} {fmt(change)}
+            </div>
+          )}
+
           {mainLine.method === "cash" && (
             <div className="pm-quick">
               <button className="pm-quick-btn pm-quick-exact" onClick={() => applyQuick(netTotal)}>
@@ -300,7 +298,7 @@ export default function PaymentModal({
             </div>
           )}
 
-          {/* Split payment — secondary line */}
+          {/* Split payment lines */}
           {showSplit && lines.length > 1 && (
             <div className="pm-split-section">
               {lines.slice(1).map(line => (
@@ -333,33 +331,41 @@ export default function PaymentModal({
             </div>
           )}
 
-          {/* Bottom bar: remaining + actions + accordions */}
-          <div className="pm-bottom-bar">
-            {/* Remaining / change indicator */}
+          {/* Due / change bar — only shown when split active */}
+          {showSplit && (
             <div className={`pm-remaining${remainingMinor < 0 ? " pm-remaining-change" : remainingMinor === 0 ? " pm-remaining-ok" : ""}`}>
               {remainingMinor > 0 ? `Due: ${DEVICE.currency} ${fmt(remainingMinor)}` :
                remainingMinor < 0 ? `Change: ${DEVICE.currency} ${fmt(-remainingMinor)}` :
-               "Fully paid"}
+               "✓ Fully paid"}
             </div>
+          )}
+        </div>
 
-            {/* Tiny action row */}
-            <div className="pm-extras">
-              {!showSplit && (
-                <button className="pm-extra-btn" onClick={() => { setShowSplit(true); setLines(p => [...p, mkLine("card")]); }}>
-                  + Split
-                </button>
-              )}
-              <button className={`pm-extra-btn${selectedCust ? " pm-extra-active" : ""}`} onClick={() => setShowCust(v => !v)}>
-                👤 {selectedCust ? selectedCust.name.split(" ")[0] : "Customer"}
-              </button>
-              <button className={`pm-extra-btn${showDelivery ? " pm-extra-active" : ""}`} onClick={() => setShowDelivery(v => !v)}>
-                🛵 Delivery
-              </button>
-            </div>
+        {/* ── PANEL 2: Customer + Delivery details ─────────────────────── */}
+        <div className="pm-mid">
+          <div className="pm-mid-title">Options</div>
 
-            {/* Customer search — collapsible */}
+          {/* Split payment toggle */}
+          {!showSplit && (
+            <button
+              className="pm-split-toggle"
+              onClick={() => { setShowSplit(true); setLines(p => [...p, mkLine("card")]); }}
+            >
+              + Split Payment
+            </button>
+          )}
+
+          {/* Customer section */}
+          <div className="pm-section">
+            <button
+              className={`pm-section-hdr${showCust ? " pm-section-hdr-open" : ""}${selectedCust ? " pm-section-hdr-active" : ""}`}
+              onClick={() => setShowCust(v => !v)}
+            >
+              <span>👤 {selectedCust ? selectedCust.name.split(" ")[0] : "Customer"}</span>
+              <span className="pm-chevron">{showCust ? "▲" : "▼"}</span>
+            </button>
             {showCust && (
-              <div className="pm-cust-panel">
+              <div className="pm-section-body">
                 {selectedCust ? (
                   <div className="pm-cust-chip">
                     {selectedCust.name}{selectedCust.phone ? ` · ${selectedCust.phone}` : ""}
@@ -369,7 +375,7 @@ export default function PaymentModal({
                 ) : (
                   <input
                     className="pm-cust-search"
-                    placeholder="Search customer name or phone…"
+                    placeholder="Search name or phone…"
                     value={custSearch}
                     onChange={e => { setCustSearch(e.target.value); if (!e.target.value) setShowCustDrop(false); }}
                     onBlur={() => setTimeout(() => setShowCustDrop(false), 180)}
@@ -388,10 +394,19 @@ export default function PaymentModal({
                 )}
               </div>
             )}
+          </div>
 
-            {/* Delivery form — collapsible */}
+          {/* Delivery section */}
+          <div className="pm-section">
+            <button
+              className={`pm-section-hdr${showDelivery ? " pm-section-hdr-open pm-section-hdr-active" : ""}`}
+              onClick={() => setShowDelivery(v => !v)}
+            >
+              <span>🛵 Delivery</span>
+              <span className="pm-chevron">{showDelivery ? "▲" : "▼"}</span>
+            </button>
             {showDelivery && (
-              <div className="pm-delivery-panel">
+              <div className="pm-section-body pm-delivery-body">
                 <DeliveryForm
                   value={deliveryData}
                   onChange={setDeliveryData}
@@ -412,7 +427,7 @@ export default function PaymentModal({
           </div>
         </div>
 
-        {/* ── RIGHT: Dialpad + confirm ───────────────────────────────── */}
+        {/* ── PANEL 3: Numpad + save ──────────────────────────────────── */}
         <div className="pm-right">
           <div className="pm-field-indicator">{activeLabel}</div>
           <Dialpad onKey={handleDialpadKey} />
@@ -430,6 +445,7 @@ export default function PaymentModal({
             </button>
           </div>
         </div>
+
       </div>
     </div>
   );

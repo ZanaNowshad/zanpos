@@ -11364,7 +11364,7 @@ label {
 .pm-cust-drop-item:hover { background: var(--surface2); }
 .pm-cust-dd-phone { font-size: 0.72rem; color: var(--text-dim); }
 
-/* Delivery panel */
+/* Delivery panel (old accordion — kept for fallback) */
 .pm-delivery-panel {
   padding: 8px;
   border: 1px solid var(--border);
@@ -11372,6 +11372,106 @@ label {
   background: var(--bg);
   max-height: 200px;
   overflow-y: auto;
+}
+
+/* ── PANEL 2: Middle panel (Customer & Delivery) ─────────────────────────── */
+.pm-mid {
+  width: 240px;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 14px;
+  gap: 8px;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  overflow-y: auto;
+}
+.pm-mid-title {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+}
+/* Split toggle button inside Panel 2 */
+.pm-split-toggle {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1.5px dashed var(--border);
+  border-radius: 8px;
+  background: transparent;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  cursor: pointer;
+  text-align: center;
+  transition: border-color var(--t-fast), color var(--t-fast), background var(--t-fast);
+}
+.pm-split-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+/* Collapsible section cards */
+.pm-section {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.pm-section-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  background: var(--bg);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-align: left;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.pm-section-hdr:hover { background: var(--surface2); color: var(--text); }
+.pm-section-hdr-active { color: var(--accent); }
+.pm-section-hdr-open {
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg));
+  color: var(--accent);
+}
+.pm-chevron { font-size: 0.55rem; opacity: 0.45; }
+.pm-section-body {
+  padding: 8px 10px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+/* Delivery section body — scrollable for tall forms */
+.pm-delivery-body {
+  padding: 8px 10px;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  overflow-y: auto;
+  max-height: 340px;
+}
+/* Standalone change pill below Tendered in Panel 1 */
+.pm-change-pill {
+  background: rgba(34, 197, 94, 0.10);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  color: #22c55e;
+  font-size: 0.88rem;
+  font-weight: 800;
+  text-align: center;
+  padding: 8px 12px;
+  border-radius: 8px;
+  letter-spacing: -0.01em;
 }
 
 /* Field indicator (dialpad label) */

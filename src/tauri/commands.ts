@@ -36,6 +36,8 @@ import type {
   StockMovementRow,
   SupabaseStatus,
   SyncQueueItem,
+  SyncDiagnostics,
+  SyncTableStats,
   SyncStatus,
   TaxRuleRow,
   ThermalConfig,
@@ -102,6 +104,26 @@ export const setupJoinStore = (input: {
   device_code: string;
 }): Promise<AppConfig> =>
   invoke("setup_join_store", { input });
+
+export interface ConnectionTestResult {
+  connected: boolean;
+  store_name: string | null;
+  error: string | null;
+}
+
+/** Lightweight read-only probe: validates credentials and returns store name. */
+export const setupTestSupabaseConnection = (url: string, key: string): Promise<ConnectionTestResult> =>
+  invoke("setup_test_supabase_connection", { url, key });
+
+export interface PullSummary {
+  ok: boolean;
+  rows_pulled: number;
+  error: string | null;
+}
+
+/** Blocking initial catalog pull called after joinStore succeeds. */
+export const setupPullCatalog = (): Promise<PullSummary> =>
+  invoke("setup_pull_catalog");
 
 export const settingsGetBranch = (): Promise<BranchSettings> =>
   invoke("settings_get_branch");
@@ -776,6 +798,18 @@ export const syncQueueRetry = (actorUserId: string, syncEventId: string): Promis
 
 export const syncQueueDismiss = (actorUserId: string, syncEventId: string): Promise<void> =>
   invoke("sync_queue_dismiss", { id: syncEventId, actorUserId });
+
+export const syncQueueStats = (): Promise<SyncTableStats[]> =>
+  invoke("sync_queue_stats");
+
+export const syncDiagnostics = (): Promise<SyncDiagnostics> =>
+  invoke("sync_diagnostics");
+
+export const syncResetStuck = (actorUserId: string): Promise<string> =>
+  invoke("sync_reset_stuck", { actorUserId });
+
+export const syncBulkInitial = (): Promise<string> =>
+  invoke("sync_bulk_initial");
 
 // ─── Delivery commands ────────────────────────────────────────────────────────
 

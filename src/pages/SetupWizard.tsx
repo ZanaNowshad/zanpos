@@ -3,11 +3,12 @@ import type { AppConfig } from "../types";
 import {
   setupWizardComplete,
   setupJoinStore,
+  setupTestSupabaseConnection,
+  setupPullCatalog,
   adminSetupSupabase,
   setupSaveBenefitNumber,
   adminBulkImportCategories,
   adminBulkImportProducts,
-  adminListUsersAll,
 } from "../tauri/commands";
 import type { BulkCategoryRow, BulkProductRow, BulkImportResult } from "../tauri/commands";
 import WhatsAppQRModal from "../components/WhatsAppQRModal";
@@ -339,17 +340,7 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
     const cfg = await doSetupComplete();
     if (!cfg) return;
     setCompletedConfig(cfg);
-    // Resolve the newly-created owner user_id so CsvSection can call RBAC-gated commands.
-    // Match by username first; fall back to the first ACTIVE owner-role user (never a
-    // deactivated row) so CSV import always runs as a valid owner.
-    try {
-      const users = await adminListUsersAll("");
-      const owner =
-        users.find(u => u.username === ownerUsername.trim() && u.is_active) ??
-        users.find(u => u.is_active && u.role_name === "owner") ??
-        users.find(u => u.is_active);
-      setOwnerUserId(owner?.user_id ?? "");
-    } catch { /* non-critical — imports will fail gracefully if blank */ }
+    setOwnerUserId(cfg.owner_user_id ?? "");
     setStep(8);
   };
 
@@ -698,21 +689,38 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
 type JoinStep = "creds" | "device" | "joining" | "done";
 
 function JoinStoreWizard({ onComplete }: { onComplete: (cfg: AppConfig) => void }) {
-  const [step, setStep]       = useState<JoinStep>("creds");
-  const [sbUrl, setSbUrl]     = useState("");
-  const [sbKey, setSbKey]     = useState("");
+  const [step, setStep]           = useState<JoinStep>("creds");
+  const [sbUrl, setSbUrl]         = useState("");
+  const [sbKey, setSbKey]         = useState("");
+  const [storeName, setStoreName] = useState<string | null>(null);
   const [deviceName, setDeviceName] = useState("POS Terminal 2");
   const [deviceCode, setDeviceCode] = useState("POS02");
-  const [error, setError]     = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [error, setError]         = useState<string | null>(null);
+  const [loading, setLoading]     = useState(false);
+  const [pullStatus, setPullStatus] = useState<string | null>(null);
 
   const clearError = () => setError(null);
 
-  const handleValidateCreds = () => {
+  // GAP 1: real network test before advancing to device step
+  const handleValidateCreds = async () => {
     if (!sbUrl.trim()) { setError("Supabase URL is required"); return; }
     if (!sbKey.trim()) { setError("Service role key is required"); return; }
+    setLoading(true);
     setError(null);
-    setStep("device");
+    try {
+      const result = await setupTestSupabaseConnection(sbUrl.trim(), sbKey.trim());
+      if (!result.connected) {
+        setError(result.error ?? "Connection failed — check credentials and try again.");
+        return;
+      }
+      setStoreName(result.store_name);
+      setStep("device");
+    } catch (e: unknown) {
+      const raw = typeof e === "string" ? e : String(e);
+      setError(raw.length < 160 ? raw : "Connection check failed — check your internet and credentials.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleJoin = async () => {
@@ -721,6 +729,7 @@ function JoinStoreWizard({ onComplete }: { onComplete: (cfg: AppConfig) => void 
     setLoading(true);
     setError(null);
     setStep("joining");
+    setPullStatus("Connecting to store…");
     try {
       const cfg = await setupJoinStore({
         supabase_url: sbUrl.trim(),
@@ -728,6 +737,26 @@ function JoinStoreWizard({ onComplete }: { onComplete: (cfg: AppConfig) => void 
         device_name:  deviceName.trim(),
         device_code:  deviceCode.trim().toUpperCase(),
       });
+
+      // GAP 2: block until catalog is downloaded, then complete
+      setPullStatus("Pulling catalog from store…");
+      try {
+        const summary = await setupPullCatalog();
+        if (summary.rows_pulled > 0) {
+          setPullStatus(`✓ Downloaded ${summary.rows_pulled} items`);
+        } else if (!summary.ok) {
+          setPullStatus("⚠ Catalog pull incomplete — sync will retry automatically");
+        } else {
+          setPullStatus("✓ Connected");
+        }
+        // Small pause so user can read the confirmation
+        await new Promise(r => setTimeout(r, 800));
+      } catch {
+        // Non-fatal: catalog will sync on next background cycle
+        setPullStatus("⚠ Initial pull incomplete — sync will retry automatically");
+        await new Promise(r => setTimeout(r, 1200));
+      }
+
       onComplete(cfg);
     } catch (e: unknown) {
       // Clean up raw Supabase JSON errors for the cashier
@@ -777,16 +806,21 @@ function JoinStoreWizard({ onComplete }: { onComplete: (cfg: AppConfig) => void 
 
           {error && <div className="modal-error">{error}</div>}
           <div className="setup-actions">
-            <button className="setup-btn-primary" onClick={handleValidateCreds}>
-              Next →
+            <button className="setup-btn-primary" onClick={handleValidateCreds} disabled={loading}>
+              {loading ? "Checking…" : "Next →"}
             </button>
           </div>
         </div>
       )}
 
-      {(step === "device" || step === "joining") && (
+      {step === "device" && (
         <div className="setup-content">
           <h2 className="setup-title">Register This Terminal</h2>
+          {storeName && (
+            <p className="setup-body" style={{ color: "var(--success)", fontWeight: 500 }}>
+              ✓ Found store: {storeName}
+            </p>
+          )}
           <p className="setup-body">
             Give this terminal a unique name and short code. The code appears on receipts.
           </p>
@@ -822,7 +856,7 @@ function JoinStoreWizard({ onComplete }: { onComplete: (cfg: AppConfig) => void 
       {step === "joining" && (
         <div className="setup-content" style={{ textAlign: "center", padding: "40px 0" }}>
           <div className="app-splash-spinner" style={{ margin: "0 auto 20px" }} />
-          <p>Connecting to store and downloading catalog…</p>
+          <p>{pullStatus ?? "Connecting to store and downloading catalog…"}</p>
         </div>
       )}
     </div>

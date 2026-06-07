@@ -20,14 +20,14 @@ async fn active_device_id(state: &AppState) -> AppResult<String> {
 }
 
 /// Tables that participate in sync (in FK-safe push order).
-const SYNC_TABLES: &[&str] = &[
+pub const SYNC_TABLES: &[&str] = &[
     "categories", "tax_rules", "products", "devices", "users", "customers",
     "shifts", "sales", "sale_items", "payments", "refunds", "refund_items",
     "stock_movements", "audit_logs", "delivery_orders", "product_prices",
 ];
 
 /// Maps each sync table to its primary key column.
-fn table_pk(table: &str) -> &str {
+pub fn table_pk(table: &str) -> &str {
     match table {
         "categories" => "category_id",
         "tax_rules" => "tax_rule_id",
@@ -68,7 +68,7 @@ async fn count_pending(pool: &sqlx::SqlitePool) -> AppResult<i64> {
 #[tauri::command]
 pub async fn sync_status(state: State<'_, AppState>) -> Result<serde_json::Value, AppError> {
     let worker_state = state.sync_worker.state.lock().await;
-    let online = worker_state.online;
+    let worker_online = worker_state.online;
     let last_error = worker_state.last_error.clone();
     drop(worker_state);
 
@@ -87,6 +87,10 @@ pub async fn sync_status(state: State<'_, AppState>) -> Result<serde_json::Value
         url.as_deref().is_some_and(|u| !u.is_empty()) && !key.is_empty()
     };
 
+    // Online = Supabase is configured AND at least one cycle completed OR worker says so.
+    // Even before the first cycle, if Supabase is configured, we're ready to sync.
+    let online = worker_online || supabase_configured;
+
     // Read last successful sync from watermark table
     let last_sync: Option<String> = sqlx::query_scalar(
         "SELECT last_pushed_at FROM sync_watermark WHERE table_name = 'sales'",
@@ -96,6 +100,11 @@ pub async fn sync_status(state: State<'_, AppState>) -> Result<serde_json::Value
     .ok()
     .flatten();
 
+    let consecutive_failure_count = {
+        let st = state.sync_worker.state.lock().await;
+        st.consecutive_failures
+    };
+
     Ok(serde_json::json!({
         "online": online,
         "supabase_configured": supabase_configured,
@@ -104,6 +113,7 @@ pub async fn sync_status(state: State<'_, AppState>) -> Result<serde_json::Value
         "days_since_last_sync": null,
         "last_error": last_error,
         "device_id": device_id,
+        "consecutive_failure_count": consecutive_failure_count,
     }))
 }
 
@@ -120,6 +130,72 @@ pub async fn sync_trigger_now(state: State<'_, AppState>) -> Result<String, AppE
     } else {
         Ok("Sync not configured — enter Supabase credentials in settings".to_string())
     }
+}
+
+// ── sync_bulk_initial ─────────────────────────────────────────────────────────
+
+/// Bulk-push ALL local data to Supabase in one shot (no 50-row batch limit).
+/// Designed for first-time sync during setup — pushes all tables at once.
+/// Called from setup_wizard_complete and setup_join_store.
+#[tauri::command]
+pub async fn sync_bulk_initial(state: State<'_, AppState>) -> Result<String, AppError> {
+    let client = match state.sync_worker.load_client().await {
+        Some(c) => c,
+        None => return Ok("Sync skipped — Supabase not configured".into()),
+    };
+
+    let total = state.sync_worker.push_all_bulk(&client).await
+        .map_err(|e| AppError::Internal(format!("Bulk sync failed: {e}")))?;
+
+    // Also pull so this terminal gets any remote data
+    let _ = state.sync_worker.run_once().await;
+
+    Ok(format!("Initial sync complete: {} rows pushed to Supabase", total))
+}
+
+// ── setup_pull_catalog ────────────────────────────────────────────────────────
+
+/// Blocking initial catalog pull for the JoinStore setup wizard.
+/// Runs one full sync cycle synchronously so the terminal has products,
+/// categories, and users before the setup wizard completes.
+/// Returns a summary the frontend can display as confirmation.
+#[derive(Debug, serde::Serialize)]
+pub struct PullSummary {
+    pub ok: bool,
+    /// Approximate row count across products + categories + users
+    pub rows_pulled: u64,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn setup_pull_catalog(
+    state: State<'_, AppState>,
+) -> Result<PullSummary, AppError> {
+    // Run one push + pull cycle synchronously.
+    // Watermarks are already at epoch for a fresh join (seeded by migration 0010_sync.sql).
+    state.sync_worker.run_once().await;
+
+    // Count key catalog rows as a concrete success indicator
+    let products: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM products WHERE is_active = 1")
+            .fetch_one(&state.db).await.unwrap_or(0);
+    let categories: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM categories")
+            .fetch_one(&state.db).await.unwrap_or(0);
+    let users: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE is_active = 1")
+            .fetch_one(&state.db).await.unwrap_or(0);
+
+    let worker_state = state.sync_worker.state.lock().await;
+    let ok = worker_state.online;
+    let error = worker_state.last_error.clone();
+    drop(worker_state);
+
+    Ok(PullSummary {
+        ok,
+        rows_pulled: (products + categories + users) as u64,
+        error,
+    })
 }
 
 // ── sync_force_full_resync ────────────────────────────────────────────────────
@@ -157,6 +233,34 @@ pub async fn sync_force_full_resync(
     } else {
         Ok(format!("Re-sync queued {queued} rows."))
     }
+}
+
+// ── sync_reset_stuck ────────────────────────────────────────────────────────
+
+/// Reset stuck rows (sync_attempts >= 10) back to pending with 0 attempts.
+/// These rows were permanently excluded from the push pipeline due to repeated
+/// failures (schema mismatch, auth errors, etc.). After fixing the root cause
+/// (e.g. re-entering Supabase credentials, fixing schema), call this to recover.
+#[tauri::command]
+pub async fn sync_reset_stuck(
+    state: State<'_, AppState>,
+    actor_user_id: String,
+) -> Result<String, AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+
+    let mut total = 0u32;
+    for table in SYNC_TABLES {
+        let sql = format!(
+            "UPDATE {table} SET sync_attempts = 0 WHERE sync_status = 'pending' AND sync_attempts >= 10",
+        );
+        let rows = sqlx::query(&sql).execute(&state.db).await?.rows_affected();
+        total += rows as u32;
+        if rows > 0 {
+            tracing::info!("Sync: reset {rows} stuck rows in {table}");
+        }
+    }
+
+    Ok(format!("Reset {total} stuck rows across all tables. Sync worker will pick them up on the next cycle."))
 }
 
 // ── admin_setup_supabase ──────────────────────────────────────────────────────
@@ -198,7 +302,8 @@ pub async fn admin_setup_supabase(
     if crate::secure_store::set_secret("supabase_service_key", &service_key) {
         let _ = ai_admin_repo::set_config(&state.db, "supabase_service_key", "").await;
     } else {
-        tracing::error!("CRITICAL: Failed to write service key to OS credential store.");
+        tracing::error!("CRITICAL: Failed to write service key to OS credential store. Falling back to DB (plaintext).");
+        ai_admin_repo::set_config(&state.db, "supabase_service_key", &service_key).await?;
     }
 
     let now = chrono::Utc::now().to_rfc3339();
@@ -252,7 +357,8 @@ pub async fn admin_setup_supabase_creds_only(
     if crate::secure_store::set_secret("supabase_service_key", &service_key) {
         let _ = ai_admin_repo::set_config(&state.db, "supabase_service_key", "").await;
     } else {
-        tracing::error!("CRITICAL: Failed to write service key to OS credential store.");
+        tracing::error!("CRITICAL: Failed to write service key to OS credential store. Falling back to DB (plaintext).");
+        ai_admin_repo::set_config(&state.db, "supabase_service_key", &service_key).await?;
     }
 
     tracing::info!("Supabase credentials stored (no schema migration): {url}");
@@ -366,6 +472,176 @@ pub async fn sync_queue_dismiss(
         return Err(AppError::NotFound(format!("Sync item {id} not found")));
     }
     Ok(())
+}
+
+// ── sync_queue_stats ──────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct SyncTableStats {
+    pub table: String,
+    pub pending: i64,
+    pub failed: i64,
+    pub max_attempts: i64,
+    pub attempts_dist: String,
+}
+
+#[tauri::command]
+pub async fn sync_queue_stats(state: State<'_, AppState>) -> Result<Vec<SyncTableStats>, AppError> {
+    let mut stats = Vec::new();
+
+    for table in SYNC_TABLES {
+        let pending: i64 = sqlx::query_scalar(
+            &format!("SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending'"),
+        )
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+
+        let failed: i64 = sqlx::query_scalar(
+            &format!(
+                "SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending' AND sync_attempts >= 10"
+            ),
+        )
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+
+        let max_attempts: i64 = sqlx::query_scalar(
+            &format!("SELECT COALESCE(MAX(sync_attempts), 0) FROM {table}"),
+        )
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+
+        let _pk = table_pk(table);
+        let attempt_dist: Vec<String> = sqlx::query_scalar(
+            &format!(
+                "SELECT 'att' || sync_attempts || '=' || COUNT(*) FROM {table} GROUP BY sync_attempts ORDER BY sync_attempts LIMIT 11"
+            ),
+        )
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+
+        stats.push(SyncTableStats {
+            table: table.to_string(),
+            pending,
+            failed,
+            max_attempts,
+            attempts_dist: attempt_dist.join(", "),
+        });
+    }
+
+    Ok(stats)
+}
+
+// ── sync_diagnostics ────────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct SyncDiagTable {
+    pub table: String,
+    pub pending: i64,
+    pub stuck: i64,
+    pub max_attempts: i64,
+    pub avg_attempts: f64,
+}
+
+#[derive(Serialize)]
+pub struct SyncDiagnostics {
+    pub supabase_configured: bool,
+    pub can_load_client: bool,
+    pub pending_events: i64,
+    pub stuck_events: i64,
+    pub last_sync_at: Option<String>,
+    pub last_error: Option<String>,
+    pub online: bool,
+    pub tables: Vec<SyncDiagTable>,
+}
+
+#[tauri::command]
+pub async fn sync_diagnostics(
+    state: State<'_, AppState>,
+) -> Result<SyncDiagnostics, AppError> {
+    let worker_state = state.sync_worker.state.lock().await;
+    let online = worker_state.online;
+    let last_error = worker_state.last_error.clone();
+    drop(worker_state);
+
+    let url: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'supabase_url'")
+            .fetch_optional(&state.db)
+            .await?
+            .flatten();
+    let key = crate::secure_store::get_secret("supabase_service_key").unwrap_or_default();
+    let supabase_configured = url.as_deref().is_some_and(|u| !u.is_empty()) && !key.is_empty();
+
+    let last_sync: Option<String> = sqlx::query_scalar(
+        "SELECT last_pushed_at FROM sync_watermark WHERE table_name = 'sales'",
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten();
+
+    let mut tables = Vec::new();
+    let mut total_pending: i64 = 0;
+    let mut total_stuck: i64 = 0;
+
+    for table in SYNC_TABLES {
+        let pending: i64 = sqlx::query_scalar(
+            &format!("SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending' AND sync_attempts < 10"),
+        )
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+
+        let stuck: i64 = sqlx::query_scalar(
+            &format!("SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending' AND sync_attempts >= 10"),
+        )
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+
+        let max_att: i64 = sqlx::query_scalar(
+            &format!("SELECT COALESCE(MAX(sync_attempts), 0) FROM {table}"),
+        )
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+
+        let avg_att: f64 = sqlx::query_scalar(
+            &format!("SELECT COALESCE(AVG(CAST(sync_attempts AS REAL)), 0) FROM {table} WHERE sync_status = 'pending'"),
+        )
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0.0);
+
+        if pending > 0 || stuck > 0 {
+            tables.push(SyncDiagTable {
+                table: table.to_string(),
+                pending,
+                stuck,
+                max_attempts: max_att,
+                avg_attempts: format!("{:.1}", avg_att).parse().unwrap_or(0.0),
+            });
+        }
+
+        total_pending += pending;
+        total_stuck += stuck;
+    }
+
+    tables.sort_by_key(|t| -(t.pending + t.stuck));
+
+    Ok(SyncDiagnostics {
+        supabase_configured,
+        can_load_client: supabase_configured,
+        pending_events: total_pending,
+        stuck_events: total_stuck,
+        last_sync_at: last_sync,
+        last_error,
+        online,
+        tables,
+    })
 }
 
 // ── admin_get_supabase_status ─────────────────────────────────────────────────

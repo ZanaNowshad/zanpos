@@ -30,6 +30,7 @@ pub struct AppConfig {
     pub tax_number: Option<String>,
     pub cr_number: Option<String>,
     pub whatsapp_benefit_number: Option<String>,
+    pub owner_user_id: Option<String>,
 }
 
 /// Map currency code → decimal exponent (minor units).
@@ -94,6 +95,14 @@ pub async fn app_config_load(state: State<'_, AppState>) -> Result<AppConfig, Ap
             .await?
             .flatten();
 
+    let owner_user_id: Option<String> = sqlx::query_scalar(
+        "SELECT u.user_id FROM users u JOIN roles r ON r.role_id = u.role_id
+         WHERE r.name = 'owner' AND u.is_active = 1 LIMIT 1",
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .flatten();
+
     let currency: String = branch_row.get("currency");
     let exp = currency_exponent(&currency);
 
@@ -114,6 +123,7 @@ pub async fn app_config_load(state: State<'_, AppState>) -> Result<AppConfig, Ap
         tax_number: branch_row.get("tax_number"),
         cr_number: branch_row.get("cr_number"),
         whatsapp_benefit_number: wa_benefit,
+        owner_user_id,
     })
 }
 
@@ -213,7 +223,7 @@ pub async fn setup_wizard_complete(
     .await?
     .ok_or_else(|| AppError::Internal("Owner role not found in database".into()))?;
 
-    if let Some(user_id) = existing_id {
+    let owner_user_id = if let Some(uid) = existing_id {
         // Update existing user — and CRITICALLY re-activate it (is_active=1).
         // The seeded 'admin' account is deactivated by migration 0030 (it ships with
         // a placeholder hash). When the wizard owner reuses that username, we must
@@ -228,12 +238,13 @@ pub async fn setup_wizard_complete(
         .bind(&pin_hash)
         .bind(owner_role_id)
         .bind(&now)
-        .bind(&user_id)
+        .bind(&uid)
         .execute(&state.db)
         .await?;
+        uid
     } else {
         // Create new owner user
-        let user_id = ulid::Ulid::new().to_string();
+        let uid = ulid::Ulid::new().to_string();
         let branch_id: String = sqlx::query_scalar(
             "SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1",
         )
@@ -246,7 +257,7 @@ pub async fn setup_wizard_complete(
                 branch_scope, is_active, created_at, updated_at, version)
              VALUES (?,?,?,?,?,?,'[]',1,?,?,1)",
         )
-        .bind(&user_id)
+        .bind(&uid)
         .bind(&branch_id)
         .bind(&input.owner_display_name)
         .bind(&input.owner_username)
@@ -256,7 +267,8 @@ pub async fn setup_wizard_complete(
         .bind(&now)
         .execute(&state.db)
         .await?;
-    }
+        uid
+    };
 
     // Mark setup complete
     sqlx::query(
@@ -307,7 +319,7 @@ pub async fn setup_wizard_complete(
             crate::secure_store::get_secret("supabase_service_key");
         let branch_row = sqlx::query(
             "SELECT branch_id, branch_code, name, currency, timezone,
-                    address, phone, receipt_header, receipt_footer, tax_number
+                    address, phone, receipt_header, receipt_footer, tax_number, cr_number
              FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1",
         )
         .fetch_optional(&state.db)
@@ -327,12 +339,17 @@ pub async fn setup_wizard_complete(
                 "receipt_header": br.get::<Option<String>, _>("receipt_header"),
                 "receipt_footer": br.get::<Option<String>, _>("receipt_footer"),
                 "tax_number":     br.get::<Option<String>, _>("tax_number"),
+                "cr_number":      br.get::<Option<String>, _>("cr_number"),
                 "is_active":      true,
-                "created_at":     &now,
+                "created_at":     br.get::<String, _>("created_at"),
                 "updated_at":     &now,
             });
-            // Best-effort — don't fail setup if cloud upsert fails
-            let _ = client.upsert_branch(&branch_json).await;
+            // Best-effort — don't fail setup if cloud upsert fails.
+            // Run non-blocking so the UI doesn't freeze (offline-first principle).
+            let branch_json_clone = branch_json.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = client.upsert_branch(&branch_json_clone).await;
+            });
         }
 
         // Trigger initial sync so the cloud is notified of the newly configured store.
@@ -356,8 +373,11 @@ pub async fn setup_wizard_complete(
         .await?;
     }
 
-    // Return updated config
-    app_config_load(state).await
+    // Return updated config with owner user_id so the frontend can
+    // call RBAC-gated commands (CSV import, etc.) as the new owner.
+    let mut cfg = app_config_load(state).await?;
+    cfg.owner_user_id = Some(owner_user_id);
+    Ok(cfg)
 }
 
 // ─── Branch settings (post-setup, back-office) ────────────────────────────────
@@ -649,7 +669,8 @@ pub async fn setup_join_store(
     if crate::secure_store::set_secret("supabase_service_key", &input.supabase_key) {
         let _ = ai_admin_repo::set_config(&state.db, "supabase_service_key", "").await;
     } else {
-        tracing::error!("CRITICAL: Failed to write service key to OS credential store. Keeping plaintext fallback to prevent sync death.");
+        tracing::error!("CRITICAL: Failed to write service key to OS credential store. Falling back to DB (plaintext).");
+        ai_admin_repo::set_config(&state.db, "supabase_service_key", &input.supabase_key).await?;
     }
 
     sqlx::query(
@@ -683,6 +704,77 @@ pub async fn setup_join_store(
     });
 
     app_config_load(state).await
+}
+
+// ─── Supabase connection test (setup wizard, read-only probe) ─────────────────
+
+#[derive(Debug, Serialize)]
+pub struct ConnectionTestResult {
+    pub connected: bool,
+    pub store_name: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Lightweight credential + connectivity test for the JoinStore wizard.
+/// Validates URL format, opens a Supabase connection, and returns the store
+/// name if one exists. Never writes to the database — read-only probe.
+#[tauri::command]
+pub async fn setup_test_supabase_connection(
+    url: String,
+    key: String,
+) -> Result<ConnectionTestResult, AppError> {
+    let url = url.trim().trim_end_matches('/').to_string();
+    if url.is_empty() {
+        return Err(AppError::Validation("Supabase URL is required".into()));
+    }
+    if !url.starts_with("https://") {
+        return Err(AppError::Validation(
+            "URL must start with https://".into(),
+        ));
+    }
+    let key = key.trim().to_string();
+    if key.is_empty() {
+        return Err(AppError::Validation("Service role key is required".into()));
+    }
+
+    use crate::sync::supabase_client::SupabaseClient;
+    let client = SupabaseClient::new(url, key);
+
+    if let Err(e) = client.validate().await {
+        let msg = e.to_string();
+        let friendly = if msg.contains("UNAUTHORIZED")
+            || msg.contains("FORBIDDEN")
+            || msg.contains("401")
+            || msg.contains("403")
+            || msg.contains("Invalid API key")
+        {
+            "Invalid credentials — check the URL and service role key.".to_string()
+        } else if msg.contains("connect")
+            || msg.contains("timeout")
+            || msg.contains("dns")
+            || msg.contains("DNS")
+        {
+            "Could not reach Supabase — check your internet connection.".to_string()
+        } else {
+            "Connection failed — check the URL and try again.".to_string()
+        };
+        return Ok(ConnectionTestResult {
+            connected: false,
+            store_name: None,
+            error: Some(friendly),
+        });
+    }
+
+    let store_name = match client.pull_branch().await {
+        Ok(Some(branch)) => branch["name"].as_str().map(|s| s.to_string()),
+        _ => None,
+    };
+
+    Ok(ConnectionTestResult {
+        connected: true,
+        store_name,
+        error: None,
+    })
 }
 
 /// Save BenefitPay number. Requires manager or owner after setup is complete.

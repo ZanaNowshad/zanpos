@@ -31,7 +31,9 @@ const SyncChip = memo(function SyncChip({ status }: Props) {
   if (status.online) {
     const hasStuckError = !!status.last_error;
     const pending = status.pending_events > 0;
-    const errorTitle = hasStuckError ? `Stuck failures: ${status.last_error}` : undefined;
+    const consecFails = status.consecutive_failure_count ?? 0;
+    const persistentError = hasStuckError && consecFails >= 3;
+    const errorTitle = hasStuckError ? `Sync errors: ${status.last_error} (${consecFails} consecutive)` : undefined;
     if (hasStuckError) {
       return (
         <span className="sync-chip sync-has-error" title={errorTitle}>
@@ -41,6 +43,16 @@ const SyncChip = memo(function SyncChip({ status }: Props) {
             <span className="sync-error-inline" style={{ fontSize: '0.75em', marginLeft: 4, opacity: 0.85 }}>
               — {status.last_error.slice(0, 60)}{status.last_error.length > 60 ? '…' : ''}
             </span>
+          )}
+          {persistentError && (
+            <button
+              className="sync-retry-btn"
+              onClick={handleRetry}
+              disabled={retrying}
+              title={`${consecFails} consecutive sync errors — retry now`}
+            >
+              {retrying ? "…" : "⟳"}
+            </button>
           )}
         </span>
       );

@@ -150,6 +150,8 @@ export interface SyncStatus {
   days_since_last_sync: number | null;
   last_error: string | null;
   device_id: string;
+  /** Count of consecutive sync cycles ending in error. Resets on success. */
+  consecutive_failure_count?: number;
 }
 
 // ─── Phase 1: Auth / Shift / Refund / Report types ───────────────────────────
@@ -548,6 +550,7 @@ export interface AppConfig {
   tax_number: string | null;
   cr_number: string | null;
   whatsapp_benefit_number: string | null;
+  owner_user_id: string | null;
 }
 
 export interface BranchSettings {
@@ -635,6 +638,33 @@ export interface SyncQueueItem {
   last_attempt_at: string | null;
   last_error: string | null;
   created_at: string;
+}
+
+export interface SyncTableStats {
+  table: string;
+  pending: number;
+  failed: number;
+  max_attempts: number;
+  attempts_dist: string;
+}
+
+export interface SyncDiagTable {
+  table: string;
+  pending: number;
+  stuck: number;
+  max_attempts: number;
+  avg_attempts: number;
+}
+
+export interface SyncDiagnostics {
+  supabase_configured: boolean;
+  can_load_client: boolean;
+  pending_events: number;
+  stuck_events: number;
+  last_sync_at: string | null;
+  last_error: string | null;
+  online: boolean;
+  tables: SyncDiagTable[];
 }
 
 // ─── Device constants — populated from DB at startup before any UI renders ─────

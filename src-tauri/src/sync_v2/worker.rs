@@ -7,7 +7,7 @@ use sqlx::Column;
 use sqlx::{Row, SqlitePool};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::time::{interval, Duration};
+use tokio::time::Duration;
 
 pub const TRANSIENT_TAG: &str = "[TRANSIENT]";
 const BATCH_SIZE: i64 = 50;
@@ -33,6 +33,9 @@ const STOCK_DRIFT_TOLERANCE: f64 = 0.001;
 pub struct SyncState {
     pub online: bool,
     pub last_error: Option<String>,
+    /// Consecutive sync cycles that ended in error. Resets on success.
+    /// Used for adaptive backoff: 3+ → 2× interval, 6+ → 5× interval.
+    pub consecutive_failures: u32,
 }
 
 pub struct SyncWorker {
@@ -49,17 +52,27 @@ impl SyncWorker {
     }
 
     /// Spawn background loop with supervisor restart on panic.
-    /// If the inner async task panics, the supervisor waits 5 s and re-spawns it,
-    /// preventing silent sync death from unexpected runtime errors.
+    /// Uses adaptive backoff: 3+ consecutive failures → 2× interval, 6+ → 5× interval.
     pub fn spawn(worker: Arc<Self>) {
         let worker_outer = worker.clone();
         tauri::async_runtime::spawn(async move {
             loop {
                 let worker_inner = worker_outer.clone();
                 let result = std::panic::AssertUnwindSafe(async move {
-                    let mut ticker = interval(Duration::from_secs(INTERVAL_SECS));
                     loop {
-                        ticker.tick().await;
+                        // Adaptive backoff based on consecutive failure count
+                        let consecutive_failures = {
+                            let st = worker_inner.state.lock().await;
+                            st.consecutive_failures
+                        };
+                        let wait_secs = if consecutive_failures >= 6 {
+                            INTERVAL_SECS * 5
+                        } else if consecutive_failures >= 3 {
+                            INTERVAL_SECS * 2
+                        } else {
+                            INTERVAL_SECS
+                        };
+                        tokio::time::sleep(Duration::from_secs(wait_secs)).await;
                         worker_inner.run_once().await;
                     }
                 });
@@ -97,19 +110,26 @@ impl SyncWorker {
         let push_result = self.push_pending(&client).await;
         let pull_result = self.pull_changes(&client, &device_id).await;
 
-        // H2: Update state quickly, then release the lock before any DB writes.
-        // Holding a tokio::sync::Mutex across .await serializes all sync_status reads.
+        // Update online status — individual table errors don't mean we're offline.
+        // Only mark offline if we have no Supabase client at all.
         {
             let mut state = self.state.lock().await;
+            state.online = true;
             match (&push_result, &pull_result) {
                 (Ok(_), Ok(_)) => {
-                    state.online = true;
                     state.last_error = None;
+                    state.consecutive_failures = 0;
                 }
                 (Err(e), _) | (_, Err(e)) => {
-                    state.online = false;
                     state.last_error = Some(e.to_string());
-                    tracing::warn!("Sync v2 cycle error: {e}");
+                    state.consecutive_failures = state.consecutive_failures.saturating_add(1);
+                    // Only log transient errors as warnings; permanent errors are normal
+                    // (schema mismatches, 404s on unmigrated tables, etc.)
+                    if e.to_string().contains(crate::sync_v2::client::TRANSIENT_TAG) {
+                        tracing::warn!("Sync v2 transient error: {e}");
+                    } else {
+                        tracing::info!("Sync v2 cycle finished with table-level errors");
+                    }
                 }
             }
         }
@@ -134,7 +154,7 @@ impl SyncWorker {
 
     // ── Load client from app_config + keyring ──────────────────────────────────
 
-    async fn load_client(&self) -> Option<SupabaseClient> {
+    pub async fn load_client(&self) -> Option<SupabaseClient> {
         let url = match ai_admin_repo::get_config(&self.pool, "supabase_url").await {
             Ok(Some(u)) => u,
             Ok(None) => return None,
@@ -225,7 +245,7 @@ impl SyncWorker {
                         for col in row.columns() {
                             let col_name = col.name();
                             // Skip local-only columns that must never sync
-                            if col_name == "sync_status" || col_name == "sync_attempts" || col_name == "pin_hash" {
+                            if should_skip_column(table, col_name) {
                                 continue;
                             }
                             let val = value_from_row_column(row, col_name);
@@ -261,6 +281,7 @@ impl SyncWorker {
                         total_pushed += row_ids.len() as u32;
                     }
                     Err(e) => {
+                        let transient = e.to_string().contains(TRANSIENT_TAG);
                         // Increment attempt count
                         for id in &row_ids {
                             let sql = format!(
@@ -270,17 +291,105 @@ impl SyncWorker {
                             let _ = sqlx::query(&sql).bind(id).execute(&self.pool).await;
                         }
 
-                        // Stop batch on transient error, continue on permanent
-                        if e.to_string().contains(TRANSIENT_TAG) {
-                            return Err(e);
+                        if transient {
+                            tracing::warn!("Sync v2: transient error on {table}, skipping to next table: {e}");
+                        } else {
+                            tracing::warn!("Sync v2: permanent error on {table}, skipping to next table: {e}");
                         }
-                        // Permanent error: break inner loop, continue to next table
+                        // Always break inner loop and continue to next table.
+                        // Never abort the entire push — one stuck table must not
+                        // block the remaining tables.
                         break;
                     }
                 }
             }
         }
 
+        // Push app_config (business settings, flags) — has no sync columns
+        if let Err(e) = self.push_app_config(client).await {
+            if e.to_string().contains(TRANSIENT_TAG) {
+                return Err(e);
+            }
+        }
+
+        Ok(total_pushed)
+    }
+
+    /// Upsert ALL app_config rows to Supabase (key-value pairs).
+    /// app_config has no sync_status/sync_attempts — always push all.
+    async fn push_app_config(&self, client: &SupabaseClient) -> AppResult<u32> {
+        let rows = sqlx::query("SELECT key, value, updated_at FROM app_config")
+            .fetch_all(&self.pool)
+            .await?;
+
+        if rows.is_empty() {
+            return Ok(0);
+        }
+
+        let json_rows: Vec<Value> = rows
+            .iter()
+            .map(|r| {
+                let key: String = r.get("key");
+                let value: String = r.get("value");
+                let updated_at: String = r.get("updated_at");
+                serde_json::json!({"key": key, "value": value, "updated_at": updated_at})
+            })
+            .collect();
+
+        client.upsert_rows("app_config", &json_rows).await?;
+        Ok(json_rows.len() as u32)
+    }
+
+    /// Bulk push ALL data from all tables during initial setup.
+    /// Not batch-limited — designed for first-time sync to Supabase.
+    pub async fn push_all_bulk(&self, client: &SupabaseClient) -> AppResult<u32> {
+        let push_order: &[&str] = &[
+            "categories", "tax_rules", "products", "devices", "users", "customers",
+            "shifts", "sales", "sale_items", "payments", "refunds", "refund_items",
+            "stock_movements", "audit_logs", "delivery_orders", "product_prices",
+        ];
+
+        let mut total_pushed = 0u32;
+
+        for table in push_order {
+            let sql = format!("SELECT * FROM {table}");
+            let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
+            if rows.is_empty() {
+                continue;
+            }
+
+            let json_rows: Vec<Value> = rows
+                .iter()
+                .map(|row| {
+                    let mut map = serde_json::Map::new();
+                    for col in row.columns() {
+                        let col_name = col.name();
+                        if should_skip_column(table, col_name) {
+                            continue;
+                        }
+                        map.insert(col_name.to_string(), value_from_row_column(row, col_name));
+                    }
+                    Value::Object(map)
+                })
+                .collect();
+
+            client.upsert_rows(table, &json_rows).await?;
+
+            // Mark rows as synced
+            let pk = pk_for_table(table);
+            for row in &rows {
+                let id: String = row.get(pk);
+                let sql = format!("UPDATE {table} SET sync_status = 'synced' WHERE {pk} = ?");
+                let _ = sqlx::query(&sql).bind(&id).execute(&self.pool).await;
+            }
+            total_pushed += json_rows.len() as u32;
+        }
+
+        // Push app_config + branches
+        self.push_app_config(client).await?;
+        // Branches pushed separately via upsert_branch in lib.rs
+
+        tracing::info!("Bulk initial sync: pushed {} rows to Supabase", total_pushed);
         Ok(total_pushed)
     }
 
@@ -463,6 +572,23 @@ impl SyncWorker {
                     .execute(&self.pool)
                     .await;
                 }
+                // branch_id is NOT NULL locally but absent from central schema.
+                // Provide fallback from active branch so fresh INSERTs don't fail.
+                if !obj.contains_key("branch_id") {
+                    let fallback_branch: Option<String> = sqlx::query_scalar(
+                        "SELECT branch_id FROM branches WHERE is_active=1 LIMIT 1",
+                    )
+                    .fetch_optional(&self.pool)
+                    .await
+                    .ok()
+                    .flatten();
+                    if let Some(ref b) = fallback_branch {
+                        let mut obj_mut = obj.clone();
+                        obj_mut.insert("branch_id".to_string(), Value::String(b.clone()));
+                        self.apply_lww("users", "user_id", &obj_mut, &["pin_hash"]).await?;
+                        return Ok(());
+                    }
+                }
                 self.apply_lww("users", "user_id", obj, &["pin_hash"]).await
             }
 
@@ -521,6 +647,7 @@ impl SyncWorker {
             .keys()
             .filter(|k| {
                 *k != "sync_status" && *k != "sync_attempts"
+                    && !matches!(obj.get(*k), Some(Value::Null))
             })
             .collect();
 
@@ -528,13 +655,13 @@ impl SyncWorker {
             return Ok(());
         }
 
-        // Build INSERT (col1, col2, ...) VALUES (v1, v2, ...)
-        let col_list = cols.iter().map(|c| c.as_str()).collect::<Vec<_>>().join(", ");
-        let val_list = cols
+        // Build INSERT (col1, col2, ..., sync_status) VALUES (v1, v2, ..., 'synced')
+        let col_list = format!("{}, sync_status", cols.iter().map(|c| c.as_str()).collect::<Vec<_>>().join(", "));
+        let val_list = format!("{}, 'synced'", cols
             .iter()
             .map(|c| json_to_sql_literal(&obj[*c]))
             .collect::<Vec<_>>()
-            .join(", ");
+            .join(", "));
 
         // Build SET clause: col = excluded.col, ...
         let set_parts: Vec<String> = cols
@@ -583,6 +710,7 @@ impl SyncWorker {
             .keys()
             .filter(|k| {
                 *k != "sync_status" && *k != "sync_attempts"
+                    && !matches!(obj.get(*k), Some(Value::Null))
             })
             .collect();
 
@@ -646,6 +774,7 @@ impl SyncWorker {
             .keys()
             .filter(|k| {
                 *k != "sync_status" && *k != "sync_attempts"
+                    && !matches!(obj.get(*k), Some(Value::Null))
             })
             .collect();
 
@@ -886,13 +1015,46 @@ fn pk_for_table(table: &str) -> &str {
     }
 }
 
+/// Returns true if a column is local-only and must not be included
+/// in JSON payloads sent to the central Supabase schema.
+fn should_skip_column(table: &str, col_name: &str) -> bool {
+    // Global: never sync these to central
+    if col_name == "sync_status" || col_name == "sync_attempts" || col_name == "pin_hash" || col_name == "deleted_at" {
+        return true;
+    }
+    match (table, col_name) {
+        ("users", "failed_pin_attempts" | "locked_until" | "last_login_at") => true,
+        ("devices", "next_receipt_seq" | "last_seen_at" | "version") => true,
+        ("customers", "origin_device_id" | "version") => true,
+        ("shifts", "expected_cash_minor" | "cash_difference_minor" | "business_date" | "created_at" | "version") => true,
+        ("audit_logs", "override_used") => true,
+        _ => false,
+    }
+}
+
 /// Extract a typed value from a sqlx Row column by name.
 /// Returns Value::Null for missing or null columns.
 fn value_from_row_column(row: &sqlx::sqlite::SqliteRow, col: &str) -> Value {
-    // Try common types in order of likelihood
-    if let Ok(v) = row.try_get::<String, _>(col) {
-        return Value::String(v);
+    // Try nullable integer first — empty/NULL → Value::Null
+    if let Ok(v) = row.try_get::<Option<i64>, _>(col) {
+        return match v {
+            Some(n) => Value::Number(n.into()),
+            None => Value::Null,
+        };
     }
+    if let Ok(v) = row.try_get::<Option<f64>, _>(col) {
+        return match v {
+            Some(n) => {
+                if let Some(num) = serde_json::Number::from_f64(n) {
+                    Value::Number(num)
+                } else {
+                    Value::Null
+                }
+            }
+            None => Value::Null,
+        };
+    }
+    // Try non-nullable int/float fallback
     if let Ok(v) = row.try_get::<i64, _>(col) {
         return Value::Number(v.into());
     }
@@ -901,11 +1063,18 @@ fn value_from_row_column(row: &sqlx::sqlite::SqliteRow, col: &str) -> Value {
             return Value::Number(n);
         }
     }
-    // Fallback: try as String again (sqlx might coerce ints)
+    // Strings last — but convert empty to null (Supabase BIGINT rejects "")
     if let Ok(v) = row.try_get::<Option<String>, _>(col) {
-        if let Some(s) = v {
-            return Value::String(s);
+        return match v {
+            Some(s) if !s.is_empty() => Value::String(s),
+            _ => Value::Null,
+        };
+    }
+    if let Ok(v) = row.try_get::<String, _>(col) {
+        if v.is_empty() {
+            return Value::Null;
         }
+        return Value::String(v);
     }
     Value::Null
 }

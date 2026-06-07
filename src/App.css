@@ -3205,6 +3205,7 @@ textarea.field-input { resize: vertical; }
 }
 .held-item-info { flex: 1; }
 .held-item-note { font-weight: 600; font-size: 0.9rem; }
+.held-item-unnamed { font-weight: 400; color: var(--text-dim); font-style: italic; }
 .held-item-meta { color: var(--text-dim); font-size: 0.8rem; margin-top: 2px; }
 .held-item-time { color: var(--text-dim); font-size: 0.75rem; }
 .held-item-actions { display: flex; gap: 8px; }

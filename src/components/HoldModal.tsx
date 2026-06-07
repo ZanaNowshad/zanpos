@@ -75,10 +75,13 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
               <span>{lineCount} item{lineCount !== 1 ? "s" : ""}</span>
               <span>{DEVICE.currency} {formatMoney(netTotal, DEVICE.currency_exponent)}</span>
             </div>
+            {/* T20: label the held order with a customer name so cashiers can quickly identify it */}
             <input
               className="field-input"
-              placeholder="Note (optional)…"
+              placeholder="Customer name (optional)…"
               value={note}
+              maxLength={60}
+              autoFocus
               onChange={e => setNote(e.target.value)}
             />
             {error && <div className="modal-error">{error}</div>}
@@ -95,7 +98,8 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
               {heldCarts.map(h => (
                 <div key={h.held_cart_id} className="held-item">
                   <div className="held-item-info">
-                    <div className="held-item-note">{h.note || "No note"}</div>
+                    {/* T20: show customer name prominently; fall back to "Unnamed order" */}
+                    <div className="held-item-note">{h.note || <span className="held-item-unnamed">Unnamed order</span>}</div>
                     <div className="held-item-meta">
                       {h.line_count} items · {DEVICE.currency} {formatMoney(h.estimated_total_minor, DEVICE.currency_exponent)}
                     </div>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { UserRound } from "lucide-react";
 import type { CustomerRow } from "../types";
 import * as cmd from "../tauri/commands";
 
@@ -119,7 +120,7 @@ export default function CustomersTab({ sessionUserId }: Props) {
           ))}
           {customers.length === 0 && (
             <div className="bo-empty">
-              <div className="bo-empty-icon">👤</div>
+              <div className="bo-empty-icon"><UserRound size={40} strokeWidth={1.5} /></div>
               <p className="bo-empty-title">No customers found</p>
               <p className="bo-empty-hint">Try a different search term, or add a new customer.</p>
             </div>

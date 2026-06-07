@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { BarChart2, Receipt } from "lucide-react";
 import type { RangeSummary, SaleListRow, SaleListPage, TopProduct } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney } from "../money";
@@ -280,7 +281,7 @@ export default function ReportsTab({ sessionUserId }: Props) {
           <div className="rpt-table-wrap">
             {topProducts.length === 0 ? (
               <div className="bo-empty">
-                <div className="bo-empty-icon">📊</div>
+                <div className="bo-empty-icon"><BarChart2 size={40} strokeWidth={1.5} /></div>
                 <p className="bo-empty-title">No data for this period</p>
                 <p className="bo-empty-hint">Adjust the date range and run the report again.</p>
               </div>
@@ -316,7 +317,7 @@ export default function ReportsTab({ sessionUserId }: Props) {
           <div className="rpt-table-wrap">
             {sales.length === 0 ? (
               <div className="bo-empty">
-                <div className="bo-empty-icon">📊</div>
+                <div className="bo-empty-icon"><BarChart2 size={40} strokeWidth={1.5} /></div>
                 <p className="bo-empty-title">No data for this period</p>
                 <p className="bo-empty-hint">Adjust the date range and run the report again.</p>
               </div>
@@ -381,7 +382,7 @@ export default function ReportsTab({ sessionUserId }: Props) {
           <div className="rpt-table-wrap">
             {taxRows.length === 0 ? (
               <div className="bo-empty">
-                <div className="bo-empty-icon">🧾</div>
+                <div className="bo-empty-icon"><Receipt size={40} strokeWidth={1.5} /></div>
                 <p className="bo-empty-title">No taxable sales</p>
                 <p className="bo-empty-hint">No taxable transactions were recorded in this period.</p>
               </div>

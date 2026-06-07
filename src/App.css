@@ -34,6 +34,12 @@
   /* T16: AI-chat tool-card category colors — mapped to semantic roles */
   --ai-indigo: #6366f1;  /* analytics / reporting */
   --ai-purple: #8b5cf6;  /* admin / people */
+  /* T19: Sticky note palette — light pastels override-able per theme */
+  --note-yellow-bg: #fef08a; --note-yellow-bd: #eab308;
+  --note-green-bg:  #bbf7d0; --note-green-bd:  #22c55e;
+  --note-blue-bg:   #bae6fd; --note-blue-bd:   #0ea5e9;
+  --note-pink-bg:   #fbcfe8; --note-pink-bd:   #ec4899;
+  --note-purple-bg: #e9d5ff; --note-purple-bd: #a855f7;
 
   /* ── Text ── */
   --text:       #F4F5FA;
@@ -1996,6 +2002,18 @@ kbd.kbd-primary {
   from { opacity: 0; transform: translateY(8px) scale(0.98); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
+
+/* T18: modal-out keyframes — apply .modal-overlay--closing before unmounting */
+@keyframes overlay-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+@keyframes modal-out {
+  from { opacity: 1; transform: translateY(0)  scale(1);    }
+  to   { opacity: 0; transform: translateY(4px) scale(0.98); }
+}
+.modal-overlay--closing                { animation: overlay-out 0.1s ease forwards; }
+.modal-overlay--closing .modal        { animation: modal-out   0.1s cubic-bezier(0.4,0,1,1) forwards; }
 
 /* Modal padded content (inside padding: 0 modal) */
 .modal > * { padding-left: 24px; padding-right: 24px; }

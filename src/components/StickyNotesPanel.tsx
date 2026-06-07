@@ -5,12 +5,13 @@ import {
   formatReminderTime, defaultReminderInput,
 } from "../utils/stickyNotes";
 
+// T19: bg/border reference CSS vars so themes can override the palette
 const COLORS: { id: NoteColor; label: string; bg: string; border: string }[] = [
-  { id: "yellow", label: "Yellow", bg: "#fef08a", border: "#eab308" },
-  { id: "green",  label: "Green",  bg: "#bbf7d0", border: "#22c55e" },
-  { id: "blue",   label: "Blue",   bg: "#bae6fd", border: "#0ea5e9" },
-  { id: "pink",   label: "Pink",   bg: "#fbcfe8", border: "#ec4899" },
-  { id: "purple", label: "Purple", bg: "#e9d5ff", border: "#a855f7" },
+  { id: "yellow", label: "Yellow", bg: "var(--note-yellow-bg)", border: "var(--note-yellow-bd)" },
+  { id: "green",  label: "Green",  bg: "var(--note-green-bg)",  border: "var(--note-green-bd)"  },
+  { id: "blue",   label: "Blue",   bg: "var(--note-blue-bg)",   border: "var(--note-blue-bd)"   },
+  { id: "pink",   label: "Pink",   bg: "var(--note-pink-bg)",   border: "var(--note-pink-bd)"   },
+  { id: "purple", label: "Purple", bg: "var(--note-purple-bg)", border: "var(--note-purple-bd)" },
 ];
 
 function uid() {

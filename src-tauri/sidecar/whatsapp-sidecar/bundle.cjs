@@ -204437,6 +204437,29 @@ app.post("/send", async (req, res) => {
     res.json({ ok: false, error: err.message });
   }
 });
+app.post("/send-document", async (req, res) => {
+  const { to, caption, document_base64, mimetype, filename } = req.body ?? {};
+  if (!to || !document_base64) {
+    return res.status(400).json({ ok: false, error: "to and document_base64 required" });
+  }
+  if (!isConnected || !sock) {
+    return res.json({ ok: false, error: "not connected" });
+  }
+  try {
+    const jid = to.replace(/^\+/, "") + "@s.whatsapp.net";
+    const docBuffer = Buffer.from(document_base64, "base64");
+    await sock.sendMessage(jid, {
+      document: docBuffer,
+      mimetype: mimetype || "application/pdf",
+      fileName: filename || "receipt.pdf",
+      caption: caption || void 0
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[wa-sidecar] send-document failed:", err.message);
+    res.json({ ok: false, error: err.message });
+  }
+});
 app.get("/contacts", (_req, res) => {
   const individual = Object.values(contactsMap).filter(
     (c) => typeof c.id === "string" && c.id.endsWith("@s.whatsapp.net")

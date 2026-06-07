@@ -7,7 +7,7 @@ import type { BusinessFlags, CustomerRow, LowStockAlert, PaymentInput, SaleListR
 import { type Theme, THEMES } from "../hooks/useTheme";
 import { formatMoney, parseMoney } from "../money";
 import { DEVICE } from "../types";
-import { businessFlagsLoad, cashNoSale, ghostRecord, receiptReprint, refundGetSale, whatsappStatus, whatsappSendDelivery, appConfigLoad, openCashDrawer, settingsGetBranch, thermalGetConfig, printReceiptRaw } from "../tauri/commands";
+import { businessFlagsLoad, cashNoSale, ghostRecord, receiptReprint, refundGetSale, whatsappStatus, whatsappSendDelivery, whatsappSendReceiptPdf, appConfigLoad, openCashDrawer, settingsGetBranch, thermalGetConfig, printReceiptRaw } from "../tauri/commands";
 import { buildReceiptLines } from "../utils/receiptLines";
 import { loadWaFormat, buildDeliveryMessage, loadWaCustomerFormat, buildCustomerMessage } from "../utils/waMessageFormat";
 import { useCart } from "../hooks/useCart";
@@ -283,16 +283,49 @@ export default function PosPage({
               // (e.g. "33050666" with no country code) otherwise builds an invalid JID.
               const dDigits = (d.contact_number || "").replace(/\D/g, "");
               const dTo = dDigits.startsWith("973") ? dDigits : `973${dDigits}`;
-              await whatsappSendDelivery(sessionUser.user_id, {
-                to:                dTo,
-                receipt_number:    result.receipt_number,
-                net_total_minor:   result.net_total_minor,
-                currency_exponent: DEVICE.currency_exponent,
-                address_text:      d.address_text,
-                house_number:      d.house_number ?? undefined,
-                area:              d.area ?? undefined,
-                message_override:  messageOverride,
-              });
+              // Try PDF + caption first; fall back to text-only if PDF fails.
+              let pdfSent = false;
+              try {
+                pdfSent = await whatsappSendReceiptPdf(sessionUser.user_id, {
+                  to:                     dTo,
+                  receipt_number:         result.receipt_number,
+                  branch_name:            result.branch_name,
+                  cashier_name:           result.cashier_name,
+                  sold_at:                result.sold_at,
+                  currency:               DEVICE.currency,
+                  currency_exponent:      DEVICE.currency_exponent,
+                  items:                  result.items.map(i => ({
+                    product_name:   i.product_name,
+                    quantity:       i.quantity,
+                    unit_price_minor: i.unit_price_minor,
+                    line_total_minor: i.line_total_minor,
+                  })),
+                  net_total_minor:        result.net_total_minor,
+                  tax_total_minor:        result.tax_total_minor,
+                  discount_total_minor:   result.discount_total_minor,
+                  payments:               result.payments.map(p => ({
+                    method:       p.method,
+                    amount_minor: p.amount_minor,
+                    change_minor: p.change_minor,
+                  })),
+                  caption:                messageOverride,
+                  address_text:           d.address_text,
+                  house_number:           d.house_number ?? undefined,
+                  area:                   d.area ?? undefined,
+                });
+              } catch { /* fall through to text-only */ }
+              if (!pdfSent) {
+                await whatsappSendDelivery(sessionUser.user_id, {
+                  to:                dTo,
+                  receipt_number:    result.receipt_number,
+                  net_total_minor:   result.net_total_minor,
+                  currency_exponent: DEVICE.currency_exponent,
+                  address_text:      d.address_text,
+                  house_number:      d.house_number ?? undefined,
+                  area:              d.area ?? undefined,
+                  message_override:  messageOverride,
+                });
+              }
             } else if (sessionUser.role_name === "owner" || sessionUser.role_name === "manager") {
               setShowWaQR(true);
             }
@@ -353,14 +386,44 @@ export default function PosPage({
                 `Date: ${dateStr}\n` +
                 `Amount: ${amtStr}\n` +
                 `Paid by: ${methodLabel}`;
-            await whatsappSendDelivery(sessionUser.user_id, {
-              to,
-              receipt_number:    result.receipt_number,
-              net_total_minor:   result.net_total_minor,
-              currency_exponent: DEVICE.currency_exponent,
-              address_text:      "",
-              message_override:  message,
-            });
+            // Try PDF + caption; fall back to text-only if PDF fails.
+            let custPdfSent = false;
+            try {
+              custPdfSent = await whatsappSendReceiptPdf(sessionUser.user_id, {
+                to,
+                receipt_number:       result.receipt_number,
+                branch_name:          result.branch_name,
+                cashier_name:         result.cashier_name,
+                sold_at:              result.sold_at,
+                currency:             DEVICE.currency,
+                currency_exponent:    DEVICE.currency_exponent,
+                items:                result.items.map(i => ({
+                  product_name:   i.product_name,
+                  quantity:       i.quantity,
+                  unit_price_minor: i.unit_price_minor,
+                  line_total_minor: i.line_total_minor,
+                })),
+                net_total_minor:      result.net_total_minor,
+                tax_total_minor:      result.tax_total_minor,
+                discount_total_minor: result.discount_total_minor,
+                payments:             result.payments.map(p => ({
+                  method:       p.method,
+                  amount_minor: p.amount_minor,
+                  change_minor: p.change_minor,
+                })),
+                caption: message,
+              });
+            } catch { /* fall through to text-only */ }
+            if (!custPdfSent) {
+              await whatsappSendDelivery(sessionUser.user_id, {
+                to,
+                receipt_number:    result.receipt_number,
+                net_total_minor:   result.net_total_minor,
+                currency_exponent: DEVICE.currency_exponent,
+                address_text:      "",
+                message_override:  message,
+              });
+            }
           } catch { /* never block the receipt flow */ }
         };
         sendCustomerWA(); // fire-and-forget

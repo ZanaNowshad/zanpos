@@ -77,6 +77,10 @@ winapi = { version = "0.3", features = ["winspool", "minwindef", "winnt", "errha
 sha2 = "0.10"
 hex = "0.4"
 
+# PDF receipt generation (WhatsApp PDF send — uses built-in Type1 fonts, no file deps)
+printpdf = "0.7"
+base64 = "0.22"
+
 # Secure credential storage (Windows Credential Manager by default on Windows)
 keyring = "2"
 

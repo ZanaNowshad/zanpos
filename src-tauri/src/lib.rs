@@ -519,6 +519,7 @@ pub fn run() {
             commands::whatsapp_commands::whatsapp_disconnect,
             commands::whatsapp_commands::whatsapp_save_config,
             commands::whatsapp_commands::whatsapp_import_contacts,
+            commands::whatsapp_commands::whatsapp_send_receipt_pdf,
             // Product image picker
             commands::updater_commands::product_pick_image,
             // Auto-updater

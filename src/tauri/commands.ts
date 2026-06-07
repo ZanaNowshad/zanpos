@@ -900,6 +900,49 @@ export function whatsappImportContacts(actorUserId: string): Promise<ImportConta
   return invoke("whatsapp_import_contacts", { actorUserId });
 }
 
+export interface ReceiptItemForPdf {
+  product_name: string;
+  quantity: string;
+  unit_price_minor: number;
+  line_total_minor: number;
+}
+
+export interface PaymentForPdf {
+  method: string;
+  amount_minor: number;
+  /** Change returned to customer for cash payments (mirrors PaymentSummary.change_minor). */
+  change_minor?: number | null;
+}
+
+export interface WhatsAppReceiptPdfInput {
+  to: string;
+  receipt_number: string;
+  branch_name: string;
+  branch_phone?: string;
+  cashier_name: string;
+  sold_at: string;
+  currency: string;
+  currency_exponent: number;
+  items: ReceiptItemForPdf[];
+  net_total_minor: number;
+  tax_total_minor: number;
+  discount_total_minor: number;
+  payments: PaymentForPdf[];
+  caption?: string;
+  address_text?: string;
+  house_number?: string;
+  area?: string;
+}
+
+/** Send a PDF receipt + caption text as a single WhatsApp document message.
+ *  Returns true on confirmed delivery, false if sidecar rejects (caller can fall back). */
+export function whatsappSendReceiptPdf(
+  actorUserId: string,
+  input: WhatsAppReceiptPdfInput,
+): Promise<boolean> {
+  return invoke("whatsapp_send_receipt_pdf", { input, actorUserId });
+}
+
 export function setupSaveBenefitNumber(benefitNumber: string): Promise<void> {
   return invoke("setup_save_benefit_number", { benefitNumber });
 }

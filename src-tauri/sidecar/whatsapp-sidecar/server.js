@@ -217,6 +217,34 @@ app.post("/send", async (req, res) => {
   }
 });
 
+/** POST /send-document
+ *  body: { to: "+97333050666", caption: "...", document_base64: "...", mimetype: "application/pdf", filename: "receipt.pdf" }
+ *  → { ok: bool }
+ *  Sends a document (e.g. PDF) with an optional caption as a single WhatsApp message. */
+app.post("/send-document", async (req, res) => {
+  const { to, caption, document_base64, mimetype, filename } = req.body ?? {};
+  if (!to || !document_base64) {
+    return res.status(400).json({ ok: false, error: "to and document_base64 required" });
+  }
+  if (!isConnected || !sock) {
+    return res.json({ ok: false, error: "not connected" });
+  }
+  try {
+    const jid = to.replace(/^\+/, "") + "@s.whatsapp.net";
+    const docBuffer = Buffer.from(document_base64, "base64");
+    await sock.sendMessage(jid, {
+      document: docBuffer,
+      mimetype: mimetype || "application/pdf",
+      fileName: filename || "receipt.pdf",
+      caption: caption || undefined,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[wa-sidecar] send-document failed:", err.message);
+    res.json({ ok: false, error: err.message });
+  }
+});
+
 /** GET /contacts → [{ id: string, name: string }]
  *  Returns all contacts accumulated via contacts.upsert events.
  *  Only individual-user JIDs (@s.whatsapp.net) are included — groups are excluded. */

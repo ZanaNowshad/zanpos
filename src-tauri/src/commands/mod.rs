@@ -22,3 +22,4 @@ pub mod sync_commands;
 pub mod thermal_commands;
 pub mod updater_commands;
 pub mod whatsapp_commands;
+pub mod receipt_pdf;

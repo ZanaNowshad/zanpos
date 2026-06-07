@@ -637,6 +637,74 @@ async fn send_raw(to: &str, message: &str, token: &str) -> AppResult<bool> {
     }
 }
 
+// ─── Receipt PDF send ─────────────────────────────────────────────────────────
+
+/// Send a WhatsApp message that contains a PDF receipt as an attached document,
+/// with the existing text message as the caption — both delivered in one message.
+/// Falls back gracefully: if the sidecar returns `ok: false`, returns `false`
+/// without throwing so the caller can fall back to text-only.
+#[tauri::command]
+pub async fn whatsapp_send_receipt_pdf(
+    input: crate::commands::receipt_pdf::WhatsAppReceiptPdfInput,
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<bool> {
+    use base64::Engine as _;
+
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
+
+    if !is_network_available().await {
+        return Err(AppError::Internal("WhatsApp: device is offline".into()));
+    }
+
+    let phone = normalize_phone(&input.to);
+
+    let pdf_bytes = crate::commands::receipt_pdf::generate_receipt_pdf(&input)
+        .map_err(|e| AppError::Internal(format!("PDF generation failed: {e}")))?;
+
+    let pdf_b64 = base64::engine::general_purpose::STANDARD.encode(&pdf_bytes);
+    let filename = format!("Receipt-{}.pdf", input.receipt_number);
+    let caption  = input.caption.as_deref().unwrap_or("").to_string();
+
+    let token  = read_sidecar_token(&state);
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_default();
+
+    match client
+        .post(format!("{}/send-document", SIDECAR_URL))
+        .header("X-Sidecar-Token", &token)
+        .json(&serde_json::json!({
+            "to":              phone,
+            "caption":         caption,
+            "document_base64": pdf_b64,
+            "mimetype":        "application/pdf",
+            "filename":        filename,
+        }))
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            let ok = body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+            if !ok {
+                tracing::warn!(
+                    "WhatsApp PDF send to '{}' rejected: {}",
+                    phone,
+                    body.get("error").and_then(|v| v.as_str()).unwrap_or("unknown")
+                );
+            }
+            Ok(ok)
+        }
+        Err(e) => {
+            tracing::warn!("WhatsApp PDF send to '{}' failed — sidecar unreachable: {}", phone, e);
+            Ok(false)
+        }
+    }
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

@@ -45,6 +45,7 @@ export default function PaymentModal({
   const containerRef = useRef<HTMLDivElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
   const _lineCounterRef = useRef(200);
+  const handleConfirmRef = useRef<() => void>(() => {});
   const mkLine = (method: PaymentInput["method"] = "cash"): PaymentLine =>
     ({ id: _lineCounterRef.current++, method, amountStr: "", tenderedStr: "" });
   useFocusTrap(containerRef, onCancel);
@@ -200,10 +201,25 @@ export default function PaymentModal({
       return { method: l.method, amount_minor: amount };
     });
     const delivery: DeliveryInput | undefined = showDelivery
-      ? { ...(deliveryData as DeliveryInput), expected_payment_method: lines[0]?.method ?? "cash" }
+      ? { ...(deliveryData as DeliveryInput), customer_id: selectedCust?.customer_id, expected_payment_method: lines[0]?.method ?? "cash" }
       : undefined;
     onConfirm(payments, selectedCust?.customer_id, delivery, selectedCust ?? undefined);
   };
+  // Keep ref current so Enter-key handler always calls the latest handleConfirm (T03)
+  useEffect(() => { handleConfirmRef.current = handleConfirm; });
+  // T03: Enter / NumpadEnter confirms payment when the form is valid
+  useEffect(() => {
+    const onEnterKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (e.key === "Enter" || e.key === "NumpadEnter") {
+        e.preventDefault();
+        if (canConfirm && !loading) handleConfirmRef.current();
+      }
+    };
+    document.addEventListener("keydown", onEnterKey);
+    return () => document.removeEventListener("keydown", onEnterKey);
+  }, [canConfirm, loading]);
 
   const activeLabel =
     activeField?.kind === "tendered" ? "Tendered" :

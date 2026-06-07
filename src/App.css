@@ -933,6 +933,24 @@ kbd.kbd-primary {
   text-align: center;
   font-size: 0.88rem;
 }
+.product-grid-msg svg {
+  display: block;
+  margin: 0 auto 16px;
+  opacity: 0.4;
+}
+.product-grid-empty-heading {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 8px;
+}
+.product-grid-empty-hint {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin: 0 auto;
+  max-width: 300px;
+  line-height: 1.5;
+}
 
 /* Product card — high-density vertical layout */
 .product-card {
@@ -1810,6 +1828,18 @@ kbd.kbd-primary {
   border-radius: 999px;
   white-space: nowrap;
   border: 1px solid transparent;
+}
+.sync-offline-wrap {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+.sync-offline-hint {
+  font-size: 0.62rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .sync-ok {
@@ -10976,29 +11006,31 @@ label {
   border-radius: 16px;
   overflow: hidden;
   box-shadow: 0 28px 70px rgba(0,0,0,0.5);
+  width: 95vw;
+  max-width: 1400px;
   max-height: 92vh;
 }
 
 /* Left panel */
 .pm-left {
-  width: 340px;
-  min-width: 280px;
+  flex: 1;
+  min-width: 320px;
   overflow-y: auto;
-  padding: 20px 16px 12px;
+  padding: 24px 20px 16px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 14px;
   border-right: 1px solid var(--border);
 }
 
 /* Right panel — dialpad */
 .pm-right {
-  width: 220px;
-  min-width: 200px;
+  width: 280px;
+  min-width: 240px;
   display: flex;
   flex-direction: column;
-  padding: 14px 12px;
-  gap: 10px;
+  padding: 20px 16px;
+  gap: 12px;
   background: var(--surface2);
 }
 

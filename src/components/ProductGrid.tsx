@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { PackageSearch } from "lucide-react";
 import type { ProductWithPrice } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney } from "../money";
@@ -38,10 +39,13 @@ const ProductGrid = memo(function ProductGrid({ products, onSelect, loading, car
       </div>
     );
   }
-  // L11: Add role="status" + aria-live so screen readers announce empty state
   if (!products.length) return (
     <div className="product-grid-msg" role="status" aria-live="polite">
-      No products found.
+      <PackageSearch size={48} />
+      <p className="product-grid-empty-heading">No products set up yet</p>
+      <p className="product-grid-empty-hint">
+        Ask your manager to add products in Back&nbsp;Office → Products
+      </p>
     </div>
   );
 

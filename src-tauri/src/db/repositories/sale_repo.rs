@@ -440,13 +440,17 @@ pub async fn finalize_sale(
     if let Some(cid) = customer_id {
         let points = net / 1000;
         if points > 0 {
-            let _ = sqlx::query(
-                "UPDATE customers SET loyalty_points = loyalty_points + ? WHERE customer_id = ?",
+            if let Err(e) = sqlx::query(
+                "UPDATE customers SET loyalty_points = loyalty_points + ?, updated_at = ?, sync_status = 'pending' WHERE customer_id = ?",
             )
             .bind(points)
+            .bind(&now)
             .bind(cid)
             .execute(pool)
-            .await;
+            .await
+            {
+                tracing::warn!("T06: loyalty update failed for customer {}: {:?}", cid, e);
+            }
         }
     }
 

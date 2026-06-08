@@ -409,9 +409,15 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
               Skip for now (7-day grace)
             </button>
             <button className="setup-btn-primary" onClick={handleConnectCloud} disabled={sbValidating}>
-              {sbValidating ? "Connecting…" : "Connect & Continue →"}
+              {sbValidating ? "Setting up schema… (1–2 min)" : "Connect & Continue →"}
             </button>
           </div>
+
+          {sbValidating && (
+            <p className="setup-hint" style={{ color: "var(--accent)", marginTop: 8 }}>
+              ⏳ Running one-time database migration — please wait, do not close the app.
+            </p>
+          )}
 
           <p className="setup-hint">
             ⚠ Skipping cloud connection means sales are stored locally only. You have 7 days

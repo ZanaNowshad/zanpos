@@ -39,12 +39,8 @@ pub async fn create_delivery_in_tx(
             "address_text is required for delivery".into(),
         ));
     }
-    // customer_id is required for delivery orders
-    if input.customer_id.as_deref().map(|s| s.trim()).unwrap_or("").is_empty() {
-        return Err(AppError::Validation(
-            "customer_id is required for delivery orders".into(),
-        ));
-    }
+    // customer_id is optional — a walk-in delivery can be placed without a registered customer.
+    // The DB column is TEXT (nullable) so NULL is safe here.
 
     let delivery_id = Ulid::new().to_string();
 

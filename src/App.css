@@ -11060,7 +11060,7 @@ label {
 /* Left panel */
 .pm-left {
   flex: 1;
-  min-width: 320px;
+  min-width: 0;
   overflow-y: auto;
   padding: 24px 20px 16px;
   display: flex;
@@ -11071,13 +11071,14 @@ label {
 
 /* Right panel — dialpad */
 .pm-right {
-  width: 280px;
-  min-width: 240px;
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  padding: 20px 16px;
+  padding: 20px 20px;
   gap: 12px;
   background: var(--surface2);
+  align-items: stretch;
 }
 
 /* Header — total front and center */
@@ -11376,11 +11377,11 @@ label {
 
 /* ── PANEL 2: Middle panel (Customer & Delivery) ─────────────────────────── */
 .pm-mid {
-  width: 240px;
-  min-width: 200px;
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  padding: 18px 14px;
+  padding: 18px 18px;
   gap: 8px;
   border-right: 1px solid var(--border);
   background: var(--surface);

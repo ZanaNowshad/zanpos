@@ -4846,11 +4846,15 @@ async fn write_audit(
     let id = ulid::Ulid::new().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     let hash = format!("{:x}", md5_simple(&format!("{}{}{}", id, event_type, now)));
+    // Do NOT include device_id / origin_device_id / branch_id / previous_hash
+    // in the column list — let the schema DEFAULTs apply (origin_device_id is
+    // TEXT NOT NULL DEFAULT ''; passing explicit NULL would violate that constraint
+    // and return "Something went wrong" to the admin user on every mutation).
     sqlx::query(
         "INSERT INTO audit_logs
          (audit_log_id, event_type, entity_type, entity_id, actor_user_id,
-          actor_type, after_json, created_at, hash, device_id, origin_device_id, branch_id, previous_hash)
-         VALUES (?, ?, 'product', ?, ?, 'ai_agent', ?, ?, ?, NULL, NULL, NULL, NULL)",
+          actor_type, after_json, created_at, hash)
+         VALUES (?, ?, 'product', ?, ?, 'ai_agent', ?, ?, ?)",
     )
     .bind(&id)
     .bind(event_type)

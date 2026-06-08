@@ -1227,7 +1227,10 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
           setLiveToolCalls([]);
           setStreamingMsgId(null);
           setStreamStartTime(null);
-          setChatState("idle");
+          // Do NOT override "confirm" state — a mutation_pending event may have set it
+          // just before the stream ended. Resetting to "idle" would hide the ConfirmActionModal
+          // before the user can approve or deny the pending action.
+          setChatState(prev => prev === "confirm" ? "confirm" : "idle");
           if (finalText) {
             // Keep in-memory context bounded at 60 entries (30 exchanges)
             setHistory(prev => {

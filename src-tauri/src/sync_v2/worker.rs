@@ -92,6 +92,25 @@ impl SyncWorker {
 
     /// Run one push + pull cycle. Called by background loop and by sync_trigger_now.
     pub async fn run_once(&self) {
+        // Guard: do not sync while first-run wizard is still in progress.
+        // The wizard's Cloud step spawns run_once() to test connectivity, but
+        // the subsequent pull can deactivate the local seed device (device_code
+        // collision guard in apply_row/devices) before setup_wizard_complete
+        // runs its reactivation check — leaving app_config_load with no device.
+        // Skipping sync until setup is complete eliminates this race entirely.
+        let setup_done: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM app_config WHERE key = 'setup_complete' AND value = '1'",
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten()
+        .map(|n: i64| n > 0)
+        .unwrap_or(false);
+        if !setup_done {
+            return; // Wizard not finished — skip silently
+        }
+
         // Resolve device_id from DB each cycle
         let device_id = match self.active_device_id().await {
             Ok(id) => id,

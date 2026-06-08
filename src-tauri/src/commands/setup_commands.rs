@@ -152,6 +152,8 @@ pub async fn setup_wizard_complete(
     input: SetupWizardInput,
     state: State<'_, AppState>,
 ) -> Result<AppConfig, AppError> {
+    tracing::info!("setup_wizard_complete: started for store '{}'", input.store_name.trim());
+
     // F-CRIT-01: Reject if setup has already been completed. Without this guard,
     // any code with Tauri IPC access can call this command post-setup to overwrite
     // the owner PIN and branch settings — a full account takeover from the webview.
@@ -163,6 +165,7 @@ pub async fn setup_wizard_complete(
             .flatten()
             .flatten();
     if already_done.as_deref() == Some("1") {
+        tracing::warn!("setup_wizard_complete: rejected — setup already complete");
         return Err(AppError::Permission(
             "Store setup is already complete. Use Back Office settings to make changes.".into(),
         ));
@@ -185,6 +188,7 @@ pub async fn setup_wizard_complete(
     let now = chrono::Utc::now().to_rfc3339();
     let pin_hash = auth_repo::hash_pin(&input.owner_pin)?;
 
+    tracing::info!("setup_wizard_complete: updating branch…");
     // Update the branch
     sqlx::query(
         "UPDATE branches SET
@@ -207,6 +211,7 @@ pub async fn setup_wizard_complete(
     .execute(&state.db)
     .await?;
 
+    tracing::info!("setup_wizard_complete: branch updated — checking owner user…");
     // Check if a user with this username already exists (owner may be the seeded admin)
     let existing_id: Option<String> =
         sqlx::query_scalar("SELECT user_id FROM users WHERE username = ?")
@@ -270,6 +275,7 @@ pub async fn setup_wizard_complete(
         uid
     };
 
+    tracing::info!("setup_wizard_complete: owner user set (id={}) — checking Supabase…", owner_user_id);
     // Check if Supabase is already configured
     let sb_url: Option<String> =
         sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'supabase_url'")
@@ -366,6 +372,7 @@ pub async fn setup_wizard_complete(
         .await?;
     }
 
+    tracing::info!("setup_wizard_complete: Supabase block done — writing setup_complete='1'…");
     // All checks passed — mark setup complete now (after Supabase validation, not before).
     // Writing this before the schema_migrated check caused permanent lockout: a failed
     // check would leave setup_complete='1' set, making every retry hit "already complete".
@@ -377,10 +384,13 @@ pub async fn setup_wizard_complete(
     .execute(&state.db)
     .await?;
 
+    tracing::info!("setup_wizard_complete: setup_complete='1' written — checking device…");
     // Guard: the background run_once() triggered by adminSetupSupabase (Cloud step) may
     // have pulled devices from Supabase and deactivated the local seed device via the
     // device_code collision guard, leaving zero active devices. Reactivate it now so
     // app_config_load can find a device for this first terminal.
+    // NOTE: With the setup guard added to run_once() this race no longer occurs, but
+    // we keep the reactivation as a safety net for any edge case.
     let active_device_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE is_active = 1")
             .fetch_one(&state.db)
@@ -408,10 +418,12 @@ pub async fn setup_wizard_complete(
         }
     }
 
+    tracing::info!("setup_wizard_complete: device check done — loading app config…");
     // Return updated config with owner user_id so the frontend can
     // call RBAC-gated commands (CSV import, etc.) as the new owner.
     let mut cfg = app_config_load(state).await?;
     cfg.owner_user_id = Some(owner_user_id);
+    tracing::info!("setup_wizard_complete: done — POS ready");
     Ok(cfg)
 }
 

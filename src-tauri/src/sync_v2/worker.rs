@@ -575,6 +575,19 @@ impl SyncWorker {
                             applied += 1;
                         }
                         Err(e) => {
+                            // FOREIGN KEY constraint (code 787): referenced row hasn't
+                            // arrived yet — skip without halting the watermark. The row
+                            // will be retried on the next cycle when dependencies arrive.
+                            if e.to_string().contains("FOREIGN KEY") {
+                                tracing::info!(
+                                    "Sync v2: FK skip on {table} — dependency not yet synced"
+                                );
+                                applied += 1; // advance watermark past this row
+                                if let Some(ts) = row.get("updated_at").and_then(|v| v.as_str()) {
+                                    if ts > max_ts.as_str() { max_ts = ts.to_string(); }
+                                }
+                                continue;
+                            }
                             // DB busy (SQLITE_BUSY code 5): happens during initial bulk data
                             // load when app writes and pull writes compete for the write lock.
                             // Retry once after a short delay before halting the watermark.
@@ -594,6 +607,14 @@ impl SyncWorker {
                                         continue;
                                     }
                                     Err(e2) => {
+                                        if e2.to_string().contains("FOREIGN KEY") {
+                                            tracing::info!("Sync v2: FK skip on {table} (retry) — dependency not yet synced");
+                                            if let Some(ts) = row.get("updated_at").and_then(|v| v.as_str()) {
+                                                if ts > max_ts.as_str() { max_ts = ts.to_string(); }
+                                            }
+                                            applied += 1;
+                                            continue;
+                                        }
                                         tracing::warn!(
                                             "Sync v2: apply_row error for {table} (retry): {e2:?} — halting watermark here"
                                         );

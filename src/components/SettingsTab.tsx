@@ -24,6 +24,7 @@ import ReceiptTab from "./settings/ReceiptTab";
 import BusinessTab from "./settings/BusinessTab";
 import PrinterTab from "./settings/PrinterTab";
 import WhatsAppTab from "./settings/WhatsAppTab";
+import HubTab from "./settings/HubTab";
 import SystemTab from "./settings/SystemTab";
 import MaintenanceTab from "./settings/MaintenanceTab";
 
@@ -42,7 +43,7 @@ function timeoutLabel(m: number) {
 
 interface Props { sessionUserId: string; sessionRole: string; }
 
-type SettingsSubTab = "store" | "receipt" | "business" | "printer" | "whatsapp" | "system" | "maintenance";
+type SettingsSubTab = "store" | "receipt" | "business" | "printer" | "whatsapp" | "hub" | "system" | "maintenance";
 
 export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
   const [settingsSubTab, setSettingsSubTab] = useState<SettingsSubTab>("store");
@@ -361,6 +362,11 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
           onClick={() => setSettingsSubTab('whatsapp')}>
           <IcoWA /> WhatsApp
         </button>
+        <button role="tab" aria-selected={settingsSubTab === 'hub'}
+          className={`settings-sub-tab${settingsSubTab === 'hub' ? ' active' : ''}`}
+          onClick={() => setSettingsSubTab('hub')}>
+          <IcoSystem /> Hub
+        </button>
         <button role="tab" aria-selected={settingsSubTab === 'system'}
           className={`settings-sub-tab${settingsSubTab === 'system' ? ' active' : ''}`}
           onClick={() => setSettingsSubTab('system')}>
@@ -425,6 +431,9 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
       )}
       {settingsSubTab === 'whatsapp' && (
         <WhatsAppTab sessionUserId={sessionUserId} sessionRole={sessionRole} registerTimer={registerTimer} />
+      )}
+      {settingsSubTab === 'hub' && (
+        <HubTab sessionUserId={sessionUserId} />
       )}
       {settingsSubTab === 'system' && (
         <SystemTab

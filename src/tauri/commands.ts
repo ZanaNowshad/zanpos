@@ -34,7 +34,6 @@ import type {
   Shift,
   StockLevel,
   StockMovementRow,
-  SupabaseStatus,
   SyncQueueItem,
   SyncDiagnostics,
   SyncTableStats,
@@ -74,6 +73,8 @@ import type {
   ChatMessage,
   ProductPrefill,
   ResolveResult,
+  HubStatus,
+  HubTestResult,
 } from "../types";
 
 // ─── Setup & Settings commands ────────────────────────────────────────────────
@@ -96,24 +97,6 @@ export const setupWizardComplete = (input: {
   owner_pin: string;
 }): Promise<AppConfig> =>
   invoke("setup_wizard_complete", { input });
-
-export const setupJoinStore = (input: {
-  supabase_url: string;
-  supabase_key: string;
-  device_name: string;
-  device_code: string;
-}): Promise<AppConfig> =>
-  invoke("setup_join_store", { input });
-
-export interface ConnectionTestResult {
-  connected: boolean;
-  store_name: string | null;
-  error: string | null;
-}
-
-/** Lightweight read-only probe: validates credentials and returns store name. */
-export const setupTestSupabaseConnection = (url: string, key: string): Promise<ConnectionTestResult> =>
-  invoke("setup_test_supabase_connection", { url, key });
 
 export interface PullSummary {
   ok: boolean;
@@ -376,25 +359,22 @@ export const syncTriggerNow = (actorUserId: string): Promise<string> => invoke("
 export const syncForceFullResync = (actorUserId: string): Promise<string> =>
   invoke("sync_force_full_resync", { actorUserId });
 
-// ─── Supabase setup ───────────────────────────────────────────────────────────
+// ─── Hub (LAN sync) ───────────────────────────────────────────────────────────
 
-export const adminSetupSupabase = (
-  url: string,
-  serviceKey: string,
-  pat: string,
-  actorUserId?: string
-): Promise<void> =>
-  invoke("admin_setup_supabase", { url, serviceKey, pat, actorUserId });
-
-export const adminGetSupabaseStatus = (actorUserId: string): Promise<SupabaseStatus> =>
-  invoke("admin_get_supabase_status", { actorUserId });
-
-export const adminSetupSupabaseCredsOnly = (
-  actorUserId: string,
-  url: string,
-  serviceKey: string,
-): Promise<void> =>
-  invoke("admin_setup_supabase_creds_only", { actorUserId, url, serviceKey });
+export const hubStatus = (actorUserId: string): Promise<HubStatus> =>
+  invoke("hub_status", { actorUserId });
+export const hubEnable = (actorUserId: string, port?: number): Promise<HubStatus> =>
+  invoke("hub_enable", { actorUserId, port: port ?? null });
+export const hubRegenerateToken = (actorUserId: string): Promise<HubStatus> =>
+  invoke("hub_regenerate_token", { actorUserId });
+export const hubTestConnection = (url: string, token: string): Promise<HubTestResult> =>
+  invoke("hub_test_connection", { url, token });
+export const hubJoin = (input: { hub_url: string; token: string; device_name: string; device_code: string })
+  : Promise<AppConfig> => invoke("hub_join", { input });
+export const hubConnectExisting = (actorUserId: string, hubUrl: string, token: string): Promise<HubStatus> =>
+  invoke("hub_connect_existing", { actorUserId, hubUrl, token });
+export const hubSetUrl = (actorUserId: string, hubUrl: string): Promise<HubStatus> =>
+  invoke("hub_set_url", { actorUserId, hubUrl });
 
 // ─── AI Admin — provider management ──────────────────────────────────────────
 

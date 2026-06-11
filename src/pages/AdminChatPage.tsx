@@ -18,7 +18,6 @@ import type {
   TodaySummary,
   StockLevel,
   SyncStatus,
-  SupabaseStatus,
 } from "../types";
 import { DEVICE } from "../types";
 import { Channel } from "@tauri-apps/api/core";
@@ -29,19 +28,16 @@ import {
   adminSetOpenai,
   adminValidateGemini,
   adminSetGemini,
-  adminSetupSupabase,
-  adminGetSupabaseStatus,
-  syncForceFullResync,
+  syncStatus,
+  reportToday,
+  inventoryGetLevels,
+  aiClearHistory,
+  aiLoadHistory,
+  aiSaveMessage,
   aiChatStream,
   aiExecuteAction,
   aiCancelAction,
   aiUndoAction,
-  aiSaveMessage,
-  aiLoadHistory,
-  aiClearHistory,
-  reportToday,
-  inventoryGetLevels,
-  syncStatus,
 } from "../tauri/commands";
 import ConfirmActionModal from "../components/ConfirmActionModal";
 import { clearAdminChat } from "../adminChatClear";
@@ -644,7 +640,7 @@ function KpiSidebar({ kpi, currencyExp, onRefresh }: {
         // The previous render collapsed "configured but failing" into "Connected"
         // (green) which made sync outages invisible from the AI page.
         const state: "not_configured" | "online" | "syncing" | "offline" =
-          !s.supabase_configured ? "not_configured"
+          !s.hub_configured ? "not_configured"
           : s.online              ? (s.pending_events > 0 ? "syncing" : "online")
           :                          "offline";
 
@@ -832,21 +828,6 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
   const [setupStep, setSetupStep] = useState<SetupStep>("loading");
   const [config, setConfig] = useState<ProviderConfig | null>(null);
 
-  // Supabase sync setup
-  const [supabaseUrl, setSupabaseUrl]     = useState("");
-  const [supabaseKey, setSupabaseKey]     = useState("");
-  const [supabasePat, setSupabasePat]     = useState("");
-  const [supabaseError, setSupabaseError] = useState("");
-  const [supabaseMigrating, setSupabaseMigrating] = useState(false);
-  // True once Supabase is connected. While true, the change-keys form is hidden
-  // everywhere (hard lock) — credentials can only be entered when NOT connected.
-  const [supabaseConfigured, setSupabaseConfigured] = useState(false);
-  const [resyncing, setResyncing] = useState(false);
-  const [resyncMsg, setResyncMsg] = useState<string | null>(null);
-  // Cached project URL for the "change connection / re-migrate" flow. Loaded
-  // once from adminGetSupabaseStatus so the form can pre-fill it. The service
-  // role key is never cached here — it stays in the OS credential store.
-  const [supabaseUrlCached, setSupabaseUrlCached] = useState("");
   const [settingsTab, setSettingsTab]     = useState<"sync" | "ai">("sync");
 
   // Anthropic setup
@@ -908,22 +889,14 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
 
   // ── Initial load ────────────────────────────────────────────────────────────
   useEffect(() => {
-    Promise.all([
-      adminGetSupabaseStatus(sessionUser.user_id).catch(() => ({ configured: false, url: "" }) as SupabaseStatus),
-      adminGetProviderConfig(sessionUser.user_id).catch(() => null),
-    ]).then(([supaStatus, cfg]) => {
+    adminGetProviderConfig(sessionUser.user_id).catch(() => null)
+      .then((cfg) => {
       if (cfg) {
         setConfig(cfg);
         if (cfg.openai_base_url) setOpenaiBaseUrl(cfg.openai_base_url);
-      }
-      setSupabaseConfigured(supaStatus.configured);
-      setSupabaseUrlCached(supaStatus.url ?? "");
-      if (!supaStatus.configured) {
-        setSetupStep("sync_setup");
-      } else if (!cfg?.provider) {
-        setSetupStep("pick_provider");
-      } else {
         setSetupStep("done");
+      } else {
+        setSetupStep("pick_provider");
       }
     }).catch((e) => {
       console.error("[AdminChat] init failed:", e);
@@ -1107,40 +1080,6 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
     }
   };
 
-  // ── Supabase setup ──────────────────────────────────────────────────────────
-  const handleSetupSupabase = async () => {
-    if (!supabaseUrl.trim() || !supabaseKey.trim() || !supabasePat.trim()) return;
-    setSupabaseError("");
-    setSupabaseMigrating(true);
-    setSetupStep("sync_migrating");
-    // Capture whether we entered this form from the connected state. If so,
-    // success means "stay in settings" rather than "go to the AI page".
-    const wasRemigrate = supabaseConfigured;
-    try {
-      await adminSetupSupabase(supabaseUrl.trim(), supabaseKey.trim(), supabasePat.trim(), sessionUser.user_id);
-      setSupabaseConfigured(true); // connection established — lock the keys form
-      setSupabaseUrlCached(supabaseUrl.trim());
-      setSupabasePat("");
-      setSupabaseKey("");
-      const cfg = await adminGetProviderConfig(sessionUser.user_id).catch(() => null);
-      if (cfg) setConfig(cfg);
-      // After re-migration, return to the settings hub so the operator can
-      // see the success and (if they want) re-run again. On first-time setup,
-      // continue to the provider picker / AI page as before.
-      if (wasRemigrate) {
-        setSetupStep("done");
-      } else {
-        setSetupStep(cfg?.provider ? "done" : "pick_provider");
-      }
-    } catch (e) {
-      setSupabaseError(String(e));
-      setSetupStep("sync_setup");
-    } finally {
-      setSupabaseMigrating(false);
-    }
-  };
-
-  // ── Chat send (streaming) ────────────────────────────────────────────────────
   const handleSend = async (overrideText?: string) => {
     const text = (overrideText ?? input).trim();
     if (!text || chatState !== "idle") return;
@@ -1376,76 +1315,21 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
     );
   }
 
-  // ── Render: sync setup ──────────────────────────────────────────────────────
+  // ── Render: sync setup (replaced by hub messaging) ──────────────────────────
   if (setupStep === "sync_setup" || setupStep === "sync_migrating") {
-    // Distinguish first-time setup from the "change connection" recovery flow.
-    // When supabaseConfigured is true we are re-entering the form to re-run
-    // migration — the URL is pre-filled, the title and helper text should
-    // reflect that, and "Skip for now" should be hidden (you cannot skip a
-    // re-migration that's already in progress).
-    const isRemigrate = supabaseConfigured;
     return (
       <div className="admin-chat-page">
-        <SetupTopBar label={isRemigrate ? "Settings — Re-migrate" : "Store Setup — Sync"} user={sessionUser.display_name} onBack={isRemigrate ? () => setSetupStep("done") : onBackToPOS} />
+        <SetupTopBar label="Store Setup — Sync" user={sessionUser.display_name} onBack={onBackToPOS} />
         <div className="setup-center">
           <div className="setup-card setup-card-wide">
-            <h2>{isRemigrate ? "Re-run cloud schema migration" : "Connect to Supabase"}</h2>
+            <h2>Multi-Terminal Sync</h2>
             <p className="setup-subtitle">
-              {isRemigrate ? (
-                <>
-                  Saving will re-run the schema migration against{" "}
-                  <code>{supabaseUrl || supabaseUrlCached}</code> and re-push your
-                  full catalog (products, users, devices, prices, customers). Use
-                  this when a previously-installed build left the cloud DB missing
-                  tables — for example, an older build that didn't include the
-                  POS Terminals table will fail to register new devices, and the
-                  AI page will show "Offline" with a `device` error in the tooltip.
-                  The PAT is used once and discarded.
-                </>
-              ) : (
-                <>
-                  ZanPOS uses <strong>Supabase</strong> to sync data across devices.
-                  Credentials are stored locally. The PAT is used once and discarded.
-                </>
-              )}
+              Multi-terminal sync is managed in Back Office → Settings → Hub.
+              Open the Hub tab to enable the hub on this device or connect to an existing one.
             </p>
-            <label className="setup-label">Supabase Project URL
-              <input type="text" className="setup-input"
-                placeholder="https://xyz.supabase.co"
-                value={supabaseUrl}
-                onChange={e => setSupabaseUrl(e.target.value)}
-                disabled={supabaseMigrating}
-              />
-            </label>
-            <p className="setup-hint">Settings → API → Project URL</p>
-            <label className="setup-label">Service Role Key (Secret)
-              <input type="password" className="setup-input"
-                placeholder="eyJhbGciOi…"
-                value={supabaseKey}
-                onChange={e => setSupabaseKey(e.target.value)}
-                disabled={supabaseMigrating}
-              />
-            </label>
-            <label className="setup-label">
-              Personal Access Token <span className="setup-hint-inline">(one-time use)</span>
-              <input type="password" className="setup-input"
-                placeholder="sbp_…"
-                value={supabasePat}
-                onChange={e => setSupabasePat(e.target.value)}
-                disabled={supabaseMigrating}
-                onKeyDown={e => e.key === "Enter" && handleSetupSupabase()}
-              />
-            </label>
-            {supabaseError && <p className="setup-error">{supabaseError}</p>}
-            {supabaseMigrating && <p className="setup-migrating">Creating central tables…</p>}
             <div className="setup-actions">
-              <button className="btn-secondary" onClick={() => setSetupStep(isRemigrate ? "done" : "pick_provider")} disabled={supabaseMigrating}>
-                {isRemigrate ? "Cancel" : "Skip for now"}
-              </button>
-              <button className="btn-primary"
-                onClick={handleSetupSupabase}
-                disabled={supabaseMigrating || !supabaseUrl.trim() || !supabaseKey.trim() || !supabasePat.trim()}
-              >{supabaseMigrating ? "Migrating…" : isRemigrate ? "Re-migrate now" : "Connect & Set Up"}</button>
+              <button className="btn-secondary" onClick={() => setSetupStep("pick_provider")}>Skip</button>
+              <button className="btn-primary" onClick={() => setSetupStep("pick_provider")}>Continue →</button>
             </div>
           </div>
         </div>
@@ -1466,93 +1350,16 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
             </div>
             {settingsTab === "sync" && (
               <div>
-                <h2>Supabase Sync</h2>
-                {supabaseConfigured ? (
-                  // Connected — credentials are hard-locked in normal use, but we
-                  // expose a "Change connection" path that pre-fills the URL and
-                  // clears key+PAT. Saving runs admin_setup_supabase, which
-                  // re-validates, re-runs the schema migration, and re-pushes
-                  // the full catalog. This is the operator's recovery hatch for
-                  // stale cloud schemas (e.g. an older build missing tables).
-                  <div className="settings-info-box">
-                    <p>✓ Supabase is connected and syncing.</p>
-                    {supabaseUrlCached && (
-                      <p className="setup-subtitle" style={{ marginTop: 4, fontFamily: "monospace", fontSize: "0.78rem" }}>
-                        {supabaseUrlCached}
-                      </p>
-                    )}
-                    <p className="setup-subtitle" style={{ marginTop: 8 }}>
-                      Credentials are locked while connected. Use <strong>Change connection</strong>{" "}
-                      to re-run the schema migration (patches the cloud DB and re-pushes your
-                      catalog). You will need to re-enter the Service Role Key and a fresh
-                      Personal Access Token.
-                    </p>
-                    <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
-                      <p className="setup-subtitle" style={{ marginBottom: 8 }}>
-                        Other terminals can't see this device's data? Re-queue the entire
-                        catalog (products, users, this device) and push it to the cloud now.
-                      </p>
-                      <button
-                        className="btn-secondary"
-                        disabled={resyncing}
-                        onClick={async () => {
-                          setResyncing(true); setResyncMsg(null);
-                          try {
-                            const msg = await syncForceFullResync(sessionUser.user_id);
-                            setResyncMsg(msg);
-                          } catch (e) {
-                            setResyncMsg(typeof e === "string" ? e : "Re-sync failed");
-                          } finally { setResyncing(false); }
-                        }}
-                      >
-                        {resyncing ? "Re-syncing…" : "⟳ Force Full Re-Sync"}
-                      </button>
-                      {resyncMsg && (
-                        <p className="setup-subtitle" style={{ marginTop: 8, color: "var(--accent)" }}>
-                          {resyncMsg}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <p className="setup-subtitle">Connect Supabase for multi-terminal sync and cloud backup.</p>
-                    <label className="setup-label">Project URL
-                      <input type="text" className="setup-input" value={supabaseUrl} onChange={e => setSupabaseUrl(e.target.value)} disabled={supabaseMigrating} />
-                    </label>
-                    <label className="setup-label">Service Role Key
-                      <input type="password" className="setup-input" value={supabaseKey} onChange={e => setSupabaseKey(e.target.value)} disabled={supabaseMigrating} />
-                    </label>
-                    <label className="setup-label">PAT <span className="setup-hint-inline">(leave blank to update keys only)</span>
-                      <input type="password" className="setup-input" placeholder="sbp_…" value={supabasePat} onChange={e => setSupabasePat(e.target.value)} disabled={supabaseMigrating} />
-                    </label>
-                    {supabaseError && <p className="setup-error">{supabaseError}</p>}
-                  </>
-                )}
+                <h2>Multi-Terminal Sync</h2>
+                <div className="settings-info-box">
+                  <p>Multi-terminal sync is managed in Back Office → Settings → Hub.</p>
+                  <p className="setup-subtitle" style={{ marginTop: 8 }}>
+                    Open the Hub tab to enable the hub on this device or connect to
+                    an existing one over your shop WiFi.
+                  </p>
+                </div>
                 <div className="setup-actions">
-                  <button className="btn-secondary" onClick={() => setSetupStep("done")}>{supabaseConfigured ? "Close" : "Cancel"}</button>
-                  {supabaseConfigured ? (
-                    <button
-                      className="btn-primary"
-                      onClick={() => {
-                        // Re-migration flow: pre-fill URL, clear key+PAT so the
-                        // user MUST re-enter them (PAT is needed for migration;
-                        // key is required by the current validation but is also
-                        // already in the keyring — re-typing is fine).
-                        setSupabaseUrl(supabaseUrlCached);
-                        setSupabaseKey("");
-                        setSupabasePat("");
-                        setSupabaseError("");
-                        setSetupStep("sync_setup");
-                      }}
-                    >
-                      ↻ Change connection
-                    </button>
-                  ) : (
-                    <button className="btn-primary" onClick={handleSetupSupabase} disabled={supabaseMigrating || !supabaseUrl.trim() || !supabaseKey.trim() || !supabasePat.trim()}>
-                      {supabaseMigrating ? "Saving…" : "Save & Connect"}
-                    </button>
-                  )}
+                  <button className="btn-secondary" onClick={() => setSetupStep("done")}>Close</button>
                 </div>
               </div>
             )}

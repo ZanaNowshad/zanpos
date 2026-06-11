@@ -2,10 +2,10 @@ import { useRef, useState } from "react";
 import type { AppConfig } from "../types";
 import {
   setupWizardComplete,
-  setupJoinStore,
-  setupTestSupabaseConnection,
   setupPullCatalog,
-  adminSetupSupabase,
+  hubEnable,
+  hubJoin,
+  hubTestConnection,
   setupSaveBenefitNumber,
   adminBulkImportCategories,
   adminBulkImportProducts,
@@ -225,12 +225,9 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
   const [completedConfig, setCompletedConfig] = useState<AppConfig | null>(null); // set when step 8 is reached
   const [ownerUserId, setOwnerUserId] = useState(""); // resolved after setup completes
 
-  // Step 2 — Cloud (soft-required)
-  const [sbUrl, setSbUrl]         = useState("");
-  const [sbKey, setSbKey]         = useState("");
-  const [sbPat, setSbPat]         = useState("");
-  const [sbSkipped, setSbSkipped] = useState(false);
-  const [sbValidating, setSbValidating] = useState(false);
+  // Step 2 — Hub (multi-terminal)
+  const [enableHub, setEnableHub] = useState(true);
+  const [hubPort, setHubPort] = useState("8923");
 
   // Step 3 — store info
   const [storeName, setStoreName] = useState("");
@@ -263,32 +260,6 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
   const anyLoading = finishLoading || csvLoading || migrateLoading;
 
   const clearError = () => setError(null);
-
-  // ── Cloud step handlers ────────────────────────────────────────────────────
-
-  const handleConnectCloud = async () => {
-    if (!sbUrl.trim()) { setError("Supabase URL is required"); return; }
-    if (!sbKey.trim()) { setError("Service role key is required"); return; }
-    if (!sbPat.trim()) { setError("Personal Access Token is required for new store setup — it runs the one-time schema migration that enables multi-terminal sync"); return; }
-    setSbValidating(true);
-    setError(null);
-    try {
-      await adminSetupSupabase(sbUrl.trim(), sbKey.trim(), sbPat.trim());
-      setSbSkipped(false);
-      setStep(3);
-    } catch (e: unknown) {
-      const msg = typeof e === "string" ? e : (e instanceof Error ? e.message : null);
-      setError(msg || "Could not connect to Supabase — check URL and service role key");
-    } finally {
-      setSbValidating(false);
-    }
-  };
-
-  const handleSkipCloud = () => {
-    setSbSkipped(true);
-    setError(null);
-    setStep(3);
-  };
 
   // ── Step validation ────────────────────────────────────────────────────────
 
@@ -341,19 +312,29 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
 
   const handleFinish = async () => {
     const cfg = await doSetupComplete(setFinishLoading);
-    if (cfg) onComplete(cfg);
+    if (!cfg) return;
+    // If hub was enabled in the wizard, activate it now
+    if (enableHub && cfg.owner_user_id) {
+      try {
+        await hubEnable(cfg.owner_user_id, parseInt(hubPort, 10) || 8923);
+      } catch { /* non-blocking — hub can be enabled later in Settings */ }
+    }
+    onComplete(cfg);
   };
 
   const handleGoImportCSV = async () => {
     const cfg = await doSetupComplete(setCsvLoading);
     if (!cfg) return;
+    if (enableHub && cfg.owner_user_id) {
+      try { await hubEnable(cfg.owner_user_id, parseInt(hubPort, 10) || 8923); } catch { /* ignore */ }
+    }
     setOwnerUserId(cfg.owner_user_id ?? "");
     setStep(8);
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  const LABELS = ["Cloud", "Store Info", "Contact", "Payments", "Owner", "Review"];
+  const LABELS = ["Hub", "Store Info", "Contact", "Payments", "Owner", "Review"];
   const stepIdx = Math.min(step - 2, LABELS.length - 1); // 0-based for progress bar (cap at Review for step 8)
 
   return (
@@ -367,68 +348,44 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
         ))}
       </div>
 
-      {/* ── Step 2: Cloud connection ── */}
+      {/* ── Step 2: Multi-Terminal Hub ── */}
       {step === 2 && (
         <div className="setup-content">
-          <h2 className="setup-title">Connect to Cloud</h2>
+          <h2 className="setup-title">Multi-Terminal Hub</h2>
           <p className="setup-body">
-            ZanPOS uses Supabase as its central database — the authoritative source for all
-            your store data, multi-terminal sync, and backups.
-          </p>
-          <p className="setup-body setup-body-dim">
-            Enter your Supabase project URL, service role key, and Personal Access Token.
-            The PAT runs the one-time schema setup on your Supabase project. It is required
-            for new store setup — without it, multi-terminal sync will not work.
+            This device can act as the Store Hub — other tills connect to it over
+            your shop WiFi. No internet needed.
           </p>
 
-          <label className="field-label">Supabase Project URL *</label>
-          <input
-            className="field-input"
-            placeholder="https://yourproject.supabase.co"
-            value={sbUrl}
-            onChange={e => { setSbUrl(e.target.value); clearError(); }}
-            autoFocus
-          />
+          <label className="field-label">
+            <input type="checkbox" checked={enableHub} onChange={e => setEnableHub(e.target.checked)} />
+            {" "}Enable Hub on this device
+          </label>
 
-          <label className="field-label">Service Role Key *</label>
-          <input
-            className="field-input"
-            type="password"
-            placeholder="eyJh…"
-            value={sbKey}
-            onChange={e => { setSbKey(e.target.value); clearError(); }}
-          />
-
-          <label className="field-label">Personal Access Token *</label>
-          <input
-            className="field-input"
-            type="password"
-            placeholder="sbp_…"
-            value={sbPat}
-            onChange={e => { setSbPat(e.target.value); clearError(); }}
-          />
-
-          {error && <div className="modal-error">{error}</div>}
-
-          <div className="setup-actions">
-            <button className="setup-btn-skip" onClick={handleSkipCloud} disabled={sbValidating}>
-              Skip for now (7-day grace)
-            </button>
-            <button className="setup-btn-primary" onClick={handleConnectCloud} disabled={sbValidating}>
-              {sbValidating ? "Setting up schema… (1–2 min)" : "Connect & Continue →"}
-            </button>
-          </div>
-
-          {sbValidating && (
-            <p className="setup-hint" style={{ color: "var(--accent)", marginTop: 8 }}>
-              ⏳ Running one-time database migration — please wait, do not close the app.
-            </p>
+          {enableHub && (
+            <div>
+              <label className="field-label">Hub Port</label>
+              <input
+                className="field-input"
+                type="number"
+                value={hubPort}
+                onChange={e => { setHubPort(e.target.value); clearError(); }}
+              />
+            </div>
           )}
 
           <p className="setup-hint">
-            ⚠ Skipping cloud connection means sales are stored locally only. You have 7 days
-            before a persistent warning appears on every screen.
+            Connection details (IP + store token) appear in Back Office → Settings → Hub after setup.
           </p>
+
+          <div className="setup-actions">
+            <button className="setup-btn-secondary" onClick={() => { setEnableHub(false); setStep(3); }}>
+              Skip for now
+            </button>
+            <button className="setup-btn-primary" onClick={() => setStep(3)}>
+              Continue →
+            </button>
+          </div>
         </div>
       )}
 
@@ -436,11 +393,7 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
       {step === 3 && (
         <div className="setup-content">
           <h2 className="setup-title">Store Information</h2>
-          {sbSkipped && (
-            <div className="setup-warn-banner">
-              ⚠ Cloud not connected — you can add Supabase credentials later in Back Office → Sync.
-            </div>
-          )}
+
           <label className="field-label">Store Name *</label>
           <input
             className="field-input"
@@ -588,9 +541,9 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
           <h2 className="setup-title">Ready to go!</h2>
 
           <div className="setup-review">
-            {sbSkipped
-              ? <div className="setup-review-row setup-review-warn"><span>Cloud</span><strong>⚠ Not connected (7-day grace)</strong></div>
-              : <div className="setup-review-row"><span>Cloud</span><strong>✓ Supabase connected</strong></div>
+            {enableHub
+              ? <div className="setup-review-row"><span>Hub</span><strong>✓ Hub enabled</strong></div>
+              : <div className="setup-review-row setup-review-warn"><span>Hub</span><strong>Not enabled (can enable later in Settings)</strong></div>
             }
             <div className="setup-review-row"><span>Store name</span><strong>{storeName}</strong></div>
             <div className="setup-review-row"><span>Currency</span><strong>{currency}</strong></div>
@@ -701,8 +654,8 @@ type JoinStep = "creds" | "device" | "joining" | "done";
 
 function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) => void; onBack?: () => void }) {
   const [step, setStep]           = useState<JoinStep>("creds");
-  const [sbUrl, setSbUrl]         = useState("");
-  const [sbKey, setSbKey]         = useState("");
+  const [hubUrl, setHubUrl]         = useState("");
+  const [token, setToken]         = useState("");
   const [storeName, setStoreName] = useState<string | null>(null);
   const [deviceName, setDeviceName] = useState("");
   const [deviceCode, setDeviceCode] = useState("");
@@ -712,23 +665,22 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
 
   const clearError = () => setError(null);
 
-  // GAP 1: real network test before advancing to device step
   const handleValidateCreds = async () => {
-    if (!sbUrl.trim()) { setError("Supabase URL is required"); return; }
-    if (!sbKey.trim()) { setError("Service role key is required"); return; }
+    if (!hubUrl.trim()) { setError("Hub address is required"); return; }
+    if (!token.trim()) { setError("Store token is required"); return; }
     setLoading(true);
     setError(null);
     try {
-      const result = await setupTestSupabaseConnection(sbUrl.trim(), sbKey.trim());
-      if (!result.connected) {
-        setError(result.error ?? "Connection failed — check credentials and try again.");
+      const result = await hubTestConnection(hubUrl.trim(), token.trim());
+      if (!result.ok) {
+        setError(result.error ?? "Connection failed — check address and token.");
         return;
       }
       setStoreName(result.store_name);
       setStep("device");
     } catch (e: unknown) {
       const raw = typeof e === "string" ? e : String(e);
-      setError(raw.length < 160 ? raw : "Connection check failed — check your internet and credentials.");
+      setError(raw.length < 160 ? raw : "Connection check failed.");
     } finally {
       setLoading(false);
     }
@@ -742,14 +694,13 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
     setStep("joining");
     setPullStatus("Connecting to store…");
     try {
-      const cfg = await setupJoinStore({
-        supabase_url: sbUrl.trim(),
-        supabase_key: sbKey.trim(),
-        device_name:  deviceName.trim(),
-        device_code:  deviceCode.trim().toUpperCase(),
+      const cfg = await hubJoin({
+        hub_url: hubUrl.trim(),
+        token: token.trim(),
+        device_name: deviceName.trim(),
+        device_code: deviceCode.trim().toUpperCase(),
       });
 
-      // GAP 2: block until catalog is downloaded, then complete
       setPullStatus("Pulling catalog from store…");
       try {
         const summary = await setupPullCatalog();
@@ -760,26 +711,23 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
         } else {
           setPullStatus("✓ Connected");
         }
-        // Small pause so user can read the confirmation
         await new Promise(r => setTimeout(r, 800));
       } catch {
-        // Non-fatal: catalog will sync on next background cycle
         setPullStatus("⚠ Initial pull incomplete — sync will retry automatically");
         await new Promise(r => setTimeout(r, 1200));
       }
 
       onComplete(cfg);
     } catch (e: unknown) {
-      // Clean up raw Supabase JSON errors for the cashier
       const raw = typeof e === "string" ? e : String(e);
       const friendlyMsg =
         raw.includes("No active store") || raw.includes("pull_branch") || raw.includes("branches")
-          ? "No store found in this Supabase project. Make sure Device 1 has been set up and connected to the internet at least once."
-          : raw.includes("UNAUTHORIZED") || raw.includes("FORBIDDEN") || raw.includes("Invalid")
-            ? "Invalid Supabase credentials — check the URL and service role key."
-            : raw.includes("connect") || raw.includes("network") || raw.includes("NETWORK")
-              ? "Could not reach Supabase — check your internet connection."
-              : raw.length < 120 ? raw : "Could not join store — check credentials and network.";
+          ? "No store found on this hub. Make sure Device 1 has been set up as the hub."
+          : raw.includes("Wrong store token")
+            ? "Invalid store token — check the token from the hub device."
+            : raw.includes("connect") || raw.includes("NETWORK")
+              ? "Could not reach the hub — check the address and that both devices are on the same WiFi."
+              : raw.length < 120 ? raw : "Could not join store — check address and token.";
       setError(friendlyMsg);
       setStep("device");
     } finally {
@@ -793,26 +741,27 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
         <div className="setup-content">
           <h2 className="setup-title">Join Existing Store</h2>
           <p className="setup-body">
-            Enter the same Supabase project credentials used when the store was first set up.
-            This terminal will pull the store's catalog, users, and configuration automatically.
+            Enter the hub address and store token shown on the hub device's
+            Back Office → Settings → Hub screen. This terminal will pull the
+            store's catalog, users, and configuration automatically over your shop WiFi.
           </p>
 
-          <label className="field-label">Supabase Project URL *</label>
+          <label className="field-label">Hub Address *</label>
           <input
             className="field-input"
-            placeholder="https://yourproject.supabase.co"
-            value={sbUrl}
-            onChange={e => { setSbUrl(e.target.value); clearError(); }}
+            placeholder="192.168.1.50"
+            value={hubUrl}
+            onChange={e => { setHubUrl(e.target.value); clearError(); }}
             autoFocus
           />
 
-          <label className="field-label">Service Role Key *</label>
+          <label className="field-label">Store Token *</label>
           <input
             className="field-input"
             type="password"
-            placeholder="eyJh…"
-            value={sbKey}
-            onChange={e => { setSbKey(e.target.value); clearError(); }}
+            placeholder="Paste the token from the hub…"
+            value={token}
+            onChange={e => { setToken(e.target.value); clearError(); }}
           />
 
           {error && <div className="modal-error">{error}</div>}
@@ -903,9 +852,9 @@ export default function SetupWizard({ onComplete, onMigrate }: Props) {
           <div className="setup-logo">ZAN<span>POS</span></div>
           <h1 className="setup-title">Welcome to ZanPOS</h1>
           <p className="setup-body">
-            ZanPOS is a cloud-authoritative point-of-sale system. Your central store data
-            lives in Supabase; this terminal uses a local cache for fast, offline-resilient
-            operation and syncs automatically.
+            ZanPOS keeps your store data local and syncs across terminals over your
+            shop WiFi — no internet required. One device acts as the Hub; other tills
+            connect to it for multi-terminal operation.
           </p>
           <p className="setup-body">What would you like to do?</p>
 
@@ -915,7 +864,7 @@ export default function SetupWizard({ onComplete, onMigrate }: Props) {
               <span className="setup-path-title">New Store</span>
               <span className="setup-path-desc">
                 Set up a brand-new store. You'll configure your store details,
-                connect Supabase, and create your owner account.
+                optionally enable the Hub, and create your owner account.
               </span>
             </button>
 
@@ -923,9 +872,9 @@ export default function SetupWizard({ onComplete, onMigrate }: Props) {
               <span className="setup-path-icon">🔗</span>
               <span className="setup-path-title">Join Existing Store</span>
               <span className="setup-path-desc">
-                Add this terminal to a store that's already running. Enter your
-                Supabase credentials and this device will sync the store's catalog
-                and users automatically.
+                Add this terminal to a store that's already running. Enter the
+                hub address and store token, and this device will sync the store's
+                catalog and users automatically.
               </span>
             </button>
           </div>

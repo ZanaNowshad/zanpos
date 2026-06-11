@@ -19,11 +19,11 @@ const SyncChip = memo(function SyncChip({ status, userId = "" }: Props) {
 
   if (!status) return <span className="sync-chip sync-unknown">●  Connecting…</span>;
 
-  // Not configured — Supabase credentials absent
-  if (!status.supabase_configured) {
+  // Not configured — no hub connection
+  if (!status.hub_configured) {
     return (
-      <span className="sync-chip sync-not-configured" title="Open Back Office → Sync to connect">
-        ⚠  No Cloud
+      <span className="sync-chip sync-not-configured" title="Open Back Office → Settings → Hub to connect">
+        ⚠  No Hub
       </span>
     );
   }

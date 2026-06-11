@@ -142,8 +142,10 @@ export interface SaleResult {
 
 export interface SyncStatus {
   online: boolean;
-  /** True when Supabase URL + service key are persisted. */
-  supabase_configured: boolean;
+  /** True when hub is configured (hub mode or terminal with hub_url + token). */
+  hub_configured: boolean;
+  mode: string;
+  hub_url: string | null;
   pending_events: number;
   last_successful_sync_at: string | null;
   /** Days elapsed since last successful sync. null if never synced. */
@@ -520,23 +522,30 @@ export interface RoleRow {
   name: string;
 }
 
-// ─── Phase 3: Supabase Sync ───────────────────────────────────────────────────
+// ─── Hub (LAN sync) ────────────────────────────────────────────────────────────
 
-export interface SupabaseStatus {
-  configured: boolean;
-  /** Supabase project URL. Surfaced for the "change connection / re-migrate" flow.
-   *  The service role key is never returned here — it stays in the OS credential store. */
-  url: string;
+export interface HubStatus {
+  mode: "hub" | "terminal" | "standalone";
+  running: boolean;
+  port: number;
+  lan_ips: string[];
+  token: string | null;
+  hub_url: string | null;
+  last_error: string | null;
+  terminals: HubTerminalSeen[];
 }
+
+export interface HubTerminalSeen { device_id: string; ip: string; last_seen: string }
+
+export interface HubTestResult { ok: boolean; store_name: string | null; error: string | null }
 
 // ─── App configuration (loaded from DB at startup) ────────────────────────────
 
 export interface AppConfig {
   setup_complete: boolean;
-  /** True when Supabase URL + service key are persisted in app_config. */
-  supabase_configured: boolean;
-  /** ISO timestamp when the 7-day cloud-setup grace period expires. null = Supabase configured. */
-  cloud_grace_deadline: string | null;
+  /** "hub" | "terminal" | "standalone" — drives Settings/Hub UI + SyncChip. */
+  hub_mode: "hub" | "terminal" | "standalone";
+  hub_url: string | null;
   branch_id: string;
   device_id: string;
   branch_name: string;
@@ -657,8 +666,7 @@ export interface SyncDiagTable {
 }
 
 export interface SyncDiagnostics {
-  supabase_configured: boolean;
-  can_load_client: boolean;
+  hub_configured: boolean;
   pending_events: number;
   stuck_events: number;
   last_sync_at: string | null;

@@ -416,6 +416,7 @@ pub fn has_origin_device_id(table: &str) -> bool {
             | "stock_movements"
             | "audit_logs"
             | "delivery_orders"
+            | "cash_events"
     )
 }
 
@@ -441,6 +442,7 @@ pub fn pk_for_table(table: &str) -> &str {
         "product_prices" => "price_id",
         "users" => "user_id",
         "cash_events" => "cash_event_id",
+        "app_config" => "key",
         _ => "id",
     }
 }

@@ -595,7 +595,7 @@ impl SyncWorker {
                                     }
                                     Err(e2) => {
                                         tracing::warn!(
-                                            "Sync v2: apply_row error for {table} (retry): {e2} — halting watermark here"
+                                            "Sync v2: apply_row error for {table} (retry): {e2:?} — halting watermark here"
                                         );
                                         hit_failure = true;
                                         break;
@@ -603,7 +603,7 @@ impl SyncWorker {
                                 }
                             } else {
                                 tracing::warn!(
-                                    "Sync v2: apply_row error for {table}: {e} — halting watermark here"
+                                    "Sync v2: apply_row error for {table}: {e:?} — halting watermark here"
                                 );
                                 hit_failure = true;
                                 break;

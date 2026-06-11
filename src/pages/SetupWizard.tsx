@@ -600,7 +600,11 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
               </div>
               <button className="setup-btn-migrate-inline" onClick={async () => {
                 const cfg = await doSetupComplete(setMigrateLoading);
-                if (cfg) onMigrate(cfg);
+                if (!cfg) return;
+                if (enableHub && cfg.owner_user_id) {
+                  try { await hubEnable(cfg.owner_user_id, parseInt(hubPort, 10) || 8923); } catch { /* ignore */ }
+                }
+                onMigrate(cfg);
               }} disabled={anyLoading}>
                 {migrateLoading ? "Setting up…" : "Import with AI →"}
               </button>
@@ -721,7 +725,7 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
     } catch (e: unknown) {
       const raw = typeof e === "string" ? e : String(e);
       const friendlyMsg =
-        raw.includes("No active store") || raw.includes("pull_branch") || raw.includes("branches")
+        raw.includes("pull_branch") || raw.includes("incomplete")
           ? "No store found on this hub. Make sure Device 1 has been set up as the hub."
           : raw.includes("Wrong store token")
             ? "Invalid store token — check the token from the hub device."

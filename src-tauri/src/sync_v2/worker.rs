@@ -2,7 +2,7 @@ use crate::db::repositories::ai_admin_repo;
 use crate::errors::{AppError, AppResult};
 use crate::secure_store;
 use crate::sync_v2::apply::{self, ALLOWED_CONFIG_KEYS, has_origin_device_id, pk_for_table, should_skip_column, value_from_row_column};
-use crate::sync_v2::client::SupabaseClient;
+use crate::sync_v2::client::HttpSyncClient;
 use serde_json::Value;
 use sqlx::Column;
 use sqlx::{Row, SqlitePool};
@@ -12,7 +12,10 @@ use tokio::time::Duration;
 
 pub const TRANSIENT_TAG: &str = "[TRANSIENT]";
 const BATCH_SIZE: i64 = 50;
-const INTERVAL_SECS: u64 = 300;
+/// Terminal→hub cycle. LAN traffic is free; 10 s gives near-real-time stock.
+const INTERVAL_SECS: u64 = 10;
+/// Hub housekeeping cadence (mark-synced + daily-prune check).
+const HUB_INTERVAL_SECS: u64 = 300;
 const MAX_ATTEMPTS: i64 = 10;
 /// Rows per hub REST call during pull. At 28k products this reduces
 /// API round-trips from 280 → 56 (5×).
@@ -47,6 +50,8 @@ impl SyncWorker {
         })
     }
 
+    pub(crate) fn pool(&self) -> &SqlitePool { &self.pool }
+
     /// Spawn background loop with supervisor restart on panic.
     /// Uses adaptive backoff: 3+ consecutive failures → 2× interval, 6+ → 5× interval.
     pub fn spawn(worker: Arc<Self>) {
@@ -61,12 +66,17 @@ impl SyncWorker {
                             let st = worker_inner.state.lock().await;
                             st.consecutive_failures
                         };
+                        let hub_mode: bool = sqlx::query_scalar::<_, String>(
+                            "SELECT value FROM app_config WHERE key='hub_mode'")
+                            .fetch_optional(worker_inner.pool()).await.ok().flatten()
+                            .map(|v| v == "1").unwrap_or(false);
+                        let base = if hub_mode { HUB_INTERVAL_SECS } else { INTERVAL_SECS };
                         let wait_secs = if consecutive_failures >= 6 {
-                            INTERVAL_SECS * 5
+                            base * 5
                         } else if consecutive_failures >= 3 {
-                            INTERVAL_SECS * 2
+                            base * 2
                         } else {
-                            INTERVAL_SECS
+                            base
                         };
                         tokio::time::sleep(Duration::from_secs(wait_secs)).await;
                         worker_inner.run_once().await;
@@ -119,6 +129,28 @@ impl SyncWorker {
             return; // Wizard not finished — skip silently
         }
 
+        // Hub mode: this device IS the source of truth. It never pushes/pulls.
+        // Its own UI writes land directly in the served DB; mark them synced so
+        // the SyncChip shows clean and terminals (which pull by updated_at, not
+        // sync_status) are unaffected.
+        let hub_mode: bool = sqlx::query_scalar::<_, String>(
+            "SELECT value FROM app_config WHERE key='hub_mode'")
+            .fetch_optional(&self.pool).await.ok().flatten()
+            .map(|v| v == "1").unwrap_or(false);
+        if hub_mode {
+            for table in apply::SYNC_TABLES.iter().filter(|t| **t != "app_config") {
+                let sql = format!(
+                    "UPDATE {table} SET sync_status='synced' WHERE sync_status='pending'");
+                let _ = sqlx::query(&sql).execute(&self.pool).await;
+            }
+            {
+                let mut st = self.state.lock().await;
+                st.online = true; st.last_error = None; st.consecutive_failures = 0;
+            }
+            self.prune_old_data().await;
+            return;
+        }
+
         // Resolve device_id from DB each cycle
         let device_id = match self.active_device_id().await {
             Ok(id) => id,
@@ -128,7 +160,7 @@ impl SyncWorker {
             }
         };
 
-        // Load Supabase client
+        // Load Hub client
         let client = match self.load_client().await {
             Some(c) => c,
             None => return, // Not configured — skip silently
@@ -182,53 +214,38 @@ impl SyncWorker {
 
     // ── Load client from app_config + keyring ──────────────────────────────────
 
-    pub async fn load_client(&self) -> Option<SupabaseClient> {
-        let url = match ai_admin_repo::get_config(&self.pool, "supabase_url").await {
-            Ok(Some(u)) => u,
-            Ok(None) => return None,
-            Err(e) => {
-                tracing::error!("Sync v2: failed to read supabase_url from config: {e}");
-                return None;
-            }
-        };
-
-        // Two-phase key lookup: OS credential store first, then DB fallback
-        let key = {
-            let from_os = secure_store::get_secret("supabase_service_key")
-                .unwrap_or_default();
-            if !from_os.is_empty() {
-                from_os
-            } else {
-                ai_admin_repo::get_config(&self.pool, "supabase_service_key")
-                    .await
-                    .ok()
-                    .flatten()
-                    .unwrap_or_default()
-            }
-        };
-
-        if url.is_empty() {
-            return None;
-        }
-        if key.is_empty() {
+    /// Terminal mode: hub_url (app_config) + hub_store_token (OS credential store).
+    /// Returns None when this device is the hub or not yet joined.
+    pub async fn load_client(&self) -> Option<HttpSyncClient> {
+        let url = ai_admin_repo::get_config(&self.pool, "hub_url").await.ok().flatten()
+            .filter(|u| !u.is_empty())?;
+        let token = secure_store::get_secret("hub_store_token").unwrap_or_default();
+        if token.is_empty() {
             tracing::error!(
-                "Sync v2: Supabase URL is configured but the service key could not be read \
-                 from the OS credential store OR the DB fallback. Sync is HALTED until \
-                 the key is re-entered in Back Office -> Sync."
-            );
+                "Sync v2: hub_url is set but hub_store_token is missing from the OS \
+                 credential store. Re-enter the store token in Settings -> Hub.");
             let mut st = self.state.lock().await;
             st.online = false;
-            st.last_error = Some(
-                "Supabase key unreadable — re-enter it in Back Office -> Sync.".into(),
-            );
+            st.last_error = Some("Store token missing — re-enter it in Settings → Hub.".into());
             return None;
         }
-        Some(SupabaseClient::new(&url, &key))
+        let device_id = sqlx::query_scalar::<_, String>(
+            "SELECT value FROM app_config WHERE key='device_id'")
+            .fetch_optional(&self.pool).await.ok().flatten();
+        Some(HttpSyncClient::new(&url, &token, device_id.as_deref()))
+    }
+
+    /// Run one push+pull against an explicit client. Test seam: bypasses
+    /// app_config/keyring lookup. Production path load_client() + run_once()
+    /// delegates here.
+    pub async fn run_once_with(&self, client: &HttpSyncClient, device_id: &str) {
+        let _ = self.push_pending(client).await;
+        let _ = self.pull_changes(client, device_id).await;
     }
 
     // ── Push pending rows table-by-table in FK-safe order ─────────────────────
 
-    async fn push_pending(&self, client: &SupabaseClient) -> AppResult<u32> {
+    async fn push_pending(&self, client: &HttpSyncClient) -> AppResult<u32> {
         // FK-safe push order:
         // 0. Branches first — all other tables have a branch_id FK
         // 1. Master data (no transaction FKs): categories, tax_rules, products, devices, customers
@@ -361,7 +378,7 @@ impl SyncWorker {
     /// Upsert app_config rows to Supabase (key-value pairs).
     /// SECURITY FIX: only push ALLOWED_CONFIG_KEYS — never push supabase_service_key,
     /// watermarks, or any other device-local internal state to the cloud.
-    async fn push_app_config(&self, client: &SupabaseClient) -> AppResult<u32> {
+    async fn push_app_config(&self, client: &HttpSyncClient) -> AppResult<u32> {
         let rows = sqlx::query("SELECT key, value, updated_at FROM app_config")
             .fetch_all(&self.pool)
             .await?;
@@ -394,7 +411,7 @@ impl SyncWorker {
 
     /// Bulk push ALL data from all tables during initial setup.
     /// Not batch-limited — designed for first-time sync to Supabase.
-    pub async fn push_all_bulk(&self, client: &SupabaseClient) -> AppResult<u32> {
+    pub async fn push_all_bulk(&self, client: &HttpSyncClient) -> AppResult<u32> {
         let push_order: &[&str] = &[
             "branches",   // Bug-Push-C: was missing from bulk push — Terminal 2 never pushed branch to Supabase
             "categories", "tax_rules", "products", "devices", "users", "customers",
@@ -449,7 +466,7 @@ impl SyncWorker {
 
         // Push app_config + branches
         self.push_app_config(client).await?;
-        // Branches pushed separately via upsert_branch in lib.rs
+        // Branches now sync normally via the hub push/pull path.
 
         tracing::info!("Bulk initial sync: pushed {} rows to Supabase", total_pushed);
         Ok(total_pushed)
@@ -459,7 +476,7 @@ impl SyncWorker {
 
     async fn pull_changes(
         &self,
-        client: &SupabaseClient,
+        client: &HttpSyncClient,
         device_id: &str,
     ) -> AppResult<u32> {
         // Tables to pull from central (same set as push, but orderly)

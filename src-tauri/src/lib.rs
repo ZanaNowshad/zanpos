@@ -3,10 +3,11 @@ mod commands;
 mod db;
 mod domain;
 mod errors;
+pub mod hub;
 mod inventory;
 mod secure_store;
 mod sync;
-mod sync_v2;
+pub mod sync_v2;
 
 use crate::sync::SyncWorker;
 use sqlx::SqlitePool;

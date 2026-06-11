@@ -47,6 +47,8 @@ pub struct DeliveryRow {
 /// Filter for listing delivery orders.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeliveryListFilter {
+    /// BUG-DELIVERY-10: caller-supplied branch_id takes precedence over DB lookup.
+    pub branch_id: Option<String>,
     pub payment_status: Option<String>,
     pub delivery_status: Option<String>,
     pub date_from: Option<String>,
@@ -70,7 +72,7 @@ pub struct ConfirmPaymentInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateDeliveryStatusInput {
     pub delivery_id: String,
-    pub delivery_status: String,  // pending | dispatched | delivered | cancelled
+    pub delivery_status: String,  // pending | dispatched | out_for_delivery | delivered | cancelled
     pub actor_user_id: String,
 }
 

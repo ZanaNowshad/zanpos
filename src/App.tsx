@@ -119,7 +119,7 @@ export default function App() {
     setSessionUser(user);
     setView("shift_check");
     try {
-      const active = await shiftGetActive(DEVICE.device_id);
+      const active = await shiftGetActive(DEVICE.device_id, user.user_id);
       if (active) {
         setShift(active);
         setView("pos");
@@ -130,12 +130,26 @@ export default function App() {
           const opened = await shiftOpen(DEVICE.branch_id, DEVICE.device_id, user.user_id, 0);
           setShift(opened);
           setView("pos");
-        } catch {
+        } catch (autoOpenErr) {
+          // Auto-open can fail with "already open" if shiftGetActive missed a race
+          // (e.g. a shift opened by another terminal since the check above).
+          // Retry before falling back to the ShiftModal.
+          try {
+            const retryActive = await shiftGetActive(DEVICE.device_id, user.user_id);
+            if (retryActive) { setShift(retryActive); setView("pos"); return; }
+          } catch { /* ignore */ }
           setView("shift_open");
         }
       }
     } catch {
-      setView("shift_open");
+      // shiftGetActive itself threw — still try auto-open before giving up.
+      try {
+        const opened = await shiftOpen(DEVICE.branch_id, DEVICE.device_id, user.user_id, 0);
+        setShift(opened);
+        setView("pos");
+      } catch {
+        setView("shift_open");
+      }
     }
   };
 
@@ -222,11 +236,13 @@ export default function App() {
   // ── Lock screen ────────────────────────────────────────────────────────────
   if (locked && sessionUser) {
     return (
-      <LockScreen
-        user={sessionUser}
-        onUnlock={() => setLocked(false)}
-        onLogout={handleLogout}
-      />
+      <ErrorBoundary>
+        <LockScreen
+          user={sessionUser}
+          onUnlock={() => setLocked(false)}
+          onLogout={handleLogout}
+        />
+      </ErrorBoundary>
     );
   }
 
@@ -276,6 +292,7 @@ export default function App() {
           sessionUser={sessionUser}
           shift={shift}
           onLogout={handleLogout}
+          onLock={() => setLocked(true)}
           onShiftClose={(updated) => {
             if (updated) {
               setShift(null);

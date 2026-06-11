@@ -16,6 +16,7 @@ import {
   businessFlagsSave,
   adminListTaxRules,
   adminSaveTaxRule,
+  adminDeleteTaxRule,
 } from "../tauri/commands";
 import { IcoStore, IcoReceipt, IcoRules, IcoPrinter, IcoWA, IcoSystem } from "./settings/Icons";
 import StoreTab from "./settings/StoreTab";
@@ -126,9 +127,9 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
 
   useEffect(() => {
     Promise.all([
-      settingsGetBranch(),
+      settingsGetBranch(sessionUserId),
       appConfigGetTimeout().catch(() => 5),
-      thermalGetConfig().catch(() => ({ enabled: false, port: "", baud: "9600" })),
+      thermalGetConfig(sessionUserId).catch(() => ({ enabled: false, port: "", baud: "9600" })),
       businessFlagsLoad().catch(() => ({
         allow_negative_stock: false,
         require_discount_reason: true,
@@ -232,7 +233,7 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
     setTestingPrint(true);
     setPrintTestMsg(null);
     try {
-      const msg = await thermalPrintTest();
+      const msg = await thermalPrintTest(sessionUserId);
       setPrintTestMsg(msg);
     } catch (e: unknown) {
       setPrintTestMsg(typeof e === "string" ? e : "Test failed");
@@ -294,6 +295,20 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
       setEditingRule(null);
     } catch (e: unknown) {
       setTaxRuleError(typeof e === "string" ? e : "Failed to save tax rule");
+    } finally {
+      setSavingRule(false);
+    }
+  };
+
+  const handleDeleteTaxRule = async (tax_rule_id: string) => {
+    setSavingRule(true);
+    setTaxRuleError(null);
+    try {
+      await adminDeleteTaxRule(tax_rule_id, sessionUserId);
+      setTaxRules(prev => prev.filter(r => r.tax_rule_id !== tax_rule_id));
+      setEditingRule(null);
+    } catch (e: unknown) {
+      setTaxRuleError(typeof e === "string" ? e : "Failed to delete tax rule");
     } finally {
       setSavingRule(false);
     }
@@ -394,6 +409,7 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
           savingFlags={savingFlags} savedFlags={savedFlags} flagsError={flagsError}
           savingRule={savingRule}
           handleSaveFlags={handleSaveFlags} handleSaveTaxRule={handleSaveTaxRule}
+          handleDeleteTaxRule={handleDeleteTaxRule}
           sessionUserId={sessionUserId}
         />
       )}

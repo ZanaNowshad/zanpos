@@ -35,7 +35,7 @@ export default function WhatsAppSection({
   const refresh = useCallback(async () => {
     // R-17: log polling errors instead of silently swallowing — a persistently
     // unreachable sidecar should leave a diagnostic trail.
-    try { setStatus(await whatsappStatus()); }
+    try { setStatus(await whatsappStatus(sessionUserId)); }
     catch (e: unknown) { console.warn("WhatsApp status poll failed:", e); }
   }, []);
 
@@ -46,9 +46,28 @@ export default function WhatsAppSection({
     }).catch(() => {});
   }, [refresh]);
 
+  // BUG-WA-PHONE-VALIDATION: validate phone number before calling the Tauri command.
+  const validateBenefitNum = (val: string): string | null => {
+    const v = val.trim();
+    if (v === "") return null; // empty = clear setting, allowed
+    if (!v.startsWith("+"))
+      return "Phone number must start with '+' followed by the country code (e.g. +97333050666)";
+    const afterPlus = v.slice(1);
+    if (afterPlus.length === 0 || !/^\d+$/.test(afterPlus))
+      return "Phone number must contain only digits after '+'";
+    if (v.length < 8 || v.length > 16)
+      return "Phone number must be 8–16 characters including the '+' prefix";
+    return null;
+  };
+
   const handleSave = async () => {
-    setSaving(true);
     setSaveError(null);
+    const validationError = validateBenefitNum(benefitNum);
+    if (validationError) {
+      setSaveError(validationError);
+      return;
+    }
+    setSaving(true);
     try {
       await whatsappSaveConfig(benefitNum.trim(), sessionUserId);
       setSaved(true);
@@ -175,7 +194,7 @@ export default function WhatsAppSection({
       </div>
 
       {showQR && (
-        <WhatsAppQRModal onClose={() => setShowQR(false)} onConnected={handleConnected} />
+        <WhatsAppQRModal onClose={() => setShowQR(false)} onConnected={handleConnected} sessionUserId={sessionUserId} />
       )}
     </>
   );

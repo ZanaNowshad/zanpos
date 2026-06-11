@@ -10,6 +10,10 @@ pub async fn get_sale_by_receipt(
     pool: &SqlitePool,
     receipt_number: &str,
 ) -> AppResult<SaleForRefund> {
+    // Receipt numbers are formatted as "{branch_code}-{device_code}-{seq:08}" (see sale_repo::next_receipt_number).
+    // The branch_code + device_code prefix makes them globally unique across all terminals in the system,
+    // so a lookup by receipt_number alone is safe and will never return the wrong sale.
+    // No additional branch_id / device_id filter is required here.
     let sale_row = sqlx::query(
         "SELECT s.sale_id, s.receipt_number, s.net_total_minor, s.currency, s.sold_at, s.status,
                 s.origin_device_id,
@@ -161,7 +165,8 @@ pub async fn create_refund(
 
     // ── Guard: original sale must exist and must not be voided ────────────────
     let sale_status_row = sqlx::query(
-        "SELECT s.status, s.currency, s.device_id, b.branch_code, d.device_code
+        "SELECT s.status, s.currency, s.device_id, s.branch_id,
+                b.branch_code, d.device_code
          FROM sales s
          JOIN branches b ON b.branch_id = s.branch_id
          JOIN devices d  ON d.device_id  = s.device_id
@@ -193,6 +198,16 @@ pub async fn create_refund(
                 item.product_name_snapshot
             )));
         }
+
+        // Validate quantity string so return_refund stock credit receives
+        // a sane value and garbage strings don't silently zero out stock.
+        let _refund_qty: f64 = match item.quantity.parse::<f64>() {
+            Ok(q) if q > 0.0 => q,
+            _ => abort!(AppError::Validation(format!(
+                "Invalid refund quantity '{}' for '{}'",
+                item.quantity, item.product_name_snapshot
+            ))),
+        };
 
         let rows = sqlx::query(
             "UPDATE sale_items
@@ -242,6 +257,7 @@ pub async fn create_refund(
 
     let currency: String = sale_row.get("currency");
     let device_id: String = sale_row.get("device_id");
+    let branch_id: String = sale_row.get("branch_id");
     let branch_code: String = sale_row.get("branch_code");
     let device_code: String = sale_row.get("device_code");
 
@@ -351,9 +367,20 @@ pub async fn create_refund(
     let audit_id = Ulid::new().to_string();
     let after_json =
         serde_json::json!({ "refund_id": &refund_id, "total_minor": refund_total }).to_string();
-    let prev_hash = audit_hash::fetch_last_hash(pool, &device_id)
-        .await
-        .unwrap_or_default();
+    // Fetch the latest hash from within the open transaction so the chain
+    // is consistent with any audit rows we are about to insert.
+    let prev_hash: String = sqlx::query_scalar(
+        "SELECT hash FROM audit_logs
+         WHERE device_id = ? AND length(hash) = 64
+         ORDER BY created_at DESC, audit_log_id DESC
+         LIMIT 1",
+    )
+    .bind(&device_id)
+    .fetch_optional(&mut *conn)
+    .await
+    .unwrap_or(None)
+    .flatten()
+    .unwrap_or_default();
     let hash = audit_hash::compute_audit_hash(&audit_hash::AuditHashInput {
         audit_log_id: &audit_id,
         event_type: "refund.created",
@@ -369,14 +396,15 @@ pub async fn create_refund(
     });
     if let Err(e) = sqlx::query(
         "INSERT INTO audit_logs (audit_log_id, event_type, entity_type, entity_id,
-         actor_user_id, actor_type, device_id, origin_device_id, after_json, created_at, hash, previous_hash, override_used)
-         VALUES (?, 'refund.created', 'refund', ?, ?, 'user', ?, ?, ?, ?, ?, ?, ?)",
+         actor_user_id, actor_type, device_id, origin_device_id, branch_id, after_json, created_at, hash, previous_hash, override_used)
+         VALUES (?, 'refund.created', 'refund', ?, ?, 'user', ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&audit_id)
     .bind(&refund_id)
     .bind(created_by_user_id)
     .bind(&device_id)
     .bind(&device_id)
+    .bind(&branch_id)
     .bind(&after_json)
     .bind(&now)
     .bind(&hash)
@@ -405,24 +433,35 @@ pub async fn create_refund(
         .fetch_optional(pool)
         .await;
 
-    // Return stock for refunded items (after commit; failures don't roll back refund).
+    // Return stock for refunded items (after commit; stock credit failure does NOT
+    // roll back the already-committed refund — the refund is accepted regardless).
+    // Errors are logged so operators can reconcile manually if needed.
     // Pass real branch/device from the original sale so movements carry correct identity.
     if let Ok(Some(ref meta)) = sale_meta {
         let device_id: String = meta.get("device_id");
         let branch_id_str: String = meta.get("branch_id");
-        let _ = movements::return_refund(
+        if let Err(e) = movements::return_refund(
             pool,
             &refund_id,
             created_by_user_id,
             &branch_id_str,
             &device_id,
         )
-        .await;
+        .await
+        {
+            // Stock credit failed — refund is still valid; stock may need manual correction.
+            tracing::error!(
+                refund_id = %refund_id,
+                sale_id = %original_sale_id,
+                "return_refund: stock credit failed after refund commit — manual reconciliation may be required: {e}"
+            );
+        }
     } else {
-        // Sale meta unavailable — still attempt return but log the anomaly
-        tracing::warn!(
-            "return_refund: could not resolve branch/device for sale {}",
-            original_sale_id
+        // Sale meta unavailable — stock credit skipped; log for manual reconciliation.
+        tracing::error!(
+            refund_id = %refund_id,
+            sale_id = %original_sale_id,
+            "return_refund: could not resolve branch/device — stock NOT credited for refund"
         );
     }
 

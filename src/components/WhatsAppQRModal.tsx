@@ -5,9 +5,10 @@ import { whatsappStatus } from "../tauri/commands";
 interface Props {
   onClose: () => void;
   onConnected?: () => void;
+  sessionUserId?: string;
 }
 
-export default function WhatsAppQRModal({ onClose, onConnected }: Props) {
+export default function WhatsAppQRModal({ onClose, onConnected, sessionUserId = "" }: Props) {
   const [status, setStatus]     = useState<WhatsAppStatus>({ connected: false });
   const [loading, setLoading]   = useState(true);
   const [unreachable, setUnreachable] = useState(false);
@@ -15,7 +16,7 @@ export default function WhatsAppQRModal({ onClose, onConnected }: Props) {
 
   const poll = useCallback(async () => {
     try {
-      const s = await whatsappStatus();
+      const s = await whatsappStatus(sessionUserId);
       setStatus(s);
       setUnreachable(false);
       setLoading(false);

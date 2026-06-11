@@ -74,23 +74,46 @@ pub async fn finalize_sale(
     // Catches f64 overflow / malicious IPC input before any DB writes.
     cart.validate()?;
 
-    // ── Guard: payment amounts must sum exactly to net_total ────────────────
-    // Cash overpayment is captured in tendered_minor/change_minor — NOT in amount_minor.
-    // This prevents accounting overstatement (multiple full-amount card payments on one sale).
-    let total_paid: i64 = payments.iter().map(|p| p.amount_minor).sum();
-    let net_total = cart.net_total();
-    if total_paid != net_total {
-        return Err(AppError::Validation(format!(
-            "Payment amounts ({}) must sum exactly to net total ({}). \
-             Use tendered_minor for cash overpayment.",
-            total_paid, net_total
-        )));
-    }
-
     // ── Guard: each cart line must have a positive price ─────────────────────
     // For product-mapped items, verify the price matches the DB to close the
     // price-manipulation attack vector (zero-price, manipulated IPC call).
-    for line in cart.lines.iter().filter(|l| !l.voided) {
+    // Pre-batch: fetch all current prices in ONE query instead of N per-line queries.
+    let active_lines: Vec<_> = cart.lines.iter().filter(|l| !l.voided).collect();
+    let price_product_ids: Vec<&str> = active_lines
+        .iter()
+        .filter_map(|l| l.product_id.as_deref())
+        .collect();
+
+    let db_prices: std::collections::HashMap<String, i64> = if price_product_ids.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        let placeholders = price_product_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        // Subquery: for each product_id, pick the most recent effective price.
+        let sql = format!(
+            "SELECT pp.product_id, pp.price_minor
+             FROM product_prices pp
+             WHERE pp.product_id IN ({placeholders})
+               AND pp.effective_from <= datetime('now')
+               AND (pp.effective_to IS NULL OR pp.effective_to >= datetime('now'))
+             GROUP BY pp.product_id
+             HAVING pp.effective_from = MAX(pp.effective_from)"
+        );
+        let mut q = sqlx::query(&sql);
+        for pid in &price_product_ids {
+            q = q.bind(*pid);
+        }
+        q.fetch_all(pool)
+            .await?
+            .into_iter()
+            .map(|row: sqlx::sqlite::SqliteRow| {
+                let pid: String = row.get("product_id");
+                let price: i64 = row.get("price_minor");
+                (pid, price)
+            })
+            .collect()
+    };
+
+    for line in &active_lines {
         if line.unit_price_minor <= 0 {
             return Err(AppError::Validation(format!(
                 "Item '{}' has an invalid price ({}). Please re-add it to the cart.",
@@ -98,21 +121,7 @@ pub async fn finalize_sale(
             )));
         }
         if let Some(ref product_id) = line.product_id {
-            // Fetch the current authoritative price from the DB.
-            // product_prices uses effective_from/effective_to for validity (no is_active column).
-            let db_price: Option<i64> = sqlx::query_scalar(
-                "SELECT pp.price_minor
-                 FROM product_prices pp
-                 WHERE pp.product_id = ?
-                   AND pp.effective_from <= datetime('now')
-                   AND (pp.effective_to IS NULL OR pp.effective_to >= datetime('now'))
-                 ORDER BY pp.effective_from DESC LIMIT 1",
-            )
-            .bind(product_id)
-            .fetch_optional(pool)
-            .await?;
-
-            if let Some(db_p) = db_price {
+            if let Some(&db_p) = db_prices.get(product_id.as_str()) {
                 if line.unit_price_minor != db_p {
                     return Err(AppError::Validation(format!(
                         "Price for '{}' has changed (expected {} fils, got {} fils). \
@@ -124,39 +133,79 @@ pub async fn finalize_sale(
         }
     }
 
-    // Lookup branch
-    let branch_row =
-        sqlx::query("SELECT branch_code, currency, name FROM branches WHERE branch_id = ?")
-            .bind(&cart.branch_id)
-            .fetch_optional(pool)
-            .await?
-            .ok_or_else(|| AppError::NotFound("Branch not found".into()))?;
+    // ── Server-side tax recalculation ────────────────────────────────────────
+    // Recalculate tax and line totals for every active line using server-side
+    // integer arithmetic. This closes the tax-manipulation vector: a compromised
+    // frontend could craft arbitrary tax_amount_minor values in the IPC payload.
+    // We compute gross, tax, and net from first principles and use those values
+    // for all persistence steps, ignoring the frontend-supplied cart totals.
+    let mut server_gross: i64 = 0;
+    let mut server_line_taxes: Vec<i64> = Vec::with_capacity(active_lines.len());
+    let mut server_line_totals: Vec<i64> = Vec::with_capacity(active_lines.len());
 
-    let branch_code: String = branch_row.get("branch_code");
-    let currency: String = branch_row.get("currency");
-    let branch_name: String = branch_row.get("name");
+    for line in &active_lines {
+        let subtotal =
+            crate::domain::money::mul_minor_by_qty(line.unit_price_minor, &line.quantity);
+        server_gross += subtotal;
+        let discounted = (subtotal - line.line_discount_minor).max(0);
+        let tax_amount = if line.tax_inclusive {
+            let divisor = 10_000 + line.tax_rate_basis_points;
+            (discounted * line.tax_rate_basis_points + divisor / 2) / divisor
+        } else {
+            crate::domain::money::calc_tax_exclusive(discounted, line.tax_rate_basis_points)
+        };
+        let line_total = discounted + if line.tax_inclusive { 0 } else { tax_amount };
+        server_line_taxes.push(tax_amount);
+        server_line_totals.push(line_total);
+    }
 
-    let device_row = sqlx::query("SELECT device_code FROM devices WHERE device_id = ?")
-        .bind(&cart.device_id)
-        .fetch_optional(pool)
-        .await?
-        .ok_or_else(|| AppError::NotFound("Device not found".into()))?;
-    let device_code: String = device_row.get("device_code");
+    let server_tax: i64 = server_line_taxes.iter().sum();
+    let server_post_line: i64 = server_line_totals.iter().sum();
+    let server_net: i64 = (server_post_line - cart.bill_discount_minor).max(0);
+    let server_discount: i64 = cart.discount_total();
 
-    let cashier_row = sqlx::query("SELECT display_name FROM users WHERE user_id = ?")
-        .bind(&cart.cashier_user_id)
-        .fetch_optional(pool)
-        .await?
-        .ok_or_else(|| AppError::NotFound("Cashier not found".into()))?;
-    let cashier_name: String = cashier_row.get("display_name");
+    // ── Guard: payment amounts must sum exactly to server_net ───────────────
+    // Validated against server-computed net, not frontend-supplied totals.
+    // Cash overpayment is captured in tendered_minor/change_minor — NOT in amount_minor.
+    let total_paid: i64 = payments.iter().map(|p| p.amount_minor).sum();
+    if total_paid != server_net {
+        return Err(AppError::Validation(format!(
+            "Payment amounts ({}) must sum exactly to net total ({}). \
+             Use tendered_minor for cash overpayment.",
+            total_paid, server_net
+        )));
+    }
+
+    // Lookup branch + device + cashier in a single round-trip (3 sequential queries → 1 JOIN).
+    let ctx_row = sqlx::query(
+        "SELECT b.branch_code, b.currency, b.name AS branch_name,
+                d.device_code,
+                u.display_name AS cashier_name
+         FROM branches b
+         JOIN devices d ON d.device_id = ?
+         JOIN users   u ON u.user_id   = ?
+         WHERE b.branch_id = ?",
+    )
+    .bind(&cart.device_id)
+    .bind(&cart.cashier_user_id)
+    .bind(&cart.branch_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Branch, device or cashier not found".into()))?;
+
+    let branch_code: String = ctx_row.get("branch_code");
+    let currency: String = ctx_row.get("currency");
+    let branch_name: String = ctx_row.get("branch_name");
+    let device_code: String = ctx_row.get("device_code");
+    let cashier_name: String = ctx_row.get("cashier_name");
 
     let sale_id = Ulid::new().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     let business_date = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let gross = cart.gross_total();
-    let tax = cart.tax_total();
-    let discount = cart.discount_total();
-    let net = cart.net_total();
+    let gross = server_gross;
+    let tax = server_tax;
+    let discount = server_discount;
+    let net = server_net;
 
     // Open the transaction BEFORE generating the receipt number so that the
     // UPDATE counter and the sale INSERT are atomic. SQLite serialises writers,
@@ -196,8 +245,10 @@ pub async fn finalize_sale(
     .await?;
 
     let mut item_summaries = Vec::new();
-    for line in cart.lines.iter().filter(|l| !l.voided) {
+    for (i, line) in active_lines.iter().enumerate() {
         let item_id = Ulid::new().to_string();
+        let line_tax = server_line_taxes[i];
+        let line_total = server_line_totals[i];
         let tax_snapshot = serde_json::json!({
             "rule_id": line.tax_rule_id,
             "rate_basis_points": line.tax_rate_basis_points,
@@ -224,8 +275,8 @@ pub async fn finalize_sale(
         .bind(line.unit_price_minor)
         .bind(line.line_discount_minor)
         .bind(&tax_snapshot)
-        .bind(line.tax_amount_minor)
-        .bind(line.line_total_minor)
+        .bind(line_tax)
+        .bind(line_total)
         .bind(&line.note)
         .bind(&now)
         .bind(&now)
@@ -236,8 +287,8 @@ pub async fn finalize_sale(
             product_name: line.product_name.clone(),
             quantity: line.quantity.clone(),
             unit_price_minor: line.unit_price_minor,
-            line_total_minor: line.line_total_minor,
-            tax_amount_minor: line.tax_amount_minor,
+            line_total_minor: line_total,
+            tax_amount_minor: line_tax,
         });
     }
 
@@ -288,6 +339,35 @@ pub async fn finalize_sale(
     // overselling: if two transactions compete, one will serialize behind the
     // other. The UPDATE's WHERE clause enforces qty >= sold; rows_affected==0
     // means insufficient stock and the whole transaction is rolled back.
+    //
+    // Pre-batch: collect all product_ids that need tracking in ONE query instead
+    // of one SELECT per line (eliminates the N+1 track_inventory check).
+    let line_product_ids: Vec<&str> = cart
+        .lines
+        .iter()
+        .filter(|l| !l.voided)
+        .filter_map(|l| l.product_id.as_deref())
+        .collect();
+
+    let tracked_ids: std::collections::HashSet<String> = if line_product_ids.is_empty() {
+        std::collections::HashSet::new()
+    } else {
+        let placeholders = line_product_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT product_id FROM products WHERE track_inventory = 1 AND product_id IN ({placeholders})"
+        );
+        let mut q = sqlx::query_scalar::<_, String>(&sql);
+        for pid in &line_product_ids {
+            q = q.bind(*pid);
+        }
+        q.fetch_all(&mut *tx).await?.into_iter().collect()
+    };
+
+    // Capture post-deduction quantities inside the transaction so movement
+    // records (written post-commit) reflect the exact state after this sale.
+    let mut captured_qtys: std::collections::HashMap<String, f64> =
+        std::collections::HashMap::new();
+
     for line in cart.lines.iter().filter(|l| !l.voided) {
         let product_id = match &line.product_id {
             Some(id) => id,
@@ -299,14 +379,8 @@ pub async fn finalize_sale(
             continue;
         }
 
-        // Check if the product is inventory-tracked
-        let tracked: Option<i64> =
-            sqlx::query_scalar("SELECT track_inventory FROM products WHERE product_id = ?")
-                .bind(product_id)
-                .fetch_optional(&mut *tx)
-                .await?;
-
-        if tracked != Some(1) {
+        // Use pre-fetched set — no DB round-trip per line.
+        if !tracked_ids.contains(product_id.as_str()) {
             continue;
         }
 
@@ -320,7 +394,8 @@ pub async fn finalize_sale(
                 "UPDATE stock_levels
                  SET quantity_on_hand = CAST(CAST(quantity_on_hand AS REAL) - ? AS TEXT),
                      last_movement_at = ?,
-                     updated_at       = ?
+                     updated_at       = ?,
+                     sync_status      = 'pending'
                  WHERE product_id = ? AND branch_id = ?",
             )
             .bind(sold_qty)
@@ -335,7 +410,8 @@ pub async fn finalize_sale(
                 "UPDATE stock_levels
                  SET quantity_on_hand = CAST(CAST(quantity_on_hand AS REAL) - ? AS TEXT),
                      last_movement_at = ?,
-                     updated_at       = ?
+                     updated_at       = ?,
+                     sync_status      = 'pending'
                  WHERE product_id = ? AND branch_id = ?
                    AND CAST(quantity_on_hand AS REAL) >= ?",
             )
@@ -369,14 +445,39 @@ pub async fn finalize_sale(
             }
             // No stock record yet (uninitialized product) → allow through.
         }
+
+        // Capture post-deduction quantity while still inside the sale tx
+        // so movement records written post-commit use the exact value.
+        if tracked_ids.contains(product_id.as_str()) {
+            let qty_after: Option<String> = sqlx::query_scalar(
+                "SELECT quantity_on_hand FROM stock_levels WHERE product_id = ? AND branch_id = ?",
+            )
+            .bind(product_id)
+            .bind(&cart.branch_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .flatten();
+            if let Some(qstr) = qty_after {
+                captured_qtys.insert(product_id.clone(), qstr.parse().unwrap_or(0.0));
+            }
+        }
     }
 
     // Audit log with SHA-256 hash chain
     let audit_id = Ulid::new().to_string();
     let after_json = serde_json::json!({ "sale_id": &sale_id, "net_total_minor": net }).to_string();
-    let prev_hash = audit_hash::fetch_last_hash(pool, &cart.device_id)
-        .await
-        .unwrap_or_default();
+    let prev_hash: String = sqlx::query_scalar(
+        "SELECT hash FROM audit_logs
+         WHERE device_id = ? AND length(hash) = 64
+         ORDER BY created_at DESC, audit_log_id DESC
+         LIMIT 1",
+    )
+    .bind(&cart.device_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .unwrap_or(None)
+    .flatten()
+    .unwrap_or_default();
     let hash = audit_hash::compute_audit_hash(&audit_hash::AuditHashInput {
         audit_log_id: &audit_id,
         event_type: "sale.created",
@@ -454,14 +555,6 @@ pub async fn finalize_sale(
         }
     }
 
-    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
-
-    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
-
-    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
-
-    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
-
     // Deduct inventory (after commit; failures don't roll back sale).
     // branch_id and device_id come from the cart — always the real active values.
     let low_stock_alerts = movements::deduct_sale(
@@ -470,8 +563,16 @@ pub async fn finalize_sale(
         &cart.cashier_user_id,
         &cart.branch_id,
         &cart.device_id,
+        Some(&captured_qtys),
     )
     .await
+    .inspect_err(|e| {
+        tracing::error!(
+            "T06: deduct_sale movement records failed for sale {}: {e}. \
+             Stock levels were already updated in the sale transaction.",
+            sale_id
+        );
+    })
     .unwrap_or_default();
 
     Ok(SaleResult {
@@ -581,8 +682,8 @@ mod tests {
     // Build a CartLine with explicit tax fields already calculated.
     fn cola_line(qty: &str) -> CartLine {
         // Cola: 400 minor, 10% exclusive VAT (1 000 bp)
-        let qty_f: f64 = qty.parse().unwrap();
-        let subtotal = (400.0 * qty_f) as i64;
+        // Use integer arithmetic via mul_minor_by_qty — no float round-trips on money.
+        let subtotal = crate::domain::money::mul_minor_by_qty(400, qty);
         let tax = subtotal * 1_000 / 10_000;
         CartLine {
             cart_line_id: ulid::Ulid::new().to_string(),
@@ -606,8 +707,8 @@ mod tests {
 
     fn water_line(qty: &str) -> CartLine {
         // Water: 250 minor, zero-rated (0 bp)
-        let qty_f: f64 = qty.parse().unwrap();
-        let subtotal = (250.0 * qty_f) as i64;
+        // Use integer arithmetic via mul_minor_by_qty — no float round-trips on money.
+        let subtotal = crate::domain::money::mul_minor_by_qty(250, qty);
         CartLine {
             cart_line_id: ulid::Ulid::new().to_string(),
             product_id: Some("01JPROD00000000000WATR001".into()),

@@ -30,14 +30,17 @@ function paymentBadge(status: string) {
 }
 
 function deliveryBadge(status: string) {
+  // FIX: standardize on "dispatched" — backend uses this status string for WhatsApp trigger
   const cls: Record<string, string> = {
     pending: "dlv-badge dlv-badge-pending",
-    out_for_delivery: "dlv-badge dlv-badge-out",
+    dispatched: "dlv-badge dlv-badge-out",
+    out_for_delivery: "dlv-badge dlv-badge-out",  // legacy alias — still display correctly
     delivered: "dlv-badge dlv-badge-delivered",
     cancelled: "dlv-badge dlv-badge-cancelled",
   };
   const labels: Record<string, string> = {
     pending: "Pending",
+    dispatched: "Out for Delivery",
     out_for_delivery: "Out for Delivery",
     delivered: "Delivered",
     cancelled: "Cancelled",
@@ -129,7 +132,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
   // ── Build filter ──
   const buildFilter = useCallback((): DeliveryListFilter => {
     const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" });
-    const filter: DeliveryListFilter = { limit: 200, offset: 0 };
+    const filter: DeliveryListFilter = { branch_id: DEVICE.branch_id, limit: 200, offset: 0 };
 
     // Preset filters
     if (preset === "unpaid") filter.payment_status = "unpaid";
@@ -284,8 +287,10 @@ export default function DeliveriesTab({ sessionUser }: Props) {
 
   const statusOptions = (row: DeliveryRow): string[] => {
     if (row.delivery_status === "cancelled" || row.delivery_status === "delivered") return [];
-    if (row.delivery_status === "pending") return ["out_for_delivery", "delivered"];
-    if (row.delivery_status === "out_for_delivery") return ["delivered"];
+    // FIX: use "dispatched" — this is what the backend's WhatsApp trigger checks for.
+    // "out_for_delivery" was never triggering the WhatsApp dispatch notification.
+    if (row.delivery_status === "pending") return ["dispatched", "delivered"];
+    if (row.delivery_status === "dispatched" || row.delivery_status === "out_for_delivery") return ["delivered"];
     return [];
   };
 

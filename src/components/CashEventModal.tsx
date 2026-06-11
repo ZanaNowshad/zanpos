@@ -97,7 +97,7 @@ export default function CashEventModal({ shiftId, userId, cashierName, onDone, o
       `Cashier : ${cashierName}`,
       `Branch  : ${DEVICE.branch_name}`, sep,
     ];
-    try { await printReceiptRaw(DEVICE.branch_name, lines); }
+    try { await printReceiptRaw(userId, DEVICE.branch_name, lines); }
     catch (e) { console.error("Print failed", e); }
     finally { setPrinting(false); }
   };

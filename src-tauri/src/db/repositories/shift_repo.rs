@@ -114,10 +114,10 @@ mod tests {
         // Paid In: BHD 2.000 (2_000 minor)
         sqlx::query(
             "INSERT INTO cash_events
-             (cash_event_id, shift_id, branch_id, device_id, event_type,
-              amount_minor, note, created_by_user_id, created_at)
-             VALUES (?,?,'01JBRANCH0000000000000001','01JDEVICE0000000000000001',
-                     'paid_in',2000,'test',?,datetime('now'))",
+             (cash_event_id, shift_id, branch_id, device_id, origin_device_id, event_type,
+              amount_minor, note, created_by_user_id, created_at, updated_at)
+             VALUES (?,?,'01JBRANCH0000000000000001','01JDEVICE0000000000000001','01JDEVICE0000000000000001',
+                     'paid_in',2000,'test',?,datetime('now'),datetime('now'))",
         )
         .bind(ulid::Ulid::new().to_string())
         .bind(shift_id)
@@ -129,10 +129,10 @@ mod tests {
         // Safe Drop: BHD 3.000 (3_000 minor)
         sqlx::query(
             "INSERT INTO cash_events
-             (cash_event_id, shift_id, branch_id, device_id, event_type,
-              amount_minor, note, created_by_user_id, created_at)
-             VALUES (?,?,'01JBRANCH0000000000000001','01JDEVICE0000000000000001',
-                     'safe_drop',3000,'bag #1',?,datetime('now'))",
+             (cash_event_id, shift_id, branch_id, device_id, origin_device_id, event_type,
+              amount_minor, note, created_by_user_id, created_at, updated_at)
+             VALUES (?,?,'01JBRANCH0000000000000001','01JDEVICE0000000000000001','01JDEVICE0000000000000001',
+                     'safe_drop',3000,'bag #1',?,datetime('now'),datetime('now'))",
         )
         .bind(ulid::Ulid::new().to_string())
         .bind(shift_id)
@@ -314,8 +314,9 @@ pub async fn close_shift(
     // Expected cash = opening + cash_sales - cash_refunds + paid_in - paid_out - safe_drop.
     // This is the authoritative formula used everywhere (drawer_summary, EOD report).
     // Previously only opening + cash_sales was computed here — that was incorrect.
-    // Only deduct refunds where the original sale had a cash payment component.
-    // Card/wallet refunds do not reduce the physical cash drawer balance.
+    // Only deduct the cash-portion of refunds: for split-payment sales, using EXISTS
+    // overcounted (deducted the full refund from cash when only part was cash).
+    // The proportional formula matches report_eod_cashup_inner (BUG-REPORTS-3 fix).
     // Unpaid deliveries are excluded from expected cash — the physical cash drawer
     // does not contain cash that hasn't been collected yet, matching drawer_summary_inner.
     let expected: Option<i64> = sqlx::query_scalar(
@@ -330,14 +331,20 @@ pub async fn close_shift(
                                 WHERE d.sale_id = sa.sale_id AND d.payment_status = 'paid'
                             ))
                          ), 0)
-              - COALESCE((SELECT SUM(r.refund_total_minor)
-                          FROM refunds r
-                          JOIN sales sa ON sa.sale_id = r.original_sale_id
-                          WHERE sa.shift_id = ?
-                            AND EXISTS (
-                                SELECT 1 FROM payments p2
-                                WHERE p2.sale_id = sa.sale_id AND p2.payment_method = 'cash'
-                            )), 0)
+              - COALESCE((SELECT SUM(
+                    CASE WHEN sa.net_total_minor <= 0 THEN 0
+                    ELSE MIN(
+                        (SELECT COALESCE(SUM(p2.amount_minor), 0)
+                         FROM payments p2
+                         WHERE p2.sale_id = sa.sale_id AND p2.payment_method = 'cash'),
+                        sa.net_total_minor
+                    ) * r.refund_total_minor / sa.net_total_minor
+                    END
+                  )
+                  FROM refunds r
+                  JOIN sales sa ON sa.sale_id = r.original_sale_id
+                  WHERE sa.shift_id = ?
+                ), 0)
               + COALESCE((SELECT SUM(ce.amount_minor)
                           FROM cash_events ce
                           WHERE ce.shift_id = ? AND ce.event_type = 'paid_in'), 0)

@@ -3,6 +3,7 @@ import type { Cart, CartLine, PaymentInput, ProductWithPrice, SaleResult } from 
 import { DEVICE } from "../types";
 import * as cmd from "../tauri/commands";
 import { posRecordVoid } from "../tauri/commands";
+import { parseMoney } from "../money";
 
 export interface CartSession {
   branch_id: string;
@@ -136,8 +137,6 @@ export function useCart(session: CartSession) {
     setLoading(true);
     setError(null);
     try {
-      // Dynamic import to avoid circular dependency; parseMoney is in ../money
-      const { parseMoney } = await import("../money");
       const priceMinor = parseMoney(priceMajor, DEVICE.currency_exponent);
       const updated = await cmd.posAddCustomItem(cart, name, priceMinor, quantity);
       setRecentLineId(findChangedLineId(cart, updated));
@@ -151,13 +150,13 @@ export function useCart(session: CartSession) {
 
   const setLinePrice = useCallback(async (cart_line_id: string, priceMinor: number) => {
     try {
-      const updated = await cmd.posSetLinePrice(cart, cart_line_id, priceMinor);
+      const updated = await cmd.posSetLinePrice(cart, cart_line_id, priceMinor, session.cashier_user_id);
       setCart(updated);
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to set price");
       throw e;
     }
-  }, [cart]);
+  }, [cart, session.cashier_user_id]);
 
   const setLineNote = useCallback(async (cart_line_id: string, note: string | null) => {
     try {

@@ -14,7 +14,9 @@ export default function TodayReportModal({ onClose, sessionUserId }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const today = new Date().toISOString().split("T")[0];
+  // FIX: use Bahrain timezone — toISOString() returns UTC date which is wrong
+  // between midnight and 03:00 Bahrain time (UTC+3)
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" });
 
   useEffect(() => {
     let cancelled = false;

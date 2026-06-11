@@ -1,8 +1,38 @@
 /* ── ZANPOS — Command Precision Design System ──────────────────────────────── */
 /* Typeface: DM Sans (UI) · IBM Plex Mono (numerics) · Bricolage Grotesque (display) */
 
-/* Load fonts — DM Sans (UI), IBM Plex Mono (numerics), Bricolage Grotesque (display), Syncopate+JetBrains Mono (boot screen) */
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800;1,9..40,400&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Syncopate:wght@700&display=swap');
+/* ── Fonts — bundled locally so the app works fully offline (offline-first POS).
+   Downloaded from Google Fonts (latin subset only — BHD/Arabic locale needs only latin).
+   To refresh: re-download woff2 files into src/assets/fonts/ from the original Google Fonts URL. */
+
+/* DM Sans — primary UI typeface */
+@font-face { font-family: 'DM Sans'; font-style: normal; font-weight: 300; font-display: swap; src: url('./assets/fonts/DM-Sans-300.woff2') format('woff2'); }
+@font-face { font-family: 'DM Sans'; font-style: normal; font-weight: 400; font-display: swap; src: url('./assets/fonts/DM-Sans-400.woff2') format('woff2'); }
+@font-face { font-family: 'DM Sans'; font-style: italic; font-weight: 400; font-display: swap; src: url('./assets/fonts/DM-Sans-400i.woff2') format('woff2'); }
+@font-face { font-family: 'DM Sans'; font-style: normal; font-weight: 500; font-display: swap; src: url('./assets/fonts/DM-Sans-500.woff2') format('woff2'); }
+@font-face { font-family: 'DM Sans'; font-style: normal; font-weight: 600; font-display: swap; src: url('./assets/fonts/DM-Sans-600.woff2') format('woff2'); }
+@font-face { font-family: 'DM Sans'; font-style: normal; font-weight: 700; font-display: swap; src: url('./assets/fonts/DM-Sans-700.woff2') format('woff2'); }
+@font-face { font-family: 'DM Sans'; font-style: normal; font-weight: 800; font-display: swap; src: url('./assets/fonts/DM-Sans-800.woff2') format('woff2'); }
+
+/* Bricolage Grotesque — display/headings */
+@font-face { font-family: 'Bricolage Grotesque'; font-style: normal; font-weight: 400; font-display: swap; src: url('./assets/fonts/Bricolage-Grotesque-400.woff2') format('woff2'); }
+@font-face { font-family: 'Bricolage Grotesque'; font-style: normal; font-weight: 500; font-display: swap; src: url('./assets/fonts/Bricolage-Grotesque-500.woff2') format('woff2'); }
+@font-face { font-family: 'Bricolage Grotesque'; font-style: normal; font-weight: 600; font-display: swap; src: url('./assets/fonts/Bricolage-Grotesque-600.woff2') format('woff2'); }
+@font-face { font-family: 'Bricolage Grotesque'; font-style: normal; font-weight: 700; font-display: swap; src: url('./assets/fonts/Bricolage-Grotesque-700.woff2') format('woff2'); }
+@font-face { font-family: 'Bricolage Grotesque'; font-style: normal; font-weight: 800; font-display: swap; src: url('./assets/fonts/Bricolage-Grotesque-800.woff2') format('woff2'); }
+
+/* IBM Plex Mono — currency/numeric display */
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url('./assets/fonts/IBM-Plex-Mono-400.woff2') format('woff2'); }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 500; font-display: swap; src: url('./assets/fonts/IBM-Plex-Mono-500.woff2') format('woff2'); }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 600; font-display: swap; src: url('./assets/fonts/IBM-Plex-Mono-600.woff2') format('woff2'); }
+@font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 700; font-display: swap; src: url('./assets/fonts/IBM-Plex-Mono-700.woff2') format('woff2'); }
+
+/* JetBrains Mono — code/terminal display */
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url('./assets/fonts/JetBrains-Mono-400.woff2') format('woff2'); }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 500; font-display: swap; src: url('./assets/fonts/JetBrains-Mono-500.woff2') format('woff2'); }
+
+/* Syncopate — boot screen / brand display */
+@font-face { font-family: 'Syncopate'; font-style: normal; font-weight: 700; font-display: swap; src: url('./assets/fonts/Syncopate-700.woff2') format('woff2'); }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 

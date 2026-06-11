@@ -35,7 +35,8 @@ export default function DeliveryForm({
   // Pre-fill from selected customer
   useEffect(() => {
     if (selectedCustomer?.phone && !value.contact_number) {
-      const raw = selectedCustomer.phone.replace(/^\+?973/, "");
+      // FIX: robust strip handles +973, 973, 00973, and bare 8-digit numbers
+      const raw = selectedCustomer.phone.replace(/\D/g, "").replace(/^(00)?973/, "").slice(0, 8);
       const normalized = normalizePhone(raw);
       if (normalized) onPhoneChange(raw, normalized, null);
     }
@@ -55,7 +56,11 @@ export default function DeliveryForm({
   useEffect(() => {
     if (!phoneRaw) return;
     const normalized = normalizePhone(phoneRaw);
-    onChange({ ...value, contact_number: normalized ?? "" });
+    // FIX: don't overwrite a valid contact_number with "" when normalization fails
+    // (partial entry of < 8 digits). Only update when we have a valid E.164 number.
+    if (normalized) {
+      onChange({ ...value, contact_number: normalized });
+    }
     // We don't call onPhoneChange here to avoid a loop — parent already set phoneRaw
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phoneRaw]);

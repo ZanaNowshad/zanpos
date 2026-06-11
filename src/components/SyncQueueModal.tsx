@@ -30,13 +30,14 @@ export default function SyncQueueModal({ onClose, sessionUserId }: Props) {
   const load = () => {
     setLoading(true);
     cancelledRef.current = false;
-    syncQueueList()
+    syncQueueList(sessionUserId)
       .then(data => { if (!cancelledRef.current) setItems(data); })
       .catch(() => { if (!cancelledRef.current) setError("Failed to load sync queue"); })
       .finally(() => { if (!cancelledRef.current) setLoading(false); });
   };
 
-  useEffect(load, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(load, [sessionUserId]);
 
   const handleRetry = async (id: string) => {
     setBusyId(id);

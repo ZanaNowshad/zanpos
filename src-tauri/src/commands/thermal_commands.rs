@@ -71,8 +71,17 @@ fn esc_feed_and_cut(lines: u8) -> Vec<u8> {
     vec![ESC, b'd', lines, GS, b'V', 0x00]
 }
 
+/// Maximum number of receipt lines that will be printed before truncation.
+/// Each line is ~40 bytes, so 500 lines ≈ 20 KB — well within a thermal printer's
+/// typical 64 KB receive buffer.  Caps prevent buffer-overflow garbling for
+/// pathological carts (e.g. 28k items).
+const MAX_RECEIPT_LINES: usize = 500;
+
 /// Build ESC/POS receipt byte payload.
 /// `store_name`, `header_lines`, `item_lines`, `footer_lines` are all pre-formatted strings.
+///
+/// Lines beyond `MAX_RECEIPT_LINES` are dropped and a truncation notice is appended
+/// so the operator sees a warning rather than silent data loss.
 pub fn build_receipt_bytes(store_name: &str, receipt_lines: &[String]) -> Vec<u8> {
     let mut buf: Vec<u8> = Vec::with_capacity(512);
 
@@ -90,9 +99,23 @@ pub fn build_receipt_bytes(store_name: &str, receipt_lines: &[String]) -> Vec<u8
     buf.push(LF);
 
     // Body lines — left aligned
+    let truncated = receipt_lines.len() > MAX_RECEIPT_LINES;
+    let to_print = if truncated {
+        &receipt_lines[..MAX_RECEIPT_LINES]
+    } else {
+        receipt_lines
+    };
     buf.extend_from_slice(&esc_align(0)); // left
-    for line in receipt_lines {
+    for line in to_print {
         buf.extend_from_slice(line.as_bytes());
+        buf.push(LF);
+    }
+    if truncated {
+        let notice = format!(
+            "... ({} lines omitted — receipt too long)",
+            receipt_lines.len() - MAX_RECEIPT_LINES
+        );
+        buf.extend_from_slice(notice.as_bytes());
         buf.push(LF);
     }
 
@@ -147,10 +170,18 @@ pub fn write_to_port(port_name: &str, baud: u32, payload: Vec<u8>) -> AppResult<
     // Serial / COM port path
     // M25: 5s was too short for busy USB printers; 15s accommodates thermal printers
     // that need extra time to respond when their buffer is almost full.
+    //
+    // FlowControl::Hardware enables RTS/CTS handshaking so the printer can signal
+    // when its receive buffer is full. Without this, large receipts (>~4 KB) may
+    // overflow the printer's hardware buffer, causing garbled output or truncation.
     let mut port = serialport::new(port_name, baud)
+        .flow_control(serialport::FlowControl::Hardware)
         .timeout(Duration::from_secs(15))
         .open()
-        .map_err(|e| AppError::Internal(format!("Cannot open port '{}': {}", port_name, e)))?;
+        .map_err(|e| AppError::Internal(format!(
+            "Could not open printer port '{}': {}. Check that the printer is connected and not in use by another application.",
+            port_name, e
+        )))?;
 
     use std::io::Write;
     port.write_all(&payload)
@@ -453,7 +484,11 @@ fn list_windows_printers() -> Vec<PortEntry> {
 
 /// Get current thermal printer configuration.
 #[tauri::command]
-pub async fn thermal_get_config(state: State<'_, AppState>) -> Result<ThermalConfig, AppError> {
+pub async fn thermal_get_config(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> Result<ThermalConfig, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     let enabled_str = config_get(&state, "thermal_printer_enabled", "0").await;
     let port = config_get(&state, "thermal_printer_port", "").await;
     let baud = config_get(&state, "thermal_printer_baud", "9600").await;
@@ -473,21 +508,49 @@ pub async fn thermal_set_config(
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+
+    // BUG-PRINTER-VALIDATION: validate port and baud_rate before persisting.
+    let port = input.port.trim();
+    if input.enabled && port.is_empty() {
+        return Err(AppError::Validation(
+            "A printer port must be selected when printing is enabled".into(),
+        ));
+    }
+    if input.enabled && port.len() > 50 {
+        return Err(AppError::Validation(
+            "Printer port name must be 50 characters or fewer".into(),
+        ));
+    }
+
+    const VALID_BAUDS: &[&str] = &["9600", "19200", "38400", "57600", "115200"];
+    let baud = input.baud.trim();
+    if !VALID_BAUDS.contains(&baud) {
+        return Err(AppError::Validation(format!(
+            "Invalid baud rate '{}'. Must be one of: {}",
+            baud,
+            VALID_BAUDS.join(", ")
+        )));
+    }
+
     config_set(
         &state,
         "thermal_printer_enabled",
         if input.enabled { "1" } else { "0" },
     )
     .await?;
-    config_set(&state, "thermal_printer_port", &input.port).await?;
-    config_set(&state, "thermal_printer_baud", &input.baud).await?;
+    config_set(&state, "thermal_printer_port", port).await?;
+    config_set(&state, "thermal_printer_baud", baud).await?;
     Ok(())
 }
 
 /// Send a test page to the configured thermal printer.
 #[tauri::command]
-pub async fn thermal_print_test(state: State<'_, AppState>) -> Result<String, AppError> {
-    let config = thermal_get_config(state).await?;
+pub async fn thermal_print_test(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let config = thermal_get_config(actor_user_id, state.clone()).await?;
 
     if !config.enabled {
         return Ok("Thermal printing is disabled. Enable it in Settings first.".into());
@@ -511,11 +574,13 @@ pub async fn thermal_print_test(state: State<'_, AppState>) -> Result<String, Ap
 /// `store_name` is printed as a centered header; `lines` are the receipt body.
 #[tauri::command]
 pub async fn print_receipt_raw(
+    actor_user_id: String,
     store_name: String,
     lines: Vec<String>,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    let config = thermal_get_config(state).await?;
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    let config = thermal_get_config(actor_user_id, state.clone()).await?;
 
     if !config.enabled {
         return Ok("Thermal printing disabled".into());
@@ -536,17 +601,35 @@ pub async fn print_receipt_raw(
         .map(|_| "Printed".into())
 }
 
-/// ESC/POS cash drawer kick pulse (pin 2 or pin 5).
-/// Standard sequence: ESC p 0 t1 t2  (0x1B 0x70 0x00 0x19 0xFA)
+/// ESC/POS cash drawer kick pulse.
+///
+/// Command: ESC p m t1 t2  (0x1B 0x70 m t1 t2)
+///   m  = 0x00 → drawer connector pin 2 (default on Epson TM / Star mPOP)
+///   m  = 0x01 → drawer connector pin 5 (alternate — set via printer DIP switch)
+///   t1 = ON  time = t1 × 2 ms  (Epson spec range: 1–127)
+///   t2 = OFF time = t2 × 2 ms  (Epson spec range: 1–127)
+///
+/// We use (60, 120) → 120 ms ON, 240 ms OFF — well within the Epson specification
+/// and backwards-compatible with Star Micronics thermal printers (Star supports the
+/// EPSON ESC/POS command set on all modern models; older Star printers may need
+/// ESC BEL 0x07 n1 n2 instead, which is not implemented here).
+///
+/// Previous values (0x19, 0xFA) = (25, 250) had t2 outside the 1–127 range;
+/// some older Epson models silently clamp out-of-range values, risking a too-short
+/// pulse that fails to trip the solenoid.
 fn esc_open_drawer() -> Vec<u8> {
-    vec![ESC, b'p', 0x00, 0x19, 0xFA]
+    vec![ESC, b'p', 0x00, 60, 120]
 }
 
 /// Open the cash drawer connected to the thermal printer's RJ-11 port.
 /// Non-fatal: returns Ok("no_printer") if thermal printing is disabled or no port configured.
 #[tauri::command]
-pub async fn open_cash_drawer(state: State<'_, AppState>) -> Result<String, AppError> {
-    let config = thermal_get_config(state).await?;
+pub async fn open_cash_drawer(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    let config = thermal_get_config(actor_user_id, state.clone()).await?;
 
     if !config.enabled || config.port.trim().is_empty() {
         // Drawer kick silently skipped — no printer configured.

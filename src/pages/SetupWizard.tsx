@@ -255,8 +255,12 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
   const [ownerPin, setOwnerPin]             = useState("");
   const [ownerPinConfirm, setOwnerPinConfirm] = useState("");
 
-  const [error, setError]   = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [error, setError]         = useState<string | null>(null);
+  // Per-button loading states — prevents ALL buttons showing "Setting up…" when one is clicked
+  const [finishLoading, setFinishLoading]   = useState(false);
+  const [csvLoading, setCsvLoading]         = useState(false);
+  const [migrateLoading, setMigrateLoading] = useState(false);
+  const anyLoading = finishLoading || csvLoading || migrateLoading;
 
   const clearError = () => setError(null);
 
@@ -273,7 +277,8 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
       setSbSkipped(false);
       setStep(3);
     } catch (e: unknown) {
-      setError(typeof e === "string" ? e : "Could not connect to Supabase — check URL and service role key");
+      const msg = typeof e === "string" ? e : (e instanceof Error ? e.message : null);
+      setError(msg || "Could not connect to Supabase — check URL and service role key");
     } finally {
       setSbValidating(false);
     }
@@ -299,9 +304,11 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
     setStep(s => (s + 1) as NewStep);
   };
 
-  // Shared setup completion — returns cfg or null on error
-  const doSetupComplete = async (): Promise<AppConfig | null> => {
-    setLoading(true);
+  // Shared setup completion — accepts which button's loading setter to use
+  const doSetupComplete = async (setLd: (v: boolean) => void): Promise<AppConfig | null> => {
+    // Guard: reuse already-completed config (e.g. user navigates back then clicks again)
+    if (completedConfig) return completedConfig;
+    setLd(true);
     setError(null);
     try {
       const cfg = await setupWizardComplete({
@@ -321,26 +328,25 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
       if (benefitNumber.trim()) {
         try { await setupSaveBenefitNumber(benefitNumber.trim()); } catch { /* ignore */ }
       }
+      setCompletedConfig(cfg);
       return cfg;
     } catch (e: unknown) {
-      setError(typeof e === "string" ? e : "Setup failed — please try again");
-      // Stay on step 7 — the existing {error && ...} div shows the message inline.
-      // Sending the user to step 6 hides the error and causes an infinite retry loop.
+      const msg = typeof e === "string" ? e : (e instanceof Error ? e.message : null);
+      setError(msg || "Setup failed — please try again");
       return null;
     } finally {
-      setLoading(false);
+      setLd(false);
     }
   };
 
   const handleFinish = async () => {
-    const cfg = await doSetupComplete();
+    const cfg = await doSetupComplete(setFinishLoading);
     if (cfg) onComplete(cfg);
   };
 
   const handleGoImportCSV = async () => {
-    const cfg = await doSetupComplete();
+    const cfg = await doSetupComplete(setCsvLoading);
     if (!cfg) return;
-    setCompletedConfig(cfg);
     setOwnerUserId(cfg.owner_user_id ?? "");
     setStep(8);
   };
@@ -504,8 +510,8 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
             and optionally connect WhatsApp now.
           </p>
 
-          <label className="field-label">BenefitPay Number <span className="setup-required">*</span></label>
-          <p className="setup-field-hint">Customers send delivery payments to this number via BenefitPay.</p>
+          <label className="field-label">BenefitPay Number <span style={{ opacity: 0.6, fontSize: "0.82em" }}>(optional)</span></label>
+          <p className="setup-field-hint">Customers send delivery payments to this number via BenefitPay. You can add it later in Settings.</p>
           <input
             className="field-input"
             type="text"
@@ -534,13 +540,7 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
 
           <div className="setup-actions">
             <button className="setup-btn-secondary" onClick={() => { setError(null); setStep(4); }}>← Back</button>
-            <button
-              className="setup-btn-primary"
-              onClick={() => {
-                if (!benefitNumber.trim()) { setError("BenefitPay number is required"); return; }
-                goNext();
-              }}
-            >
+            <button className="setup-btn-primary" onClick={goNext}>
               Next →
             </button>
           </div>
@@ -595,7 +595,11 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
             <div className="setup-review-row"><span>Store name</span><strong>{storeName}</strong></div>
             <div className="setup-review-row"><span>Currency</span><strong>{currency}</strong></div>
             <div className="setup-review-row"><span>Timezone</span><strong>{timezone}</strong></div>
-            {address && <div className="setup-review-row"><span>Address</span><strong>{address}</strong></div>}
+            {address    && <div className="setup-review-row"><span>Address</span><strong>{address}</strong></div>}
+            {phone      && <div className="setup-review-row"><span>Phone</span><strong>{phone}</strong></div>}
+            {taxNumber  && <div className="setup-review-row"><span>Tax / VAT #</span><strong>{taxNumber}</strong></div>}
+            {crNumber   && <div className="setup-review-row"><span>CR Number</span><strong>{crNumber}</strong></div>}
+            {benefitNumber && <div className="setup-review-row"><span>BenefitPay #</span><strong>{benefitNumber}</strong></div>}
             <div className="setup-review-row"><span>Owner account</span><strong>{ownerName} ({ownerUsername})</strong></div>
           </div>
 
@@ -606,7 +610,7 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
           {error && <div className="modal-error">{error}</div>}
 
           <div className="setup-actions setup-actions-back">
-            <button className="setup-btn-secondary" onClick={() => { setError(null); setStep(6); }} disabled={loading}>← Back</button>
+            <button className="setup-btn-secondary" onClick={() => { setError(null); setStep(6); }} disabled={anyLoading}>← Back</button>
           </div>
 
           <div className="setup-launch-options">
@@ -617,8 +621,8 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
                 <div className="setup-launch-card-title">Start Fresh</div>
                 <div className="setup-launch-card-desc">Launch the POS right now. Add products and categories manually from Back Office.</div>
               </div>
-              <button className="setup-btn-primary setup-btn-finish" onClick={handleFinish} disabled={loading}>
-                {loading ? "Setting up…" : "Launch POS"}
+              <button className="setup-btn-primary setup-btn-finish" onClick={handleFinish} disabled={anyLoading}>
+                {finishLoading ? "Setting up…" : "Launch POS"}
               </button>
             </div>
 
@@ -629,8 +633,8 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
                 <div className="setup-launch-card-title">Import from CSV</div>
                 <div className="setup-launch-card-desc">Upload your categories and products now using a spreadsheet. Quick setup in minutes.</div>
               </div>
-              <button className="setup-btn-primary" onClick={handleGoImportCSV} disabled={loading}>
-                {loading ? "Setting up…" : "Upload CSV →"}
+              <button className="setup-btn-primary" onClick={handleGoImportCSV} disabled={anyLoading}>
+                {csvLoading ? "Setting up…" : "Upload CSV →"}
               </button>
             </div>
 
@@ -642,10 +646,10 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
                 <div className="setup-launch-card-desc">AI-guided import from SQL Server, SQLite, Access, MySQL, or any database file.</div>
               </div>
               <button className="setup-btn-migrate-inline" onClick={async () => {
-                const cfg = await doSetupComplete();
+                const cfg = await doSetupComplete(setMigrateLoading);
                 if (cfg) onMigrate(cfg);
-              }} disabled={loading}>
-                Import with AI →
+              }} disabled={anyLoading}>
+                {migrateLoading ? "Setting up…" : "Import with AI →"}
               </button>
             </div>
           </div>
@@ -695,13 +699,13 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
 
 type JoinStep = "creds" | "device" | "joining" | "done";
 
-function JoinStoreWizard({ onComplete }: { onComplete: (cfg: AppConfig) => void }) {
+function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) => void; onBack?: () => void }) {
   const [step, setStep]           = useState<JoinStep>("creds");
   const [sbUrl, setSbUrl]         = useState("");
   const [sbKey, setSbKey]         = useState("");
   const [storeName, setStoreName] = useState<string | null>(null);
-  const [deviceName, setDeviceName] = useState("POS Terminal 2");
-  const [deviceCode, setDeviceCode] = useState("POS02");
+  const [deviceName, setDeviceName] = useState("");
+  const [deviceCode, setDeviceCode] = useState("");
   const [error, setError]         = useState<string | null>(null);
   const [loading, setLoading]     = useState(false);
   const [pullStatus, setPullStatus] = useState<string | null>(null);
@@ -813,6 +817,9 @@ function JoinStoreWizard({ onComplete }: { onComplete: (cfg: AppConfig) => void 
 
           {error && <div className="modal-error">{error}</div>}
           <div className="setup-actions">
+            {onBack && (
+              <button className="setup-btn-secondary" onClick={onBack} disabled={loading}>← Back</button>
+            )}
             <button className="setup-btn-primary" onClick={handleValidateCreds} disabled={loading}>
               {loading ? "Checking…" : "Next →"}
             </button>
@@ -863,7 +870,15 @@ function JoinStoreWizard({ onComplete }: { onComplete: (cfg: AppConfig) => void 
       {step === "joining" && (
         <div className="setup-content" style={{ textAlign: "center", padding: "40px 0" }}>
           <div className="app-splash-spinner" style={{ margin: "0 auto 20px" }} />
-          <p>{pullStatus ?? "Connecting to store and downloading catalog…"}</p>
+          <p style={{ marginBottom: 16 }}>{pullStatus ?? "Connecting to store and downloading catalog…"}</p>
+          {loading && (
+            <button
+              className="setup-btn-skip"
+              onClick={() => { setStep("device"); setLoading(false); setPullStatus(null); }}
+            >
+              Cancel
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -878,7 +893,7 @@ export default function SetupWizard({ onComplete, onMigrate }: Props) {
   const [path, setPath] = useState<SetupPath>(null);
 
   if (path === "new")  return <div className="setup-screen"><NewStoreWizard onComplete={onComplete} onMigrate={onMigrate ?? onComplete} /></div>;
-  if (path === "join") return <div className="setup-screen"><JoinStoreWizard onComplete={onComplete} /></div>;
+  if (path === "join") return <div className="setup-screen"><JoinStoreWizard onComplete={onComplete} onBack={() => setPath(null)} /></div>;
 
   // ── Path selector ──────────────────────────────────────────────────────────
   return (

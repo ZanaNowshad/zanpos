@@ -42,10 +42,12 @@ export default function BulkStockTakeModal({ user, onClose }: Props) {
       .filter(r => r.counted.trim() !== "")
       .map(r => ({
         product_id: r.product_id,
-        new_quantity: parseFloat(r.counted),
+        // FIX: pass raw string, not parseFloat — JS float arithmetic (e.g. 0.1+0.2)
+        // would corrupt the Decimal value stored in the Rust backend.
+        new_quantity: r.counted.trim(),
         notes: "Bulk stock-take",
       }))
-      .filter(e => !isNaN(e.new_quantity));
+      .filter(e => !isNaN(parseFloat(e.new_quantity)));
 
     if (entries.length === 0) {
       setError("Enter at least one counted quantity to submit.");

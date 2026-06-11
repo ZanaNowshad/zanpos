@@ -260,9 +260,40 @@ pub async fn admin_create_product(
     state: State<'_, AppState>,
 ) -> Result<AdminProduct, AppError> {
     rbac::manager_or_owner(&state.db, &input.created_by_user_id).await?;
+
+    // IPC input validation — enforce bounds before any DB write
+    let name_trimmed = input.name.trim();
+    if name_trimmed.is_empty() {
+        return Err(AppError::Validation("Product name is required".into()));
+    }
+    if name_trimmed.len() > 255 {
+        return Err(AppError::Validation("Product name must not exceed 255 characters".into()));
+    }
+    if let Some(ref sku) = input.sku {
+        if sku.trim().len() > 100 {
+            return Err(AppError::Validation("SKU must not exceed 100 characters".into()));
+        }
+    }
+    if let Some(ref bc) = input.barcode {
+        if bc.trim().len() > 100 {
+            return Err(AppError::Validation("Barcode must not exceed 100 characters".into()));
+        }
+    }
+
+    // BUG-PRODUCTS-4: reject zero or negative prices
+    if input.price_minor <= 0 {
+        return Err(AppError::Validation(
+            "Product price must be greater than zero".into(),
+        ));
+    }
+
     let product_id = Ulid::new().to_string();
     let price_id = Ulid::new().to_string();
     let now = chrono::Utc::now().to_rfc3339();
+
+    // BUG-PRODUCTS-13: wrap product + price + stock inserts in one transaction
+    // so a price-insert failure doesn't leave a price-less product in the DB.
+    let mut tx = state.db.begin().await?;
 
     sqlx::query(
         "INSERT INTO products
@@ -287,7 +318,7 @@ pub async fn admin_create_product(
     .bind(input.default_supplier_id.as_deref().filter(|s| !s.is_empty()))
     .bind(&now)
     .bind(&now)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
@@ -309,7 +340,7 @@ pub async fn admin_create_product(
     .bind(&now)
     .bind(&input.created_by_user_id)
     .bind(&now)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await?;
 
     if input.track_inventory {
@@ -325,9 +356,11 @@ pub async fn admin_create_product(
         .bind(&branch_id)
         .bind(&now)
         .bind(&now)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
     }
+
+    tx.commit().await?;
 
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
@@ -381,9 +414,41 @@ pub async fn admin_update_product(
     state: State<'_, AppState>,
 ) -> Result<AdminProduct, AppError> {
     rbac::manager_or_owner(&state.db, &input.updated_by_user_id).await?;
+
+    // IPC input validation — enforce bounds before any DB write
+    let name_trimmed = input.name.trim();
+    if name_trimmed.is_empty() {
+        return Err(AppError::Validation("Product name is required".into()));
+    }
+    if name_trimmed.len() > 255 {
+        return Err(AppError::Validation("Product name must not exceed 255 characters".into()));
+    }
+    if let Some(ref sku) = input.sku {
+        if sku.trim().len() > 100 {
+            return Err(AppError::Validation("SKU must not exceed 100 characters".into()));
+        }
+    }
+    if let Some(ref bc) = input.barcode {
+        if bc.trim().len() > 100 {
+            return Err(AppError::Validation("Barcode must not exceed 100 characters".into()));
+        }
+    }
+
+    // BUG-PRODUCTS-4: reject zero or negative prices on update too
+    if input.price_minor <= 0 {
+        return Err(AppError::Validation(
+            "Product price must be greater than zero".into(),
+        ));
+    }
+
     let now = chrono::Utc::now().to_rfc3339();
 
+    // Resolve branch/device IDs before the transaction
+    let branch_id = active_branch_id(&state).await?;
+    let device_id = active_device_id(&state).await;
+
     // Check if price changed — fetch full old price row for H-8 re-enqueue
+    // (read before the transaction so we know the current state)
     let old_price_row = sqlx::query(
         "SELECT price_id, price_minor, effective_from FROM product_prices
          WHERE product_id = ? AND branch_id IS NULL
@@ -395,6 +460,11 @@ pub async fn admin_update_product(
     .await?;
 
     let current_price: Option<i64> = old_price_row.as_ref().map(|r| r.get("price_minor"));
+
+    // BUG-PRODUCTS-13: wrap product update + price close/insert + stock init
+    // in one transaction so a partial write doesn't leave inconsistent state
+    // (e.g. product row updated but no valid price row).
+    let mut tx = state.db.begin().await?;
 
     // H-4: version = version + 1, plus M-3/M-4/M-5 new fields
     sqlx::query(
@@ -421,7 +491,7 @@ pub async fn admin_update_product(
     .bind(input.default_supplier_id.as_deref().filter(|s| !s.is_empty()))
     .bind(&now)
     .bind(&input.product_id)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
@@ -440,12 +510,10 @@ pub async fn admin_update_product(
         )
         .bind(&now)
         .bind(&input.product_id)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
 
-        // sync_status='pending' is set by column DEFAULT — sync worker picks it up
-
-        // Insert new price
+        // Insert new price (sync_status defaults to 'pending')
         let price_id = Ulid::new().to_string();
         sqlx::query(
             "INSERT INTO product_prices
@@ -459,14 +527,11 @@ pub async fn admin_update_product(
         .bind(&now)
         .bind(&input.updated_by_user_id)
         .bind(&now)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
-
-        // sync_status='pending' is set by column DEFAULT — sync worker picks it up
     }
 
     if input.track_inventory {
-        let branch_id = active_branch_id(&state).await?;
         let sl_id = format!("SL-{}-{}", input.product_id, branch_id);
         sqlx::query(
             "INSERT OR IGNORE INTO stock_levels
@@ -478,15 +543,15 @@ pub async fn admin_update_product(
         .bind(&branch_id)
         .bind(&now)
         .bind(&now)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
     }
+
+    tx.commit().await?;
 
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     // H8: Audit log — product updated
-    let device_id = active_device_id(&state).await;
-    let branch_id_str = active_branch_id(&state).await?;
     let after = serde_json::json!({
         "product_id": input.product_id, "name": input.name,
         "category_id": input.category_id, "sku": input.sku,
@@ -494,7 +559,7 @@ pub async fn admin_update_product(
     }).to_string();
     if let Err(e) = audit_hash::insert_audit_entry(
         &state.db, "PRODUCT_UPDATED", "product", &input.product_id,
-        &input.updated_by_user_id, "user", &device_id, &branch_id_str,
+        &input.updated_by_user_id, "user", &device_id, &branch_id,
         None, Some(&after), None,
     ).await { tracing::error!("AUDIT WRITE FAILED [PRODUCT_UPDATED]: {:?}", e); }
 
@@ -677,6 +742,52 @@ pub async fn admin_save_tax_rule(
     Ok(result)
 }
 
+/// Delete a tax rule (soft-delete by setting is_active=0, sync_status='pending').
+/// Sync worker pushes the deactivation to Supabase so other terminals pick it up.
+#[derive(Deserialize)]
+pub struct DeleteTaxRuleInput {
+    pub tax_rule_id: String,
+    pub actor_user_id: String,
+}
+
+#[tauri::command]
+pub async fn admin_delete_tax_rule(
+    input: DeleteTaxRuleInput,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let affected = sqlx::query(
+        "UPDATE tax_rules SET is_active = 0, updated_at = ?, sync_status = 'pending',
+         version = version + 1
+         WHERE tax_rule_id = ?",
+    )
+    .bind(&now)
+    .bind(&input.tax_rule_id)
+    .execute(&state.db)
+    .await?
+    .rows_affected();
+
+    if affected == 0 {
+        return Err(AppError::NotFound("Tax rule not found".into()));
+    }
+
+    // H8: Audit log — tax rule deleted
+    let device_id = active_device_id(&state).await;
+    let branch_id = active_branch_id(&state).await?;
+    let after = serde_json::json!({
+        "tax_rule_id": input.tax_rule_id, "is_active": false, "deleted": true,
+    }).to_string();
+    if let Err(e) = audit_hash::insert_audit_entry(
+        &state.db, "TAX_RULE_DELETED", "tax_rule", &input.tax_rule_id,
+        &input.actor_user_id, "user", &device_id, &branch_id,
+        None, Some(&after), None,
+    ).await { tracing::error!("AUDIT WRITE FAILED [TAX_RULE_DELETED]: {:?}", e); }
+
+    Ok(())
+}
+
 // ─── Category commands ────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -700,6 +811,54 @@ pub async fn admin_save_category(
     let is_update = input.category_id.is_some();
 
     let category_id = if let Some(id) = input.category_id {
+        // Guard: validate parent exists and check for circular hierarchy.
+        if let Some(ref parent_id) = input.parent_category_id {
+            // Self-parent is always a cycle.
+            if parent_id == &id {
+                return Err(AppError::Validation(
+                    "A category cannot be its own parent".into(),
+                ));
+            }
+            // Verify the parent category exists
+            let parent_exists: bool = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM categories WHERE category_id = ?",
+            )
+            .bind(parent_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0) > 0;
+            if !parent_exists {
+                return Err(AppError::Validation(
+                    "Parent category does not exist".into(),
+                ));
+            }
+            // Recursive CTE: walk ancestors of the proposed parent. If the
+            // category being edited appears anywhere in that chain it would
+            // create a cycle.
+            let cycle_found: bool = sqlx::query_scalar::<_, i64>(
+                "WITH RECURSIVE ancestors(cat_id) AS (
+                     SELECT parent_category_id FROM categories WHERE category_id = ?
+                     UNION ALL
+                     SELECT c.parent_category_id
+                     FROM categories c
+                     JOIN ancestors a ON c.category_id = a.cat_id
+                     WHERE a.cat_id IS NOT NULL
+                 )
+                 SELECT EXISTS(SELECT 1 FROM ancestors WHERE cat_id = ?)",
+            )
+            .bind(parent_id)
+            .bind(&id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0) != 0;
+
+            if cycle_found {
+                return Err(AppError::Validation(
+                    "Setting this parent would create a circular category hierarchy".into(),
+                ));
+            }
+        }
+
         // H-5: version = version + 1 on UPDATE
         sqlx::query(
             "UPDATE categories SET name=?, sort_order=?, is_active=?, parent_category_id=?, updated_at=?,
@@ -716,6 +875,21 @@ pub async fn admin_save_category(
         .await?;
         id
     } else {
+        // Validate parent_category_id exists before creating the new category
+        if let Some(ref parent_id) = input.parent_category_id {
+            let parent_exists: bool = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM categories WHERE category_id = ?",
+            )
+            .bind(parent_id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0) > 0;
+            if !parent_exists {
+                return Err(AppError::Validation(
+                    "Parent category does not exist".into(),
+                ));
+            }
+        }
         let id = Ulid::new().to_string();
         sqlx::query(
             "INSERT INTO categories
@@ -949,6 +1123,10 @@ pub async fn admin_bulk_import_products(
 
         // Parse price — decimal string → minor integer (no float)
         let price_minor = match crate::domain::money::parse_major_to_minor(&row.price, 3) {
+            Some(v) if v <= 0 => {
+                errors.push(BulkRowError { row: idx + 1, name: row.name.clone(), reason: "Price must be greater than zero".into() });
+                continue;
+            }
             Some(v) if v <= 999_999_000 => v, // max 999.999 BHD
             Some(_) => {
                 errors.push(BulkRowError { row: idx + 1, name: row.name.clone(), reason: format!("Price out of range: {}", row.price) });
@@ -1031,6 +1209,41 @@ pub async fn admin_bulk_import_products(
         } else {
             vec![]
         };
+        // PRE-VALIDATE all barcodes before any DB insert.
+        // Check both product_barcodes AND products.barcode to catch duplicates
+        // from all sources (admin_create_product writes to products.barcode only).
+        // If any barcode conflicts, skip the entire row — do not create an
+        // orphaned product that has no valid barcodes.
+        let mut barcode_conflict = false;
+        for bc in &all_barcodes {
+            let already_exists: bool = sqlx::query_scalar::<_, i64>(
+                "SELECT EXISTS(
+                    SELECT 1 FROM product_barcodes WHERE barcode = ?
+                    UNION ALL
+                    SELECT 1 FROM products WHERE barcode = ? AND is_active = 1
+                )",
+            )
+            .bind(bc)
+            .bind(bc)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap_or(0) != 0;
+
+            if already_exists {
+                errors.push(BulkRowError {
+                    row: idx + 1,
+                    name: row.name.clone(),
+                    reason: format!("Barcode '{}' is already registered to another product", bc),
+                });
+                barcode_conflict = true;
+                break;
+            }
+        }
+        if barcode_conflict {
+            skipped += 1;
+            continue;
+        }
+
         let primary_barcode = all_barcodes.first().copied(); // stored in products.barcode
 
         let track = row.track_inventory.unwrap_or(true);
@@ -1070,11 +1283,13 @@ pub async fn admin_bulk_import_products(
             Ok(_) => {}
         }
 
-        // Insert all barcodes into product_barcodes table
+        // Insert all barcodes into product_barcodes table.
+        // Duplicates were already checked in the pre-validation block above,
+        // so we can insert without re-checking here.
         for bc in &all_barcodes {
             let bc_id = format!("BC-{}", Ulid::new());
-            let _ = sqlx::query(
-                "INSERT OR IGNORE INTO product_barcodes
+            if let Err(e) = sqlx::query(
+                "INSERT INTO product_barcodes
                    (barcode_id, product_id, barcode, created_at)
                  VALUES (?,?,?,?)",
             )
@@ -1083,7 +1298,14 @@ pub async fn admin_bulk_import_products(
             .bind(bc)
             .bind(&now)
             .execute(&mut *tx)
-            .await;
+            .await
+            {
+                errors.push(BulkRowError {
+                    row: idx + 1,
+                    name: row.name.clone(),
+                    reason: format!("Barcode insert failed for '{}': {}", bc, e),
+                });
+            }
         }
 
         // Insert price — critical: product without price cannot be sold; capture failure (T07)
@@ -1281,6 +1503,13 @@ pub async fn product_barcode_add(
     state: State<'_, AppState>,
 ) -> AppResult<ProductBarcodeRow> {
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let barcode = barcode.trim().to_string();
+    if barcode.is_empty() {
+        return Err(AppError::Validation("Barcode is required".into()));
+    }
+    if barcode.len() > 100 {
+        return Err(AppError::Validation("Barcode must not exceed 100 characters".into()));
+    }
     let barcode_id = format!("PBC-{}", Ulid::new());
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -1296,7 +1525,7 @@ pub async fn product_barcode_add(
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
-            AppError::Validation("Barcode already exists on another product".into())
+            AppError::Conflict("Barcode already registered to another product".into())
         } else {
             e.into()
         }
@@ -1415,6 +1644,13 @@ pub async fn admin_update_user(
     state: State<'_, AppState>,
 ) -> Result<AdminUserRow, AppError> {
     rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
+    // FIX: prevent self-demotion or self-deactivation — an owner who deactivates
+    // themselves locks out the system permanently.
+    if input.user_id == input.actor_user_id && !input.is_active {
+        return Err(AppError::Validation(
+            "You cannot deactivate your own account".into(),
+        ));
+    }
     if let Some(pin) = &input.pin {
         if pin.len() < 4 {
             return Err(AppError::Validation("PIN must be at least 4 digits".into()));

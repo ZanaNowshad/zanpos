@@ -81,6 +81,12 @@ pub async fn refund_create(
     state: State<'_, AppState>,
 ) -> Result<RefundResult, AppError> {
     // Step 1 — Verify the caller exists and is active.
+    // RBAC DECISION: cashiers ARE permitted to initiate refunds on the same device
+    // (same-device refund is a standard POS workflow — cashier returns a just-sold item).
+    // Cross-device refunds require a manager override token (enforced in Step 4 below).
+    // Manager/owner can refund cross-device without a token (their role is checked via
+    // can_override_refund). `require_any_role` is the correct minimum here — it rejects
+    // unauthenticated / inactive callers while allowing all active roles.
     rbac::require_any_role(&state.db, &input.created_by_user_id).await?;
 
     // Step 2 — Check if the user is manager/owner.

@@ -51,12 +51,17 @@ fn read_sidecar_token(state: &AppState) -> String {
 
 /// Normalize a phone number: strip spaces/hyphens, ensure single '+' prefix,
 /// remove any doubled country code (e.g. +973973... → +973...).
+/// Returns an empty string if the input has no digits (e.g. empty or all symbols).
 fn normalize_phone(raw: &str) -> String {
     let stripped: String = raw
         .chars()
         .filter(|c| c.is_ascii_digit() || *c == '+')
         .collect();
     let digits_only: String = stripped.trim_start_matches('+').to_string();
+    // Reject inputs with no digits — avoid sending "+" to the sidecar.
+    if digits_only.is_empty() {
+        return String::new();
+    }
     // Check for doubled Gulf country codes
     for cc in &["973", "966", "971", "965", "968", "974", "967"] {
         let double = format!("{}{}", cc, cc);
@@ -96,13 +101,9 @@ pub struct WhatsAppDeliveryParams<'a> {
 
 /// Format minor units to decimal string, e.g. 1500 with exp=3 → "1.500"
 fn fmt_money(minor: i64, exp: i32) -> String {
-    if exp == 0 {
-        return minor.to_string();
-    }
-    let divisor = 10_i64.pow(exp as u32);
-    let whole = minor / divisor;
-    let frac = minor % divisor;
-    format!("{}.{:0>width$}", whole, frac.abs(), width = exp as usize)
+    // Delegate to the canonical integer-only formatter to avoid the negative-amount
+    // sign-loss bug (e.g. -500 with exp=3 was emitted as "0.500" instead of "-0.500").
+    crate::domain::money::format_minor(minor, exp as u32)
 }
 
 pub fn build_delivery_whatsapp_message(p: &WhatsAppDeliveryParams) -> String {
@@ -175,7 +176,11 @@ pub fn build_delivery_whatsapp_message(p: &WhatsAppDeliveryParams) -> String {
 // ─── Commands ─────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn whatsapp_status(state: State<'_, AppState>) -> AppResult<WhatsAppStatus> {
+pub async fn whatsapp_status(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<WhatsAppStatus> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     let token = read_sidecar_token(&state);
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
@@ -223,6 +228,9 @@ pub async fn whatsapp_send_delivery(
     }
 
     let phone = normalize_phone(&input.to);
+    if phone.is_empty() {
+        return Err(AppError::Validation("Recipient phone number is required".into()));
+    }
 
     whatsapp_send_delivery_impl(
         &state,
@@ -267,11 +275,35 @@ pub async fn whatsapp_save_config(
     state: State<'_, AppState>,
 ) -> AppResult<()> {
     crate::commands::rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+
+    // BUG-WA-PHONE-VALIDATION: validate the BenefitPay phone number before saving.
+    // Allow empty string (clears the setting). Non-empty strings must be a valid
+    // international phone number: starts with '+', digits only after '+', total 8–16 chars.
+    let trimmed = benefit_number.trim();
+    if !trimmed.is_empty() {
+        if !trimmed.starts_with('+') {
+            return Err(AppError::Validation(
+                "Phone number must start with '+' followed by the country code (e.g. +97333050666)".into(),
+            ));
+        }
+        let after_plus = &trimmed[1..];
+        if after_plus.is_empty() || !after_plus.chars().all(|c| c.is_ascii_digit()) {
+            return Err(AppError::Validation(
+                "Phone number must contain only digits after '+'".into(),
+            ));
+        }
+        if trimmed.len() < 8 || trimmed.len() > 16 {
+            return Err(AppError::Validation(
+                "Phone number must be 8–16 characters including the '+' prefix".into(),
+            ));
+        }
+    }
+
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
         "INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('whatsapp_benefit_number', ?, ?)",
     )
-    .bind(&benefit_number)
+    .bind(trimmed)
     .bind(&now)
     .execute(&state.db)
     .await?;
@@ -300,6 +332,9 @@ pub async fn whatsapp_notify_arrival(
     }
 
     let phone = normalize_phone(&input.to);
+    if phone.is_empty() {
+        return Err(AppError::Validation("Recipient phone number is required".into()));
+    }
 
     whatsapp_notify_arrival_impl(&state, &phone, &input.receipt_number).await?;
 
@@ -333,6 +368,9 @@ pub async fn whatsapp_payment_reminder(
     }
 
     let phone = normalize_phone(&input.to);
+    if phone.is_empty() {
+        return Err(AppError::Validation("Recipient phone number is required".into()));
+    }
 
     whatsapp_payment_reminder_impl(
         &state,
@@ -471,6 +509,10 @@ pub(crate) async fn whatsapp_send_delivery_impl(
         return Ok(()); // Best-effort — don't fail the delivery status update
     }
     let phone = normalize_phone(phone);
+    if phone.is_empty() {
+        tracing::debug!("whatsapp_send_delivery_impl: no phone number, skipping");
+        return Ok(());
+    }
 
     let benefit_number: Option<String> =
         sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'whatsapp_benefit_number'")
@@ -522,6 +564,10 @@ pub(crate) async fn whatsapp_notify_arrival_impl(
         return Ok(());
     }
     let phone = normalize_phone(phone);
+    if phone.is_empty() {
+        tracing::debug!("whatsapp_notify_arrival_impl: no phone number, skipping");
+        return Ok(());
+    }
 
     let message = format!(
         "🚚 Your delivery is here!\n\
@@ -553,6 +599,10 @@ pub(crate) async fn whatsapp_payment_reminder_impl(
         return Ok(());
     }
     let phone = normalize_phone(phone);
+    if phone.is_empty() {
+        tracing::debug!("whatsapp_payment_reminder_impl: no phone number, skipping");
+        return Ok(());
+    }
 
     let benefit_number: Option<String> =
         sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'whatsapp_benefit_number'")
@@ -600,49 +650,101 @@ pub(crate) async fn whatsapp_payment_reminder_impl(
     Ok(())
 }
 
+/// Check whether the sidecar is alive and WhatsApp session is active.
+/// Returns Err with a user-friendly message if the sidecar is unreachable or
+/// the session has expired and needs QR re-scanning.
+async fn sidecar_health_check(token: &str) -> AppResult<()> {
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(3))
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap_or_default();
+    match client
+        .get(format!("{}/status", SIDECAR_URL))
+        .header("X-Sidecar-Token", token)
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            let status = body.get("status").and_then(|v| v.as_str()).unwrap_or("");
+            let connected = body.get("connected").and_then(|v| v.as_bool()).unwrap_or(false);
+            if !connected || status == "DISCONNECTED" || status == "QR_REQUIRED" {
+                return Err(AppError::Internal(
+                    "WhatsApp session expired. Please re-scan the QR code in Settings.".into(),
+                ));
+            }
+            Ok(())
+        }
+        Err(e) => {
+            tracing::warn!("WhatsApp sidecar health check failed: {}", e);
+            Err(AppError::Internal(
+                "WhatsApp service is unavailable. Please restart the application.".into(),
+            ))
+        }
+    }
+}
+
 /// Internal helper: POST a raw message to the sidecar /send endpoint.
-/// Returns Ok(true) on confirmed send, Ok(false) otherwise. R-15: the underlying
-/// cause (sidecar unreachable vs. invalid number rejected by WhatsApp) is logged
-/// so a returned `false` is always diagnosable from the logs.
+/// Performs a health check first, then attempts the send once; on failure retries
+/// once after a ~2 s delay. Returns Ok(true) on confirmed send, Err otherwise.
+/// R-15: the underlying cause is always logged so a failure is diagnosable.
 async fn send_raw(to: &str, message: &str, token: &str) -> AppResult<bool> {
+    // Health check — surface sidecar-dead or QR-expired before attempting send.
+    sidecar_health_check(token).await?;
+
     // Apply a bounded timeout so a stuck sidecar can't hang the caller.
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(20))
         .build()
         .unwrap_or_default();
-    match client
-        .post(format!("{}/send", SIDECAR_URL))
-        .header("X-Sidecar-Token", token)
-        .json(&serde_json::json!({ "to": to, "message": message }))
-        .send()
-        .await
-    {
-        Ok(resp) => {
-            let body: serde_json::Value = resp.json().await.unwrap_or_default();
-            let ok = body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-            if !ok {
-                tracing::warn!(
-                    "WhatsApp send to '{}' rejected by sidecar: {}",
-                    to,
-                    body.get("error").and_then(|v| v.as_str()).unwrap_or("unknown reason")
-                );
-            }
-            Ok(ok)
-        }
+
+    let attempt = |c: &reqwest::Client| {
+        c.post(format!("{}/send", SIDECAR_URL))
+            .header("X-Sidecar-Token", token)
+            .json(&serde_json::json!({ "to": to, "message": message }))
+            .send()
+    };
+
+    // First attempt
+    let result = attempt(&client).await;
+
+    // On network failure, wait ~2 s and retry once.
+    let resp = match result {
+        Ok(r) => r,
         Err(e) => {
-            tracing::warn!("WhatsApp send to '{}' failed — sidecar unreachable: {}", to, e);
-            Ok(false)
+            tracing::warn!("WhatsApp send attempt 1 to '{}' failed: {} — retrying in 2s", to, e);
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            attempt(&client).await.map_err(|e2| {
+                tracing::warn!("WhatsApp send attempt 2 to '{}' failed: {}", to, e2);
+                AppError::Internal(format!("WhatsApp send failed after retry: {}", e2))
+            })?
         }
+    };
+
+    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    let ok = body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !ok {
+        tracing::warn!(
+            "WhatsApp send to '{}' rejected by sidecar: {}",
+            to,
+            body.get("error").and_then(|v| v.as_str()).unwrap_or("unknown reason")
+        );
     }
+    Ok(ok)
 }
 
 // ─── Receipt PDF send ─────────────────────────────────────────────────────────
 
 /// Send a WhatsApp message that contains a PDF receipt as an attached document,
 /// with the existing text message as the caption — both delivered in one message.
-/// Falls back gracefully: if the sidecar returns `ok: false`, returns `false`
-/// without throwing so the caller can fall back to text-only.
+///
+/// Performs a sidecar health check first:
+///   - If the sidecar is dead or QR-expired, returns an **actionable error** so the
+///     user knows to restart or re-scan the QR (text-only fallback won't work either).
+///   - If the sidecar is alive but the /send-document endpoint fails or returns
+///     `ok: false`, returns `Ok(false)` so the caller can fall back to text-only.
 #[tauri::command]
 pub async fn whatsapp_send_receipt_pdf(
     input: crate::commands::receipt_pdf::WhatsAppReceiptPdfInput,
@@ -659,6 +761,12 @@ pub async fn whatsapp_send_receipt_pdf(
 
     let phone = normalize_phone(&input.to);
 
+    let token = read_sidecar_token(&state);
+    // Health check — surface sidecar-dead or QR-expired before attempting send.
+    // If the sidecar is actually down, text-only fallback is also impossible, so
+    // we return an error rather than silently returning false.
+    sidecar_health_check(&token).await?;
+
     let pdf_bytes = crate::commands::receipt_pdf::generate_receipt_pdf(&input)
         .map_err(|e| AppError::Internal(format!("PDF generation failed: {e}")))?;
 
@@ -666,7 +774,6 @@ pub async fn whatsapp_send_receipt_pdf(
     let filename = format!("Receipt-{}.pdf", input.receipt_number);
     let caption  = input.caption.as_deref().unwrap_or("").to_string();
 
-    let token  = read_sidecar_token(&state);
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(30))
@@ -699,7 +806,7 @@ pub async fn whatsapp_send_receipt_pdf(
             Ok(ok)
         }
         Err(e) => {
-            tracing::warn!("WhatsApp PDF send to '{}' failed — sidecar unreachable: {}", phone, e);
+            tracing::warn!("WhatsApp PDF send to '{}' failed after health check passed: {}", phone, e);
             Ok(false)
         }
     }
@@ -822,6 +929,11 @@ mod tests {
 
     #[test]
     fn test_normalize_phone_empty() {
-        assert_eq!(normalize_phone(""), "+");
+        assert_eq!(normalize_phone(""), "");
+    }
+
+    #[test]
+    fn test_normalize_phone_all_symbols() {
+        assert_eq!(normalize_phone("  - "), "");
     }
 }

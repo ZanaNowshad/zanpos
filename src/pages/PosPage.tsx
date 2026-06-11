@@ -7,7 +7,7 @@ import type { BusinessFlags, CustomerRow, LowStockAlert, PaymentInput, SaleListR
 import { type Theme, THEMES } from "../hooks/useTheme";
 import { formatMoney, parseMoney } from "../money";
 import { DEVICE } from "../types";
-import { businessFlagsLoad, cashNoSale, ghostRecord, receiptReprint, refundGetSale, whatsappStatus, whatsappSendDelivery, whatsappSendReceiptPdf, appConfigLoad, openCashDrawer, settingsGetBranch, thermalGetConfig, printReceiptRaw } from "../tauri/commands";
+import { businessFlagsLoad, cashNoSale, ghostRecord, receiptReprint, whatsappStatus, whatsappSendDelivery, whatsappSendReceiptPdf, appConfigLoad, openCashDrawer, settingsGetBranch, thermalGetConfig, printReceiptRaw, posLoadSaleForEdit } from "../tauri/commands";
 import { buildReceiptLines } from "../utils/receiptLines";
 import { loadWaFormat, buildDeliveryMessage, loadWaCustomerFormat, buildCustomerMessage } from "../utils/waMessageFormat";
 import { useCart } from "../hooks/useCart";
@@ -71,6 +71,7 @@ interface Props {
   sessionUser: SessionUser;
   shift: Shift;
   onLogout: () => void;
+  onLock?: () => void;
   onShiftClose: (closed: boolean) => void;
   onOpenAdminChat?: () => void;
   theme?: Theme;
@@ -78,7 +79,7 @@ interface Props {
 }
 
 export default function PosPage({
-  sessionUser, shift, onLogout, onShiftClose, onOpenAdminChat, theme, onToggleTheme,
+  sessionUser, shift, onLogout, onLock, onShiftClose, onOpenAdminChat, theme, onToggleTheme,
 }: Props) {
   const session = useMemo(() => ({
     branch_id: DEVICE.branch_id,
@@ -86,6 +87,11 @@ export default function PosPage({
     shift_id: shift.shift_id,
     cashier_user_id: sessionUser.user_id,
   }), [shift.shift_id, sessionUser.user_id]);
+
+  // Stale-closure fix: keep a ref to sessionUser.user_id so handleBarcode never
+  // closes over a stale user_id even if the prop is hot-swapped (BUG-POS-STALE).
+  const sessionUserIdRef = useRef(sessionUser.user_id);
+  useEffect(() => { sessionUserIdRef.current = sessionUser.user_id; });
 
   // ── Sidebar visibility — persisted across sessions ────────────────────────────
   const [showSidebar, setShowSidebar] = useState<boolean>(() =>
@@ -124,6 +130,9 @@ export default function PosPage({
   const [branchSettings, setBranchSettings] = useState<import("../types").BranchSettings | null>(null);
   const [thermalEnabled, setThermalEnabled] = useState(false);
 
+  // FIX: guard against double-payment race (Enter key can fire before loading prop propagates)
+  const confirmingRef = useRef(false);
+
   const [numpadValue, setNumpadValue] = useState("1");
   const numpadRef = useRef(numpadValue);
   useEffect(() => { numpadRef.current = numpadValue; }, [numpadValue]);
@@ -144,7 +153,7 @@ export default function PosPage({
   // PosPage previously ran a second independent idle timer that called onLogout
   // directly, bypassing the warning. Removed here — App's timer handles logout.
 
-  const syncStatus = useSyncStatus(15_000);
+  const syncStatus = useSyncStatus(15_000, sessionUser.user_id);
 
   const {
     cart, loading, error, clearError, setError,
@@ -181,7 +190,7 @@ export default function PosPage({
       const result = await finalizeSale([payment]);
       setLastReceiptNumber(result.receipt_number);
       // Open cash drawer — best-effort, non-fatal
-      openCashDrawer().catch(() => {});
+      openCashDrawer(sessionUser.user_id).catch((e: unknown) => console.warn("Cash drawer open failed:", e));
       // No ReceiptPreview — cart already cleared in finalizeSale
       focusBarcode();
       if (result.low_stock_alerts.length > 0) {
@@ -218,6 +227,9 @@ export default function PosPage({
 
   // ── Confirm payment ───────────────────────────────────────────────────────────
   const handleConfirmPayment = async (payments: PaymentInput[], customerId?: string, deliveryInput?: import("../types").DeliveryInput, selectedCustomer?: CustomerRow) => {
+    // FIX: guard against double-invocation (Enter key can fire before loading prop propagates)
+    if (confirmingRef.current) return;
+    confirmingRef.current = true;
     try {
       const result = await finalizeSale(payments, customerId, deliveryInput);
       setActiveModal({ kind: "none" });
@@ -225,7 +237,7 @@ export default function PosPage({
       setLastReceiptNumber(result.receipt_number);
       // Open cash drawer if any payment was cash — best-effort, non-fatal
       if (payments.some(p => p.method === "cash")) {
-      openCashDrawer().catch((e: unknown) => console.warn("Cash drawer open failed:", e));
+      openCashDrawer(sessionUser.user_id).catch((e: unknown) => console.warn("Cash drawer open failed:", e));
       }
       // ── Auto-print receipt to thermal printer ────────────────────────────────
       // Fires for every checkout path EXCEPT Fast Cash (handlePayFast is
@@ -233,6 +245,7 @@ export default function PosPage({
       // Non-fatal: a printer error never rolls back the sale.
       if (thermalEnabled) {
         printReceiptRaw(
+          sessionUser.user_id,
           result.branch_name,
           buildReceiptLines(result, branchSettings, false),
         ).catch((e: unknown) => console.warn("Receipt print failed:", e)); // fire-and-forget
@@ -248,7 +261,7 @@ export default function PosPage({
         const d = result.delivery;
         const sendWA = async () => {
           try {
-            const waStatus = await whatsappStatus();
+            const waStatus = await whatsappStatus(sessionUser.user_id);
             if (waStatus.connected) {
               // Build message from custom template (falls back to Rust builder if not set)
               let messageOverride: string | undefined;
@@ -341,7 +354,7 @@ export default function PosPage({
       if (selectedCustomer?.phone && !deliveryInput) {
         const sendCustomerWA = async () => {
           try {
-            const waStatus = await whatsappStatus();
+            const waStatus = await whatsappStatus(sessionUser.user_id);
             if (!waStatus.connected) return; // silent skip
             const cfg = await appConfigLoad();
             const phone = selectedCustomer.phone!;
@@ -430,6 +443,8 @@ export default function PosPage({
       }
     } catch {
       // error is set in useCart; modal stays open
+    } finally {
+      confirmingRef.current = false;
     }
   };
 
@@ -461,33 +476,29 @@ export default function PosPage({
     try { await cashNoSale(shift.shift_id, sessionUser.user_id); }
     catch (e) { setError(typeof e === "string" ? e : "No-sale open failed"); }
     // Open cash drawer — best-effort
-    openCashDrawer().catch(() => {});
+    openCashDrawer(sessionUser.user_id).catch((e: unknown) => console.warn("Cash drawer open failed (no-sale):", e));
   }, [shift.shift_id, sessionUser.user_id]);
 
   // ── Edit a past sale (load items back into cart as custom items) ──────────────
-  // Items are added in parallel (Promise.allSettled) to avoid O(n) sequential
-  // IPC round-trips. allSettled ensures a single failed item doesn't leave the
-  // cart partially populated silently — failures are surfaced via console.error.
+  // Items are added sequentially — addCustomItem writes to shared SQLite cart
+  // state and parallel calls race on the same row, causing only one item to win.
   const handleEditSale = useCallback(async (sale: SaleListRow) => {
     try {
-      const detail = await refundGetSale(sale.receipt_number, sessionUser.user_id);
-      clearCart();
-      const results = await Promise.allSettled(
-        detail.items.map(item => {
-          const priceMajor = formatMoney(item.unit_price_minor, DEVICE.currency_exponent);
-          return addCustomItem(item.product_name_snapshot, priceMajor, item.quantity);
-        })
+      const cart = await posLoadSaleForEdit(
+        sale.receipt_number,
+        DEVICE.branch_id,
+        shift.device_id,
+        shift.shift_id,
+        sessionUser.user_id,
       );
-      const failed = results.filter(r => r.status === "rejected");
-      if (failed.length > 0) {
-        setError(`${failed.length} of ${detail.items.length} items could not be loaded into cart`);
-      }
+      clearCart();
+      replaceCart(cart);
       setActiveModal({ kind: "none" });
       focusBarcode();
     } catch (e) {
       setError(typeof e === "string" ? e : "Failed to load sale for edit");
     }
-  }, [clearCart, addCustomItem, focusBarcode, sessionUser.user_id]);
+  }, [clearCart, replaceCart, focusBarcode, shift, sessionUser.user_id]);
 
   // ── Clear cart with confirmation ──────────────────────────────────────────────
   const handleClearCartRequest = useCallback(() => {
@@ -546,7 +557,7 @@ export default function PosPage({
         focusBarcode();
       } catch {
         barcodeRef.current?.flashError();
-        void ghostRecord(sessionUser.user_id, barcode); // fire-and-forget, never throws
+        void ghostRecord(sessionUserIdRef.current, barcode); // fire-and-forget, never throws
         // T21: give cashier an actionable message, not a void flash
         setError(`Barcode "${barcode}" not found — flagged for your manager. Keep selling.`);
         focusBarcode();
@@ -575,14 +586,16 @@ export default function PosPage({
     onIncrementRecent:   handleIncrementRecent,
     onDecrementRecent:   handleDecrementRecent,
     onRemoveRecent:      removeRecentLine,
-    onLock:              onLogout,
+    // FIX: onLock should lock the session (show LockScreen), NOT log out.
+    // Ctrl+L was destroying the session and clearing the shift — wrong behaviour.
+    onLock:              onLock ?? onLogout,
     onReport:            () => setActiveModal({ kind: "report" }),
     onCustomItem:        () => setActiveModal({ kind: "customItem" }),
     onHelp:              () => setActiveModal({ kind: "help" }),
   }), [noModalOpen, lineCount, recentLineId, lastReceiptNumber, canRefund, canViewXReport,
        focusBarcode, handleOpenHold, openPay, handlePayFast, handleClearCartRequest,
        handleReprintLast, handleNoSale, handleIncrementRecent, handleDecrementRecent,
-       removeRecentLine, onLogout]);
+       removeRecentLine, onLock, onLogout]);
   usePosShortcuts(shortcutHandlers);
 
   // ── Focus barcode after any modal closes ──────────────────────────────────────
@@ -604,9 +617,9 @@ export default function PosPage({
     let cancelled = false;
     businessFlagsLoad().then(v => { if (!cancelled) setBizFlags(v); })
       .catch((e: unknown) => console.warn("businessFlagsLoad failed:", e));
-    settingsGetBranch().then(v => { if (!cancelled) setBranchSettings(v); })
+    settingsGetBranch(sessionUser.user_id).then(v => { if (!cancelled) setBranchSettings(v); })
       .catch((e: unknown) => console.warn("settingsGetBranch failed:", e));
-    thermalGetConfig().then(c => { if (!cancelled) setThermalEnabled(c.enabled); })
+    thermalGetConfig(sessionUser.user_id).then(c => { if (!cancelled) setThermalEnabled(c.enabled); })
       .catch((e: unknown) => console.warn("thermalGetConfig failed:", e));
     return () => { cancelled = true; };
   }, []);
@@ -693,7 +706,7 @@ export default function PosPage({
 
         {/* Right: sync status + reprint + close shift + logout */}
         <div className="top-bar-right" data-tauri-drag-region="true">
-          <SyncChip status={syncStatus} />
+          <SyncChip status={syncStatus} userId={sessionUser.user_id} />
           {lastReceiptNumber && (
             <button className="top-bar-btn" onClick={handleReprintLast} title={`Reprint #${lastReceiptNumber} (Ctrl+P)`} data-tauri-drag-region="false">
               Reprint
@@ -781,8 +794,9 @@ export default function PosPage({
                     lineId: zeroLine.cart_line_id, productName: zeroLine.product_name });
                   return;
                 }
-              } catch {
+              } catch (e) {
                 barcodeRef.current?.flashError();
+                setError(e instanceof Error ? e.message : "Failed to add product — please try again");
               }
             }}
             onSearch={() => {}}
@@ -1100,6 +1114,7 @@ export default function PosPage({
         <ReceiptPreview
           sale={activeModal.result}
           isReprint={activeModal.isReprint}
+          userId={sessionUser.user_id}
           onNewSale={() => { setActiveModal({ kind: "none" }); handleNewSale(); }}
         />
       )}

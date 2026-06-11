@@ -47,15 +47,38 @@ pub async fn init_db(db_path: &str) -> AppResult<SqlitePool> {
 
     let pool = SqlitePoolOptions::new()
         // SQLite WAL allows multiple readers but only one writer at a time.
-        // A small pool avoids write-lock contention across Tauri command threads.
-        .max_connections(4)
-        // Surface a clear error instead of hanging indefinitely
-        .acquire_timeout(Duration::from_secs(5))
+        // 6 connections: enough for concurrent Tauri commands + sync worker without
+        // overwhelming the write-lock queue. WAL allows all 6 to read in parallel.
+        .max_connections(6)
+        // Must exceed busy_timeout (15 s) so that a slow sync INSERT (observed
+        // at up to 10 s on initial Supabase pull) doesn't starve other operations
+        // while holding a connection. 30 s gives safe headroom.
+        .acquire_timeout(Duration::from_secs(30))
         .connect_with(connect_opts)
         .await?;
 
     // Run migrations
     sqlx::migrate!("./migrations").run(&pool).await?;
+
+    // Reset rows that exhausted sync_attempts under the old bug where updated_at was
+    // omitted from Supabase payloads, causing PostgreSQL 23502 on every upsert.
+    // COALESCE(NULLIF(updated_at,''), ...) only overwrites NULL/empty values so valid
+    // timestamps are preserved.
+    for table in &[
+        "branches", "categories", "products", "stock_levels", "users",
+        "tax_rules", "devices", "customers", "shifts", "sales", "sale_items",
+        "payments", "refunds", "refund_items", "stock_movements",
+        "audit_logs", "delivery_orders", "product_prices", "cash_events",
+    ] {
+        let sql = format!(
+            "UPDATE {table} SET sync_attempts = 0, \
+             updated_at = COALESCE(NULLIF(updated_at, ''), created_at, datetime('now')) \
+             WHERE sync_status = 'pending'"
+        );
+        if let Err(e) = sqlx::query(&sql).execute(&pool).await {
+            tracing::warn!("DB init: could not reset {table} sync state: {e}");
+        }
+    }
 
     tracing::info!("Database initialized at {}", db_path);
     Ok(pool)

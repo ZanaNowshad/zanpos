@@ -46,11 +46,6 @@ pub struct AddItemInput {
     pub quantity: Option<String>,
 }
 
-/// Format a quantity float cleanly: whole numbers as integers, decimals as-is.
-fn fmt_qty(qty: f64) -> String {
-    if qty.fract() == 0.0 { format!("{}", qty as i64) } else { qty.to_string() }
-}
-
 #[tauri::command]
 pub async fn pos_add_item(
     input: AddItemInput,
@@ -62,16 +57,22 @@ pub async fn pos_add_item(
         .ok_or_else(|| AppError::NotFound(format!("Product {} not found", input.product_id)))?;
 
     let qty_str = input.quantity.as_deref().unwrap_or("1");
-    let qty_to_add: f64 = qty_str.parse().unwrap_or(1.0);
-    if !qty_to_add.is_finite() || qty_to_add <= 0.0 || qty_to_add > 1_000_000.0 {
+    // Validate quantity using integer-only arithmetic (no f64 round-trips).
+    if !crate::domain::money::qty_in_range(qty_str, 1_000_000) {
         return Err(AppError::Validation(format!(
             "Invalid quantity: {qty_str}"
         )));
     }
-    if qty_to_add.fract() != 0.0 && !product.product.allow_decimal_quantity {
-        return Err(AppError::Validation(
-            "This product does not allow decimal quantities".into()
-        ));
+    // Decimal quantity check: if there is a non-zero fractional part and the
+    // product does not allow decimal quantities, reject.
+    if !product.product.allow_decimal_quantity {
+        if let Some((_, frac)) = qty_str.split_once('.') {
+            if frac.trim_end_matches('0').len() > 0 {
+                return Err(AppError::Validation(
+                    "This product does not allow decimal quantities".into()
+                ));
+            }
+        }
     }
     let mut cart = input.cart;
 
@@ -79,8 +80,7 @@ pub async fn pos_add_item(
     if let Some(existing) = cart.lines.iter_mut()
         .find(|l| !l.voided && l.product_id.as_deref() == Some(product.product.product_id.as_str()))
     {
-        let current: f64 = existing.quantity.parse().unwrap_or(1.0);
-        existing.quantity = fmt_qty(current + qty_to_add);
+        existing.quantity = crate::domain::money::add_decimal_qty_str(&existing.quantity, qty_str);
         existing.recalculate();
         return Ok(cart);
     }
@@ -134,8 +134,7 @@ pub async fn pos_add_item_by_barcode(
     if let Some(existing) = cart.lines.iter_mut()
         .find(|l| !l.voided && l.product_id.as_deref() == Some(product.product.product_id.as_str()))
     {
-        let current: f64 = existing.quantity.parse().unwrap_or(1.0);
-        existing.quantity = fmt_qty(current + 1.0);
+        existing.quantity = crate::domain::money::add_decimal_qty_str(&existing.quantity, "1");
         existing.recalculate();
         return Ok(cart);
     }
@@ -168,36 +167,36 @@ pub async fn pos_update_quantity(
     input: UpdateQuantityInput,
     state: State<'_, AppState>,
 ) -> Result<Cart, AppError> {
-    let qty: f64 = input
-        .quantity
-        .parse()
-        .map_err(|_| AppError::Validation("Invalid quantity".into()))?;
-    if !qty.is_finite() || qty <= 0.0 || qty > 1_000_000.0 {
+    crate::commands::rbac::require_any_role(&state.db, &input.cart.cashier_user_id).await?;
+    // Validate quantity using integer-only arithmetic (no f64 round-trips).
+    if !crate::domain::money::qty_in_range(&input.quantity, 1_000_000) {
         return Err(AppError::Validation(format!(
-            "Quantity must be between 0 and 1,000,000 (got {qty})"
+            "Invalid quantity: {}", input.quantity
         )));
     }
     // Guard: reject decimal quantities for products that don't allow them.
-    if qty.fract() != 0.0 {
-        let product_id = input
-            .cart
-            .lines
-            .iter()
-            .find(|l| l.cart_line_id == input.cart_line_id)
-            .and_then(|l| l.product_id.as_deref());
-        if let Some(pid) = product_id {
-            let allow_decimal: bool = sqlx::query_scalar(
-                "SELECT allow_decimal_quantity FROM products WHERE product_id = ?",
-            )
-            .bind(pid)
-            .fetch_optional(&state.db)
-            .await?
-            .flatten()
-            .unwrap_or(false);
-            if !allow_decimal {
-                return Err(AppError::Validation(
-                    "This product does not allow decimal quantities".into()
-                ));
+    if let Some((_, frac)) = input.quantity.split_once('.') {
+        if frac.trim_end_matches('0').len() > 0 {
+            let product_id = input
+                .cart
+                .lines
+                .iter()
+                .find(|l| l.cart_line_id == input.cart_line_id)
+                .and_then(|l| l.product_id.as_deref());
+            if let Some(pid) = product_id {
+                let allow_decimal: bool = sqlx::query_scalar(
+                    "SELECT allow_decimal_quantity FROM products WHERE product_id = ?",
+                )
+                .bind(pid)
+                .fetch_optional(&state.db)
+                .await?
+                .flatten()
+                .unwrap_or(false);
+                if !allow_decimal {
+                    return Err(AppError::Validation(
+                        "This product does not allow decimal quantities".into()
+                    ));
+                }
             }
         }
     }
@@ -250,7 +249,11 @@ pub struct RemoveLineInput {
 }
 
 #[tauri::command]
-pub async fn pos_remove_line(input: RemoveLineInput) -> Result<Cart, AppError> {
+pub async fn pos_remove_line(
+    input: RemoveLineInput,
+    state: State<'_, AppState>,
+) -> Result<Cart, AppError> {
+    crate::commands::rbac::require_any_role(&state.db, &input.cart.cashier_user_id).await?;
     let mut cart = input.cart;
     cart.lines.retain(|l| l.cart_line_id != input.cart_line_id);
     Ok(cart)
@@ -325,52 +328,30 @@ pub async fn pos_finalize_sale(
     .await?;
 
     // Auto-print receipt if the business flag is enabled.
-    let auto_print: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM app_config WHERE key = 'flag_auto_print_receipt'",
+    // Batch all printer config keys into a single query (was 5 sequential round-trips).
+    let printer_cfg: std::collections::HashMap<String, String> = sqlx::query(
+        "SELECT key, value FROM app_config WHERE key IN (
+         'flag_auto_print_receipt','thermal_printer_enabled','thermal_printer_port',
+         'thermal_printer_baud','store_name')",
     )
-    .fetch_optional(&state.db)
+    .fetch_all(&state.db)
     .await
-    .ok()
-    .flatten()
-    .flatten();
-    if auto_print.as_deref() == Some("1") {
-        let enabled: String = sqlx::query_scalar(
-            "SELECT value FROM app_config WHERE key = 'thermal_printer_enabled'",
-        )
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .flatten()
-        .unwrap_or_default();
-        let port: String = sqlx::query_scalar(
-            "SELECT value FROM app_config WHERE key = 'thermal_printer_port'",
-        )
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .flatten()
-        .unwrap_or_default();
-        let baud_str: String = sqlx::query_scalar(
-            "SELECT value FROM app_config WHERE key = 'thermal_printer_baud'",
-        )
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .flatten()
-        .unwrap_or_else(|| "9600".into());
+    .unwrap_or_default()
+    .into_iter()
+    .map(|r: sqlx::sqlite::SqliteRow| {
+        let k: String = r.get("key");
+        let v: String = r.get("value");
+        (k, v)
+    })
+    .collect();
+    let auto_print = printer_cfg.get("flag_auto_print_receipt").map(|s| s.as_str());
+    if auto_print == Some("1") {
+        let enabled = printer_cfg.get("thermal_printer_enabled").map(|s| s.as_str()).unwrap_or("0");
+        // Clone into owned Strings so the borrow is released before spawn_blocking.
+        let port: String = printer_cfg.get("thermal_printer_port").cloned().unwrap_or_default();
+        let baud_str = printer_cfg.get("thermal_printer_baud").map(|s| s.as_str()).unwrap_or("9600");
         if enabled == "1" && !port.trim().is_empty() {
-            let store_name: String = sqlx::query_scalar(
-                "SELECT value FROM app_config WHERE key = 'store_name'",
-            )
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten()
-            .flatten()
-            .unwrap_or_default();
+            let store_name: String = printer_cfg.get("store_name").cloned().unwrap_or_default();
             let mut lines: Vec<String> = Vec::new();
             lines.push(format!("Receipt: {}", result.receipt_number));
             lines.push(format!("Date: {}", result.business_date));
@@ -378,17 +359,17 @@ pub async fn pos_finalize_sale(
             lines.push(String::new());
             for item in &result.items {
                 lines.push(format!(
-                    "{} x{} @ {:.3} = {:.3}",
+                    "{} x{} @ {} = {}",
                     item.product_name,
                     item.quantity,
-                    item.unit_price_minor as f64 / 1000.0,
-                    item.line_total_minor as f64 / 1000.0,
+                    crate::domain::money::format_minor(item.unit_price_minor, 3),
+                    crate::domain::money::format_minor(item.line_total_minor, 3),
                 ));
             }
             lines.push(String::new());
             lines.push(format!(
-                "TOTAL: {:.3} {}",
-                result.net_total_minor as f64 / 1000.0,
+                "TOTAL: {} {}",
+                crate::domain::money::format_minor(result.net_total_minor, 3),
                 result.currency,
             ));
             let payload =
@@ -423,29 +404,28 @@ pub struct ApplyBillDiscountInput {
     pub authorized_by_user_id: String,
 }
 
-/// Load the two discount-policy flags in a single helper to avoid duplication.
+/// Load the two discount-policy flags in a single query to avoid 2 round-trips.
 /// Returns `(require_discount_reason, cashier_can_discount)`.
 /// Defaults: require_reason = true (fail-safe), cashier_can_discount = false (fail-safe).
 async fn load_discount_flags(db: &sqlx::SqlitePool) -> (bool, bool) {
-    let require_reason_val: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM app_config WHERE key = 'flag_require_discount_reason'",
+    let rows: Vec<(String, String)> = sqlx::query(
+        "SELECT key, value FROM app_config WHERE key IN
+         ('flag_require_discount_reason', 'flag_cashier_can_discount')",
     )
-    .fetch_optional(db)
+    .fetch_all(db)
     .await
-    .inspect_err(|e| tracing::warn!("Failed to read flag_require_discount_reason: {e}; defaulting to true"))
-    .ok()
-    .flatten();
-    let require_discount_reason = require_reason_val.as_deref() != Some("0"); // default true
+    .unwrap_or_default()
+    .into_iter()
+    .map(|r: sqlx::sqlite::SqliteRow| {
+        (r.get("key"), r.get("value"))
+    })
+    .collect();
 
-    let cashier_discount_val: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM app_config WHERE key = 'flag_cashier_can_discount'",
-    )
-    .fetch_optional(db)
-    .await
-    .inspect_err(|e| tracing::warn!("Failed to read flag_cashier_can_discount: {e}; defaulting to false"))
-    .ok()
-    .flatten();
-    let cashier_can_discount = cashier_discount_val.as_deref() == Some("1");
+    let find = |key: &str| -> Option<&str> {
+        rows.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+    };
+    let require_discount_reason = find("flag_require_discount_reason") != Some("0"); // default true
+    let cashier_can_discount = find("flag_cashier_can_discount") == Some("1");
 
     (require_discount_reason, cashier_can_discount)
 }
@@ -459,12 +439,12 @@ pub async fn pos_apply_bill_discount(
     let (require_discount_reason, cashier_can_discount) =
         load_discount_flags(&state.db).await;
 
-    // Upper-bound: discount cannot exceed the cart gross total
+    // Upper-bound: discount cannot exceed the post-line-discount cart total
     if discount > 0 {
-        let gross = input.cart.gross_total();
-        if discount > gross {
+        let post_line = input.cart.post_line_total();
+        if discount > post_line {
             return Err(AppError::Validation(format!(
-                "Discount ({discount}) exceeds cart total ({gross})"
+                "Discount ({discount}) exceeds cart total ({post_line})"
             )));
         }
     }
@@ -654,7 +634,11 @@ pub struct SetLineNoteInput {
 }
 
 #[tauri::command]
-pub async fn pos_set_line_note(input: SetLineNoteInput) -> Result<Cart, AppError> {
+pub async fn pos_set_line_note(
+    input: SetLineNoteInput,
+    state: State<'_, AppState>,
+) -> Result<Cart, AppError> {
+    crate::commands::rbac::require_any_role(&state.db, &input.cart.cashier_user_id).await?;
     let mut cart = input.cart;
     if let Some(line) = cart
         .lines
@@ -689,10 +673,8 @@ pub async fn pos_add_custom_item(
         return Err(AppError::Validation("Price must be positive".into()));
     }
     let qty = input.quantity.as_deref().unwrap_or("1");
-    let qty_f: f64 = qty
-        .parse()
-        .map_err(|_| AppError::Validation("Invalid quantity".into()))?;
-    if !qty_f.is_finite() || qty_f <= 0.0 || qty_f > 1_000_000.0 {
+    // Validate quantity using integer-only arithmetic (no f64 round-trips).
+    if !crate::domain::money::qty_in_range(qty, 1_000_000) {
         return Err(AppError::Validation(format!(
             "Invalid quantity: {qty}"
         )));
@@ -781,37 +763,27 @@ pub async fn pos_void_sale(
     rbac::manager_or_owner(&state.db, &voided_by_user_id).await?;
 
     let now = chrono::Utc::now().to_rfc3339();
-    let affected = sqlx::query(
+
+    // Merge UPDATE + SELECT into a single RETURNING query (saves one round-trip).
+    let row = sqlx::query(
         "UPDATE sales SET status = 'voided', updated_at = ?, sync_status = 'pending'
-         WHERE sale_id = ? AND status = 'completed'",
+         WHERE sale_id = ? AND status = 'completed'
+         RETURNING branch_id, device_id",
     )
     .bind(&now)
     .bind(&sale_id)
-    .execute(&state.db)
-    .await?
-    .rows_affected();
+    .fetch_optional(&state.db)
+    .await?;
 
-    if affected == 0 {
-        return Err(AppError::NotFound(
-            "Sale not found or already voided".into(),
-        ));
-    }
-
-    // Fetch branch_id + device_id needed for inventory restoration and audit chain
-    let (branch_id, device_id): (String, String) = {
-        let row = sqlx::query("SELECT branch_id, device_id FROM sales WHERE sale_id = ?")
-            .bind(&sale_id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
-
-        match row {
-            Some(r) => (
-                r.get::<String, _>("branch_id"),
-                r.get::<String, _>("device_id"),
-            ),
-            None => (String::new(), String::new()),
+    let (branch_id, device_id) = match row {
+        Some(r) => (
+            r.get::<String, _>("branch_id"),
+            r.get::<String, _>("device_id"),
+        ),
+        None => {
+            return Err(AppError::NotFound(
+                "Sale not found or already voided".into(),
+            ))
         }
     };
 
@@ -898,7 +870,11 @@ pub struct CartSummary {
 }
 
 #[tauri::command]
-pub async fn pos_cart_summary(cart: Cart) -> Result<CartSummary, AppError> {
+pub async fn pos_cart_summary(
+    cart: Cart,
+    state: State<'_, AppState>,
+) -> Result<CartSummary, AppError> {
+    crate::commands::rbac::require_any_role(&state.db, &cart.cashier_user_id).await?;
     Ok(CartSummary {
         gross_total_minor: cart.gross_total(),
         tax_total_minor: cart.tax_total(),
@@ -976,4 +952,99 @@ pub async fn pos_record_void(
     .await?;
 
     Ok(())
+}
+
+// ─── Load sale for edit ────────────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+pub struct LoadSaleForEditInput {
+    pub receipt_number: String,
+    pub branch_id: String,
+    pub device_id: String,
+    pub shift_id: String,
+    pub cashier_user_id: String,
+}
+
+/// Load a completed sale back into a Cart for editing.
+/// Queries the sale's line items and reconstructs them as custom items
+/// with their original prices, quantities, and tax snapshots.
+/// Single backend call — avoids the stale-closure race in the TS loop.
+#[tauri::command]
+pub async fn pos_load_sale_for_edit(
+    input: LoadSaleForEditInput,
+    state: State<'_, AppState>,
+) -> Result<Cart, AppError> {
+    crate::commands::rbac::require_any_role(&state.db, &input.cashier_user_id).await?;
+
+    let rows = sqlx::query(
+        "SELECT si.product_name_snapshot, si.quantity, si.unit_price_minor,
+                si.sku_snapshot, si.barcode_snapshot,
+                si.tax_rule_snapshot, si.line_discount_minor
+         FROM sale_items si
+         JOIN sales s ON s.sale_id = si.sale_id
+         WHERE s.receipt_number = ? AND s.status != 'voided'
+         ORDER BY si.created_at",
+    )
+    .bind(&input.receipt_number)
+    .fetch_all(&state.db)
+    .await?;
+
+    if rows.is_empty() {
+        return Err(AppError::NotFound(format!(
+            "Sale {} not found or has no items",
+            input.receipt_number
+        )));
+    }
+
+    let mut cart = Cart::new(
+        input.branch_id,
+        input.device_id,
+        input.shift_id,
+        input.cashier_user_id,
+    );
+
+    for row in &rows {
+        let product_name: String = row.get("product_name_snapshot");
+        let quantity: String = row.get("quantity");
+        let unit_price_minor: i64 = row.get("unit_price_minor");
+        let sku: Option<String> = row.get("sku_snapshot");
+        let barcode: Option<String> = row.get("barcode_snapshot");
+        let tax_json: String = row.get("tax_rule_snapshot");
+        let line_discount: i64 = row.get("line_discount_minor");
+
+        let tax: serde_json::Value =
+            serde_json::from_str(&tax_json).unwrap_or_default();
+        let tax_rule_id = tax
+            .get("rule_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let tax_bp = tax
+            .get("rate_basis_points")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let tax_inclusive = tax
+            .get("inclusive")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let mut line = CartLine::new(
+            None,
+            product_name,
+            sku,
+            barcode,
+            &quantity,
+            unit_price_minor,
+            tax_rule_id,
+            tax_bp,
+            tax_inclusive,
+        );
+        if line_discount > 0 {
+            line.line_discount_minor = line_discount;
+            line.recalculate();
+        }
+        cart.lines.push(line);
+    }
+
+    Ok(cart)
 }

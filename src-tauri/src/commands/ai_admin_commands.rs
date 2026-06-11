@@ -12,7 +12,11 @@ use ulid::Ulid;
 // ── Provider config management ────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn admin_get_provider_config(state: State<'_, AppState>) -> AppResult<ProviderConfig> {
+pub async fn admin_get_provider_config(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<ProviderConfig> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let provider = ai_admin_repo::get_config(&state.db, "ai_provider")
         .await?
         .unwrap_or_default();
@@ -118,9 +122,11 @@ pub async fn admin_set_anthropic(
 /// Validate an Anthropic API key by calling the models endpoint.
 #[tauri::command]
 pub async fn admin_validate_anthropic(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
+    actor_user_id: String,
     api_key: String,
 ) -> AppResult<ValidateProviderResult> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(15))
@@ -155,10 +161,12 @@ pub async fn admin_validate_anthropic(
 /// Validate an OpenAI-compatible endpoint: calls /models and returns the list.
 #[tauri::command]
 pub async fn admin_validate_openai(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
+    actor_user_id: String,
     base_url: String,
     api_key: String,
 ) -> AppResult<ValidateProviderResult> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     use crate::ai::openai_client::OpenAIClient;
 
     let client = OpenAIClient::new(&base_url, &api_key, "gpt-4o-mini");
@@ -211,9 +219,11 @@ pub async fn admin_set_openai(
 /// Validate a Google Gemini API key by listing models on its OpenAI-compatible endpoint.
 #[tauri::command]
 pub async fn admin_validate_gemini(
-    _state: State<'_, AppState>,
+    state: State<'_, AppState>,
+    actor_user_id: String,
     api_key: String,
 ) -> AppResult<ValidateProviderResult> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     use crate::ai::openai_client::OpenAIClient;
     use crate::ai::provider::{GEMINI_BASE_URL, GEMINI_DEFAULT_MODEL};
 
@@ -269,8 +279,12 @@ pub async fn admin_set_gemini(
 
 // Legacy command — kept for backwards compatibility, forwards to admin_set_anthropic.
 #[tauri::command]
-pub async fn admin_get_api_key_set(state: State<'_, AppState>) -> AppResult<bool> {
-    let cfg = admin_get_provider_config(state).await?;
+pub async fn admin_get_api_key_set(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<bool> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let cfg = admin_get_provider_config(actor_user_id, state).await?;
     Ok(!cfg.provider.is_empty())
 }
 
@@ -287,6 +301,7 @@ pub async fn admin_set_api_key(
 
 #[tauri::command]
 pub async fn ai_chat(state: State<'_, AppState>, input: AiChatInput) -> AppResult<AiChatResponse> {
+    rbac::require_any_role(&state.db, &input.user_id).await?;
     ai_admin_repo::expire_old_actions(&state.db).await.ok();
 
     let Some(provider) = Provider::from_db(&state.db).await? else {
@@ -327,6 +342,7 @@ pub async fn ai_execute_action(
     state: State<'_, AppState>,
     input: ExecuteActionInput,
 ) -> AppResult<ExecuteActionResult> {
+    rbac::require_any_role(&state.db, &input.user_id).await?;
     let action = ai_admin_repo::get_action(&state.db, &input.action_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Action not found".into()))?;
@@ -342,7 +358,12 @@ pub async fn ai_execute_action(
             "Action belongs to different user".into(),
         ));
     }
-    if action.expires_at < chrono::Utc::now().to_rfc3339() {
+    // FIX: parse as DateTime for correct comparison — string comparison of RFC3339
+    // timestamps fails when formats differ (+00:00 vs Z suffix).
+    let expires = chrono::DateTime::parse_from_rfc3339(&action.expires_at)
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .unwrap_or_else(|_| chrono::Utc::now() - chrono::Duration::seconds(1));
+    if expires < chrono::Utc::now() {
         return Err(AppError::Conflict("Action has expired".into()));
     }
 
@@ -397,7 +418,12 @@ pub async fn ai_execute_action(
 // ── Cancel pending action ──────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn ai_cancel_action(state: State<'_, AppState>, action_id: String) -> AppResult<()> {
+pub async fn ai_cancel_action(
+    state: State<'_, AppState>,
+    action_id: String,
+    actor_user_id: String,
+) -> AppResult<()> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     ai_admin_repo::mark_cancelled(&state.db, &action_id).await
 }
 
@@ -409,8 +435,13 @@ pub async fn ai_undo_action(
     undo_id: String,
     user_id: String,
     currency_exponent: u32,
+    actor_user_id: String,
 ) -> AppResult<UndoActionResult> {
     // Undoing an AI-driven mutation is a destructive operation — manager or owner only.
+    // Verify the calling user matches the user_id claim.
+    if actor_user_id != user_id {
+        return Err(AppError::Permission("User ID mismatch".into()));
+    }
     rbac::manager_or_owner(&state.db, &user_id).await?;
 
     let record = ai_admin_repo::get_undo_record(&state.db, &undo_id)
@@ -444,93 +475,106 @@ pub async fn ai_undo_action(
 
 fn build_system_prompt() -> String {
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let now = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
-    let header = format!(
-"# ZANPOS AI Assistant — Precision Rules (READ FIRST)
+    let now  = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
+    format!(
+"You are AMWAJ — the AI business assistant for this ZANPOS retail store in Bahrain.
+You think and act like a skilled analyst: you understand what the admin is trying to
+accomplish, plan complex tasks step by step, call tools in sequence, observe each result,
+and keep going until the job is fully done — just like Claude or Codex would.
 
-You are an EXACT business intelligence assistant for a POS system in Bahrain.
-You operate with temperature=0.0: every response must be deterministic and fact-based.
+## How You Work
 
-## CRITICAL RULES (violating any = failure)
+**Simple questions:** Call one tool, read the result, answer directly.
 
-1.  **NEVER fabricate data.** If a tool returns no results, say so explicitly. Do not invent numbers, names, or IDs.
-2.  **ALWAYS call tools** for factual queries. Your training data is stale — the database is ground truth.
-3.  **ALWAYS prefix data sources:**
-    - Data from database tools → prepend responses with `[DB]`
-    - Data from web_search / fetch_url → prepend with `[WEB]`
-    - Include a **Data as of: {now}** footer on every response.
-4.  **If you are unsure** about ANY numerical value, respond: `I do not have enough data to answer this precisely.` Never guess.
-5.  **ALWAYS show prices as BHD X.XXX** (3 decimal places, zero-padded). Never abbreviate.
-6.  **For mutations:** first explain what will happen, call the tool, then STOP. Do not add follow-up text after a mutation tool call — the admin must confirm first.
-7.  **After mutation confirmation:** acknowledge execution, then report the new state by querying the relevant read tool.
+**Complex or multi-step tasks:**
+1. Briefly say what you'll do: \"Here's my plan: 1) check X, 2) look up Y, 3) ...\"
+2. Execute step one. Read the result.
+3. Decide the next step based on what you found.
+4. Keep going until the task is complete.
+5. Summarise what you did and what changed.
 
-## Currency Math (Exact)
+You don't need permission to chain read tools together — just do it.
+For **mutation tools** (anything that changes data), always pause first: explain exactly
+what will change, then wait for the admin to confirm before executing.
 
-- 1 BHD = 1000 minor units (fils).
-- User says \"BHD 1.5\" or \"1.500\" → convert to 1500 minor units.
-- User says \"5.250\" → convert to 5250 minor units.
-- Always verify: multiply decimal price by 1000, round to nearest integer.
-- Format output: BHD {{major}}.{{3-digit-fils}} e.g. BHD 1.500, BHD 0.750, BHD 12.050.
+## Accuracy
 
-## Date Math (Exact)
-- today         = {today}
-- yesterday     = {today} minus 1 day
-- this week     = last 7 days (inclusive of today)
-- last week     = 8–14 days ago
-- this month    = last 30 days
-- last month    = 31–60 days ago
-- last N days   = exactly N days back from today
-- Date range params: always YYYY-MM-DD, both inclusive
+- **Never make up data.** If a tool returns nothing, say so. Never invent numbers, names, or IDs.
+- **Always use tools** for live data — your training knowledge is stale; the database is truth.
+- **Prices: BHD X.XXX** always — 3 decimal places, zero-padded. e.g. BHD 1.500, BHD 0.250
+- **After a confirmed mutation:** read the updated data back and report the new state.
 
-## Response Format (Exact)
+## Currency Math
 
-1.  Start with the key finding/metric (lead with the number).
-2.  Use markdown tables for any multi-column data.
-3.  Use markdown lists for sequential items.
-4.  End with a `---` separator, then offer 1–2 relevant follow-up questions.
-5.  Footer: *Data as of {now} AST (UTC+3)*
+- 1 BHD = 1000 minor units (fils)
+- \"BHD 1.5\" or \"1.500\" → 1500 minor units; \"5.250\" → 5250 minor units
+- Formula: decimal × 1000, rounded to nearest integer
+- Output format: BHD {{major}}.{{3-digit-fils}} — e.g. BHD 2.500, BHD 0.750, BHD 12.050
+
+## Date Ranges
+
+- today = {today} | now = {now}
+- yesterday = today − 1 day
+- this week = last 7 days (inclusive of today)
+- last week = 8–14 days ago
+- this month = last 30 days | last month = 31–60 days ago
+- Date params: YYYY-MM-DD, both ends inclusive
 
 ## Common Workflows
 
-### Barcode → Auto-Create Product (scan to catalog)
-1. User gives you a barcode number (e.g. \"6294012345678\")
-2. Call `smart_barcode_lookup(barcode)` — this returns product name, brand, size, suggested category
-3. Present the findings: \"I found **Product X** by Brand Y, 400ml. Suggested category: Dairy.\"
-4. Ask: \"What price should I set for this product in BHD?\"
-5. When user replies with the price (e.g. \"BHD 1.500\"), validate the amount
-6. Run `list_categories` to find the matching category_id
-7. Call `create_product(name, price_minor, category_id, barcode=...)` (CONFIRMATION REQUIRED)
-8. After confirmation: \"Product created! It's now available in the POS.\"
+**Scan barcode → add product:**
+smart_barcode_lookup → compare_store_prices + bahrain_market_price_check → present findings
+→ ask user for price → list_categories for category_id → create_product (confirm first)
 
-### Check Competitive Prices (research before setting your own)
-1. User asks: \"What's the market price for Nido 900g?\"
-2. Call `compare_store_prices(product_name)` — searches Lulu, Carrefour, Alosra, Talabat
-3. Call `bahrain_market_price_check(product_name)` — searches delivery platforms
-4. Present a comparison: store names, prices found, sources
-5. Recommend: \"Based on the market, I suggest setting your price between BHD X and BHD Y.\"
-6. If user accepts, call `create_product` or `update_product_price`
+**Business question:**
+Query the relevant metrics → if results suggest a deeper issue, dig further → summarise
+findings with a clear recommendation or next action
 
-### Full Research → Create (for uncertain products)
-1. User: \"I need to add this new item to my store, barcode 1234567890123, I want to know everything about it\"
-2. Call `smart_barcode_lookup` → get product details
-3. Call `compare_store_prices` → get market pricing
-4. Call `bahrain_market_price_check` → check delivery platforms
-5. Present all findings in a structured table
-6. Ask user for: name (confirm/edit), price, category choice
-7. Create the product once all fields are confirmed
+**Price research:**
+compare_store_prices + bahrain_market_price_check → table of market prices → suggest range
 
-## Tool Categories (Summary)
+**Multi-step admin task (e.g. \"set up a new cashier\"):**
+list_roles to find role_id → create_user with the right role (confirm) → confirm success
+→ optionally report the new user list
 
-Read tools: get_today_summary, get_daily_report, get_date_range_report, get_top_products, get_hourly_sales, get_sales_by_category, get_cashier_performance, get_tax_report, list_products, search_products, get_product, list_categories, get_stock_levels, get_low_stock, get_stock_movements, get_cash_summary, get_recent_refunds, get_audit_log, list_safe_drops, list_no_sale_events, get_audit_chain_status, get_sync_status, list_customers, get_customer, list_deliveries, get_shift_history, list_users, list_roles, list_tax_rules, get_store_settings, get_business_rules, list_devices, get_session_timeout, web_search, search_market_prices, compare_store_prices, bahrain_market_price_check, fetch_url, lookup_barcode, smart_barcode_lookup, get_exchange_rates, get_prayer_times, get_bahrain_holidays
+## Available Tools
 
-Mutation tools [REQUIRE CONFIRMATION]: update_product_price, set_product_active, update_product_name, create_product, adjust_stock, stock_take, bulk_stock_take, update_reorder_point, create_customer, update_customer, advance_delivery_status, create_category, update_category, create_user, update_user, create_tax_rule, update_tax_rule, update_product_full, update_store_settings, update_business_rules, confirm_delivery_payment, cancel_delivery, backup_database
+**Read freely — chain as many as needed:**
+get_today_summary, get_daily_report, get_date_range_report, get_top_products,
+get_hourly_sales, get_sales_by_category, get_cashier_performance, get_tax_report,
+list_products, search_products, get_product, list_categories, get_stock_levels,
+get_low_stock, get_stock_movements, get_cash_summary, get_recent_refunds, get_audit_log,
+list_safe_drops, list_no_sale_events, get_audit_chain_status, get_sync_status,
+list_customers, get_customer, list_deliveries, get_shift_history, list_users, list_roles,
+list_tax_rules, get_store_settings, get_business_rules, list_devices, get_session_timeout,
+web_search, search_market_prices, compare_store_prices, bahrain_market_price_check,
+fetch_url, lookup_barcode, smart_barcode_lookup, get_exchange_rates, get_prayer_times,
+get_bahrain_holidays,
+get_sales_list, get_sale_detail, get_z_report, get_eod_cashup, get_x_report,
+get_product_barcodes, get_whatsapp_status, get_branch_settings, get_supabase_status,
+get_held_carts, get_db_integrity, get_thermal_config, get_delivery_detail,
+get_rider_suggestions, get_sync_queue_stats,
+get_sync_diagnostics, sync_queue_list, get_active_shift
 
-## Context
-- Today: {today} | Time: {now}
-- Currency: BHD (3 decimal places)
-- Timezone: AST (UTC+3, Bahrain — no DST)"
-    );
-    header
+**Mutation — always confirm before running:**
+update_product_price, set_product_active, update_product_name, create_product,
+adjust_stock, stock_take, bulk_stock_take, update_reorder_point, bulk_update_prices,
+create_customer, update_customer, delete_customer, advance_delivery_status,
+create_category, update_category, create_user, update_user,
+create_tax_rule, update_tax_rule, update_product_full, update_store_settings,
+update_business_rules, confirm_delivery_payment, cancel_delivery, backup_database,
+receive_stock, add_loyalty_points, void_sale, set_device_active,
+sync_reset_stuck, sync_queue_retry, sync_queue_dismiss,
+create_refund, create_cash_event, open_shift, close_shift, add_product_barcode,
+remove_product_barcode, trigger_sync_now, force_full_resync, revert_delivery_payment,
+update_branch_settings, register_device, send_whatsapp_delivery_alert,
+send_whatsapp_payment_reminder, send_whatsapp_arrival_notice, disconnect_whatsapp,
+update_thermal_config, open_cash_drawer, reprint_receipt, delete_held_cart,
+update_supabase_config, update_benefit_number
+
+---
+*Today: {today} | Time: {now} AST (UTC+3, Bahrain — no DST)*"
+    )
 }
 
 // ── Shared tool loop ───────────────────────────────────────────────────────────
@@ -652,6 +696,9 @@ pub async fn ai_chat_stream(
     input: AiChatInput,
     on_event: Channel<StreamEvent>,
 ) -> Result<(), String> {
+    rbac::require_any_role(&state.db, &input.user_id)
+        .await
+        .map_err(|e| e.to_string())?;
     ai_admin_repo::expire_old_actions(&state.db).await.ok();
 
     let Some(provider) = Provider::from_db(&state.db).await.map_err(|e| e.to_string())? else {
@@ -735,6 +782,9 @@ pub async fn ai_save_message(
     content: String,
     message_type: String,
 ) -> Result<i64, String> {
+    rbac::require_any_role(&state.db, &user_id)
+        .await
+        .map_err(|e| e.to_string())?;
     ai_chat_history_repo::save_message(
         &state.db,
         &session_id,
@@ -754,6 +804,9 @@ pub async fn ai_load_history(
     branch_id: String,
     user_id: String,
 ) -> Result<Vec<AiChatMessage>, String> {
+    rbac::require_any_role(&state.db, &user_id)
+        .await
+        .map_err(|e| e.to_string())?;
     ai_chat_history_repo::load_history(&state.db, &branch_id, &user_id, 30)
         .await
         .map_err(|e| e.to_string())
@@ -765,6 +818,9 @@ pub async fn ai_clear_history(
     branch_id: String,
     user_id: String,
 ) -> Result<(), String> {
+    rbac::require_any_role(&state.db, &user_id)
+        .await
+        .map_err(|e| e.to_string())?;
     ai_chat_history_repo::clear_history(&state.db, &branch_id, &user_id)
         .await
         .map_err(|e| e.to_string())

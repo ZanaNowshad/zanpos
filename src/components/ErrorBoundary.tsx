@@ -45,6 +45,13 @@ export default class ErrorBoundary extends Component<Props, State> {
             >
               Try Again
             </button>
+            <button
+              className="btn-secondary"
+              onClick={() => window.location.reload()}
+              style={{ marginTop: 8 }}
+            >
+              Reload App
+            </button>
           </div>
         </div>
       );

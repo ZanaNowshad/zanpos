@@ -909,8 +909,8 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
   // ── Initial load ────────────────────────────────────────────────────────────
   useEffect(() => {
     Promise.all([
-      adminGetSupabaseStatus().catch(() => ({ configured: false, url: "" }) as SupabaseStatus),
-      adminGetProviderConfig().catch(() => null),
+      adminGetSupabaseStatus(sessionUser.user_id).catch(() => ({ configured: false, url: "" }) as SupabaseStatus),
+      adminGetProviderConfig(sessionUser.user_id).catch(() => null),
     ]).then(([supaStatus, cfg]) => {
       if (cfg) {
         setConfig(cfg);
@@ -966,7 +966,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
       const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" });
       const todaySummary = await reportToday(sessionUser.user_id, DEVICE.branch_id, today).catch(() => null);
       const levels = await inventoryGetLevels(sessionUser.user_id).catch(() => [] as StockLevel[]);
-      const syncStat = await syncStatus().catch(() => null);
+      const syncStat = await syncStatus(sessionUser.user_id).catch(() => null);
       const lowStockCount  = levels.filter(l => l.is_low_stock && !l.is_out_of_stock).length;
       const outOfStockCount = levels.filter(l => l.is_out_of_stock).length;
       setKpi({ loading: false, error: null, today: todaySummary, lowStockCount, outOfStockCount, sync: syncStat });
@@ -1010,7 +1010,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
     setAnthropicError("");
     try {
       await adminSetAnthropic(sessionUser.user_id, anthropicKey.trim());
-      const cfg = await adminGetProviderConfig();
+      const cfg = await adminGetProviderConfig(sessionUser.user_id);
       setConfig(cfg);
       setSetupStep("done");
     } catch (e) {
@@ -1028,7 +1028,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
     setModelList([]);
     setSetupStep("openai_validating");
     try {
-      const result = await adminValidateOpenai(openaiBaseUrl.trim(), openaiKey.trim());
+      const result = await adminValidateOpenai(sessionUser.user_id, openaiBaseUrl.trim(), openaiKey.trim());
       if (result.success && result.models.length > 0) {
         setModelList(result.models);
         setSelectedModel(result.models[0].id);
@@ -1054,7 +1054,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
     setSavingOpenai(true);
     try {
       await adminSetOpenai(sessionUser.user_id, openaiBaseUrl.trim(), openaiKey.trim(), selectedModel.trim());
-      const cfg = await adminGetProviderConfig();
+      const cfg = await adminGetProviderConfig(sessionUser.user_id);
       setConfig(cfg);
       setSetupStep("done");
     } catch (e) {
@@ -1072,7 +1072,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
     setModelList([]);
     setSetupStep("gemini_validating");
     try {
-      const result = await adminValidateGemini(geminiKey.trim());
+      const result = await adminValidateGemini(sessionUser.user_id, geminiKey.trim());
       if (result.success) {
         setModelList(result.models);
         if (result.models.length > 0 && !result.models.some(m => m.id === geminiModel)) {
@@ -1097,7 +1097,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
     setSavingGemini(true);
     try {
       await adminSetGemini(sessionUser.user_id, geminiKey.trim(), geminiModel.trim());
-      const cfg = await adminGetProviderConfig();
+      const cfg = await adminGetProviderConfig(sessionUser.user_id);
       setConfig(cfg);
       setSetupStep("done");
     } catch (e) {
@@ -1117,12 +1117,12 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
     // success means "stay in settings" rather than "go to the AI page".
     const wasRemigrate = supabaseConfigured;
     try {
-      await adminSetupSupabase(supabaseUrl.trim(), supabaseKey.trim(), supabasePat.trim());
+      await adminSetupSupabase(supabaseUrl.trim(), supabaseKey.trim(), supabasePat.trim(), sessionUser.user_id);
       setSupabaseConfigured(true); // connection established — lock the keys form
       setSupabaseUrlCached(supabaseUrl.trim());
       setSupabasePat("");
       setSupabaseKey("");
-      const cfg = await adminGetProviderConfig().catch(() => null);
+      const cfg = await adminGetProviderConfig(sessionUser.user_id).catch(() => null);
       if (cfg) setConfig(cfg);
       // After re-migration, return to the settings hub so the operator can
       // see the success and (if they want) re-run again. On first-time setup,
@@ -1252,12 +1252,14 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
           setLiveToolCalls([]);
           setStreamingMsgId(null);
           setStreamStartTime(null);
+          setPendingAction(null);  // FIX: clear stale pending action on error
           setChatState("idle");
         }
       };
 
       // Cap history to last 40 messages to avoid unbounded IPC payload growth
-      const cappedHistory = history.length > 40 ? history.slice(history.length - 40) : history;
+      // FIX: use newHistory (includes the user's current message) not stale `history`
+      const cappedHistory = newHistory.length > 40 ? newHistory.slice(newHistory.length - 40) : newHistory;
       await aiChatStream(
         {
           history: cappedHistory,
@@ -1288,14 +1290,19 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
 
   const handleConfirm = async () => {
     if (!pendingAction) return;
+    // Capture pendingAction before clearing it (state is async, pendingAction still valid here)
+    const captured = pendingAction;
     setChatState("thinking");
     setPendingAction(null);
+    // FIX: clear streaming state that OpenAI/Gemini path never clears via a Done event
+    setStreamingMsgId(null);
+    setStreamStartTime(null);
     try {
       const result = await aiExecuteAction({
-        action_id: pendingAction.action_id,
+        action_id: captured.action_id,
         user_id: sessionUser.user_id,
         history,
-        assistant_text: pendingAction.assistant_text,
+        assistant_text: captured.assistant_text,
         currency_exponent: DEVICE.currency_exponent,
       });
       addMessage({
@@ -1303,9 +1310,12 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
         text: result.followup,
         undoId: result.undo_id ?? undefined,
       });
+      // FIX: insert synthetic user confirmation turn to avoid consecutive assistant roles
+      // which causes Anthropic 400 "invalid_request_error" on the next message
       setHistory(prev => [
         ...prev,
-        { role: "assistant", content: pendingAction.assistant_text },
+        { role: "assistant", content: captured.assistant_text },
+        { role: "user", content: "Yes, please proceed." },
         { role: "assistant", content: result.followup },
       ]);
       setChatState("idle");
@@ -1319,9 +1329,13 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
 
   const handleCancel = async () => {
     if (!pendingAction) return;
-    await aiCancelAction(pendingAction.action_id).catch(() => {});
+    const capturedCancel = pendingAction;
+    await aiCancelAction(capturedCancel.action_id).catch(() => {});
     addMessage({ role: "system", text: "Action cancelled." });
     setPendingAction(null);
+    // FIX: clear streaming state that OpenAI/Gemini never clears via Done event
+    setStreamingMsgId(null);
+    setStreamStartTime(null);
     setChatState("idle");
   };
 

@@ -477,6 +477,20 @@ ALTER TABLE stock_levels ADD COLUMN IF NOT EXISTS updated_at TEXT;
 -- pin_hash is intentionally absent from central (never synced).
 
 -- ===========================================================================
+-- 11b. APP CONFIG (whitelisted store-wide business flags only)
+-- ===========================================================================
+-- The sync worker pushes/pulls a small allowlist of store-wide flags
+-- (ALLOWED_CONFIG_KEYS) so settings converge across terminals. Device-local
+-- keys (Supabase creds, printer port, sync watermarks) are never synced.
+-- Defined here — before the GRANT block below — so GRANT ALL ON ALL TABLES
+-- covers it. Without this table the worker logs PGRST205 every cycle.
+CREATE TABLE IF NOT EXISTS app_config (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+);
+
+-- ===========================================================================
 -- 12. PERMISSIONS
 -- ===========================================================================
 -- Fresh Supabase projects ship with a locked-down public schema. Without

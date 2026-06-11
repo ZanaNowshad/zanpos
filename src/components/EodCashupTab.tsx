@@ -87,9 +87,9 @@ export default function EodCashupTab({ sessionUserId }: { sessionUserId: string 
                     {s.closed_at ? "Closed" : "Open"}
                   </span>
                   <span className="eod-shift-time">
-                    {new Date(s.opened_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    {new Date(s.opened_at).toLocaleTimeString("en-BH", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bahrain" })}
                     {s.closed_at
-                      ? ` → ${new Date(s.closed_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                      ? ` → ${new Date(s.closed_at).toLocaleTimeString("en-BH", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bahrain" })}`
                       : " → now"}
                   </span>
                 </div>

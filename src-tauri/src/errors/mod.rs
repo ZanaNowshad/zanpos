@@ -3,10 +3,13 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum AppError {
-    #[error("Database error: {0}")]
+    // Display intentionally hides the raw sqlx error — internal details go to
+    // the tracing log only.  The Serialize impl delegates to user_message() which
+    // also returns a generic string, so callers never see SQL or constraint names.
+    #[error("A database error occurred")]
     Database(#[from] sqlx::Error),
 
-    #[error("Migration error: {0}")]
+    #[error("A database migration error occurred")]
     Migration(#[from] sqlx::migrate::MigrateError),
 
     #[error("Validation error: {0}")]
@@ -38,9 +41,16 @@ impl AppError {
     /// Returns a user-safe error message that does not include internal details.
     pub fn user_message(&self) -> &str {
         match self {
-            // T22: operational English — cashiers do not know what "the log" is
-            AppError::Database(_) => "Something went wrong — please try again. If the problem persists, restart the app.",
-            AppError::Migration(_) => "The app needs to update its database — please restart the app.",
+            // T22: operational English — cashiers do not know what "the log" is.
+            // Raw sqlx errors are logged to tracing (never sent to the frontend).
+            AppError::Database(e) => {
+                tracing::error!("DB error: {}", e);
+                "Something went wrong — please try again. If the problem persists, restart the app."
+            }
+            AppError::Migration(e) => {
+                tracing::error!("Migration error: {}", e);
+                "The app needs to update its database — please restart the app."
+            }
             AppError::Validation(m) => m,
             AppError::NotFound(m) => m,
             AppError::Permission(m) => m,

@@ -94,11 +94,12 @@ pub async fn run_streaming_chat(
     tool_defs: &[crate::ai::client::ToolDef],
     on_event: &Channel<StreamEvent>,
 ) -> AppResult<String> {
-    // R-02: SSE streams are long-lived so we do NOT set an overall request timeout
-    // (that would kill a healthy long stream). We DO set a connect timeout so an
-    // unreachable API fails fast instead of hanging the task forever.
+    // R-02: SSE streams are long-lived — connect timeout fails fast on unreachable
+    // hosts; an overall request timeout (120s) guards against mid-stream API hangs
+    // that would otherwise keep the Tauri async task alive forever.
     let http = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(120))
         .build()
         .unwrap_or_default();
     let mut msgs = build_messages(&input.history, &input.message);
@@ -328,6 +329,8 @@ pub async fn run_streaming_chat(
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn build_messages(history: &[ChatMessage], user_message: &str) -> Vec<AnthropicMsg> {
+    // C-05: apply sliding-window guard — drop oldest pairs if history is too large
+    let history = truncate_history(history);
     let mut msgs: Vec<AnthropicMsg> = history
         .iter()
         .map(|m| AnthropicMsg {
@@ -340,6 +343,30 @@ fn build_messages(history: &[ChatMessage], user_message: &str) -> Vec<AnthropicM
         content: vec![MsgContent::Text { text: user_message.into() }],
     });
     msgs
+}
+
+/// Rough token estimator: 1 token ≈ 4 characters.
+/// Keeps history within ~80k tokens so a large conversation never overflows
+/// the model's context window. Drops oldest pairs (user+assistant) from front.
+const MAX_HISTORY_CHARS: usize = 320_000;
+
+fn truncate_history(history: &[ChatMessage]) -> &[ChatMessage] {
+    let total: usize = history.iter().map(|m| m.content.len()).sum();
+    if total <= MAX_HISTORY_CHARS {
+        return history;
+    }
+    let mut start = 0;
+    let mut running = total;
+    while start + 2 <= history.len() {
+        let removed = history[start].content.len() + history[start + 1].content.len();
+        if running - removed <= MAX_HISTORY_CHARS {
+            start += 2;
+            break;
+        }
+        running -= removed;
+        start += 2;
+    }
+    &history[start..]
 }
 
 fn preview_to_text(p: &ToolPreview) -> String {

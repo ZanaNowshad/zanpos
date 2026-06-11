@@ -82,9 +82,57 @@ pub fn qty_in_range(qty: &str, max: i64) -> bool {
     true
 }
 
+/// Add two decimal quantity strings (e.g. "2" + "0.5" = "2.5") using integer
+/// arithmetic only — no floating point.  Handles up to 9 decimal places.
+/// Returns "0" for invalid inputs.
+pub fn add_decimal_qty_str(a: &str, b: &str) -> String {
+    let a = a.trim();
+    let b = b.trim();
+    if a.is_empty() || b.is_empty() {
+        return "0".to_string();
+    }
+    let (a_int_str, a_frac_str) = a.split_once('.').unwrap_or((a, ""));
+    let (b_int_str, b_frac_str) = b.split_once('.').unwrap_or((b, ""));
+
+    let a_int: i64 = a_int_str.parse().unwrap_or(0);
+    let b_int: i64 = b_int_str.parse().unwrap_or(0);
+    if a_int < 0 || b_int < 0 {
+        return "0".to_string();
+    }
+
+    let max_frac = a_frac_str.len().max(b_frac_str.len()).min(9);
+    let denom = 10_i64.pow(max_frac as u32);
+
+    let a_frac: i64 = {
+        let pad = format!("{:0<width$}", a_frac_str, width = max_frac);
+        pad[..max_frac].parse().unwrap_or(0)
+    };
+    let b_frac: i64 = {
+        let pad = format!("{:0<width$}", b_frac_str, width = max_frac);
+        pad[..max_frac].parse().unwrap_or(0)
+    };
+
+    let a_total = a_int.saturating_mul(denom).saturating_add(a_frac);
+    let b_total = b_int.saturating_mul(denom).saturating_add(b_frac);
+    let sum = a_total.saturating_add(b_total);
+
+    let int_part = sum / denom;
+    let frac_part = sum % denom;
+
+    if frac_part == 0 {
+        format!("{}", int_part)
+    } else {
+        let frac_str = format!("{:0>width$}", frac_part, width = max_frac);
+        let trimmed = frac_str.trim_end_matches('0');
+        format!("{}.{}", int_part, trimmed)
+    }
+}
+
 /// Parse a decimal price string (e.g. "1.500") into minor units (1500 fils).
 /// Uses integer arithmetic only — no floating point.
-/// Returns None for negative, unparseable, or out-of-range values.
+/// Returns None for negative, unparseable, out-of-range, or inputs with more
+/// significant decimal digits than the exponent (e.g. "1.5001" with exponent=3
+/// would silently truncate — BUG-BACKEND-7 fix: reject instead).
 pub fn parse_major_to_minor(s: &str, exponent: u32) -> Option<i64> {
     let parts: Vec<&str> = s.trim().splitn(2, '.').collect();
     let whole: i64 = parts[0].parse().ok()?;
@@ -92,6 +140,14 @@ pub fn parse_major_to_minor(s: &str, exponent: u32) -> Option<i64> {
         return None;
     }
     let frac_str = parts.get(1).copied().unwrap_or("");
+    // Reject if the input has more significant decimal digits than the currency
+    // exponent allows — truncating silently would corrupt the amount.
+    if frac_str.len() > exponent as usize {
+        let excess = &frac_str[exponent as usize..];
+        if excess.chars().any(|c| c != '0') {
+            return None;
+        }
+    }
     let frac_padded = format!("{:0<width$}", frac_str, width = exponent as usize);
     let frac: i64 = frac_padded[..exponent as usize].parse().unwrap_or(0);
     let divisor = 10_i64.pow(exponent);
@@ -99,12 +155,19 @@ pub fn parse_major_to_minor(s: &str, exponent: u32) -> Option<i64> {
 }
 
 /// Format minor units as a decimal string for the configured currency exponent.
-/// For BHD (exponent 3): 1500 → "1.500"
+/// For BHD (exponent 3): 1500 → "1.500", -1500 → "-1.500", -500 → "-0.500"
+///
+/// Bug fix: when |minor| < divisor (e.g. -500 BHD minor), `minor / divisor`
+/// rounds toward zero to 0, losing the negative sign entirely.  We handle the
+/// sign explicitly so "-0.500" is never silently emitted as "0.500".
 pub fn format_minor(minor: i64, exponent: u32) -> String {
     let divisor = 10i64.pow(exponent);
-    let whole = minor / divisor;
-    let frac = minor.abs() % divisor;
-    format!("{}.{:0>width$}", whole, frac, width = exponent as usize)
+    let sign = if minor < 0 { "-" } else { "" };
+    let abs = minor.unsigned_abs();           // u64 — avoids i64::MIN overflow
+    let abs_divisor = divisor as u64;
+    let whole = abs / abs_divisor;
+    let frac  = abs % abs_divisor;
+    format!("{}{}.{:0>width$}", sign, whole, frac, width = exponent as usize)
 }
 
 /// Apply a percentage discount given in basis points (100 bp = 1%).
@@ -132,6 +195,18 @@ mod tests {
         assert_eq!(format_minor(1500, 3), "1.500");
         assert_eq!(format_minor(0, 3), "0.000");
         assert_eq!(format_minor(400, 3), "0.400");
+    }
+
+    #[test]
+    fn format_minor_negative() {
+        // Whole-unit negative
+        assert_eq!(format_minor(-1500, 3), "-1.500");
+        // Sub-unit negative — previously emitted "0.500" (sign lost)
+        assert_eq!(format_minor(-500, 3), "-0.500");
+        // Exact negative one
+        assert_eq!(format_minor(-1000, 3), "-1.000");
+        // Large negative
+        assert_eq!(format_minor(-10_250, 3), "-10.250");
     }
 
     #[test]

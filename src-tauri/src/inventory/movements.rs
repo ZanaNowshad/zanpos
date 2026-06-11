@@ -1,5 +1,6 @@
 use crate::domain::product::LowStockAlert;
 use crate::errors::AppResult;
+use std::collections::HashMap;
 /// Inventory movement writers.
 /// Each function creates a stock_movement record and updates stock_levels atomically.
 /// Returns a list of LowStockAlert for products that crossed below their reorder point.
@@ -66,7 +67,8 @@ async fn upsert_level_tx(
          ON CONFLICT(product_id, branch_id) DO UPDATE SET
            quantity_on_hand = excluded.quantity_on_hand,
            last_movement_at = excluded.last_movement_at,
-           updated_at       = excluded.updated_at"
+           updated_at       = excluded.updated_at,
+           sync_status      = 'pending'"
     )
     .bind(&id)
     .bind(product_id)
@@ -122,14 +124,19 @@ async fn check_alert(pool: &SqlitePool, product_id: &str, new_qty: f64) -> Optio
 
 /// Called AFTER finalize_sale commits. Stock levels have already been atomically
 /// deducted within the sale transaction. This function only writes movement
-/// writes movement records and sets sync_status — it does NOT touch stock_levels again.
+/// records and sets sync_status — it does NOT touch stock_levels again.
 /// Returns alerts for products that crossed below their reorder point.
+///
+/// `known_qtys` is an optional map of `product_id → quantity_after` captured
+/// inside the sale transaction (before commit). When provided, movement records
+/// use these exact post-deduction quantities instead of re-reading stock_levels.
 pub async fn deduct_sale(
     pool: &SqlitePool,
     sale_id: &str,
     cashier_user_id: &str,
     branch_id: &str,
     device_id: &str,
+    known_qtys: Option<&HashMap<String, f64>>,
 ) -> AppResult<Vec<LowStockAlert>> {
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -155,31 +162,74 @@ pub async fn deduct_sale(
             continue;
         }
 
-        // Stock level was already deducted in the sale transaction; read current value.
-        let new_qty = get_qty(pool, &product_id, branch_id).await;
+        // Guard: skip if a movement for this sale+product already exists
+        // (idempotency for crash-recovery / retry of deduct_sale).
+        let already: Option<String> = sqlx::query_scalar(
+            "SELECT movement_id FROM stock_movements
+             WHERE reference_type = 'sale' AND reference_id = ? AND product_id = ? LIMIT 1",
+        )
+        .bind(sale_id)
+        .bind(&product_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten();
+        if already.is_some() {
+            continue;
+        }
+
         let movement_id = Ulid::new().to_string();
 
-        // Write movement record (stock_levels already updated — do NOT call upsert_level).
-        sqlx::query(
-            "INSERT INTO stock_movements
-             (movement_id, product_id, branch_id, device_id, origin_device_id, movement_type,
-              quantity_delta, quantity_after, reference_type, reference_id,
-              created_by_user_id, created_at, sync_status)
-             VALUES (?,?,?,?,?,'sale',?,?,   'sale',?,?,?,'pending')",
-        )
-        .bind(&movement_id)
-        .bind(&product_id)
-        .bind(branch_id)
-        .bind(device_id)
-        .bind(device_id)
-        .bind(format_qty(-sold_qty))
-        .bind(format_qty(new_qty))
-        .bind(sale_id)
-        .bind(cashier_user_id)
-        .bind(&now)
-        .execute(pool)
-        .await?;
-
+        // When known_qtys was captured inside the sale transaction, the
+        // quantity_after is already correct — insert directly. Otherwise,
+        // wrap read+insert in a per-item transaction to avoid a TOCTOU
+        // window between reading stock_levels and writing the movement.
+        let new_qty: f64;
+        if let Some(ref qtys) = known_qtys {
+            new_qty = *qtys.get(&product_id).unwrap_or(&0.0);
+            sqlx::query(
+                "INSERT INTO stock_movements
+                 (movement_id, product_id, branch_id, device_id, origin_device_id, movement_type,
+                  quantity_delta, quantity_after, reference_type, reference_id,
+                  created_by_user_id, created_at, sync_status)
+                 VALUES (?,?,?,?,?,'sale',?,?,   'sale',?,?,?,'pending')",
+            )
+            .bind(&movement_id)
+            .bind(&product_id)
+            .bind(branch_id)
+            .bind(device_id)
+            .bind(device_id)
+            .bind(format_qty(-sold_qty))
+            .bind(format_qty(new_qty))
+            .bind(sale_id)
+            .bind(cashier_user_id)
+            .bind(&now)
+            .execute(pool)
+            .await?;
+        } else {
+            let mut tx = pool.begin().await?;
+            new_qty = get_qty_tx(&mut tx, &product_id, branch_id).await;
+            sqlx::query(
+                "INSERT INTO stock_movements
+                 (movement_id, product_id, branch_id, device_id, origin_device_id, movement_type,
+                  quantity_delta, quantity_after, reference_type, reference_id,
+                  created_by_user_id, created_at, sync_status)
+                 VALUES (?,?,?,?,?,'sale',?,?,   'sale',?,?,?,'pending')",
+            )
+            .bind(&movement_id)
+            .bind(&product_id)
+            .bind(branch_id)
+            .bind(device_id)
+            .bind(device_id)
+            .bind(format_qty(-sold_qty))
+            .bind(format_qty(new_qty))
+            .bind(sale_id)
+            .bind(cashier_user_id)
+            .bind(&now)
+            .execute(&mut *tx)
+            .await?;
+            tx.commit().await?;
+        }
         // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
         if let Some(alert) = check_alert(pool, &product_id, new_qty).await {

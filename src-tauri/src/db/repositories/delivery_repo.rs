@@ -7,6 +7,37 @@ use crate::errors::{AppError, AppResult};
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use ulid::Ulid;
 
+/// Valid delivery status transitions.
+/// - pending   → dispatched | cancelled
+/// - dispatched → out_for_delivery | cancelled
+/// - out_for_delivery → delivered | cancelled
+/// - delivered  → (terminal — no further transitions)
+/// - cancelled  → (terminal — no further transitions)
+fn validate_delivery_transition(current: &str, next: &str) -> AppResult<()> {
+    let allowed: &[&str] = match current {
+        "pending"          => &["dispatched", "cancelled"],
+        "dispatched"       => &["out_for_delivery", "cancelled"],
+        "out_for_delivery" => &["delivered", "cancelled"],
+        "delivered"        => &[],
+        "cancelled"        => &[],
+        _                  => &[],
+    };
+
+    if current == next {
+        // No-op re-apply of the same status is fine
+        return Ok(());
+    }
+
+    if allowed.contains(&next) {
+        Ok(())
+    } else {
+        Err(AppError::Validation(format!(
+            "Cannot transition delivery from '{}' to '{}'",
+            current, next
+        )))
+    }
+}
+
 /// Called from within sale_repo::finalize_sale's transaction.
 /// Creates the delivery_order row atomically with the sale.
 pub async fn create_delivery_in_tx(
@@ -21,10 +52,16 @@ pub async fn create_delivery_in_tx(
     device_id: &str,
     now: &str,
 ) -> AppResult<DeliveryRow> {
-    // Validate expected_payment_method
+    // Validate amount_minor — deliveries must have a positive value
+    if amount_minor <= 0 {
+        return Err(AppError::Validation(
+            "Delivery amount must be greater than zero".into(),
+        ));
+    }
+    // Validate expected_payment_method — exhaustive match against allowed values
     if !["cash", "card", "wallet"].contains(&input.expected_payment_method.as_str()) {
         return Err(AppError::Validation(format!(
-            "Invalid expected_payment_method: {}",
+            "Invalid expected_payment_method '{}': must be one of cash, card, wallet",
             input.expected_payment_method
         )));
     }
@@ -82,6 +119,11 @@ pub async fn create_delivery_in_tx(
         .bind(sale_id)
         .execute(&mut *tx)
         .await?;
+
+    // Stock note: no stock_movements INSERT here. Stock is decremented by
+    // sale_repo::finalize_sale (movement_type='sale') before this function is
+    // called. Deliveries are pure logistics tracking for already-processed
+    // POS sales; recording a second movement would double-count the outflow.
 
     Ok(DeliveryRow {
         delivery_id,
@@ -217,22 +259,13 @@ pub async fn update_delivery_status(
 
     let existing = get_delivery(pool, &input.delivery_id).await?;
 
-    // Guard: cannot change status of a cancelled delivery
-    if existing.delivery_status == "cancelled" {
-        return Err(AppError::Validation(
-            "Cannot update status of a cancelled delivery".into(),
-        ));
-    }
-    // Guard: cannot cancel a paid delivery (must use cancel_delivery for proper dual-field update)
+    // State machine: enforce valid transitions before touching the DB
+    validate_delivery_transition(&existing.delivery_status, &input.delivery_status)?;
+
+    // Guard: cannot cancel a paid delivery via status update — use cancel_delivery for dual-field update
     if input.delivery_status == "cancelled" && existing.payment_status == "paid" {
         return Err(AppError::Validation(
             "Cannot cancel a delivery that has already been paid".into(),
-        ));
-    }
-    // Guard: cannot move backwards from delivered
-    if existing.delivery_status == "delivered" && input.delivery_status != "delivered" {
-        return Err(AppError::Validation(
-            "Cannot change status of a delivered order".into(),
         ));
     }
 
@@ -268,7 +301,7 @@ pub async fn update_delivery_status(
         actor_user_id: &input.actor_user_id,
         actor_type: "user",
         created_at: &now,
-        before_json: None,
+        before_json: Some(&before_json),
         after_json: Some(&after_json),
         reason: None,
         previous_hash: &prev_hash,
@@ -277,7 +310,7 @@ pub async fn update_delivery_status(
         "INSERT INTO audit_logs
          (audit_log_id, event_type, entity_type, entity_id, actor_user_id, actor_type,
           device_id, origin_device_id, branch_id, before_json, after_json, created_at, hash, previous_hash)
-         VALUES (?,'delivery.status_changed','delivery_order',?,?,'user',?,?,?,?,?,?,?)",
+         VALUES (?,'delivery.status_changed','delivery_order',?,?,'user',?,?,?,?,?,?,?,?)",
     )
     .bind(&audit_id)
     .bind(&input.delivery_id)
@@ -363,7 +396,7 @@ pub async fn confirm_payment(
         actor_user_id: &input.confirmed_by_user_id,
         actor_type: "user",
         created_at: &now,
-        before_json: None,
+        before_json: Some(&before_json),
         after_json: Some(&after_json),
         reason: None,
         previous_hash: &prev_hash,
@@ -372,7 +405,7 @@ pub async fn confirm_payment(
         "INSERT INTO audit_logs
          (audit_log_id, event_type, entity_type, entity_id, actor_user_id, actor_type,
           device_id, origin_device_id, branch_id, before_json, after_json, created_at, hash, previous_hash)
-         VALUES (?,'delivery.payment_confirmed','delivery_order',?,?,'user',?,?,?,?,?,?,?)",
+         VALUES (?,'delivery.payment_confirmed','delivery_order',?,?,'user',?,?,?,?,?,?,?,?)",
     )
     .bind(&audit_id)
     .bind(&input.delivery_id)
@@ -410,6 +443,8 @@ pub async fn cancel_delivery(
     if existing.delivery_status == "cancelled" {
         return Ok(existing); // idempotent
     }
+    // Use the formal state machine for transition validation (replaces ad-hoc delivered guard)
+    validate_delivery_transition(&existing.delivery_status, "cancelled")?;
 
     let now = chrono::Utc::now().to_rfc3339();
     let before_json = serde_json::json!({
@@ -447,7 +482,7 @@ pub async fn cancel_delivery(
         actor_user_id: &input.actor_user_id,
         actor_type: "user",
         created_at: &now,
-        before_json: None,
+        before_json: Some(&before_json),
         after_json: Some(&after_json),
         reason: None,
         previous_hash: &prev_hash,
@@ -456,7 +491,7 @@ pub async fn cancel_delivery(
         "INSERT INTO audit_logs
          (audit_log_id, event_type, entity_type, entity_id, actor_user_id, actor_type,
           device_id, origin_device_id, branch_id, before_json, after_json, created_at, hash, previous_hash)
-         VALUES (?,'delivery.cancelled','delivery_order',?,?,'user',?,?,?,?,?,?,?)",
+         VALUES (?,'delivery.cancelled','delivery_order',?,?,'user',?,?,?,?,?,?,?,?)",
     )
     .bind(&audit_id)
     .bind(&input.delivery_id)
@@ -538,7 +573,7 @@ pub async fn revert_payment(
         actor_user_id: &input.actor_user_id,
         actor_type: "user",
         created_at: &now,
-        before_json: None,
+        before_json: Some(&before_json),
         after_json: Some(&after_json),
         reason: None,
         previous_hash: &prev_hash,
@@ -547,7 +582,7 @@ pub async fn revert_payment(
         "INSERT INTO audit_logs
          (audit_log_id, event_type, entity_type, entity_id, actor_user_id, actor_type,
           device_id, origin_device_id, branch_id, before_json, after_json, created_at, hash, previous_hash)
-         VALUES (?,'delivery.payment_reverted','delivery_order',?,?,'user',?,?,?,?,?,?,?)",
+         VALUES (?,'delivery.payment_reverted','delivery_order',?,?,'user',?,?,?,?,?,?,?,?)",
     )
     .bind(&audit_id)
     .bind(&input.delivery_id)

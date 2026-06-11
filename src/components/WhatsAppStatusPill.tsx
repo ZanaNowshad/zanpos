@@ -4,15 +4,16 @@ import { whatsappStatus } from "../tauri/commands";
 
 interface Props {
   sessionRole: string;
+  sessionUserId?: string;
   onOpenQR: () => void;
 }
 
-const WhatsAppStatusPill = memo(function WhatsAppStatusPill({ sessionRole, onOpenQR }: Props) {
+const WhatsAppStatusPill = memo(function WhatsAppStatusPill({ sessionRole, sessionUserId = "", onOpenQR }: Props) {
   const [status, setStatus] = useState<WhatsAppStatus>({ connected: false });
 
   const poll = useCallback(async () => {
     try {
-      const s = await whatsappStatus();
+      const s = await whatsappStatus(sessionUserId);
       setStatus(s);
     } catch { /* sidecar not running */ }
   }, []);

@@ -75,28 +75,61 @@ impl SupabaseClient {
 
         for (i, stmt) in statements.iter().enumerate() {
             tracing::info!("Migration [{}/{}]: {:.80}...", i + 1, statements.len(), stmt);
-            let resp = self
-                .http
-                .post(&url)
-                .header("Authorization", format!("Bearer {pat}"))
-                .header("Content-Type", "application/json")
-                .json(&json!({ "query": stmt }))
-                .send()
-                .await
-                .map_err(|e| AppError::Internal(format!(
-                    "Migration HTTP error on statement {}: {e}", i + 1
-                )))?;
 
-            if !resp.status().is_success() {
-                let body = resp.text().await.unwrap_or_default();
-                let body_lower = body.to_lowercase();
-                if body_lower.contains("already exists") || body_lower.contains("does not exist") {
+            // Proactive throttle: 100 ms gap between statements keeps the
+            // Supabase Management API well under its rate limit even for large
+            // schemas (~120 statements = ~12 s, acceptable for one-time setup).
+            if i > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+
+            // Retry up to 4× on 429 with exponential back-off (0.5 s, 1 s, 2 s, 4 s).
+            let mut attempt = 0u32;
+            let result: AppResult<()> = loop {
+                let resp = self
+                    .http
+                    .post(&url)
+                    .header("Authorization", format!("Bearer {pat}"))
+                    .header("Content-Type", "application/json")
+                    .json(&json!({ "query": stmt }))
+                    .send()
+                    .await
+                    .map_err(|e| AppError::Internal(format!(
+                        "Migration HTTP error on statement {}: {e}", i + 1
+                    )))?;
+
+                let status = resp.status();
+
+                if status == StatusCode::TOO_MANY_REQUESTS {
+                    attempt += 1;
+                    if attempt > 4 {
+                        break Err(AppError::Internal(format!(
+                            "Migration statement {} rate-limited after {attempt} retries", i + 1
+                        )));
+                    }
+                    let wait_ms = 500u64 * (1u64 << (attempt - 1)); // 500 ms, 1 s, 2 s, 4 s
+                    tracing::warn!(
+                        "Rate-limited on migration statement {}. Waiting {wait_ms} ms (retry {attempt}/4)…",
+                        i + 1
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
                     continue;
                 }
-                return Err(AppError::Internal(format!(
-                    "Migration statement {} failed: {body}", i + 1
-                )));
-            }
+
+                if !status.is_success() {
+                    let body = resp.text().await.unwrap_or_default();
+                    let body_lower = body.to_lowercase();
+                    if body_lower.contains("already exists") || body_lower.contains("does not exist") {
+                        break Ok(());   // idempotent — schema already applied, skip
+                    }
+                    break Err(AppError::Internal(format!(
+                        "Migration statement {} failed: {body}", i + 1
+                    )));
+                }
+
+                break Ok(());
+            };
+            result?;
         }
         Ok(())
     }

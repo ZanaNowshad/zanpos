@@ -164,6 +164,9 @@ CREATE INDEX idx_products_sku      ON products(sku);
 -- sync_status index for fast push queries
 CREATE INDEX idx_products_sync_status ON products(sync_status);
 
+-- Composite index for the common catalog filter: is_active=1 AND deleted_at IS NULL
+CREATE INDEX idx_products_active ON products(is_active, deleted_at);
+
 CREATE TABLE product_prices (
     price_id              TEXT PRIMARY KEY,
     product_id            TEXT NOT NULL REFERENCES products(product_id),
@@ -260,6 +263,8 @@ CREATE TABLE customers (
 );
 CREATE INDEX idx_customers_branch ON customers(branch_id);
 CREATE INDEX idx_customers_phone  ON customers(phone);
+-- Enforce phone uniqueness only on non-NULL values so walk-in customers can share a NULL phone
+CREATE UNIQUE INDEX idx_customers_phone_unique ON customers(phone) WHERE phone IS NOT NULL;
 
 -- sync_status index for fast push queries
 CREATE INDEX idx_customers_sync_status ON customers(sync_status);
@@ -474,13 +479,22 @@ CREATE TABLE cash_events (
     shift_id          TEXT NOT NULL REFERENCES shifts(shift_id),
     branch_id         TEXT,
     device_id         TEXT,
+    origin_device_id  TEXT NOT NULL DEFAULT '',
     event_type        TEXT NOT NULL,
     amount_minor      INTEGER,
     note              TEXT,
     created_by_user_id TEXT NOT NULL,
-    created_at        TEXT NOT NULL
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    -- BUG-8: sync tracking so cash events are pushed to the server
+    sync_status       TEXT NOT NULL DEFAULT 'pending',
+    sync_attempts     INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_cash_events_shift ON cash_events(shift_id);
+-- sync_status index for fast push queries
+CREATE INDEX idx_cash_events_sync_status ON cash_events(sync_status);
+-- updated_at index for pull watermark advancement
+CREATE INDEX idx_cash_events_updated_at ON cash_events(updated_at);
 
 -- ══════════════════════════════════════════════════════════════════════════════
 -- AUDIT & GHOST BARCODES
@@ -557,7 +571,7 @@ INSERT INTO sync_watermark (table_name) VALUES
     ('tax_rules'),('product_prices'),('customers'),('sales'),
     ('sale_items'),('payments'),('refunds'),('refund_items'),
     ('stock_movements'),('stock_levels'),('audit_logs'),
-    ('shifts'),('delivery_orders'),('app_config');
+    ('shifts'),('cash_events'),('delivery_orders'),('app_config');
 
 -- ══════════════════════════════════════════════════════════════════════════════
 -- LOCAL-ONLY TABLES (never synced)
@@ -616,10 +630,13 @@ CREATE TABLE import_history (
 );
 
 CREATE TABLE no_sale_events (
-    id      TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL,
-    reason  TEXT,
-    created_at TEXT NOT NULL
+    no_sale_id     TEXT PRIMARY KEY,
+    shift_id       TEXT NOT NULL,
+    branch_id      TEXT,
+    device_id      TEXT,
+    actor_user_id  TEXT NOT NULL,
+    note           TEXT,
+    created_at     TEXT NOT NULL
 );
 
 -- ══════════════════════════════════════════════════════════════════════════════
@@ -647,7 +664,7 @@ INSERT OR IGNORE INTO devices (device_id, branch_id, device_code, name, status, 
 VALUES ('01JDEVICE0000000000000001', '01JBRANCH0000000000000001', 'POS01', 'Main Terminal', 'offline', 1, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z', 1);
 
 INSERT OR IGNORE INTO app_config (key, value, updated_at) VALUES
-    ('flag_allow_negative_stock',  '1', '2025-01-01T00:00:00Z'),
+    ('flag_allow_negative_stock',  '0', '2025-01-01T00:00:00Z'),
     ('flag_require_discount_reason','1', '2025-01-01T00:00:00Z'),
     ('flag_cashier_can_discount',  '1', '2025-01-01T00:00:00Z'),
     ('flag_auto_print_receipt',    '0', '2025-01-01T00:00:00Z'),

@@ -11,6 +11,43 @@ use crate::secure_store;
 use serde_json::Value;
 use sqlx::SqlitePool;
 
+// ── Context window guard ───────────────────────────────────────────────────────
+
+/// Rough token estimator: 1 token ≈ 4 characters.
+/// Keeps the history within a safe limit so a large conversation (e.g. "list all
+/// 28k products") never overflows the model's context window.
+///
+/// Threshold: 80k tokens ≈ 320k chars for the history slice alone.
+/// The system prompt (~2k tokens) and new user message (~0.5k) are not counted here
+/// because they are always small.  If the history exceeds the limit the oldest
+/// message pairs are dropped from the front until it fits.
+///
+/// Note: we always drop in pairs (user + assistant) to keep Anthropic/OpenAI's
+/// alternating-role requirement satisfied.  A lone system/user at the very start
+/// may remain if stripping it would leave an odd count — that is fine; the model
+/// only requires that consecutive roles are different, not that every pair is symmetric.
+const MAX_HISTORY_CHARS: usize = 320_000; // ~80k tokens
+
+fn truncate_history(history: &[ChatMessage]) -> &[ChatMessage] {
+    let total: usize = history.iter().map(|m| m.content.len()).sum();
+    if total <= MAX_HISTORY_CHARS {
+        return history;
+    }
+    // Drop oldest pairs from the front until we fit
+    let mut start = 0;
+    let mut running = total;
+    while start + 2 <= history.len() {
+        let removed = history[start].content.len() + history[start + 1].content.len();
+        if running - removed <= MAX_HISTORY_CHARS {
+            start += 2;
+            break;
+        }
+        running -= removed;
+        start += 2;
+    }
+    &history[start..]
+}
+
 // ── Unified result types ───────────────────────────────────────────────────────
 
 pub struct ChatResult {
@@ -146,6 +183,8 @@ impl Provider {
         user_message: &str,
         tools: &[ToolDef],
     ) -> AppResult<ChatResult> {
+        // C-05: apply sliding-window guard before building messages
+        let history = truncate_history(history);
         match self {
             Provider::Anthropic(c) => {
                 let mut msgs: Vec<AnthropicMessage> = history
@@ -224,6 +263,8 @@ impl Provider {
         tools: &[ToolDef],
         prev_reasoning: Option<String>,
     ) -> AppResult<ChatResult> {
+        // C-05: apply sliding-window guard before building messages
+        let history = truncate_history(history);
         match self {
             Provider::Anthropic(c) => {
                 let mut msgs: Vec<AnthropicMessage> = history
@@ -326,6 +367,8 @@ impl Provider {
         tool_name: &str,
         description: &str,
     ) -> AppResult<String> {
+        // C-05: apply sliding-window guard before building messages
+        let history = truncate_history(history);
         let notification = format!(
             "[System: the mutation '{}' was confirmed by the admin and executed successfully. {}]",
             tool_name, description

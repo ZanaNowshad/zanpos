@@ -139,7 +139,12 @@ fn is_safe_sql_identifier(name: &str) -> bool {
 // ─── Command 1: migration_inspect_file ───────────────────────────────────────
 
 #[tauri::command]
-pub async fn migration_inspect_file(path: String) -> AppResult<FileSchema> {
+pub async fn migration_inspect_file(
+    path: String,
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<FileSchema> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let lower = path.to_lowercase();
     if lower.ends_with(".csv") {
         inspect_csv(path).await
@@ -642,8 +647,10 @@ async fn inspect_json(path: String) -> AppResult<FileSchema> {
 pub async fn migration_ai_map(
     schema: FileSchema,
     currency_exponent: u32,
+    actor_user_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<MappingConfig> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let provider = match Provider::from_db(&state.db).await? {
         Some(p) => p,
         None => return Err(AppError::Internal("No AI provider configured".into())),
@@ -1489,7 +1496,10 @@ fn format_ts(secs: u64) -> String {
 pub async fn migration_connect_test(
     db_type: String,
     conn_str: String,
+    actor_user_id: String,
+    state: State<'_, AppState>,
 ) -> AppResult<ConnectTestResult> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     match db_type.as_str() {
         "sqlite" => {
             let url = format!("sqlite:{}?mode=ro", conn_str);
@@ -1600,7 +1610,10 @@ pub async fn migration_connect_test(
 pub async fn migration_list_tables(
     db_type: String,
     conn_str: String,
+    actor_user_id: String,
+    state: State<'_, AppState>,
 ) -> AppResult<Vec<RemoteTableInfo>> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     match db_type.as_str() {
         "sqlite" => {
             let url = format!("sqlite:{}?mode=ro", conn_str);
@@ -1735,7 +1748,10 @@ pub async fn migration_query_remote(
     conn_str: String,
     query: String,
     max_rows: Option<usize>,
+    actor_user_id: String,
+    state: State<'_, AppState>,
 ) -> AppResult<QueryResult> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     // Finding 6: block CTE-wrapped destructive queries (e.g. WITH x AS (SELECT 1) DELETE …)
     let q_upper = query.trim().to_uppercase();
     let allowed_starts = ["SELECT", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "PRAGMA", "WITH"];
@@ -1916,7 +1932,10 @@ pub async fn migration_query_remote(
 #[tauri::command]
 pub async fn migration_list_processes(
     filter: Option<String>,
+    actor_user_id: String,
+    state: State<'_, AppState>,
 ) -> AppResult<Vec<ProcessInfo>> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     tokio::task::spawn_blocking(move || -> AppResult<Vec<ProcessInfo>> {
         let output = std::process::Command::new("tasklist")
             .args(["/FO", "CSV", "/NH"])
@@ -1959,7 +1978,10 @@ pub async fn migration_list_processes(
 #[tauri::command]
 pub async fn migration_find_db_files(
     extra_paths: Option<Vec<String>>,
+    actor_user_id: String,
+    state: State<'_, AppState>,
 ) -> AppResult<Vec<DbFileInfo>> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     tokio::task::spawn_blocking(move || -> AppResult<Vec<DbFileInfo>> {
         let db_exts = ["db", "sqlite", "sqlite3", "db3", "s3db", "mdf", "ndf", "mdb", "accdb", "fdb", "gdb", "bak", "sql", "json"];
 
@@ -2716,12 +2738,14 @@ async fn execute_migration_agent_tool(
     name: &str,
     input: &Value,
     pool: &SqlitePool,
+    actor_user_id: &str,
+    state: &State<'_, AppState>,
 ) -> AppResult<String> {
     match name {
         "mg_inspect_file" => {
             let path = input.get("path").and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Validation("Missing path".into()))?;
-            let schema = migration_inspect_file(path.to_string()).await?;
+            let schema = migration_inspect_file(path.to_string(), actor_user_id.to_string(), state.clone()).await?;
             let mut out = format!("File: {}\nType: {}\nSheets/Tables: {}\n\n",
                 schema.file_path, schema.file_type, schema.sheets.len());
             for sheet in &schema.sheets {
@@ -2746,11 +2770,11 @@ async fn execute_migration_agent_tool(
             let conn_str = input.get("conn_str").and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Validation("Missing conn_str".into()))?;
 
-            let test = migration_connect_test(db_type.to_string(), conn_str.to_string()).await?;
+            let test = migration_connect_test(db_type.to_string(), conn_str.to_string(), actor_user_id.to_string(), state.clone()).await?;
             if !test.success {
                 return Ok(format!("Connection FAILED: {}", test.message));
             }
-            let tables = migration_list_tables(db_type.to_string(), conn_str.to_string()).await?;
+            let tables = migration_list_tables(db_type.to_string(), conn_str.to_string(), actor_user_id.to_string(), state.clone()).await?;
             let mut out = format!("Connected! {}\n\n{} tables:\n",
                 test.server_version.as_deref().unwrap_or(""), tables.len());
             for t in &tables {
@@ -2771,7 +2795,8 @@ async fn execute_migration_agent_tool(
             let max_rows = input.get("max_rows").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
 
             let result = migration_query_remote(
-                db_type.to_string(), conn_str.to_string(), sql.to_string(), Some(max_rows)
+                db_type.to_string(), conn_str.to_string(), sql.to_string(), Some(max_rows),
+                actor_user_id.to_string(), state.clone()
             ).await?;
 
             let mut out = format!("Query: {}\n{} rows{}\nColumns: {}\n\n",
@@ -2793,7 +2818,7 @@ async fn execute_migration_agent_tool(
                 .and_then(|v| v.as_array())
                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
                 .unwrap_or_default();
-            let files = migration_find_db_files(if extra.is_empty() { None } else { Some(extra) }).await?;
+            let files = migration_find_db_files(if extra.is_empty() { None } else { Some(extra) }, actor_user_id.to_string(), state.clone()).await?;
             if files.is_empty() {
                 return Ok("No database files found in common locations.".to_string());
             }
@@ -2808,7 +2833,7 @@ async fn execute_migration_agent_tool(
 
         "mg_list_processes" => {
             let filter = input.get("filter").and_then(|v| v.as_str()).map(|s| s.to_string());
-            let procs = migration_list_processes(filter).await?;
+            let procs = migration_list_processes(filter, actor_user_id.to_string(), state.clone()).await?;
             if procs.is_empty() {
                 return Ok("No processes found.".to_string());
             }
@@ -3594,8 +3619,10 @@ When executing the actual migration via the migration wizard UI:
 #[tauri::command]
 pub async fn migration_agent_chat(
     input: MigrationAgentChatInput,
+    actor_user_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<String> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let Some(provider) = Provider::from_db(&state.db).await? else {
         return Err(AppError::Internal("No AI provider configured. Please set up your API key.".into()));
     };
@@ -3628,7 +3655,7 @@ pub async fn migration_agent_chat(
             }
         }
 
-        let tool_result = execute_migration_agent_tool(&tc.name, &tc.input, &state.db)
+        let tool_result = execute_migration_agent_tool(&tc.name, &tc.input, &state.db, &actor_user_id, &state)
             .await
             .unwrap_or_else(|e| format!("Tool error: {}", e));
 

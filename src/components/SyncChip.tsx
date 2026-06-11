@@ -2,9 +2,9 @@ import { type MouseEvent, memo, useState } from "react";
 import type { SyncStatus } from "../types";
 import { syncTriggerNow } from "../tauri/commands";
 
-interface Props { status: SyncStatus | null }
+interface Props { status: SyncStatus | null; userId?: string }
 
-const SyncChip = memo(function SyncChip({ status }: Props) {
+const SyncChip = memo(function SyncChip({ status, userId = "" }: Props) {
   const [retrying, setRetrying] = useState(false);
 
   const handleRetry = async (e: MouseEvent) => {
@@ -12,7 +12,7 @@ const SyncChip = memo(function SyncChip({ status }: Props) {
     if (retrying) return;
     setRetrying(true);
     // R-16: surface retry failures to the console rather than swallowing them.
-    try { await syncTriggerNow(); }
+    try { await syncTriggerNow(userId); }
     catch (err: unknown) { console.warn("Sync retry failed:", err); }
     finally { setRetrying(false); }
   };

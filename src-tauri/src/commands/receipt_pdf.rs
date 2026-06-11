@@ -40,18 +40,20 @@ pub struct WhatsAppReceiptPdfInput {
     pub address_text: Option<String>,
     pub house_number: Option<String>,
     pub area: Option<String>,
+    /// Tax/VAT registration number (if configured for the branch).
+    /// Shown on the receipt header only when non-empty.
+    pub tax_number: Option<String>,
+    /// Commercial Registration number (if configured for the branch).
+    /// Shown on the receipt header only when non-empty.
+    pub cr_number: Option<String>,
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 fn fmt_money(minor: i64, exp: i32) -> String {
-    if exp == 0 {
-        return minor.to_string();
-    }
-    let divisor = 10_i64.pow(exp as u32);
-    let whole = minor / divisor;
-    let frac = (minor % divisor).abs();
-    format!("{}.{:0>width$}", whole, frac, width = exp as usize)
+    // Delegate to the canonical integer-only formatter to avoid the negative-amount
+    // sign-loss bug (e.g. -500 with exp=3 was emitted as "0.500" instead of "-0.500").
+    crate::domain::money::format_minor(minor, exp as u32)
 }
 
 /// Replace non-ASCII chars with '?' — required for Type1/Helvetica PDF fonts.
@@ -135,6 +137,26 @@ pub fn generate_receipt_pdf(inp: &WhatsAppReceiptPdfInput) -> Result<Vec<u8>, St
         8.5, Mm(mx), Mm(y), &font,
     );
     y -= 5.0;
+
+    // ── Tax / CR numbers (shown only when non-empty) ────────────────────────
+    if let Some(tn) = &inp.tax_number {
+        if !tn.is_empty() {
+            layer.use_text(
+                format!("Tax ID:  {}", ascii(tn)),
+                8.5, Mm(mx), Mm(y), &font,
+            );
+            y -= 5.0;
+        }
+    }
+    if let Some(cr) = &inp.cr_number {
+        if !cr.is_empty() {
+            layer.use_text(
+                format!("CR No:   {}", ascii(cr)),
+                8.5, Mm(mx), Mm(y), &font,
+            );
+            y -= 5.0;
+        }
+    }
 
     layer.use_text("--------------------------------------------------", 6.0, Mm(mx), Mm(y), &font);
     y -= 5.0;

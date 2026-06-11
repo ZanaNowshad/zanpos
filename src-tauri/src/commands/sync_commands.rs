@@ -8,8 +8,20 @@ use serde::Serialize;
 use sqlx::Row;
 use tauri::State;
 
-/// Resolve the active device_id from the database at runtime.
+/// Resolve the active device_id for THIS terminal.
+/// Prefers the app_config 'device_id' key written at setup time so the correct
+/// identity is returned even after other terminals' device records sync locally.
 async fn active_device_id(state: &AppState) -> AppResult<String> {
+    if let Ok(Some(id)) = sqlx::query_scalar::<_, String>(
+        "SELECT value FROM app_config WHERE key = 'device_id'",
+    )
+    .fetch_optional(&state.db)
+    .await
+    {
+        if !id.is_empty() {
+            return Ok(id);
+        }
+    }
     let row = sqlx::query(
         "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1",
     )
@@ -21,14 +33,18 @@ async fn active_device_id(state: &AppState) -> AppResult<String> {
 
 /// Tables that participate in sync (in FK-safe push order).
 pub const SYNC_TABLES: &[&str] = &[
+    "branches",          // was missing — local branch edits were invisible to admin commands
     "categories", "tax_rules", "products", "devices", "users", "customers",
     "shifts", "sales", "sale_items", "payments", "refunds", "refund_items",
-    "stock_movements", "audit_logs", "delivery_orders", "product_prices",
+    "stock_movements", "stock_levels",  // was missing — stock levels invisible to admin commands
+    "audit_logs", "delivery_orders", "product_prices",
+    "cash_events",       // was missing — cash events invisible to admin commands
 ];
 
 /// Maps each sync table to its primary key column.
 pub fn table_pk(table: &str) -> &str {
     match table {
+        "branches" => "branch_id",
         "categories" => "category_id",
         "tax_rules" => "tax_rule_id",
         "products" => "product_id",
@@ -42,9 +58,11 @@ pub fn table_pk(table: &str) -> &str {
         "refunds" => "refund_id",
         "refund_items" => "refund_item_id",
         "stock_movements" => "movement_id",
+        "stock_levels" => "stock_level_id",
         "audit_logs" => "audit_log_id",
         "delivery_orders" => "delivery_id",
         "product_prices" => "price_id",
+        "cash_events" => "cash_event_id",
         _ => "id",
     }
 }
@@ -66,7 +84,11 @@ async fn count_pending(pool: &sqlx::SqlitePool) -> AppResult<i64> {
 // ── sync_status ───────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn sync_status(state: State<'_, AppState>) -> Result<serde_json::Value, AppError> {
+pub async fn sync_status(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> Result<serde_json::Value, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     let worker_state = state.sync_worker.state.lock().await;
     let worker_online = worker_state.online;
     let last_error = worker_state.last_error.clone();
@@ -120,7 +142,11 @@ pub async fn sync_status(state: State<'_, AppState>) -> Result<serde_json::Value
 // ── sync_trigger_now ──────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn sync_trigger_now(state: State<'_, AppState>) -> Result<String, AppError> {
+pub async fn sync_trigger_now(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     state.sync_worker.run_once().await;
     let worker_state = state.sync_worker.state.lock().await;
     if worker_state.online {
@@ -138,7 +164,11 @@ pub async fn sync_trigger_now(state: State<'_, AppState>) -> Result<String, AppE
 /// Designed for first-time sync during setup — pushes all tables at once.
 /// Called from setup_wizard_complete and setup_join_store.
 #[tauri::command]
-pub async fn sync_bulk_initial(state: State<'_, AppState>) -> Result<String, AppError> {
+pub async fn sync_bulk_initial(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let client = match state.sync_worker.load_client().await {
         Some(c) => c,
         None => return Ok("Sync skipped — Supabase not configured".into()),
@@ -171,6 +201,19 @@ pub struct PullSummary {
 pub async fn setup_pull_catalog(
     state: State<'_, AppState>,
 ) -> Result<PullSummary, AppError> {
+    // Called from the JoinStore wizard before the session user is established.
+    // Gate on setup_complete to prevent post-setup abuse.
+    let setup_done: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM app_config WHERE key = 'setup_complete'",
+    )
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+    if setup_done.as_deref() == Some("1") {
+        return Err(AppError::Permission(
+            "Setup is already complete. Use the sync panel to pull catalog updates.".into(),
+        ));
+    }
     // Run one push + pull cycle synchronously.
     // Watermarks are already at epoch for a fresh join (seeded by migration 0010_sync.sql).
     state.sync_worker.run_once().await;
@@ -187,7 +230,10 @@ pub async fn setup_pull_catalog(
             .fetch_one(&state.db).await.unwrap_or(0);
 
     let worker_state = state.sync_worker.state.lock().await;
-    let ok = worker_state.online;
+    // Bug-Join-09: derive ok from catalog presence OR worker online state.
+    // worker_state.online alone is unreliable if run_once() was skipped by the
+    // execution mutex; checking row counts provides a concrete success indicator.
+    let ok = products > 0 || categories > 0 || worker_state.online;
     let error = worker_state.last_error.clone();
     drop(worker_state);
 
@@ -220,6 +266,23 @@ pub async fn sync_force_full_resync(
     let _ = sqlx::query("UPDATE sync_watermark SET last_pulled_at = '1970-01-01T00:00:00Z'")
         .execute(&state.db)
         .await;
+    // FIX: also reset v2 app_config watermarks — the v2 worker uses these,
+    // not the sync_watermark table. Without this, re-pull never actually happens.
+    let _ = sqlx::query(
+        "DELETE FROM app_config WHERE key LIKE 'sync_v2_watermark_%'"
+    )
+    .execute(&state.db)
+    .await;
+
+    // Reset consecutive failure counter and clear last_error so adaptive backoff
+    // is lifted immediately — without this, force-resync still waits up to 5x the
+    // normal interval before the first push cycle actually runs.
+    {
+        let mut st = state.sync_worker.state.lock().await;
+        st.consecutive_failures = 0;
+        st.last_error = None;
+        st.online = false; // will be set to true by run_once() if push/pull succeeds
+    }
 
     // Push + pull immediately
     state.sync_worker.run_once().await;
@@ -268,10 +331,33 @@ pub async fn sync_reset_stuck(
 #[tauri::command]
 pub async fn admin_setup_supabase(
     state: State<'_, AppState>,
+    actor_user_id: Option<String>,
     url: String,
     service_key: String,
     pat: String,
 ) -> Result<(), AppError> {
+    // Two calling contexts:
+    // 1. Setup Wizard (pre-auth): actor_user_id is None — only allowed when setup_complete='0'.
+    // 2. Admin Panel re-migration (post-auth): actor_user_id is Some(id) — apply owner_only RBAC.
+    match actor_user_id.as_deref() {
+        Some(uid) if !uid.is_empty() => {
+            rbac::owner_only(&state.db, uid).await?;
+        }
+        _ => {
+            // Pre-auth call: only permitted during initial setup.
+            let setup_done: Option<String> = sqlx::query_scalar(
+                "SELECT value FROM app_config WHERE key = 'setup_complete'",
+            )
+            .fetch_optional(&state.db)
+            .await
+            .unwrap_or(None);
+            if setup_done.as_deref() == Some("1") {
+                return Err(AppError::Permission(
+                    "Setup is already complete. Please log in to update Supabase credentials.".into(),
+                ));
+            }
+        }
+    }
     let url = url.trim().trim_end_matches('/').to_string();
     if url.is_empty() {
         return Err(AppError::Validation("Supabase URL is required".into()));
@@ -296,14 +382,25 @@ pub async fn admin_setup_supabase(
     client
         .migrate(&pat, &project_ref, CENTRAL_SCHEMA_SQL)
         .await
-        .map_err(|e| AppError::Validation(format!("Schema migration failed: {e}")))?;
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("rate-limited") || msg.contains("ThrottlerException") {
+                AppError::Validation("Supabase is rate-limiting the schema setup. Please wait 60 seconds and try again.".into())
+            } else {
+                AppError::Validation(format!("Schema migration failed: {e}"))
+            }
+        })?;
 
     ai_admin_repo::set_config(&state.db, "supabase_url", &url).await?;
     if crate::secure_store::set_secret("supabase_service_key", &service_key) {
         let _ = ai_admin_repo::set_config(&state.db, "supabase_service_key", "").await;
     } else {
-        tracing::error!("CRITICAL: Failed to write service key to OS credential store. Falling back to DB (plaintext).");
-        ai_admin_repo::set_config(&state.db, "supabase_service_key", &service_key).await?;
+        tracing::error!("CRITICAL: Falling back to plaintext secret storage — OS credential store write failed for supabase_service_key. Setup aborted.");
+        return Err(AppError::Internal(
+            "Windows Credential Manager is unavailable. \
+             Cannot store the Supabase service key securely. \
+             Ensure the Credential Manager service is running and try again.".into(),
+        ));
     }
 
     let now = chrono::Utc::now().to_rfc3339();
@@ -357,8 +454,12 @@ pub async fn admin_setup_supabase_creds_only(
     if crate::secure_store::set_secret("supabase_service_key", &service_key) {
         let _ = ai_admin_repo::set_config(&state.db, "supabase_service_key", "").await;
     } else {
-        tracing::error!("CRITICAL: Failed to write service key to OS credential store. Falling back to DB (plaintext).");
-        ai_admin_repo::set_config(&state.db, "supabase_service_key", &service_key).await?;
+        tracing::error!("CRITICAL: Falling back to plaintext secret storage — OS credential store write failed for supabase_service_key. Credential update aborted.");
+        return Err(AppError::Internal(
+            "Windows Credential Manager is unavailable. \
+             Cannot store the Supabase service key securely. \
+             Ensure the Credential Manager service is running and try again.".into(),
+        ));
     }
 
     tracing::info!("Supabase credentials stored (no schema migration): {url}");
@@ -390,7 +491,11 @@ pub struct SyncQueueItem {
 }
 
 #[tauri::command]
-pub async fn sync_queue_list(state: State<'_, AppState>) -> Result<Vec<SyncQueueItem>, AppError> {
+pub async fn sync_queue_list(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<SyncQueueItem>, AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let mut items = Vec::new();
 
     for table in SYNC_TABLES {
@@ -438,8 +543,11 @@ pub async fn sync_queue_retry(
         .ok_or_else(|| AppError::Validation("Invalid sync item id format. Expected table:id".into()))?;
     let pk = table_pk(table);
 
+    // FIX: the v2 worker never writes sync_status='failed' — stuck rows remain at
+    // 'pending' with high sync_attempts (>= 10). Match both to make Retry button work.
     let sql = format!(
-        "UPDATE {table} SET sync_status = 'pending', sync_attempts = 0 WHERE {pk} = ? AND sync_status = 'failed'",
+        "UPDATE {table} SET sync_status = 'pending', sync_attempts = 0 \
+         WHERE {pk} = ? AND (sync_status = 'failed' OR (sync_status = 'pending' AND sync_attempts >= 10))",
     );
     let rows = sqlx::query(&sql).bind(row_id).execute(&state.db).await?.rows_affected();
 
@@ -486,7 +594,11 @@ pub struct SyncTableStats {
 }
 
 #[tauri::command]
-pub async fn sync_queue_stats(state: State<'_, AppState>) -> Result<Vec<SyncTableStats>, AppError> {
+pub async fn sync_queue_stats(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<SyncTableStats>, AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let mut stats = Vec::new();
 
     for table in SYNC_TABLES {
@@ -560,8 +672,10 @@ pub struct SyncDiagnostics {
 
 #[tauri::command]
 pub async fn sync_diagnostics(
+    actor_user_id: String,
     state: State<'_, AppState>,
 ) -> Result<SyncDiagnostics, AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let worker_state = state.sync_worker.state.lock().await;
     let online = worker_state.online;
     let last_error = worker_state.last_error.clone();
@@ -654,8 +768,10 @@ pub struct SupabaseStatus {
 
 #[tauri::command]
 pub async fn admin_get_supabase_status(
+    actor_user_id: String,
     state: State<'_, AppState>,
 ) -> Result<SupabaseStatus, AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let url = ai_admin_repo::get_config(&state.db, "supabase_url")
         .await?
         .unwrap_or_default();

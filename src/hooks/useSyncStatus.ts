@@ -2,14 +2,15 @@ import { useState, useEffect } from "react";
 import type { SyncStatus } from "../types";
 import { syncStatus } from "../tauri/commands";
 
-export function useSyncStatus(intervalMs = 10_000) {
+export function useSyncStatus(intervalMs = 10_000, userId = "") {
   const [status, setStatus] = useState<SyncStatus | null>(null);
 
   useEffect(() => {
+    if (!userId) return; // don't poll until we have a real user ID
     let mounted = true;
     const poll = async () => {
       try {
-        const s = await syncStatus();
+        const s = await syncStatus(userId);
         if (mounted) setStatus(s);
       } catch {
         // non-critical: keep last known status
@@ -18,7 +19,7 @@ export function useSyncStatus(intervalMs = 10_000) {
     poll();
     const id = setInterval(poll, intervalMs);
     return () => { mounted = false; clearInterval(id); };
-  }, [intervalMs]);
+  }, [intervalMs, userId]);
 
   return status;
 }

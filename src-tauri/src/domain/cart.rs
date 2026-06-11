@@ -76,7 +76,11 @@ impl CartLine {
 
     pub fn recalculate(&mut self) {
         let subtotal = mul_minor_by_qty(self.unit_price_minor, &self.quantity);
-        let discounted = subtotal - self.line_discount_minor;
+        // Clamp to 0: prevents negative discounted base if a crafted payload somehow
+        // bypasses the command-layer guard in pos_apply_line_discount. The validate()
+        // call in finalize_sale is the final backstop, but we should not propagate
+        // garbage values into tax arithmetic.
+        let discounted = (subtotal - self.line_discount_minor).max(0);
         let tax_amount = if self.tax_inclusive {
             let divisor = 10_000 + self.tax_rate_basis_points;
             (discounted * self.tax_rate_basis_points + divisor / 2) / divisor
@@ -250,11 +254,14 @@ impl Cart {
         }
     }
 
+    /// Pre-discount subtotal: sum of unit_price * qty for every active line,
+    /// using integer-only arithmetic (no float round-trips).  Does NOT include
+    /// tax for exclusive-tax items — that is the tax_total() component.
     pub fn gross_total(&self) -> i64 {
         self.lines
             .iter()
             .filter(|l| !l.voided)
-            .map(|l| l.line_total_minor)
+            .map(|l| mul_minor_by_qty(l.unit_price_minor, &l.quantity))
             .sum()
     }
 
@@ -276,8 +283,20 @@ impl Cart {
         item_discounts + self.bill_discount_minor
     }
 
+    /// Post-line-discount total (before bill discount).  Used as the base for
+    /// the bill-discount guard and for computing the net due.
+    pub fn post_line_total(&self) -> i64 {
+        self.lines
+            .iter()
+            .filter(|l| !l.voided)
+            .map(|l| l.line_total_minor)
+            .sum()
+    }
+
+    /// Net amount the customer must pay.
+    /// Satisfies: net_total == gross_total - discount_total + tax_total
     pub fn net_total(&self) -> i64 {
-        (self.gross_total() - self.bill_discount_minor).max(0)
+        (self.post_line_total() - self.bill_discount_minor).max(0)
     }
 
     /// Validate all quantities and monetary totals are within safe ranges.

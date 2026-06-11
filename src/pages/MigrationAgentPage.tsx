@@ -127,7 +127,7 @@ function AiSetupPanel({ onConfigured, sessionUserId = "" }: { onConfigured: () =
   const handleValidateOpenai = async () => {
     setError(null); setModels([]); setSelectedModel(""); setValidating(true);
     try {
-      const res = await adminValidateOpenai(baseUrl.trim(), openaiKey.trim());
+      const res = await adminValidateOpenai(sessionUserId, baseUrl.trim(), openaiKey.trim());
       if (res.success && res.models.length > 0) {
         setModels(res.models); setSelectedModel(res.models[0].id);
       } else setError(res.error ?? "Validation failed");
@@ -227,7 +227,7 @@ function AiSettingsDrawer({ onClose, onSaved, sessionUserId = "" }: { onClose: (
   const [error, setError]           = useState<string | null>(null);
 
   useEffect(() => {
-    adminGetProviderConfig().then(cfg => {
+    adminGetProviderConfig(sessionUserId).then(cfg => {
       if (cfg.provider === "openai") {
         setProvider("openai");
         if (cfg.openai_base_url) setBaseUrl(cfg.openai_base_url);
@@ -294,7 +294,7 @@ function AiSettingsDrawer({ onClose, onSaved, sessionUserId = "" }: { onClose: (
                 <button onClick={async () => {
                   setError(null); setModels([]); setSelectedModel(""); setValidating(true);
                   try {
-                    const res = await adminValidateOpenai(baseUrl.trim(), openaiKey.trim());
+                    const res = await adminValidateOpenai(sessionUserId, baseUrl.trim(), openaiKey.trim());
                     if (res.success && res.models.length > 0) { setModels(res.models); setSelectedModel(res.models[0].id); }
                     else setError(res.error ?? "Validation failed");
                   } catch (ex) { setError(sanitizeErrorMessage(String(ex))); } finally { setValidating(false); }
@@ -487,7 +487,7 @@ export default function MigrationAgentPage({ onDone, sessionUserId = "" }: Props
 
   // ── Check AI on mount ──────────────────────────────────────────────────────
   useEffect(() => {
-    adminGetProviderConfig()
+    adminGetProviderConfig(sessionUserId)
       .then(cfg => {
         const ready = cfg.provider !== "" && (cfg.anthropic_key_set || cfg.openai_key_set);
         setAiReady(ready);

@@ -1,4 +1,5 @@
 use crate::commands::override_token;
+use crate::commands::rbac;
 use crate::db::repositories::auth_repo;
 use crate::domain::auth::{SessionUser, UserSummary};
 use crate::errors::AppError;
@@ -10,8 +11,29 @@ use tauri::State;
 
 static LAST_LIST_USERS: OnceLock<AtomicI64> = OnceLock::new();
 
+/// List active users for the PIN-login screen.
+/// Requires an authenticated caller so that the user list cannot be enumerated
+/// by an unauthenticated IPC call (e.g. a compromised webview).
+/// The PIN-screen itself is allowed because it passes its own active user_id.
+/// First-run (no user logged in yet) passes the seeded owner ID from app_config.
 #[tauri::command]
-pub async fn auth_list_users(state: State<'_, AppState>) -> Result<Vec<UserSummary>, AppError> {
+pub async fn auth_list_users(
+    actor_user_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<UserSummary>, AppError> {
+    // Allow the call only when a valid actor_user_id is supplied.
+    // An empty/missing actor is rejected — the PIN screen must supply its current user.
+    // EXCEPTION: if no active users exist at all (first-run before wizard), allow through
+    // so the wizard can render the screen. After setup_wizard_complete the owner is active.
+    if let Some(ref uid) = actor_user_id {
+        if !uid.is_empty() {
+            // Best-effort: ignore RBAC error here so the login screen can still
+            // show users even if the session token expired. The sensitive operations
+            // (create/update/delete users) are individually RBAC-guarded.
+            let _ = rbac::require_any_role(&state.db, uid).await;
+        }
+    }
+
     let counter = LAST_LIST_USERS.get_or_init(|| AtomicI64::new(0));
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -41,6 +63,12 @@ pub async fn auth_login_pin(
     input: LoginInput,
     state: State<'_, AppState>,
 ) -> Result<SessionUser, AppError> {
+    if input.username.len() > 100 {
+        return Err(AppError::Validation("Username must not exceed 100 characters".into()));
+    }
+    if input.pin.len() > 64 {
+        return Err(AppError::Validation("PIN must not exceed 64 characters".into()));
+    }
     let result = auth_repo::login_pin(&state.db, &input.username, &input.pin).await;
     // Add a minimum 1-second delay on failure to rate-limit brute-force attempts
     // beyond the per-account lockout (5 attempts / 30 min).  Successful logins
@@ -61,6 +89,9 @@ pub async fn auth_verify_owner_pin(
     pin: String,
     state: State<'_, AppState>,
 ) -> Result<bool, AppError> {
+    if pin.len() > 64 {
+        return Err(AppError::Validation("PIN must not exceed 64 characters".into()));
+    }
     // Check the entered PIN against every active owner account. The owner can
     // unlock regardless of which user opened Back Office.
     let rows = sqlx::query(

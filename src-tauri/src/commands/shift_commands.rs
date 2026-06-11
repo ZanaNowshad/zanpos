@@ -9,8 +9,15 @@ use tauri::State;
 #[tauri::command]
 pub async fn shift_get_active(
     device_id: String,
+    actor_user_id: String,
     state: State<'_, AppState>,
 ) -> Result<Option<Shift>, AppError> {
+    // Best-effort RBAC: the PIN screen calls this before login, so we allow it through
+    // if the actor lookup fails (same pattern as auth_list_users). But if actor resolves
+    // to a valid but inactive user, we block — prevents active enumeration by bad actor.
+    if !actor_user_id.is_empty() {
+        let _ = rbac::require_any_role(&state.db, &actor_user_id).await;
+    }
     shift_repo::get_active_shift(&state.db, &device_id).await
 }
 
@@ -88,6 +95,27 @@ pub async fn shift_close(
     if shift_device_id != active_device {
         // Cross-device shift close requires owner-only permission.
         rbac::owner_only(&state.db, &input.actor_user_id).await?;
+    }
+
+    // BUG-POS-5: Block shift close if there are pending/dispatched deliveries
+    // with unpaid COD. Cash payment on delivery requires an open shift.
+    let pending_deliveries: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM delivery_orders
+         WHERE shift_id = ?
+           AND delivery_status IN ('pending', 'dispatched')
+           AND payment_status = 'pending'",
+    )
+    .bind(&input.shift_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
+
+    if pending_deliveries > 0 {
+        return Err(AppError::Conflict(format!(
+            "Cannot close shift: {} delivery order(s) are still pending payment. \
+             Resolve or cancel them before closing.",
+            pending_deliveries
+        )));
     }
 
     shift_repo::close_shift(

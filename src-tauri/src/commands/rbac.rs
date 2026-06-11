@@ -207,21 +207,17 @@ mod tests {
         );
     }
 
-    // ── refund: cashier cannot bypass the RBAC guard (repo-level simulation) ──
-    // This tests that the seeded cashier user would fail the guard that now
-    // wraps refund_create, shift_close, cash_event_create, and pos_void_sale.
+    // ── cashier is blocked from manager-only financial operations ───────────────
+    // shift_close, cash_event_create, and pos_void_sale use manager_or_owner.
+    // NOTE: refund_create uses require_any_role (cashiers CAN refund on same device;
+    // cross-device refunds require a manager override token — see refund_commands.rs).
     #[tokio::test]
-    async fn cashier_cannot_perform_financial_operations() {
+    async fn cashier_cannot_perform_manager_only_operations() {
         let pool = make_pool().await;
         let cashier_id = "01JUSER000000000000CASH01";
 
-        // All four guarded commands use manager_or_owner internally
-        for label in &[
-            "refund_create",
-            "shift_close",
-            "cash_event_create",
-            "pos_void_sale",
-        ] {
+        // These commands use manager_or_owner internally
+        for label in &["shift_close", "cash_event_create", "pos_void_sale"] {
             let result = manager_or_owner(&pool, cashier_id).await;
             assert!(
                 matches!(result, Err(AppError::Permission(_))),

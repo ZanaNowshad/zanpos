@@ -125,8 +125,8 @@ export interface PullSummary {
 export const setupPullCatalog = (): Promise<PullSummary> =>
   invoke("setup_pull_catalog");
 
-export const settingsGetBranch = (): Promise<BranchSettings> =>
-  invoke("settings_get_branch");
+export const settingsGetBranch = (actorUserId: string): Promise<BranchSettings> =>
+  invoke("settings_get_branch", { actorUserId });
 
 export const settingsUpdateBranch = (input: {
   name: string;
@@ -154,16 +154,16 @@ export const businessFlagsSave = (
 
 // ─── Auth commands ────────────────────────────────────────────────────────────
 
-export const authListUsers = (): Promise<UserSummary[]> =>
-  invoke("auth_list_users");
+export const authListUsers = (actorUserId?: string): Promise<UserSummary[]> =>
+  invoke("auth_list_users", { actorUserId });
 
 export const authLoginPin = (username: string, pin: string): Promise<SessionUser> =>
   invoke("auth_login_pin", { input: { username, pin } });
 
 // ─── Shift commands ───────────────────────────────────────────────────────────
 
-export const shiftGetActive = (device_id: string): Promise<Shift | null> =>
-  invoke("shift_get_active", { deviceId: device_id });
+export const shiftGetActive = (device_id: string, actorUserId = ""): Promise<Shift | null> =>
+  invoke("shift_get_active", { deviceId: device_id, actorUserId });
 
 export const shiftOpen = (
   branch_id: string,
@@ -189,8 +189,16 @@ export const productSearch = (actorUserId: string, query: string): Promise<Produ
 export const productGetByBarcode = (actorUserId: string, barcode: string): Promise<ProductWithPrice | null> =>
   invoke("product_get_by_barcode", { actorUserId, barcode });
 
-export const productListAll = (actorUserId: string): Promise<ProductWithPrice[]> =>
-  invoke("product_list_all", { actorUserId });
+export const productListAll = (
+  actorUserId: string,
+  afterId?: string | null,
+  pageSize?: number,
+): Promise<ProductWithPrice[]> =>
+  invoke("product_list_all", {
+    actorUserId,
+    afterId: afterId ?? null,
+    pageSize: pageSize ?? 50,
+  });
 
 // ─── POS commands ─────────────────────────────────────────────────────────────
 
@@ -211,8 +219,8 @@ export const posAddItemByBarcode = (cart: Cart, barcode: string): Promise<Cart> 
 export const posUpdateQuantity = (cart: Cart, cart_line_id: string, quantity: string): Promise<Cart> =>
   invoke("pos_update_quantity", { input: { cart, cart_line_id, quantity } });
 
-export const posSetLinePrice = (cart: Cart, cart_line_id: string, price_minor: number): Promise<Cart> =>
-  invoke("pos_set_line_price", { input: { cart, cart_line_id, price_minor } });
+export const posSetLinePrice = (cart: Cart, cart_line_id: string, price_minor: number, authorized_by_user_id: string): Promise<Cart> =>
+  invoke("pos_set_line_price", { input: { cart, cart_line_id, price_minor, authorized_by_user_id } });
 
 export const posRemoveLine = (cart: Cart, cart_line_id: string): Promise<Cart> =>
   invoke("pos_remove_line", { input: { cart, cart_line_id } });
@@ -242,6 +250,20 @@ export const posAddCustomItem = (
   quantity: string,
 ): Promise<Cart> =>
   invoke("pos_add_custom_item", { input: { cart, name, price_minor, quantity } });
+
+/** Load a completed sale back into a Cart for editing.
+ *  Returns a pre-populated Cart with each line item as a custom item
+ *  preserving original prices, quantities, and discounts. */
+export const posLoadSaleForEdit = (
+  receipt_number: string,
+  branch_id: string,
+  device_id: string,
+  shift_id: string,
+  cashier_user_id: string,
+): Promise<Cart> =>
+  invoke("pos_load_sale_for_edit", {
+    input: { receipt_number, branch_id, device_id, shift_id, cashier_user_id },
+  });
 
 export interface VoidSaleResult {
   voided: boolean;
@@ -341,13 +363,13 @@ export const reportSalesList = (
     limit: limit ?? 200,
   });
 
-export const dbIntegrityCheck = (): Promise<string> =>
-  invoke("db_integrity_check");
+export const dbIntegrityCheck = (actorUserId: string): Promise<string> =>
+  invoke("db_integrity_check", { actorUserId });
 
 // ─── Sync commands ────────────────────────────────────────────────────────────
 
-export const syncStatus = (): Promise<SyncStatus> => invoke("sync_status");
-export const syncTriggerNow = (): Promise<string> => invoke("sync_trigger_now");
+export const syncStatus = (actorUserId: string): Promise<SyncStatus> => invoke("sync_status", { actorUserId });
+export const syncTriggerNow = (actorUserId: string): Promise<string> => invoke("sync_trigger_now", { actorUserId });
 
 /// Recovery: re-enqueue the full catalog and push immediately. For terminals whose
 /// data never reached the cloud (outbox looks empty but cloud is empty).
@@ -359,12 +381,13 @@ export const syncForceFullResync = (actorUserId: string): Promise<string> =>
 export const adminSetupSupabase = (
   url: string,
   serviceKey: string,
-  pat: string
+  pat: string,
+  actorUserId?: string
 ): Promise<void> =>
-  invoke("admin_setup_supabase", { url, serviceKey, pat });
+  invoke("admin_setup_supabase", { url, serviceKey, pat, actorUserId });
 
-export const adminGetSupabaseStatus = (): Promise<SupabaseStatus> =>
-  invoke("admin_get_supabase_status");
+export const adminGetSupabaseStatus = (actorUserId: string): Promise<SupabaseStatus> =>
+  invoke("admin_get_supabase_status", { actorUserId });
 
 export const adminSetupSupabaseCredsOnly = (
   actorUserId: string,
@@ -375,17 +398,18 @@ export const adminSetupSupabaseCredsOnly = (
 
 // ─── AI Admin — provider management ──────────────────────────────────────────
 
-export const adminGetProviderConfig = (): Promise<ProviderConfig> =>
-  invoke("admin_get_provider_config");
+export const adminGetProviderConfig = (actorUserId: string): Promise<ProviderConfig> =>
+  invoke("admin_get_provider_config", { actorUserId });
 
 export const adminSetAnthropic = (actorUserId: string, apiKey: string): Promise<void> =>
   invoke("admin_set_anthropic", { actorUserId, apiKey });
 
 export const adminValidateOpenai = (
+  actorUserId: string,
   baseUrl: string,
   apiKey: string
 ): Promise<ValidateProviderResult> =>
-  invoke("admin_validate_openai", { baseUrl, apiKey });
+  invoke("admin_validate_openai", { actorUserId, baseUrl, apiKey });
 
 export const adminSetOpenai = (
   actorUserId: string,
@@ -396,8 +420,8 @@ export const adminSetOpenai = (
   invoke("admin_set_openai", { actorUserId, baseUrl, apiKey, model });
 
 // Google Gemini (OpenAI-compatible endpoint; base URL is fixed server-side)
-export const adminValidateGemini = (apiKey: string): Promise<ValidateProviderResult> =>
-  invoke("admin_validate_gemini", { apiKey });
+export const adminValidateGemini = (actorUserId: string, apiKey: string): Promise<ValidateProviderResult> =>
+  invoke("admin_validate_gemini", { actorUserId, apiKey });
 
 export const adminSetGemini = (
   actorUserId: string,
@@ -407,8 +431,8 @@ export const adminSetGemini = (
   invoke("admin_set_gemini", { actorUserId, apiKey, model });
 
 // Legacy — kept for compat
-export const adminGetApiKeySet = (): Promise<boolean> =>
-  invoke("admin_get_api_key_set");
+export const adminGetApiKeySet = (actorUserId: string): Promise<boolean> =>
+  invoke("admin_get_api_key_set", { actorUserId });
 
 export const adminSetApiKey = (actorUserId: string, key: string): Promise<void> =>
   invoke("admin_set_api_key", { actorUserId, key });
@@ -510,6 +534,9 @@ export const adminSaveTaxRule = (input: {
 }): Promise<TaxRuleRow> =>
   invoke("admin_save_tax_rule", { input });
 
+export const adminDeleteTaxRule = (tax_rule_id: string, actor_user_id: string): Promise<void> =>
+  invoke("admin_delete_tax_rule", { input: { tax_rule_id, actor_user_id } });
+
 export const adminSaveCategory = (input: {
   category_id?: string; name: string; sort_order: number; is_active: boolean; parent_category_id?: string; actor_user_id: string;
 }): Promise<CategoryRow> =>
@@ -600,8 +627,8 @@ export type ReportsConfig = {
   local_device_id: string;
 };
 
-export const reportsConfigLoad = (): Promise<ReportsConfig> =>
-  invoke("reports_config_load");
+export const reportsConfigLoad = (actorUserId: string): Promise<ReportsConfig> =>
+  invoke("reports_config_load", { actorUserId });
 
 export const reportsConfigSave = (
   device_scope: "origin" | "all",
@@ -666,8 +693,8 @@ export const customerAddLoyalty = (actorUserId: string, customerId: string, poin
 
 // ─── Phase 10b — Devices ──────────────────────────────────────────────────────
 
-export const deviceList = (): Promise<DeviceRow[]> =>
-  invoke("device_list");
+export const deviceList = (actorUserId: string): Promise<DeviceRow[]> =>
+  invoke("device_list", { actorUserId });
 
 export const deviceCreate = (actorUserId: string, input: {
   device_code: string; device_name: string;
@@ -712,22 +739,22 @@ export interface PortEntry {
 export const thermalListPorts = (): Promise<PortEntry[]> =>
   invoke("thermal_list_ports");
 
-export const thermalGetConfig = (): Promise<ThermalConfig> =>
-  invoke("thermal_get_config");
+export const thermalGetConfig = (actorUserId: string): Promise<ThermalConfig> =>
+  invoke("thermal_get_config", { actorUserId });
 
 export const thermalSetConfig = (actorUserId: string, input: ThermalConfig): Promise<void> =>
   invoke("thermal_set_config", { input, actorUserId });
 
-export const thermalPrintTest = (): Promise<string> =>
-  invoke("thermal_print_test");
+export const thermalPrintTest = (actorUserId: string): Promise<string> =>
+  invoke("thermal_print_test", { actorUserId });
 
-export const printReceiptRaw = (storeName: string, lines: string[]): Promise<string> =>
-  invoke("print_receipt_raw", { storeName, lines });
+export const printReceiptRaw = (actorUserId: string, storeName: string, lines: string[]): Promise<string> =>
+  invoke("print_receipt_raw", { actorUserId, storeName, lines });
 
 /** Open the cash drawer connected to the ESC/POS printer's RJ-11 port.
  *  Returns "opened" on success, "no_printer" if thermal printing is disabled. */
-export const openCashDrawer = (): Promise<string> =>
-  invoke("open_cash_drawer");
+export const openCashDrawer = (actorUserId: string): Promise<string> =>
+  invoke("open_cash_drawer", { actorUserId });
 
 // ─── Cash events ──────────────────────────────────────────────────────────────
 
@@ -785,13 +812,14 @@ export const reportEodCashup = (
   invoke("report_eod_cashup", { actorUserId: actor_user_id, branchId: branch_id, date: business_date });
 
 export const inventoryBulkStockTake = (
-  entries: Array<{ product_id: string; new_quantity: number; notes?: string }>,
+  // FIX: string, not number — JS floats corrupt Decimal arithmetic in Rust backend
+  entries: Array<{ product_id: string; new_quantity: string; notes?: string }>,
   actor_user_id: string,
 ): Promise<BulkStockTakeResult> =>
   invoke("inventory_bulk_stock_take", { entries, actorUserId: actor_user_id });
 
-export const syncQueueList = (): Promise<SyncQueueItem[]> =>
-  invoke("sync_queue_list");
+export const syncQueueList = (actorUserId: string): Promise<SyncQueueItem[]> =>
+  invoke("sync_queue_list", { actorUserId });
 
 export const syncQueueRetry = (actorUserId: string, syncEventId: string): Promise<void> =>
   invoke("sync_queue_retry", { id: syncEventId, actorUserId });
@@ -799,17 +827,17 @@ export const syncQueueRetry = (actorUserId: string, syncEventId: string): Promis
 export const syncQueueDismiss = (actorUserId: string, syncEventId: string): Promise<void> =>
   invoke("sync_queue_dismiss", { id: syncEventId, actorUserId });
 
-export const syncQueueStats = (): Promise<SyncTableStats[]> =>
-  invoke("sync_queue_stats");
+export const syncQueueStats = (actorUserId: string): Promise<SyncTableStats[]> =>
+  invoke("sync_queue_stats", { actorUserId });
 
-export const syncDiagnostics = (): Promise<SyncDiagnostics> =>
-  invoke("sync_diagnostics");
+export const syncDiagnostics = (actorUserId: string): Promise<SyncDiagnostics> =>
+  invoke("sync_diagnostics", { actorUserId });
 
 export const syncResetStuck = (actorUserId: string): Promise<string> =>
   invoke("sync_reset_stuck", { actorUserId });
 
-export const syncBulkInitial = (): Promise<string> =>
-  invoke("sync_bulk_initial");
+export const syncBulkInitial = (actorUserId: string): Promise<string> =>
+  invoke("sync_bulk_initial", { actorUserId });
 
 // ─── Delivery commands ────────────────────────────────────────────────────────
 
@@ -853,8 +881,8 @@ export const deliveryRiderSuggestions = (
 
 // ─── WhatsApp ─────────────────────────────────────────────────────────────────
 
-export function whatsappStatus(): Promise<WhatsAppStatus> {
-  return invoke("whatsapp_status");
+export function whatsappStatus(actorUserId: string): Promise<WhatsAppStatus> {
+  return invoke("whatsapp_status", { actorUserId });
 }
 
 export function whatsappSendDelivery(actorUserId: string, input: SendDeliveryInput): Promise<boolean> {

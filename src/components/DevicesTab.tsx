@@ -17,7 +17,7 @@ export default function DevicesTab({ sessionUserId }: Props) {
   const load = async () => {
     setLoading(true);
     try {
-      const rows = await cmd.deviceList();
+      const rows = await cmd.deviceList(sessionUserId);
       setDevices(rows);
     } catch {
       setError("Failed to load devices");

@@ -53,7 +53,12 @@ fn map_row(r: &sqlx::sqlite::SqliteRow) -> DeviceRow {
 
 /// List all devices for the active branch.
 #[tauri::command]
-pub async fn device_list(state: State<'_, AppState>) -> Result<Vec<DeviceRow>, AppError> {
+pub async fn device_list(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<DeviceRow>, AppError> {
+    // BUG-PRODUCTS-2: this endpoint was unauthenticated — device info is sensitive
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let branch_id = active_branch_id(&state).await?;
     let rows = sqlx::query(
         "SELECT device_id, device_code, name, is_active,

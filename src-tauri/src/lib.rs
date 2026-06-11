@@ -230,9 +230,12 @@ pub fn run() {
             };
 
             /// Spawn the sidecar with up to `max_attempts` retries.
+            /// `log_path` receives the sidecar's stdout + stderr so crashes are
+            /// visible in logs/whatsapp-sidecar.log instead of disappearing silently.
             fn spawn_sidecar(
                 exe: &std::path::Path,
                 session_dir: &std::path::Path,
+                log_path: &std::path::Path,
                 max_attempts: u32,
             ) -> Option<std::process::Child> {
                 for attempt in 1..=max_attempts {
@@ -241,9 +244,23 @@ pub fn run() {
                     // every spawn flashes a cmd.exe console window and steals
                     // keyboard focus from the Tauri window.
                     let mut cmd = std::process::Command::new(exe);
-                    cmd.arg(format!("--session-dir={}", session_dir.to_string_lossy()))
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null());
+                    cmd.arg(format!("--session-dir={}", session_dir.to_string_lossy()));
+
+                    // Redirect stdout + stderr to a dedicated log file.
+                    // Two separate file handles are required (one per stream).
+                    // Fall back to null if the log file can't be opened so we
+                    // never prevent startup due to a filesystem permission issue.
+                    let out_file = std::fs::OpenOptions::new()
+                        .create(true).append(true).open(log_path);
+                    let err_file = std::fs::OpenOptions::new()
+                        .create(true).append(true).open(log_path);
+                    match (out_file, err_file) {
+                        (Ok(out), Ok(err)) => { cmd.stdout(out).stderr(err); }
+                        _ => {
+                            cmd.stdout(std::process::Stdio::null())
+                               .stderr(std::process::Stdio::null());
+                        }
+                    }
 
                     #[cfg(target_os = "windows")]
                     {
@@ -283,8 +300,10 @@ pub fn run() {
                 None
             }
 
+            let wa_log_path = app_data.join("logs").join("whatsapp-sidecar.log");
+
             let initial_child = if sidecar_exe.exists() {
-                spawn_sidecar(&sidecar_exe, &wa_session_dir, 3)
+                spawn_sidecar(&sidecar_exe, &wa_session_dir, &wa_log_path, 3)
             } else {
                 tracing::warn!(
                     "WhatsApp sidecar binary not found at {:?} — watchdog will keep retrying",
@@ -303,6 +322,7 @@ pub fn run() {
                 let wa_child_watch  = Arc::clone(&wa_child);
                 let exe_watch       = sidecar_exe.clone();
                 let session_watch   = wa_session_dir.clone();
+                let log_watch       = wa_log_path.clone();
 
                 tauri::async_runtime::spawn(async move {
                     loop {
@@ -343,7 +363,7 @@ pub fn run() {
                         if needs_restart {
                             if exe_watch.exists() {
                                 if let Some(child) =
-                                    spawn_sidecar(&exe_watch, &session_watch, 3)
+                                    spawn_sidecar(&exe_watch, &session_watch, &log_watch, 3)
                                 {
                                     let mut guard = wa_child_watch
                                         .lock()
@@ -395,6 +415,7 @@ pub fn run() {
             commands::pos_commands::pos_apply_line_discount,
             commands::pos_commands::pos_set_line_note,
             commands::pos_commands::pos_add_custom_item,
+            commands::pos_commands::pos_load_sale_for_edit,
             commands::pos_commands::pos_void_sale,
             // Back-office admin
             commands::admin_commands::admin_list_products,
@@ -403,6 +424,7 @@ pub fn run() {
             commands::admin_commands::admin_list_categories,
             commands::admin_commands::admin_list_tax_rules,
             commands::admin_commands::admin_save_tax_rule,
+            commands::admin_commands::admin_delete_tax_rule,
             commands::admin_commands::admin_save_category,
             commands::admin_commands::admin_list_users_all,
             commands::admin_commands::admin_list_roles,

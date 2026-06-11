@@ -13,6 +13,7 @@ interface BusinessTabProps {
   savingFlags: boolean; savedFlags: boolean; flagsError: string | null;
   savingRule: boolean;
   handleSaveFlags: () => void; handleSaveTaxRule: () => void;
+  handleDeleteTaxRule: (tax_rule_id: string) => void;
   sessionUserId: string;
 }
 
@@ -21,7 +22,7 @@ export default function BusinessTab(props: BusinessTabProps) {
     flags, setFlags, taxRules,
     editingRule, setEditingRule, taxRuleError, setTaxRuleError,
     savingFlags, savedFlags, flagsError, savingRule,
-    handleSaveFlags, handleSaveTaxRule, sessionUserId,
+    handleSaveFlags, handleSaveTaxRule, handleDeleteTaxRule, sessionUserId,
   } = props;
 
   const [reportsCfg, setReportsCfg]       = useState<ReportsConfig | null>(null);
@@ -30,7 +31,7 @@ export default function BusinessTab(props: BusinessTabProps) {
   const [scopeError, setScopeError]       = useState<string | null>(null);
 
   useEffect(() => {
-    reportsConfigLoad()
+    reportsConfigLoad(sessionUserId)
       .then(setReportsCfg)
       .catch(() => setReportsCfg({ device_scope: "origin", device_count: 1, local_device_id: "" }));
   }, []);
@@ -202,10 +203,16 @@ export default function BusinessTab(props: BusinessTabProps) {
                   {!rule.is_active && <span className="tax-rule-badge tax-badge-off">Inactive</span>}
                 </span>
               </div>
-              <button className="btn-secondary btn-sm"
-                onClick={() => setEditingRule({ ...rule, rate_basis_points: rule.rate_basis_points })}>
-                Edit
-              </button>
+              <div className="tax-rule-row-actions">
+                <button className="btn-secondary btn-sm"
+                  onClick={() => setEditingRule({ ...rule, rate_basis_points: rule.rate_basis_points })}>
+                  Edit
+                </button>
+                <button className="btn-danger btn-sm"
+                  onClick={() => handleDeleteTaxRule(rule.tax_rule_id)}>
+                  Delete
+                </button>
+              </div>
             </div>
           ))}
         </div>

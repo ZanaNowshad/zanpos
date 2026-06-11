@@ -7932,7 +7932,7 @@ dependencies = [
 
 [[package]]
 name = "zanpos"
-version = "1.0.31"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "argon2",

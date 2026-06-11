@@ -879,6 +879,44 @@ pub fn all_tool_definitions() -> Vec<ToolDef> {
                 "required": ["updates"]
             }),
         },
+        // ── Extension read tools ──────────────────────────────────────────────
+        ToolDef { name: "get_sales_list".into(), description: "List sales for a date range. date_from, date_to (YYYY-MM-DD), optional limit (max 200).".into(), input_schema: json!({"type":"object","properties":{"date_from":{"type":"string"},"date_to":{"type":"string"},"limit":{"type":"integer"}}}) },
+        ToolDef { name: "get_sale_detail".into(), description: "Get full detail of a single sale by receipt number, including all items and payments.".into(), input_schema: json!({"type":"object","properties":{"receipt_number":{"type":"string"}},"required":["receipt_number"]}) },
+        ToolDef { name: "get_z_report".into(), description: "Get Z-report (end-of-day summary) for a specific date (YYYY-MM-DD). Shows revenue, payments, refunds.".into(), input_schema: json!({"type":"object","properties":{"date":{"type":"string"}}}) },
+        ToolDef { name: "get_eod_cashup".into(), description: "Get end-of-day cashup summary for a specific date. Same as Z-report.".into(), input_schema: json!({"type":"object","properties":{"date":{"type":"string"}}}) },
+        ToolDef { name: "get_x_report".into(), description: "Get X-report (intra-day cash summary) for a specific shift_id. Shows opening, sales, cash in/out, expected vs counted.".into(), input_schema: json!({"type":"object","properties":{"shift_id":{"type":"string"}},"required":["shift_id"]}) },
+        ToolDef { name: "get_product_barcodes".into(), description: "List all extra barcodes registered for a product.".into(), input_schema: json!({"type":"object","properties":{"product_id":{"type":"string"}},"required":["product_id"]}) },
+        ToolDef { name: "get_whatsapp_status".into(), description: "Check WhatsApp sidecar connection status (running/connected/disconnected).".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "get_branch_settings".into(), description: "Get the current branch/store configuration (name, address, VAT, receipt header/footer, phone, currency).".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "get_supabase_status".into(), description: "Check Supabase cloud sync configuration and connection status (URL, key, last sync, pending rows).".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "get_held_carts".into(), description: "List all parked/held carts on the current device.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "get_db_integrity".into(), description: "Run SQLite integrity check on the local database.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "get_thermal_config".into(), description: "Get the current thermal printer configuration (port, baud rate, enabled status).".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "get_delivery_detail".into(), description: "Get full detail of a delivery order by delivery_id.".into(), input_schema: json!({"type":"object","properties":{"delivery_id":{"type":"string"}},"required":["delivery_id"]}) },
+        ToolDef { name: "get_rider_suggestions".into(), description: "Get a list of suggested rider names based on past deliveries.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "get_sync_queue_stats".into(), description: "Show per-table sync queue stats (pending rows, stuck rows) for all sync tables.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        // ── Extension mutation tools ──────────────────────────────────────────
+        ToolDef { name: "create_refund".into(), description: "Process a full refund for a past sale by receipt number. Refunds all items.".into(), input_schema: json!({"type":"object","properties":{"receipt_number":{"type":"string"},"reason":{"type":"string"}},"required":["receipt_number"]}) },
+        ToolDef { name: "create_cash_event".into(), description: "Record a cash event for a shift: event_type (paid_in/paid_out/safe_drop), amount_bhd, shift_id, optional note.".into(), input_schema: json!({"type":"object","properties":{"shift_id":{"type":"string"},"event_type":{"type":"string","enum":["paid_in","paid_out","safe_drop"]},"amount_bhd":{"type":"string"},"note":{"type":"string"}},"required":["shift_id","event_type","amount_bhd"]}) },
+        ToolDef { name: "open_shift".into(), description: "Open a new cashier shift. Requires cashier_user_id and optional opening_cash_bhd.".into(), input_schema: json!({"type":"object","properties":{"cashier_user_id":{"type":"string"},"opening_cash_bhd":{"type":"string"}},"required":["cashier_user_id"]}) },
+        ToolDef { name: "close_shift".into(), description: "Close a cashier shift by shift_id. Optional: counted_cash_bhd, notes.".into(), input_schema: json!({"type":"object","properties":{"shift_id":{"type":"string"},"counted_cash_bhd":{"type":"string"},"notes":{"type":"string"}},"required":["shift_id"]}) },
+        ToolDef { name: "add_product_barcode".into(), description: "Register an additional barcode for a product.".into(), input_schema: json!({"type":"object","properties":{"product_id":{"type":"string"},"barcode":{"type":"string"}},"required":["product_id","barcode"]}) },
+        ToolDef { name: "remove_product_barcode".into(), description: "Remove a barcode registration by barcode_id.".into(), input_schema: json!({"type":"object","properties":{"barcode_id":{"type":"string"}},"required":["barcode_id"]}) },
+        ToolDef { name: "trigger_sync_now".into(), description: "Reset sync retry counters so the background sync worker picks up pending rows in the next cycle (within 30 seconds).".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "force_full_resync".into(), description: "Force a complete resync: marks all synced rows as pending and resets all watermarks to epoch. Use when data is inconsistent with Supabase.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "revert_delivery_payment".into(), description: "Reverse a delivery payment — set delivery payment_status from 'paid' back to 'unpaid'.".into(), input_schema: json!({"type":"object","properties":{"delivery_id":{"type":"string"},"reason":{"type":"string"}},"required":["delivery_id"]}) },
+        ToolDef { name: "update_branch_settings".into(), description: "Update branch/store configuration. All fields optional; only provided fields are changed.".into(), input_schema: json!({"type":"object","properties":{"name":{"type":"string"},"timezone":{"type":"string"},"address":{"type":"string"},"phone":{"type":"string"},"receipt_header":{"type":"string"},"receipt_footer":{"type":"string"},"tax_number":{"type":"string"},"cr_number":{"type":"string"}}}) },
+        ToolDef { name: "register_device".into(), description: "Register a new POS device/terminal. Requires device_code and name.".into(), input_schema: json!({"type":"object","properties":{"device_code":{"type":"string"},"name":{"type":"string"}},"required":["device_code","name"]}) },
+        ToolDef { name: "send_whatsapp_delivery_alert".into(), description: "Send a WhatsApp delivery alert to a phone number. Optional custom message.".into(), input_schema: json!({"type":"object","properties":{"phone":{"type":"string"},"message":{"type":"string"}},"required":["phone"]}) },
+        ToolDef { name: "send_whatsapp_payment_reminder".into(), description: "Send a WhatsApp payment reminder to a phone number. Optional custom message.".into(), input_schema: json!({"type":"object","properties":{"phone":{"type":"string"},"message":{"type":"string"}},"required":["phone"]}) },
+        ToolDef { name: "send_whatsapp_arrival_notice".into(), description: "Send a WhatsApp order arrival notice to a phone number. Optional custom message.".into(), input_schema: json!({"type":"object","properties":{"phone":{"type":"string"},"message":{"type":"string"}},"required":["phone"]}) },
+        ToolDef { name: "disconnect_whatsapp".into(), description: "Disconnect the active WhatsApp session from the sidecar.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "update_thermal_config".into(), description: "Update thermal printer configuration. Fields: port (e.g. COM3), baud (e.g. 9600), enabled (1/0).".into(), input_schema: json!({"type":"object","properties":{"port":{"type":"string"},"baud":{"type":"string"},"enabled":{"type":"string"}}}) },
+        ToolDef { name: "open_cash_drawer".into(), description: "Send an ESC/POS pulse to physically open the cash drawer connected to the thermal printer.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "reprint_receipt".into(), description: "Reprint a past receipt by receipt_number to the configured thermal printer.".into(), input_schema: json!({"type":"object","properties":{"receipt_number":{"type":"string"}},"required":["receipt_number"]}) },
+        ToolDef { name: "delete_held_cart".into(), description: "Permanently delete a held/parked cart by held_cart_id.".into(), input_schema: json!({"type":"object","properties":{"held_cart_id":{"type":"string"}},"required":["held_cart_id"]}) },
+        ToolDef { name: "update_supabase_config".into(), description: "Update Supabase cloud sync credentials. supabase_url (required, must start with https://), optional service_key.".into(), input_schema: json!({"type":"object","properties":{"supabase_url":{"type":"string"},"service_key":{"type":"string"}},"required":["supabase_url"]}) },
+        ToolDef { name: "update_benefit_number".into(), description: "Update the Benefit/Sadad payment phone number stored in app config.".into(), input_schema: json!({"type":"object","properties":{"benefit_number":{"type":"string"}},"required":["benefit_number"]}) },
     ]
 }
 
@@ -919,6 +957,28 @@ pub const MUTATION_TOOLS: &[&str] = &[
     "receive_stock",
     "add_loyalty_points",
     "bulk_update_prices",
+    // ── Extension mutations ──────────────────────────────────────────────────
+    "create_refund",
+    "create_cash_event",
+    "open_shift",
+    "close_shift",
+    "add_product_barcode",
+    "remove_product_barcode",
+    "trigger_sync_now",
+    "force_full_resync",
+    "revert_delivery_payment",
+    "update_branch_settings",
+    "register_device",
+    "send_whatsapp_delivery_alert",
+    "send_whatsapp_payment_reminder",
+    "send_whatsapp_arrival_notice",
+    "disconnect_whatsapp",
+    "update_thermal_config",
+    "open_cash_drawer",
+    "reprint_receipt",
+    "delete_held_cart",
+    "update_supabase_config",
+    "update_benefit_number",
 ];
 
 pub fn is_mutation_tool(name: &str) -> bool {
@@ -948,7 +1008,7 @@ pub async fn execute_read_tool(
             ))
         }
         "list_products" => {
-            let products = product_repo::list_all_active(pool).await?;
+            let products = product_repo::list_all_active(pool, None, u32::MAX).await?;
             if products.is_empty() {
                 return Ok("No active products found.".into());
             }
@@ -1089,15 +1149,29 @@ pub async fn execute_read_tool(
             let cash_sales: i64 = sqlx::query_scalar(
                 "SELECT COALESCE(SUM(p.amount_minor),0) FROM payments p
                  JOIN sales s ON s.sale_id=p.sale_id
-                 WHERE s.shift_id=? AND p.payment_method='cash' AND s.status!='voided'",
+                 WHERE s.shift_id=? AND p.payment_method='cash' AND s.status!='voided'
+                   AND (s.is_delivery = 0 OR EXISTS (
+                       SELECT 1 FROM delivery_orders d WHERE d.sale_id = s.sale_id AND d.payment_status = 'paid'
+                   ))",
             )
             .bind(shift_id)
             .fetch_one(pool)
             .await?;
 
             let cash_refunds: i64 = sqlx::query_scalar(
-                "SELECT COALESCE(SUM(r.refund_total_minor),0) FROM refunds r
-                 JOIN sales s ON s.sale_id=r.original_sale_id WHERE s.shift_id=?",
+                "SELECT COALESCE(SUM(
+                    CASE WHEN s.net_total_minor <= 0 THEN 0
+                    ELSE MIN(
+                        (SELECT COALESCE(SUM(p2.amount_minor), 0)
+                         FROM payments p2
+                         WHERE p2.sale_id = s.sale_id AND p2.payment_method = 'cash'),
+                        s.net_total_minor
+                    ) * r.refund_total_minor / s.net_total_minor
+                    END
+                ), 0)
+                 FROM refunds r
+                 JOIN sales s ON s.sale_id = r.original_sale_id
+                 WHERE s.shift_id = ?",
             )
             .bind(shift_id)
             .fetch_one(pool)
@@ -1861,11 +1935,13 @@ pub async fn execute_read_tool(
                     let name: String = r.get("name");
                     let phone: Option<String> = r.get("phone");
                     let pts: i64 = r.get("loyalty_points");
+                    // PII-01: mask phone — only last 4 digits shown in AI context
+                    let masked = phone.as_deref().map(mask_phone).unwrap_or_else(|| "—".into());
                     format!(
                         "- {} (ID: {}) | Phone: {} | Loyalty: {} pts",
                         name,
                         &id[..8.min(id.len())],
-                        phone.as_deref().unwrap_or("—"),
+                        masked,
                         pts
                     )
                 })
@@ -1891,9 +1967,11 @@ pub async fn execute_read_tool(
             let pts: i64 = r.get("loyalty_points");
             let notes: Option<String> = r.get("notes");
             let at: String = r.get("created_at");
+            // PII-01: mask phone — only last 4 digits shown in AI context
+            let masked_phone = phone.as_deref().map(mask_phone).unwrap_or_else(|| "—".into());
             Ok(format!(
                 "Customer: {name}\nID: {customer_id}\nPhone: {}\nEmail: {}\nLoyalty: {pts} pts\nNotes: {}\nSince: {}",
-                phone.as_deref().unwrap_or("—"),
+                masked_phone,
                 email.as_deref().unwrap_or("—"),
                 notes.as_deref().unwrap_or("—"),
                 &at[..10.min(at.len())]
@@ -2423,10 +2501,7 @@ pub async fn execute_read_tool(
             Ok(format!("[DB] Session timeout: {} minutes ({}).", timeout,
                 if timeout == 0 { "never locks" } else { "auto-locks after idle" }))
         }
-        _ => Err(AppError::Validation(format!(
-            "Unknown read tool: {}",
-            tool_name
-        ))),
+        name => crate::ai::tools_read_ext::execute(pool, name, input, branch_id, currency_exp).await,
     }
 }
 
@@ -3562,10 +3637,7 @@ pub async fn dry_run_mutation(
         "backup_database" => {
             Ok(ToolPreview { tool_name: tool_name.into(), description: "Create full database backup".into(), fields: vec![ToolPreviewField { label: "Action".into(), value: "Backup to app data directory".into() }] })
         }
-        _ => Err(AppError::Validation(format!(
-            "Unknown mutation tool: {}",
-            tool_name
-        ))),
+        name => crate::ai::tools_write_ext::dry_run(pool, name, input, currency_exp).await,
     }
 }
 
@@ -4231,32 +4303,6 @@ pub async fn execute_mutation(
                 entity_id: customer_id.into(),
             })
         }
-        "delete_customer" => {
-            // Internal-only rollback tool for undoing create_customer
-            let customer_id = input
-                .get("customer_id")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::Validation("Missing customer_id".into()))?;
-            let row = sqlx::query("SELECT name FROM customers WHERE customer_id = ?")
-                .bind(customer_id)
-                .fetch_optional(pool)
-                .await?;
-            let name: String = row
-                .map(|r| r.get::<String, _>("name"))
-                .unwrap_or_else(|| "unknown".to_string());
-            sqlx::query("DELETE FROM customers WHERE customer_id = ?")
-                .bind(customer_id)
-                .execute(pool)
-                .await?;
-            Ok(MutationResult {
-                description: format!("Customer '{}' deleted", name),
-                undo_snapshot_json: "{}".into(),
-                rollback_tool: "_no_undo".into(),
-                rollback_input_json: "{}".into(),
-                entity_type: "customer".into(),
-                entity_id: customer_id.into(),
-            })
-        }
         // ── Delivery mutations ────────────────────────────────────────────────
         "advance_delivery_status" => {
             let delivery_id = input
@@ -4340,33 +4386,77 @@ pub async fn execute_mutation(
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.0);
 
-                // Fetch old quantity
-                let old_qty: f64 = sqlx::query(
+                // Fetch old quantity for audit snapshot (outside transaction)
+                let old_qty_read: Option<String> = sqlx::query_scalar(
                     "SELECT quantity_on_hand FROM stock_levels WHERE product_id = ? AND branch_id = ?",
                 )
                 .bind(product_id)
                 .bind(&branch_id)
                 .fetch_optional(pool)
                 .await?
-                .map(|r| r.get::<String, _>("quantity_on_hand").parse().unwrap_or(0.0))
-                .unwrap_or(0.0);
+                .flatten();
+                let old_qty_str = old_qty_read.as_deref().unwrap_or("0");
+                let old_qty: f64 = old_qty_str.parse().unwrap_or(0.0);
+
+                // Transaction: read current qty → compute delta → upsert → movement
+                let (device_id, _) = active_device_branch(pool).await?;
+                let mut tx = pool.begin().await?;
+
+                let old_in_tx: Option<String> = sqlx::query_scalar(
+                    "SELECT quantity_on_hand FROM stock_levels WHERE product_id = ? AND branch_id = ?",
+                )
+                .bind(product_id)
+                .bind(&branch_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .flatten();
+                let old_dec: f64 = old_in_tx.as_deref().unwrap_or("0").parse().unwrap_or(0.0);
+                let delta = new_qty - old_dec;
+                let new_qty_str = format!("{new_qty}");
+                let delta_str = format!("{delta}");
 
                 // Upsert stock level
                 let stock_level_id = format!("SL-{}-{}", product_id, branch_id);
                 sqlx::query(
-                    "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?)
+                    "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at, last_movement_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)
                      ON CONFLICT(product_id, branch_id)
-                     DO UPDATE SET quantity_on_hand = excluded.quantity_on_hand, updated_at = excluded.updated_at",
+                     DO UPDATE SET quantity_on_hand = excluded.quantity_on_hand,
+                                   updated_at = excluded.updated_at,
+                                   last_movement_at = excluded.last_movement_at,
+                                   sync_status = 'pending'",
                 )
                 .bind(&stock_level_id)
                 .bind(product_id)
                 .bind(&branch_id)
-                .bind(new_qty)
+                .bind(&new_qty_str)
                 .bind(&now)
                 .bind(&now)
-                .execute(pool)
+                .bind(&now)
+                .execute(&mut *tx)
                 .await?;
+
+                // Record stock movement
+                let movement_id = ulid::Ulid::new().to_string();
+                sqlx::query(
+                    "INSERT INTO stock_movements
+                     (movement_id, product_id, branch_id, device_id, origin_device_id,
+                      movement_type, quantity_delta, quantity_after,
+                      reference_type, notes, created_by_user_id, created_at, sync_status)
+                     VALUES (?,?,?,?,?,'stock_take',?,?,'ai_action',NULL,'AI_ADMIN',?,'pending')",
+                )
+                .bind(&movement_id)
+                .bind(product_id)
+                .bind(&branch_id)
+                .bind(&device_id)
+                .bind(&device_id)
+                .bind(&delta_str)
+                .bind(&new_qty_str)
+                .bind(&now)
+                .execute(&mut *tx)
+                .await?;
+
+                tx.commit().await?;
 
                 write_audit(
                     pool,
@@ -4813,10 +4903,7 @@ pub async fn execute_mutation(
                 entity_type: "backup".into(), entity_id: ts,
             })
         }
-        _ => Err(AppError::Validation(format!(
-            "Unknown mutation tool: {}",
-            tool_name
-        ))),
+        name => crate::ai::tools_write_ext::execute(pool, name, input, currency_exp).await,
     }
 }
 
@@ -4877,6 +4964,22 @@ fn md5_simple(s: &str) -> u64 {
     let bytes = h.finalize();
     // Take the first 8 bytes as a u64 (still 64-bit collision resistance for audit chain)
     u64::from_le_bytes(bytes[..8].try_into().unwrap_or([0u8; 8]))
+}
+
+// ── PII helpers ───────────────────────────────────────────────────────────────
+
+/// Mask a customer phone number for AI tool responses.
+/// Keeps only the last 4 digits visible, e.g. "+973 3XXX X456" or "XXXX 4567".
+/// This prevents full phone numbers from being stored in AI conversation history
+/// or appearing in logs. The last 4 digits retain enough context to identify
+/// the customer in a lookup without exposing the full number (PII-01).
+pub fn mask_phone(phone: &str) -> String {
+    let digits: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() < 4 {
+        return "XXXXX".to_string();
+    }
+    let last4 = &digits[digits.len() - 4..];
+    format!("XXXX-{}", last4)
 }
 
 // ── Integrity tests ────────────────────────────────────────────────────────────

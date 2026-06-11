@@ -16,16 +16,21 @@ pub async fn delivery_list(
 ) -> Result<Vec<DeliveryRow>, AppError> {
     rbac::require_role(&state.db, &actor_user_id, &["owner", "manager", "cashier"]).await?;
 
-    let active_branch: String = sqlx::query_scalar(
-        "SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1",
-    )
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or_default();
+    // BUG-DELIVERY-10: prefer branch_id from caller (DEVICE.branch_id) over DB lookup.
+    let branch_id: String = if let Some(b) = &filter.branch_id {
+        b.clone()
+    } else {
+        sqlx::query_scalar(
+            "SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1",
+        )
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+    };
 
-    delivery_repo::list_deliveries(&state.db, &active_branch, &filter).await
+    delivery_repo::list_deliveries(&state.db, &branch_id, &filter).await
 }
 
 #[tauri::command]
@@ -43,12 +48,17 @@ pub async fn delivery_update_status(
     input: UpdateDeliveryStatusInput,
     state: State<'_, AppState>,
 ) -> Result<DeliveryRow, AppError> {
-    rbac::require_role(
-        &state.db,
-        &input.actor_user_id,
-        &["owner", "manager", "cashier"],
-    )
-    .await?;
+    // Cancellation via status update requires manager/owner — same as delivery_cancel
+    if input.delivery_status == "cancelled" {
+        rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
+    } else {
+        rbac::require_role(
+            &state.db,
+            &input.actor_user_id,
+            &["owner", "manager", "cashier"],
+        )
+        .await?;
+    }
     let result = delivery_repo::update_delivery_status(&state.db, &input).await?;
 
     // Trigger WhatsApp notification on status transitions
@@ -96,19 +106,17 @@ pub async fn delivery_confirm_payment(
     rbac::manager_or_owner(&state.db, &input.confirmed_by_user_id).await?;
     let result = delivery_repo::confirm_payment(&state.db, &input).await?;
 
-    // Trigger WhatsApp payment reminder
-    let exp = super::setup_commands::currency_exponent(&result.currency);
-    if let Err(e) = super::whatsapp_commands::whatsapp_payment_reminder_impl(
+    // FIX: send arrival/confirmation notice, NOT a payment reminder.
+    // A payment reminder fires BEFORE payment; after payment is confirmed we
+    // should notify the customer that their order is confirmed/paid.
+    if let Err(e) = super::whatsapp_commands::whatsapp_notify_arrival_impl(
         &state,
         &result.contact_number,
         &result.receipt_number,
-        result.amount_minor,
-        exp,
-        &result.currency,
     )
     .await
     {
-        tracing::warn!("T12: WA payment reminder failed for delivery {}: {:?}", result.receipt_number, e);
+        tracing::warn!("WA payment-confirmed notice failed for delivery {}: {:?}", result.receipt_number, e);
     }
 
     Ok(result)

@@ -719,7 +719,7 @@ export interface DeliveryRow {
   delivery_staff_name?: string;
   expected_payment_method: string;
   payment_status: "unpaid" | "paid" | "cancelled";
-  delivery_status: "pending" | "out_for_delivery" | "delivered" | "cancelled";
+  delivery_status: "pending" | "dispatched" | "out_for_delivery" | "delivered" | "cancelled";
   amount_minor: number;
   currency: string;
   paid_confirmed_by_user_id?: string;
@@ -734,6 +734,7 @@ export interface DeliveryRow {
 }
 
 export interface DeliveryListFilter {
+  branch_id?: string;
   payment_status?: string;
   delivery_status?: string;
   date_from?: string;

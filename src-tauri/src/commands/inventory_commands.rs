@@ -164,14 +164,13 @@ pub async fn inventory_receive_stock(
     // Upsert stock_levels with the computed string (include PK so ON CONFLICT fires)
     let movement_id = Ulid::new().to_string();
     sqlx::query(
-        "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at, last_movement_at, reference_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at, last_movement_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(product_id, branch_id) DO UPDATE SET
            sync_status = 'pending',
            quantity_on_hand = excluded.quantity_on_hand,
            updated_at = excluded.updated_at,
-           last_movement_at = excluded.last_movement_at,
-           reference_id = excluded.reference_id",
+           last_movement_at = excluded.last_movement_at",
     )
     .bind(&stock_level_id)
     .bind(&input.product_id)
@@ -180,7 +179,6 @@ pub async fn inventory_receive_stock(
     .bind(&now)
     .bind(&now)
     .bind(&now)
-    .bind(&movement_id)
     .execute(&mut *tx)
     .await?;
 
@@ -302,14 +300,13 @@ pub async fn inventory_adjust_stock(
     // Upsert stock_levels (include PK)
     let movement_id = Ulid::new().to_string();
     sqlx::query(
-        "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at, last_movement_at, reference_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at, last_movement_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(product_id, branch_id) DO UPDATE SET
            sync_status = 'pending',
            quantity_on_hand = excluded.quantity_on_hand,
            updated_at = excluded.updated_at,
-           last_movement_at = excluded.last_movement_at,
-           reference_id = excluded.reference_id",
+           last_movement_at = excluded.last_movement_at",
     )
     .bind(&stock_level_id)
     .bind(&input.product_id)
@@ -318,7 +315,6 @@ pub async fn inventory_adjust_stock(
     .bind(&now)
     .bind(&now)
     .bind(&now)
-    .bind(&movement_id)
     .execute(&mut *tx)
     .await?;
 
@@ -474,14 +470,13 @@ pub async fn inventory_bulk_stock_take(
         // Upsert stock level (include PK)
         let movement_id = Ulid::new().to_string();
         if let Err(e) = sqlx::query(
-            "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at, last_movement_at, reference_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at, last_movement_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(product_id, branch_id) DO UPDATE SET
                sync_status = 'pending',
                quantity_on_hand = excluded.quantity_on_hand,
                updated_at = excluded.updated_at,
-               last_movement_at = excluded.last_movement_at,
-               reference_id = excluded.reference_id",
+               last_movement_at = excluded.last_movement_at",
         )
         .bind(&stock_level_id)
         .bind(&entry.product_id)
@@ -490,7 +485,6 @@ pub async fn inventory_bulk_stock_take(
         .bind(&now)
         .bind(&now)
         .bind(&now)
-        .bind(&movement_id)
         .execute(&mut *tx)
         .await
         {

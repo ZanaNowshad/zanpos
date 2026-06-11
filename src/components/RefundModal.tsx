@@ -56,7 +56,7 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
   const [pinLoading, setPinLoading]         = useState(false);
   const [overrideToken, setOverrideToken]   = useState<string | null>(null);
 
-  const isCrossDevice = sale ? (sale.origin_device_id && sale.origin_device_id !== (DEVICE as any).device_id) : false;
+  const isCrossDevice = sale ? (sale.origin_device_id && sale.origin_device_id !== DEVICE.device_id) : false;
 
   const handleSearch = async () => {
     if (!receiptInput.trim()) return;
@@ -127,8 +127,12 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
     if (m === "browse") loadBrowseList(browseDate);
   };
 
-  const setQty = (saleItemId: string, raw: string) => {
-    const n = Math.max(0, parseInt(raw, 10) || 0);
+  const setQty = (saleItemId: string, raw: string, maxQty?: number) => {
+    // FIX: clamp upper bound — type="number" input allows keyboard entry > maxQty
+    const n = Math.min(
+      Math.max(0, parseInt(raw, 10) || 0),
+      maxQty ?? Infinity
+    );
     setRefundQtys(prev => new Map(prev).set(saleItemId, n));
   };
 
@@ -142,12 +146,20 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
     ? sale.items.filter(i => (refundQtys.get(i.sale_item_id) ?? 0) > 0)
     : [];
 
+  // BUG-POS-4: use proportional line_total_minor share, not unit_price_minor,
+  // so line-level discounts are correctly reflected in the refund amount.
+  const lineRefundAmount = (item: SaleItemForRefund, qty: number): number => {
+    const origQty = parseFloat(item.quantity);
+    if (origQty <= 0) return 0;
+    return Math.round(qty * item.line_total_minor / origQty);
+  };
+
   const refundTotal = selectedItems.reduce((sum, item) => {
-    const qty    = refundQtys.get(item.sale_item_id) ?? 0;
-    return sum + qty * item.unit_price_minor;
+    const qty = refundQtys.get(item.sale_item_id) ?? 0;
+    return sum + lineRefundAmount(item, qty);
   }, 0);
 
-  const handleConfirm = async () => {
+  const handleConfirm = async (immediateToken?: string) => {
     if (!sale || selectedItems.length === 0) return;
     setSubmitting(true);
     setError(null);
@@ -159,7 +171,7 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
           product_name_snapshot: i.product_name_snapshot,
           quantity:              qty.toString(),
           unit_price_minor:      i.unit_price_minor,
-          refund_amount_minor:   qty * i.unit_price_minor,
+          refund_amount_minor:   lineRefundAmount(i, qty),
         };
       });
       const refund = await refundCreate(
@@ -168,7 +180,9 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
         reason || REASON_CODE_LABELS[reasonCode] || "Customer return",
         cashierUserId,
         reasonCode,
-        overrideToken ?? undefined,
+        // FIX: use immediateToken directly — React state (overrideToken) is not yet
+        // updated when handleConfirm is called from handlePinSubmit in the same tick
+        (immediateToken ?? overrideToken) ?? undefined,
       );
       setResult(refund);
       setOverrideToken(null);
@@ -197,8 +211,11 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
       setOverrideToken(token);
       setShowPinEntry(false);
       setManagerPin("");
-      // Re-trigger refund with the token
-      handleConfirm();
+      // FIX: await handleConfirm and pass token directly — React state is async,
+      // overrideToken is still null in the closure until next render.
+      // Also: await ensures pinLoading stays true until refund completes (prevents
+      // double-submit by re-enabling the Authorise button prematurely).
+      await handleConfirm(token);
     } catch (e: unknown) {
       const msg = typeof e === "string" ? e : "Invalid PIN";
       setPinError(msg.includes("Invalid") || msg.includes("Permission") ? "Invalid manager PIN" : msg);
@@ -328,7 +345,7 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
               {sale.items.map(item => {
                 const maxQty  = Math.floor(parseFloat(item.quantity));
                 const current = refundQtys.get(item.sale_item_id) ?? 0;
-                const lineRefund = current * item.unit_price_minor;
+                const lineRefund = lineRefundAmount(item, current);
 
                 return (
                   <div key={item.sale_item_id} className={`refund-item ${current > 0 ? "refund-item-selected" : ""}`}>
@@ -345,7 +362,7 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
                     <div className="refund-qty-stepper">
                       <button
                         className="refund-qty-btn"
-                        onClick={() => setQty(item.sale_item_id, String(current - 1))}
+                        onClick={() => setQty(item.sale_item_id, String(current - 1), maxQty)}
                         disabled={current <= 0}
                       >−</button>
                       <input
@@ -354,11 +371,11 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
                         min={0}
                         max={maxQty}
                         value={current}
-                        onChange={e => setQty(item.sale_item_id, e.target.value)}
+                        onChange={e => setQty(item.sale_item_id, e.target.value, maxQty)}
                       />
                       <button
                         className="refund-qty-btn"
-                        onClick={() => setQty(item.sale_item_id, String(current + 1))}
+                        onClick={() => setQty(item.sale_item_id, String(current + 1), maxQty)}
                         disabled={current >= maxQty}
                       >+</button>
                       <span className="refund-qty-of">/ {maxQty}</span>
@@ -397,7 +414,7 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
               </div>
               <button
                 className="modal-btn-danger"
-                onClick={handleConfirm}
+                onClick={() => handleConfirm()}
                 disabled={submitting || selectedItems.length === 0}
               >
                 {submitting

@@ -28,7 +28,7 @@ const PRODUCT_QUERY: &str = r#"
         COALESCE(t.inclusive, 0) AS tax_inclusive,
         sl.quantity_on_hand AS quantity_on_hand
     FROM products p
-    JOIN categories c ON c.category_id = p.category_id
+    JOIN categories c ON c.category_id = p.category_id AND c.is_active = 1 AND c.deleted_at IS NULL
     LEFT JOIN product_prices pp ON pp.product_id = p.product_id
         AND pp.branch_id IS NULL
         AND pp.price_type = 'selling'
@@ -36,7 +36,7 @@ const PRODUCT_QUERY: &str = r#"
         AND (pp.effective_to IS NULL OR datetime(pp.effective_to) > datetime('now'))
     LEFT JOIN tax_rules t ON t.tax_rule_id = p.tax_rule_id AND t.is_active = 1
     LEFT JOIN (SELECT product_id, quantity_on_hand FROM stock_levels WHERE branch_id = (SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1)) sl ON sl.product_id = p.product_id
-    WHERE p.is_active = 1
+    WHERE p.is_active = 1 AND p.deleted_at IS NULL
 "#;
 
 fn row_to_product(row: &sqlx::sqlite::SqliteRow) -> ProductWithPrice {
@@ -100,6 +100,58 @@ pub async fn search_products(
     Ok(rows.iter().map(row_to_product).collect())
 }
 
+/// Cursor-paginated product search for large catalogs.
+/// Uses `product_id > ?` ordering to avoid OFFSET re-scan on large catalogs.
+/// `after_id`: exclusive lower bound (pass `None` for first page).
+/// `page_size`: caller must cap.
+pub async fn search_products_paginated(
+    pool: &SqlitePool,
+    query: &str,
+    after_id: Option<&str>,
+    page_size: u32,
+) -> AppResult<Vec<ProductWithPrice>> {
+    let escaped = query
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("%{}%", escaped);
+
+    let sql = if after_id.is_some() {
+        format!(
+            "{} AND (p.name LIKE ? ESCAPE '\\' OR p.sku LIKE ? ESCAPE '\\' OR p.barcode LIKE ? ESCAPE '\\') \
+             AND p.product_id > ? ORDER BY p.product_id LIMIT ?",
+            PRODUCT_QUERY
+        )
+    } else {
+        format!(
+            "{} AND (p.name LIKE ? ESCAPE '\\' OR p.sku LIKE ? ESCAPE '\\' OR p.barcode LIKE ? ESCAPE '\\') \
+             ORDER BY p.product_id LIMIT ?",
+            PRODUCT_QUERY
+        )
+    };
+
+    let rows = if let Some(cursor) = after_id {
+        sqlx::query(&sql)
+            .bind(&pattern)
+            .bind(&pattern)
+            .bind(&pattern)
+            .bind(cursor)
+            .bind(page_size as i64)
+            .fetch_all(pool)
+            .await?
+    } else {
+        sqlx::query(&sql)
+            .bind(&pattern)
+            .bind(&pattern)
+            .bind(&pattern)
+            .bind(page_size as i64)
+            .fetch_all(pool)
+            .await?
+    };
+
+    Ok(rows.iter().map(row_to_product).collect())
+}
+
 pub async fn get_product_by_barcode(
     pool: &SqlitePool,
     barcode: &str,
@@ -130,8 +182,37 @@ pub async fn get_product_by_id(
     Ok(row.as_ref().map(row_to_product))
 }
 
-pub async fn list_all_active(pool: &SqlitePool) -> AppResult<Vec<ProductWithPrice>> {
-    let sql = format!("{} ORDER BY p.name LIMIT 200", PRODUCT_QUERY);
-    let rows = sqlx::query(&sql).fetch_all(pool).await?;
+/// Cursor-paginated active product listing.
+/// `after_id`: exclusive lower bound on `product_id` (pass `None` for the first page).
+/// `page_size`: number of rows to return, caller is responsible for capping.
+pub async fn list_all_active(
+    pool: &SqlitePool,
+    after_id: Option<&str>,
+    page_size: u32,
+) -> AppResult<Vec<ProductWithPrice>> {
+    // Cursor: product_id is a ULID so lexicographic order == insertion order.
+    // Using WHERE p.product_id > ? avoids OFFSET re-scanning all previous rows.
+    let sql = if after_id.is_some() {
+        format!(
+            "{} AND p.product_id > ? ORDER BY p.product_id LIMIT ?",
+            PRODUCT_QUERY
+        )
+    } else {
+        format!("{} ORDER BY p.product_id LIMIT ?", PRODUCT_QUERY)
+    };
+
+    let rows = if let Some(cursor) = after_id {
+        sqlx::query(&sql)
+            .bind(cursor)
+            .bind(page_size as i64)
+            .fetch_all(pool)
+            .await?
+    } else {
+        sqlx::query(&sql)
+            .bind(page_size as i64)
+            .fetch_all(pool)
+            .await?
+    };
+
     Ok(rows.iter().map(row_to_product).collect())
 }

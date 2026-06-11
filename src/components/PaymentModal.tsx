@@ -84,7 +84,7 @@ export default function PaymentModal({
     let mounted = true;
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(async () => {
-      const rows = await cmd.customerList(sessionUserId ?? "", custSearch.trim()).catch(() => [] as CustomerRow[]);
+      const rows = await cmd.customerList(sessionUserId ?? "", custSearch.trim()).catch((e: unknown) => { console.warn("customerList failed:", e); return [] as CustomerRow[]; });
       if (!mounted) return;
       setCustResults(rows.slice(0, 6));
       setShowCustDrop(true);
@@ -95,8 +95,8 @@ export default function PaymentModal({
     };
   }, [custSearch]);
 
-  const updateLine = (id: number, patch: Partial<PaymentLine>) =>
-    setLines(prev => prev.map(l => l.id === id ? { ...l, ...patch } : l));
+  const updateLine = useCallback((id: number, patch: Partial<PaymentLine>) =>
+    setLines(prev => prev.map(l => l.id === id ? { ...l, ...patch } : l)), []);
   const removeLine = (id: number) =>
     setLines(prev => prev.filter(l => l.id !== id));
 
@@ -123,7 +123,7 @@ export default function PaymentModal({
         return prev + key;
       });
     }
-  }, [activeField, lines]);
+  }, [activeField, lines, updateLine]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

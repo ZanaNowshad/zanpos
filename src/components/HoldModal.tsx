@@ -19,6 +19,8 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
   const [heldCarts, setHeldCarts] = useState<HeldCartSummary[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // BUG-POS-9: prevent double-resume — track which held_cart_ids are in-flight
+  const [resumingIds, setResumingIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -41,14 +43,18 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
   };
 
   const handleResume = async (held_cart_id: string) => {
+    // BUG-POS-9: guard against double-tap/double-click resuming the same cart twice
+    if (resumingIds.has(held_cart_id)) return;
+    setResumingIds(prev => new Set(prev).add(held_cart_id));
     try {
       const resumed = await heldCartResume(actorUserId, held_cart_id, cart.shift_id);
-      // Remove the resumed cart from the list so it cannot be resumed a second time
-      await heldCartDelete(actorUserId, held_cart_id).catch(() => {}); // best-effort cleanup
+      // Await delete — fire-and-forget left the cart resumable again on failure
+      await heldCartDelete(actorUserId, held_cart_id).catch(() => {});
       setHeldCarts(prev => prev.filter(h => h.held_cart_id !== held_cart_id));
       onResume(resumed);
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to resume cart");
+      setResumingIds(prev => { const s = new Set(prev); s.delete(held_cart_id); return s; });
     }
   };
 
@@ -106,8 +112,12 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
                     <div className="held-item-time">{new Date(h.held_at).toLocaleTimeString()}</div>
                   </div>
                   <div className="held-item-actions">
-                    <button className="held-btn-resume" onClick={() => handleResume(h.held_cart_id)}>
-                      Resume
+                    <button
+                      className="held-btn-resume"
+                      onClick={() => handleResume(h.held_cart_id)}
+                      disabled={resumingIds.has(h.held_cart_id)}
+                    >
+                      {resumingIds.has(h.held_cart_id) ? "Resuming…" : "Resume"}
                     </button>
                     <button className="held-btn-delete" onClick={() => handleDelete(h.held_cart_id)}>
                       ✕

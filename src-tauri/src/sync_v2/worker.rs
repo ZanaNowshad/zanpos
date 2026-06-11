@@ -1,6 +1,7 @@
 use crate::db::repositories::ai_admin_repo;
 use crate::errors::{AppError, AppResult};
 use crate::secure_store;
+use crate::sync_v2::apply::{self, ALLOWED_CONFIG_KEYS, has_origin_device_id, pk_for_table, should_skip_column, value_from_row_column};
 use crate::sync_v2::client::SupabaseClient;
 use serde_json::Value;
 use sqlx::Column;
@@ -11,21 +12,11 @@ use tokio::time::Duration;
 
 pub const TRANSIENT_TAG: &str = "[TRANSIENT]";
 const BATCH_SIZE: i64 = 50;
-const INTERVAL_SECS: u64 = 30;
+const INTERVAL_SECS: u64 = 300;
 const MAX_ATTEMPTS: i64 = 10;
-const PULL_PAGE_LIMIT: usize = 100;
-
-/// app_config keys that are allowed to sync across devices.
-const ALLOWED_CONFIG_KEYS: &[&str] = &[
-    "flag_allow_negative_stock",
-    "flag_require_discount_reason",
-    "flag_cashier_can_discount",
-    "flag_auto_print_receipt",
-    "whatsapp_benefit_number",
-    "reports_device_scope",
-];
-
-const STOCK_DRIFT_TOLERANCE: f64 = 0.001;
+/// Rows per hub REST call during pull. At 28k products this reduces
+/// API round-trips from 280 → 56 (5×).
+const PULL_PAGE_LIMIT: usize = 500;
 
 // ── Shared online state ────────────────────────────────────────────────────────
 
@@ -41,6 +32,10 @@ pub struct SyncState {
 pub struct SyncWorker {
     pool: SqlitePool,
     pub state: Arc<Mutex<SyncState>>,
+    /// Execution guard — prevents concurrent run_once() calls.
+    /// Background loop, setup wizard, and sync_trigger_now can all fire simultaneously;
+    /// try_lock() at the start of run_once() ensures at-most-one execution at a time.
+    running: Arc<Mutex<()>>,
 }
 
 impl SyncWorker {
@@ -48,6 +43,7 @@ impl SyncWorker {
         Arc::new(Self {
             pool,
             state: Arc::new(Mutex::new(SyncState::default())),
+            running: Arc::new(Mutex::new(())),
         })
     }
 
@@ -92,6 +88,18 @@ impl SyncWorker {
 
     /// Run one push + pull cycle. Called by background loop and by sync_trigger_now.
     pub async fn run_once(&self) {
+        // CRITICAL FIX: prevent concurrent execution.
+        // Background loop tick, setup wizard spawn, and sync_trigger_now can all call
+        // run_once() simultaneously. Two concurrent cycles sharing the same pool would
+        // double-push pending rows and race on watermark advancement.
+        let _run_guard = match self.running.try_lock() {
+            Ok(g) => g,
+            Err(_) => {
+                tracing::debug!("Sync v2: run_once already in progress — skipping concurrent invocation");
+                return;
+            }
+        };
+
         // Guard: do not sync while first-run wizard is still in progress.
         // The wizard's Cloud step spawns run_once() to test connectivity, but
         // the subsequent pull can deactivate the local seed device (device_code
@@ -154,10 +162,11 @@ impl SyncWorker {
         }
 
         // DB write outside the lock — no contention with sync_status reads
+        // BUG-SYNC-7: update last_pushed_at for ALL tables, not just 'sales'.
         if push_result.is_ok() && pull_result.is_ok() {
             let now = chrono::Utc::now().to_rfc3339();
             if let Err(e) = sqlx::query(
-                "UPDATE sync_watermark SET last_pushed_at = ? WHERE table_name = 'sales'",
+                "UPDATE sync_watermark SET last_pushed_at = ?",
             )
             .bind(&now)
             .execute(&self.pool)
@@ -221,10 +230,12 @@ impl SyncWorker {
 
     async fn push_pending(&self, client: &SupabaseClient) -> AppResult<u32> {
         // FK-safe push order:
+        // 0. Branches first — all other tables have a branch_id FK
         // 1. Master data (no transaction FKs): categories, tax_rules, products, devices, customers
         // 2. Transactions: shifts, sales, sale_items, payments, refunds, refund_items,
         //    stock_movements, audit_logs, delivery_orders, product_prices
         let push_order: &[&str] = &[
+            "branches",   // Bug-Push-B: was missing — local branch edits never reached Supabase
             "categories",
             "tax_rules",
             "products",
@@ -238,9 +249,11 @@ impl SyncWorker {
             "refunds",
             "refund_items",
             "stock_movements",
+            "stock_levels",  // Bug-Push-SL: was missing — stock_levels has sync_status but was never pushed
             "audit_logs",
             "delivery_orders",
             "product_prices",
+            "cash_events",   // Bug-Push-CE: was missing — cash_events has sync_status but was never pushed
         ];
 
         let mut total_pushed = 0u32;
@@ -270,6 +283,15 @@ impl SyncWorker {
                             let val = value_from_row_column(row, col_name);
                             map.insert(col_name.to_string(), val);
                         }
+                        // Supabase schema requires updated_at NOT NULL with no DEFAULT.
+                        // Fall back to created_at or now() when the local value is missing.
+                        if map.get("updated_at").map_or(true, |v| matches!(v, Value::Null)) {
+                            let fallback = map.get("created_at")
+                                .cloned()
+                                .filter(|v| !matches!(v, Value::Null))
+                                .unwrap_or_else(|| Value::String(chrono::Utc::now().to_rfc3339()));
+                            map.insert("updated_at".to_string(), fallback);
+                        }
                         Value::Object(map)
                     })
                     .collect();
@@ -283,19 +305,20 @@ impl SyncWorker {
 
                 match client.upsert_rows(table, &json_rows).await {
                     Ok(()) => {
-                        // Mark rows as synced
+                        // Mark all rows synced atomically in one UPDATE … IN (…) statement.
+                        // A single statement is crash-safe: either all are marked or none are,
+                        // preventing a partial-mark state that would cause redundant re-pushes.
+                        let placeholders = row_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                        let sql = format!(
+                            "UPDATE {} SET sync_status = 'synced' WHERE {} IN ({})",
+                            table, id_col, placeholders
+                        );
+                        let mut q = sqlx::query(&sql);
                         for id in &row_ids {
-                            let sql = format!(
-                                "UPDATE {} SET sync_status = 'synced' WHERE {} = ?",
-                                table, id_col
-                            );
-                            if let Err(e) =
-                                sqlx::query(&sql).bind(id).execute(&self.pool).await
-                            {
-                                tracing::warn!(
-                                    "Sync v2: failed to mark {table} {id} as synced: {e}"
-                                );
-                            }
+                            q = q.bind(id);
+                        }
+                        if let Err(e) = q.execute(&self.pool).await {
+                            tracing::warn!("Sync v2: failed to mark {table} batch as synced: {e}");
                         }
                         total_pushed += row_ids.len() as u32;
                     }
@@ -324,18 +347,20 @@ impl SyncWorker {
             }
         }
 
-        // Push app_config (business settings, flags) — has no sync columns
+        // Push app_config (business settings, flags) — has no sync columns.
+        // Best-effort: a transient failure here must NOT mark the whole push cycle
+        // as failed (which would block watermark advancement and trigger adaptive
+        // backoff). Log and continue — the flags will retry next cycle.
         if let Err(e) = self.push_app_config(client).await {
-            if e.to_string().contains(TRANSIENT_TAG) {
-                return Err(e);
-            }
+            tracing::warn!("Sync v2: app_config push failed (non-fatal): {e}");
         }
 
         Ok(total_pushed)
     }
 
-    /// Upsert ALL app_config rows to Supabase (key-value pairs).
-    /// app_config has no sync_status/sync_attempts — always push all.
+    /// Upsert app_config rows to Supabase (key-value pairs).
+    /// SECURITY FIX: only push ALLOWED_CONFIG_KEYS — never push supabase_service_key,
+    /// watermarks, or any other device-local internal state to the cloud.
     async fn push_app_config(&self, client: &SupabaseClient) -> AppResult<u32> {
         let rows = sqlx::query("SELECT key, value, updated_at FROM app_config")
             .fetch_all(&self.pool)
@@ -347,13 +372,21 @@ impl SyncWorker {
 
         let json_rows: Vec<Value> = rows
             .iter()
-            .map(|r| {
+            .filter_map(|r| {
                 let key: String = r.get("key");
+                // FIX: same allowlist used for inbound filtering — must also apply at push
+                if !ALLOWED_CONFIG_KEYS.contains(&key.as_str()) {
+                    return None; // never push service keys, watermarks, setup flags, etc.
+                }
                 let value: String = r.get("value");
                 let updated_at: String = r.get("updated_at");
-                serde_json::json!({"key": key, "value": value, "updated_at": updated_at})
+                Some(serde_json::json!({"key": key, "value": value, "updated_at": updated_at}))
             })
             .collect();
+
+        if json_rows.is_empty() {
+            return Ok(0);
+        }
 
         client.upsert_rows("app_config", &json_rows).await?;
         Ok(json_rows.len() as u32)
@@ -363,9 +396,12 @@ impl SyncWorker {
     /// Not batch-limited — designed for first-time sync to Supabase.
     pub async fn push_all_bulk(&self, client: &SupabaseClient) -> AppResult<u32> {
         let push_order: &[&str] = &[
+            "branches",   // Bug-Push-C: was missing from bulk push — Terminal 2 never pushed branch to Supabase
             "categories", "tax_rules", "products", "devices", "users", "customers",
             "shifts", "sales", "sale_items", "payments", "refunds", "refund_items",
-            "stock_movements", "audit_logs", "delivery_orders", "product_prices",
+            "stock_movements", "stock_levels",  // Bug-Push-SL: stock_levels was missing from bulk push
+            "audit_logs", "delivery_orders", "product_prices",
+            "cash_events",  // Bug-Push-CE: was missing from bulk push — cash events never reached Supabase
         ];
 
         let mut total_pushed = 0u32;
@@ -387,6 +423,13 @@ impl SyncWorker {
                             continue;
                         }
                         map.insert(col_name.to_string(), value_from_row_column(row, col_name));
+                    }
+                    if map.get("updated_at").map_or(true, |v| matches!(v, Value::Null)) {
+                        let fallback = map.get("created_at")
+                            .cloned()
+                            .filter(|v| !matches!(v, Value::Null))
+                            .unwrap_or_else(|| Value::String(chrono::Utc::now().to_rfc3339()));
+                        map.insert("updated_at".to_string(), fallback);
                     }
                     Value::Object(map)
                 })
@@ -435,19 +478,33 @@ impl SyncWorker {
             "refunds",
             "refund_items",
             "stock_movements",
+            "stock_levels",   // Fix-Pull-SL: was missing from pull_tables — remote stock changes were never applied locally
             "audit_logs",
             "delivery_orders",
             "product_prices",
+            "cash_events",    // Fix-Pull-CE: was missing from pull_tables — remote cash events were never applied locally
             "app_config",
         ];
 
         let mut total_pulled = 0u32;
+        // Collect transient pull errors per-table so ALL tables are attempted even
+        // when one fails (Bug-Pull-A: old code did `return Err(e)` on first TRANSIENT,
+        // which aborted every subsequent table in the same cycle).
+        let mut transient_errors: Vec<String> = Vec::new();
 
         for table in pull_tables {
             let mut watermark = self.get_watermark(table).await.unwrap_or_default();
             if watermark.is_empty() {
                 watermark = "1970-01-01T00:00:00Z".to_string();
             }
+
+            // Offset tracking for pagination within same-timestamp rows.
+            // When watermark advances (new updated_at), offset resets to 0.
+            // When watermark stays the same (all rows in a full page shared
+            // the same timestamp), offset increments by the batch count so the
+            // next query skips already-processed rows instead of re-fetching them.
+            let mut offset: usize = 0;
+            let pk_col = pk_for_table(table);
 
             // Retry-loop: pull batches until exhausted or error
             loop {
@@ -460,15 +517,21 @@ impl SyncWorker {
                         } else {
                             None
                         },
+                        PULL_PAGE_LIMIT,
+                        offset,
+                        if pk_col != "id" { Some(pk_col) } else { None },
                     )
                     .await
                 {
                     Ok(r) => r,
                     Err(e) => {
+                        // BOTH transient and permanent errors skip this table and move on.
+                        // Transient errors are accumulated and returned after all tables
+                        // are processed — never abort the remaining tables mid-cycle.
                         if e.to_string().contains(TRANSIENT_TAG) {
-                            return Err(e);
+                            tracing::warn!("Sync v2: transient pull error on {table}, continuing other tables: {e}");
+                            transient_errors.push(e.to_string());
                         }
-                        // Permanent pull error: skip table
                         break;
                     }
                 };
@@ -483,29 +546,68 @@ impl SyncWorker {
                 let mut hit_failure = false;
 
                 for row in &rows {
-                    // Track max updated_at for watermark advance
-                    if let Some(ts) = row.get("updated_at").and_then(|v| v.as_str()) {
-                        if ts > max_ts.as_str() {
-                            max_ts = ts.to_string();
-                        }
-                    }
-
-                    match self.apply_row(table, row).await {
+                                match apply::apply_row(&self.pool, table, row).await {
                         Ok(()) => {
+                            // BUG-SYNC-4: Only advance watermark past rows that were
+                            // successfully applied — never skip past a failed row.
+                            if let Some(ts) = row.get("updated_at").and_then(|v| v.as_str()) {
+                                if ts > max_ts.as_str() {
+                                    max_ts = ts.to_string();
+                                }
+                            }
                             applied += 1;
                         }
                         Err(e) => {
-                            tracing::warn!(
-                                "Sync v2: apply_row error for {table}: {e} — halting watermark here"
-                            );
-                            hit_failure = true;
-                            break;
+                            // DB busy (SQLITE_BUSY code 5): happens during initial bulk data
+                            // load when app writes and pull writes compete for the write lock.
+                            // Retry once after a short delay before halting the watermark.
+                            if e.to_string().contains("database is locked") {
+                                tracing::debug!(
+                                    "Sync v2: DB busy on {table} apply_row, retrying in 4 s"
+                                );
+                                tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                    match apply::apply_row(&self.pool, table, row).await {
+                                    Ok(()) => {
+                                        if let Some(ts) = row.get("updated_at").and_then(|v| v.as_str()) {
+                                            if ts > max_ts.as_str() {
+                                                max_ts = ts.to_string();
+                                            }
+                                        }
+                                        applied += 1;
+                                        continue;
+                                    }
+                                    Err(e2) => {
+                                        tracing::warn!(
+                                            "Sync v2: apply_row error for {table} (retry): {e2} — halting watermark here"
+                                        );
+                                        hit_failure = true;
+                                        break;
+                                    }
+                                }
+                            } else {
+                                tracing::warn!(
+                                    "Sync v2: apply_row error for {table}: {e} — halting watermark here"
+                                );
+                                hit_failure = true;
+                                break;
+                            }
                         }
                     }
                 }
 
                 total_pulled += applied as u32;
+
+                // Advance offset: if watermark changed, reset to 0; otherwise
+                // skip already-processed rows via offset pagination (avoids
+                // the gt-based boundary bug when >PULL_PAGE_LIMIT rows share
+                // the same updated_at timestamp).
+                let watermark_advanced = max_ts != watermark;
                 watermark = max_ts;
+                if watermark_advanced {
+                    offset = 0;
+                } else {
+                    offset = offset.saturating_add(batch_count);
+                }
 
                 // Persist watermark
                 if let Err(e) = self.set_watermark(table, &watermark).await {
@@ -519,339 +621,13 @@ impl SyncWorker {
             }
         }
 
+        // Return accumulated transient errors after ALL tables have been attempted.
+        // This surfaces the error in the UI status while ensuring no table was skipped.
+        if !transient_errors.is_empty() {
+            return Err(AppError::Internal(transient_errors.join("; ")));
+        }
+
         Ok(total_pulled)
-    }
-
-    // ── Apply a single row to the local database ──────────────────────────────
-
-    async fn apply_row(&self, table: &str, row: &Value) -> AppResult<()> {
-        let obj = row.as_object().ok_or_else(|| {
-            AppError::Internal("apply_row: row is not a JSON object".into())
-        })?;
-
-        match table {
-            // ── Mutable master data (LWW by updated_at) ──────────────────────
-            "categories" => {
-                self.apply_lww("categories", "category_id", obj, &[]).await
-            }
-            "tax_rules" => {
-                self.apply_lww("tax_rules", "tax_rule_id", obj, &[]).await
-            }
-            "products" => {
-                self.apply_lww("products", "product_id", obj, &[]).await
-            }
-            "devices" => {
-                // Handle device_code collision: soft-deactivate local stub so
-                // we don't orphan any references. Hard-DELETE would lose data.
-                if let (Some(device_id), Some(branch_id), Some(device_code)) = (
-                    obj.get("device_id").and_then(|v| v.as_str()),
-                    obj.get("branch_id").and_then(|v| v.as_str()),
-                    obj.get("device_code").and_then(|v| v.as_str()),
-                ) {
-                    let now = chrono::Utc::now().to_rfc3339();
-                    let _ = sqlx::query(
-                        "UPDATE devices SET is_active = 0, deleted_at = ? WHERE branch_id = ? AND device_code = ? AND device_id <> ?",
-                    )
-                    .bind(&now)
-                    .bind(branch_id)
-                    .bind(device_code)
-                    .bind(device_id)
-                    .execute(&self.pool)
-                    .await;
-                }
-                self.apply_lww("devices", "device_id", obj, &[]).await
-            }
-            "branches" => {
-                // branches lacks sync_status/sync_attempts; apply as LWW directly.
-                self.apply_lww("branches", "branch_id", obj, &[]).await
-            }
-            "shifts" => {
-                self.apply_lww("shifts", "shift_id", obj, &[]).await
-            }
-            "delivery_orders" => {
-                self.apply_lww("delivery_orders", "delivery_id", obj, &[]).await
-            }
-
-            // ── Users (LWW but exclude pin_hash) ─────────────────────────────
-            "users" => {
-                // Handle username collision: soft-deactivate local stub so
-                // FK references (refunds, sales, audit) survive. Hard-DELETE
-                // would orphan receipts and break refund lookups.
-                if let (Some(user_id), Some(username)) = (
-                    obj.get("user_id").and_then(|v| v.as_str()),
-                    obj.get("username").and_then(|v| v.as_str()),
-                ) {
-                    let now = chrono::Utc::now().to_rfc3339();
-                    let _ = sqlx::query(
-                        "UPDATE users SET is_active = 0, deleted_at = ? WHERE username = ? AND user_id <> ?",
-                    )
-                    .bind(&now)
-                    .bind(username)
-                    .bind(user_id)
-                    .execute(&self.pool)
-                    .await;
-                }
-
-                // Normalise the incoming row before any INSERT:
-                // 1. branch_id: NOT NULL locally but absent from central Supabase schema.
-                //    Provide fallback from the active branch so fresh INSERTs don't fail.
-                // 2. pin_hash: NOT NULL locally but absent/null in Supabase (local-only
-                //    secret). Use a sentinel that cannot match any real argon2id hash so
-                //    the row can be inserted for FK integrity without granting login access.
-                //    The ON CONFLICT path excludes pin_hash from SET so existing local
-                //    credentials are always preserved.
-                let mut obj_norm = obj.clone();
-
-                if !obj_norm.contains_key("branch_id") {
-                    let fallback_branch: Option<String> = sqlx::query_scalar(
-                        "SELECT branch_id FROM branches WHERE is_active=1 LIMIT 1",
-                    )
-                    .fetch_optional(&self.pool)
-                    .await
-                    .ok()
-                    .flatten();
-                    if let Some(b) = fallback_branch {
-                        obj_norm.insert("branch_id".to_string(), Value::String(b));
-                    }
-                }
-
-                if !obj_norm.contains_key("pin_hash")
-                    || obj_norm.get("pin_hash") == Some(&Value::Null)
-                {
-                    // Sentinel: valid UTF-8, not a real argon2id hash — cannot match any PIN.
-                    obj_norm.insert(
-                        "pin_hash".to_string(),
-                        Value::String("*REMOTE-ONLY*".to_string()),
-                    );
-                }
-
-                self.apply_lww("users", "user_id", &obj_norm, &["pin_hash"]).await
-            }
-
-            // ── Customers (LWW + loyalty_points GREATEST) ────────────────────
-            "customers" => {
-                self.apply_customer(obj).await
-            }
-
-            // ── Append-only (INSERT OR IGNORE) ──────────────────────────────
-            "sales" | "sale_items" | "payments" | "refunds"
-            | "refund_items" | "stock_movements" | "audit_logs"
-            | "product_prices" => {
-                self.apply_append_only(table, obj).await
-            }
-
-            // ── app_config (whitelisted keys only) ──────────────────────────
-            "app_config" => {
-                let key = obj.get("key").and_then(|v| v.as_str()).unwrap_or("");
-                if ALLOWED_CONFIG_KEYS.contains(&key) {
-                    let value = obj.get("value").and_then(|v| v.as_str()).unwrap_or("");
-                    let now = chrono::Utc::now().to_rfc3339();
-                    sqlx::query(
-                        "INSERT INTO app_config (key, value, updated_at) VALUES (?, ?, ?)
-                         ON CONFLICT(key) DO UPDATE SET
-                           value      = excluded.value,
-                           updated_at = excluded.updated_at",
-                    )
-                    .bind(key)
-                    .bind(value)
-                    .bind(&now)
-                    .execute(&self.pool)
-                    .await?;
-                }
-                Ok(())
-            }
-
-            other => {
-                tracing::warn!("Sync v2: unknown table '{}', skipping apply", other);
-                Ok(())
-            }
-        }
-    }
-
-    /// Apply a last-write-wins row: INSERT ON CONFLICT(id) DO UPDATE SET ...
-    /// WHERE updated_at < excluded.updated_at
-    ///
-    /// `exclude_cols` lists columns to skip in the SET clause (e.g. pin_hash on users).
-    async fn apply_lww(
-        &self,
-        table: &str,
-        pk: &str,
-        obj: &serde_json::Map<String, Value>,
-        exclude_cols: &[&str],
-    ) -> AppResult<()> {
-        let cols: Vec<&String> = obj
-            .keys()
-            .filter(|k| {
-                *k != "sync_status" && *k != "sync_attempts"
-                    && !matches!(obj.get(*k), Some(Value::Null))
-            })
-            .collect();
-
-        if cols.is_empty() {
-            return Ok(());
-        }
-
-        // Build INSERT (col1, col2, ..., sync_status) VALUES (v1, v2, ..., 'synced')
-        let col_list = format!("{}, sync_status", cols.iter().map(|c| c.as_str()).collect::<Vec<_>>().join(", "));
-        let val_list = format!("{}, 'synced'", cols
-            .iter()
-            .map(|c| json_to_sql_literal(&obj[*c]))
-            .collect::<Vec<_>>()
-            .join(", "));
-
-        // Build SET clause: col = excluded.col, ...
-        let set_parts: Vec<String> = cols
-            .iter()
-            .filter(|c| **c != pk && !exclude_cols.contains(&c.as_str()))
-            .map(|c| format!("{} = excluded.{}", c, c))
-            .collect();
-
-        let set_clause = set_parts.join(", ");
-
-        let has_updated_at = obj.contains_key("updated_at");
-
-        // Always set sync_status = 'synced' on pulled rows so they aren't
-        // picked up as pending on the next push cycle.
-        let set_with_sync = if set_clause.is_empty() {
-            "sync_status = 'synced'".to_string()
-        } else {
-            format!("{}, sync_status = 'synced'", set_clause)
-        };
-
-        let sql = if has_updated_at && !set_with_sync.is_empty() {
-            format!(
-                "INSERT INTO {} ({}) VALUES ({})
-                 ON CONFLICT({}) DO UPDATE SET {}
-                 WHERE datetime({0}.updated_at) < datetime(excluded.updated_at)",
-                table, col_list, val_list, pk, set_with_sync,
-            )
-        } else {
-            format!(
-                "INSERT INTO {} ({}) VALUES ({})
-                 ON CONFLICT({}) DO UPDATE SET {}",
-                table, col_list, val_list, pk, set_with_sync,
-            )
-        };
-
-        sqlx::query(&sql).execute(&self.pool).await?;
-        Ok(())
-    }
-
-    /// Apply a customer row with LWW but GREATEST for loyalty_points.
-    async fn apply_customer(
-        &self,
-        obj: &serde_json::Map<String, Value>,
-    ) -> AppResult<()> {
-        let cols: Vec<&String> = obj
-            .keys()
-            .filter(|k| {
-                *k != "sync_status" && *k != "sync_attempts"
-                    && !matches!(obj.get(*k), Some(Value::Null))
-            })
-            .collect();
-
-        if cols.is_empty() {
-            return Ok(());
-        }
-
-        let col_list = cols.iter().map(|c| c.as_str()).collect::<Vec<_>>().join(", ");
-        let val_list = cols
-            .iter()
-            .map(|c| json_to_sql_literal(&obj[*c]))
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        // Build SET clause, with special handling for loyalty_points
-        let set_parts: Vec<String> = cols
-            .iter()
-            .filter(|c| **c != "customer_id")
-            .map(|c| {
-                if c.as_str() == "loyalty_points" {
-                    format!(
-                        "{} = MAX(customers.loyalty_points, excluded.loyalty_points)",
-                        c
-                    )
-                } else {
-                    format!("{} = excluded.{}", c, c)
-                }
-            })
-            .collect();
-
-        let set_clause = format!("{}, sync_status = 'synced'", set_parts.join(", "));
-
-        let has_updated_at = obj.contains_key("updated_at");
-
-        let sql = if has_updated_at && !set_clause.is_empty() {
-            format!(
-                "INSERT INTO customers ({}) VALUES ({})
-                 ON CONFLICT(customer_id) DO UPDATE SET {}
-                 WHERE datetime(customers.updated_at) < datetime(excluded.updated_at)",
-                col_list, val_list, set_clause,
-            )
-        } else {
-            format!(
-                "INSERT INTO customers ({}) VALUES ({})
-                 ON CONFLICT(customer_id) DO UPDATE SET {}",
-                col_list, val_list, set_clause,
-            )
-        };
-
-        sqlx::query(&sql).execute(&self.pool).await?;
-        Ok(())
-    }
-
-    /// Apply an append-only row: INSERT OR IGNORE.
-    async fn apply_append_only(
-        &self,
-        table: &str,
-        obj: &serde_json::Map<String, Value>,
-    ) -> AppResult<()> {
-        let cols: Vec<&String> = obj
-            .keys()
-            .filter(|k| {
-                *k != "sync_status" && *k != "sync_attempts"
-                    && !matches!(obj.get(*k), Some(Value::Null))
-            })
-            .collect();
-
-        if cols.is_empty() {
-            return Ok(());
-        }
-
-        let col_list = cols.iter().map(|c| c.as_str()).collect::<Vec<_>>().join(", ");
-        let val_list = cols
-            .iter()
-            .map(|c| json_to_sql_literal(&obj[*c]))
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        // Pulled rows are already on Supabase — mark them synced so they
-        // aren't pushed back on the next cycle.
-        let sql = format!(
-            "INSERT OR IGNORE INTO {} ({}, sync_status) VALUES ({}, 'synced')",
-            table, col_list, val_list,
-        );
-
-        sqlx::query(&sql).execute(&self.pool).await?;
-
-        // For stock_movements: recompute stock_levels after applying
-        if table == "stock_movements" {
-            if let (Some(product_id), Some(branch_id), Some(created_at)) = (
-                obj.get("product_id").and_then(|v| v.as_str()),
-                obj.get("branch_id").and_then(|v| v.as_str()),
-                obj.get("created_at").and_then(|v| v.as_str()),
-            ) {
-                let _ = recompute_stock_level(
-                    &self.pool,
-                    product_id,
-                    branch_id,
-                    created_at,
-                )
-                .await;
-            }
-        }
-
-        Ok(())
     }
 
     // ── Watermark helpers ─────────────────────────────────────────────────────
@@ -882,6 +658,19 @@ impl SyncWorker {
     // ── Active device ─────────────────────────────────────────────────────────
 
     async fn active_device_id(&self) -> AppResult<String> {
+        // Prefer the identity key written during setup — guaranteed to be THIS terminal's
+        // device_id regardless of how many other devices sync into the local `devices` table.
+        // ORDER BY device_code falls back for terminals set up before this key was introduced.
+        if let Ok(Some(id)) = sqlx::query_scalar::<_, String>(
+            "SELECT value FROM app_config WHERE key = 'device_id'",
+        )
+        .fetch_optional(&self.pool)
+        .await
+        {
+            if !id.is_empty() {
+                return Ok(id);
+            }
+        }
         let row = sqlx::query(
             "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1",
         )
@@ -1006,222 +795,5 @@ impl SyncWorker {
         tracing::info!(
             "DB prune v2 complete — sales cutoff: {sales_cutoff}, log cutoff: {log_cutoff}"
         );
-    }
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
-/// Whether a table has an `origin_device_id` column on Supabase.
-/// Pull queries add a `neq` filter for tables that have this column.
-fn has_origin_device_id(table: &str) -> bool {
-    matches!(
-        table,
-        "shifts"
-            | "sales"
-            | "sale_items"
-            | "payments"
-            | "refunds"
-            | "refund_items"
-            | "stock_movements"
-            | "audit_logs"
-            | "delivery_orders"
-    )
-}
-
-/// Return the primary key column name for a table.
-fn pk_for_table(table: &str) -> &str {
-    match table {
-        "categories" => "category_id",
-        "tax_rules" => "tax_rule_id",
-        "products" => "product_id",
-        "devices" => "device_id",
-        "customers" => "customer_id",
-        "shifts" => "shift_id",
-        "sales" => "sale_id",
-        "sale_items" => "sale_item_id",
-        "payments" => "payment_id",
-        "refunds" => "refund_id",
-        "refund_items" => "refund_item_id",
-        "stock_movements" => "movement_id",
-        "audit_logs" => "audit_log_id",
-        "delivery_orders" => "delivery_id",
-        "product_prices" => "price_id",
-        "users" => "user_id",
-        _ => "id",
-    }
-}
-
-/// Returns true if a column is local-only and must not be included
-/// in JSON payloads sent to the central Supabase schema.
-fn should_skip_column(table: &str, col_name: &str) -> bool {
-    // Global: never sync these to central
-    if col_name == "sync_status" || col_name == "sync_attempts" || col_name == "pin_hash" || col_name == "deleted_at" {
-        return true;
-    }
-    match (table, col_name) {
-        ("users", "failed_pin_attempts" | "locked_until" | "last_login_at") => true,
-        ("devices", "next_receipt_seq" | "last_seen_at" | "version") => true,
-        ("customers", "origin_device_id" | "version") => true,
-        ("shifts", "expected_cash_minor" | "cash_difference_minor" | "business_date" | "created_at" | "version") => true,
-        ("audit_logs", "override_used") => true,
-        _ => false,
-    }
-}
-
-/// Extract a typed value from a sqlx Row column by name.
-/// Returns Value::Null for missing or null columns.
-fn value_from_row_column(row: &sqlx::sqlite::SqliteRow, col: &str) -> Value {
-    // Try nullable integer first — empty/NULL → Value::Null
-    if let Ok(v) = row.try_get::<Option<i64>, _>(col) {
-        return match v {
-            Some(n) => Value::Number(n.into()),
-            None => Value::Null,
-        };
-    }
-    if let Ok(v) = row.try_get::<Option<f64>, _>(col) {
-        return match v {
-            Some(n) => {
-                if let Some(num) = serde_json::Number::from_f64(n) {
-                    Value::Number(num)
-                } else {
-                    Value::Null
-                }
-            }
-            None => Value::Null,
-        };
-    }
-    // Try non-nullable int/float fallback
-    if let Ok(v) = row.try_get::<i64, _>(col) {
-        return Value::Number(v.into());
-    }
-    if let Ok(v) = row.try_get::<f64, _>(col) {
-        if let Some(n) = serde_json::Number::from_f64(v) {
-            return Value::Number(n);
-        }
-    }
-    // Strings last — but convert empty to null (Supabase BIGINT rejects "")
-    if let Ok(v) = row.try_get::<Option<String>, _>(col) {
-        return match v {
-            Some(s) if !s.is_empty() => Value::String(s),
-            _ => Value::Null,
-        };
-    }
-    if let Ok(v) = row.try_get::<String, _>(col) {
-        if v.is_empty() {
-            return Value::Null;
-        }
-        return Value::String(v);
-    }
-    Value::Null
-}
-
-/// Convert a serde_json Value to a SQLite-safe literal string for embedding in SQL.
-fn json_to_sql_literal(v: &Value) -> String {
-    match v {
-        Value::Null => "NULL".to_string(),
-        Value::Bool(b) => (if *b { "1" } else { "0" }).to_string(),
-        Value::Number(n) => n.to_string(),
-        Value::String(s) => format!("'{}'", s.replace('\'', "''")),
-        Value::Array(_) | Value::Object(_) => {
-            let s = serde_json::to_string(v).unwrap_or_default();
-            format!("'{}'", s.replace('\'', "''"))
-        }
-    }
-}
-
-/// Recompute stock_levels quantity_on_hand from the stock_movements ledger
-/// for a given (product, branch). Called after applying a remote movement.
-async fn recompute_stock_level(
-    pool: &SqlitePool,
-    product_id: &str,
-    branch_id: &str,
-    applied_at: &str,
-) -> AppResult<()> {
-    let ledger_sum: Option<f64> = sqlx::query_scalar(
-        "SELECT CAST(COALESCE(SUM(CAST(quantity_delta AS REAL)), 0) AS REAL)
-         FROM stock_movements
-         WHERE product_id = ? AND branch_id = ?",
-    )
-    .bind(product_id)
-    .bind(branch_id)
-    .fetch_one(pool)
-    .await?;
-
-    let ledger = ledger_sum.unwrap_or(0.0);
-
-    let stock_level_id = format!("SL-{}-{}", product_id, branch_id);
-    let qty_str = format!("{:.3}", ledger)
-        .trim_end_matches('0')
-        .trim_end_matches('.')
-        .to_string();
-
-    sqlx::query(
-        "INSERT INTO stock_levels
-            (stock_level_id, product_id, branch_id, quantity_on_hand, last_movement_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(product_id, branch_id) DO UPDATE SET
-            quantity_on_hand = excluded.quantity_on_hand,
-            last_movement_at = excluded.last_movement_at,
-            updated_at       = excluded.updated_at",
-    )
-    .bind(&stock_level_id)
-    .bind(product_id)
-    .bind(branch_id)
-    .bind(&qty_str)
-    .bind(applied_at)
-    .bind(applied_at)
-    .bind(applied_at)
-    .execute(pool)
-    .await?;
-
-    // Drift detection
-    let cached: Option<f64> = sqlx::query_scalar(
-        "SELECT CAST(quantity_on_hand AS REAL) FROM stock_levels
-         WHERE product_id = ? AND branch_id = ?",
-    )
-    .bind(product_id)
-    .bind(branch_id)
-    .fetch_optional(pool)
-    .await?
-    .flatten();
-
-    if let Some(c) = cached {
-        if (ledger - c).abs() > STOCK_DRIFT_TOLERANCE {
-            tracing::warn!(
-                "stock drift: product={product_id} branch={branch_id} ledger={ledger} cached={c}"
-            );
-        }
-    }
-
-    Ok(())
-}
-
-// ── Tests ──────────────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_json_to_sql_literal() {
-        assert_eq!(json_to_sql_literal(&Value::Null), "NULL");
-        assert_eq!(json_to_sql_literal(&Value::Bool(true)), "1");
-        assert_eq!(json_to_sql_literal(&Value::Bool(false)), "0");
-        assert_eq!(json_to_sql_literal(&serde_json::json!(42)), "42");
-        assert_eq!(
-            json_to_sql_literal(&Value::String("hello".into())),
-            "'hello'"
-        );
-        assert_eq!(
-            json_to_sql_literal(&Value::String("it's".into())),
-            "'it''s'"
-        );
-    }
-
-    #[test]
-    fn test_pk_for_table() {
-        assert_eq!(pk_for_table("products"), "product_id");
-        assert_eq!(pk_for_table("sales"), "sale_id");
-        assert_eq!(pk_for_table("unknown"), "id");
     }
 }

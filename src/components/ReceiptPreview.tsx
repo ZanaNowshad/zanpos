@@ -9,9 +9,10 @@ interface Props {
   sale: SaleResult;
   onNewSale: () => void;
   isReprint?: boolean;
+  userId: string;
 }
 
-export default function ReceiptPreview({ sale, onNewSale, isReprint = false }: Props) {
+export default function ReceiptPreview({ sale, onNewSale, isReprint = false, userId }: Props) {
   const [settings, setSettings]       = useState<BranchSettings | null>(null);
   const [thermalEnabled, setThermalEnabled] = useState(false);
   const [printing, setPrinting]       = useState(false);
@@ -19,8 +20,8 @@ export default function ReceiptPreview({ sale, onNewSale, isReprint = false }: P
 
   useEffect(() => {
     let cancelled = false;
-    settingsGetBranch().then(data => { if (!cancelled) setSettings(data); }).catch(() => {});
-    thermalGetConfig().then(c => { if (!cancelled) setThermalEnabled(c.enabled); }).catch(() => {});
+    settingsGetBranch(userId).then(data => { if (!cancelled) setSettings(data); }).catch(() => {});
+    thermalGetConfig(userId).then(c => { if (!cancelled) setThermalEnabled(c.enabled); }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
 
@@ -30,7 +31,7 @@ export default function ReceiptPreview({ sale, onNewSale, isReprint = false }: P
     setPrinting(true);
     setPrintMsg(null);
     try {
-      const msg = await printReceiptRaw(sale.branch_name, buildReceiptLines(sale, settings, isReprint));
+      const msg = await printReceiptRaw(userId, sale.branch_name, buildReceiptLines(sale, settings, isReprint));
       setPrintMsg(msg);
     } catch (e: unknown) {
       setPrintMsg(typeof e === "string" ? e : "Print failed");

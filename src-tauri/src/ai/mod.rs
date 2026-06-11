@@ -3,3 +3,5 @@ pub mod openai_client;
 pub mod provider;
 pub mod streaming;
 pub mod tools;
+pub mod tools_read_ext;
+pub mod tools_write_ext;

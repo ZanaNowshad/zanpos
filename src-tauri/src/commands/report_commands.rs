@@ -239,12 +239,15 @@ pub async fn report_sales_list(
     // M13: COUNT must use identical JOINs/WHERE as the data query to avoid
     // pagination totals diverging from actual row counts. Use LEFT JOIN users
     // in both to count even if the cashier account was later deleted.
+    // FIX: exclude voided sales from count — data query also excludes them implicitly
+    // (voided show in list but are filtered by status). Count must match displayed rows.
     let total: i64 = sqlx::query_scalar(
         "SELECT COUNT(DISTINCT s.sale_id)
          FROM sales s
          LEFT JOIN users u ON u.user_id = s.cashier_user_id
          WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
-           AND (? = 'all' OR s.origin_device_id = ?)",
+           AND (? = 'all' OR s.origin_device_id = ?)
+           AND s.status != 'voided'",
     )
     .bind(&branch_id)
     .bind(&from_date)
@@ -264,6 +267,7 @@ pub async fn report_sales_list(
          LEFT JOIN payments p ON p.sale_id = s.sale_id
          WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
            AND (? = 'all' OR s.origin_device_id = ?)
+           AND s.status != 'voided'
          GROUP BY s.sale_id
          ORDER BY s.sold_at DESC
          LIMIT ? OFFSET ?",
@@ -410,6 +414,19 @@ pub async fn report_by_cashier(
 
 // ─── End-of-day cash-up report ────────────────────────────────────────────────
 
+/// Per-tax-rule breakdown row for Z/EOD reports (BUG-3).
+#[derive(Debug, Serialize)]
+pub struct TaxBreakdownRow {
+    /// e.g. "VAT 10%" or "Zero-rated"
+    pub tax_rule_name: String,
+    /// Basis points (1000 = 10 %)
+    pub rate_basis_points: i64,
+    /// Net taxable sales amount for this rule (minor units)
+    pub net_sales_minor: i64,
+    /// Tax collected for this rule (minor units)
+    pub tax_collected_minor: i64,
+}
+
 #[derive(Debug, Serialize)]
 pub struct EodShiftRow {
     pub shift_id: String,
@@ -417,6 +434,7 @@ pub struct EodShiftRow {
     pub opened_at: String,
     pub closed_at: Option<String>,
     pub opening_minor: i64,
+    // ── Cash drawer ──────────────────────────────────────────────────────────
     pub cash_sales_minor: i64,
     pub safe_drop_minor: i64,
     pub paid_in_minor: i64,
@@ -424,7 +442,17 @@ pub struct EodShiftRow {
     pub expected_minor: i64,
     pub counted_minor: Option<i64>,
     pub variance_minor: Option<i64>,
+    // ── Sales totals (BUG-3: all payment methods + gross/discount/refund) ───
+    pub gross_sales_minor: i64,
+    pub discount_total_minor: i64,
     pub net_sales_minor: i64,
+    /// All non-cash, non-card payment methods (wallet, other) combined.
+    pub card_sales_minor: i64,
+    pub other_sales_minor: i64,
+    pub refund_count: i64,
+    pub refund_total_minor: i64,
+    // ── Tax breakdown per rule (BUG-3) ────────────────────────────────────
+    pub tax_by_rule: Vec<TaxBreakdownRow>,
 }
 
 #[derive(Debug, Serialize)]
@@ -433,6 +461,11 @@ pub struct EodCashupReport {
     pub shifts: Vec<EodShiftRow>,
     pub total_net_minor: i64,
     pub total_cash_minor: i64,
+    pub total_card_minor: i64,
+    pub total_other_minor: i64,
+    pub total_gross_minor: i64,
+    pub total_discount_minor: i64,
+    pub total_refund_minor: i64,
     pub total_counted_minor: Option<i64>,
     pub total_variance_minor: Option<i64>,
 }
@@ -471,6 +504,11 @@ pub(crate) async fn report_eod_cashup_inner(
     let mut rows: Vec<EodShiftRow> = Vec::new();
     let mut total_net: i64 = 0;
     let mut total_cash: i64 = 0;
+    let mut total_card: i64 = 0;
+    let mut total_other: i64 = 0;
+    let mut total_gross: i64 = 0;
+    let mut total_discount: i64 = 0;
+    let mut total_refund: i64 = 0;
     let mut total_counted: Option<i64> = Some(0);
     let mut all_counted = true;
 
@@ -479,18 +517,13 @@ pub(crate) async fn report_eod_cashup_inner(
         let opening: i64 = sh.get("opening_cash_minor");
         let counted: Option<i64> = sh.get("counted_cash_minor");
 
-        let net_sales: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(s.net_total_minor),0) FROM sales s
+        // Sales totals: gross, discount, net (paid deliveries only)
+        let sales_totals_row = sqlx::query(
+            "SELECT COALESCE(SUM(s.gross_total_minor),0)    AS gross,
+                    COALESCE(SUM(s.discount_total_minor),0) AS discount,
+                    COALESCE(SUM(s.net_total_minor),0)      AS net
+             FROM sales s
              WHERE s.shift_id=? AND s.status!='voided'
-               AND (s.is_delivery = 0 OR EXISTS (
-                   SELECT 1 FROM delivery_orders d WHERE d.sale_id = s.sale_id AND d.payment_status = 'paid'
-               ))",
-        ).bind(&shift_id).fetch_one(pool).await?;
-
-        let cash_sales: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(p.amount_minor),0) FROM payments p
-             JOIN sales s ON s.sale_id=p.sale_id
-             WHERE s.shift_id=? AND p.payment_method='cash' AND s.status!='voided'
                AND (s.is_delivery = 0 OR EXISTS (
                    SELECT 1 FROM delivery_orders d WHERE d.sale_id = s.sale_id AND d.payment_status = 'paid'
                ))",
@@ -498,6 +531,39 @@ pub(crate) async fn report_eod_cashup_inner(
         .bind(&shift_id)
         .fetch_one(pool)
         .await?;
+        let gross_sales: i64 = sales_totals_row.get("gross");
+        let discount_total: i64 = sales_totals_row.get("discount");
+        let net_sales: i64 = sales_totals_row.get("net");
+
+        // BUG-3: All payment methods — query dynamically, then split into
+        // cash / card / other so the struct stays typed and frontend-friendly.
+        let payment_rows = sqlx::query(
+            "SELECT p.payment_method,
+                    COALESCE(SUM(p.amount_minor),0) AS total
+             FROM payments p
+             JOIN sales s ON s.sale_id = p.sale_id
+             WHERE s.shift_id=? AND s.status!='voided'
+               AND (s.is_delivery = 0 OR EXISTS (
+                   SELECT 1 FROM delivery_orders d WHERE d.sale_id = s.sale_id AND d.payment_status = 'paid'
+               ))
+             GROUP BY p.payment_method",
+        )
+        .bind(&shift_id)
+        .fetch_all(pool)
+        .await?;
+
+        let mut cash_sales: i64 = 0;
+        let mut card_sales: i64 = 0;
+        let mut other_sales: i64 = 0;
+        for pr in &payment_rows {
+            let method: String = pr.get("payment_method");
+            let total: i64 = pr.get("total");
+            match method.as_str() {
+                "cash"  => cash_sales  += total,
+                "card"  => card_sales  += total,
+                _       => other_sales += total,
+            }
+        }
 
         let safe_drop: i64 = sqlx::query_scalar(
             "SELECT COALESCE(SUM(amount_minor),0) FROM cash_events WHERE shift_id=? AND event_type='safe_drop'"
@@ -511,12 +577,25 @@ pub(crate) async fn report_eod_cashup_inner(
             "SELECT COALESCE(SUM(amount_minor),0) FROM cash_events WHERE shift_id=? AND event_type='paid_out'"
         ).bind(&shift_id).fetch_one(pool).await?;
 
-        // Only deduct refunds that were paid in cash — card refunds don't reduce
-        // the physical cash in the drawer.
+        // BUG-REPORTS-3: Only deduct the cash portion of refunds.
+        // Using EXISTS (cash payment) overcounted for split-payment sales — the full
+        // refund was deducted from the cash drawer even when only part was cash.
+        // Fix: proportionally scale refund_total by (cash_paid / sale_total), capped
+        // at sale_total to avoid over-counting change given back on pure-cash sales.
         let cash_refunds: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(r.refund_total_minor),0) FROM refunds r
-             JOIN sales s ON s.sale_id=r.original_sale_id
-             WHERE s.shift_id=?
+            "SELECT COALESCE(SUM(
+                 CASE WHEN s.net_total_minor <= 0 THEN 0
+                 ELSE MIN(
+                     (SELECT COALESCE(SUM(p2.amount_minor),0)
+                      FROM payments p2
+                      WHERE p2.sale_id = s.sale_id AND p2.payment_method = 'cash'),
+                     s.net_total_minor
+                 ) * r.refund_total_minor / s.net_total_minor
+                 END
+             ), 0)
+             FROM refunds r
+             JOIN sales s ON s.sale_id = r.original_sale_id
+             WHERE s.shift_id = ?
                AND EXISTS (
                    SELECT 1 FROM payments p
                    WHERE p.sale_id = s.sale_id AND p.payment_method = 'cash'
@@ -526,11 +605,62 @@ pub(crate) async fn report_eod_cashup_inner(
         .fetch_one(pool)
         .await?;
 
+        // BUG-3: Total refunds for the shift (all methods)
+        let refund_row = sqlx::query(
+            "SELECT COUNT(r.refund_id) AS cnt,
+                    COALESCE(SUM(r.refund_total_minor),0) AS total
+             FROM refunds r
+             JOIN sales s ON s.sale_id = r.original_sale_id
+             WHERE s.shift_id = ?",
+        )
+        .bind(&shift_id)
+        .fetch_one(pool)
+        .await?;
+        let refund_count: i64 = refund_row.get("cnt");
+        let refund_total: i64 = refund_row.get("total");
+
+        // BUG-3: Tax breakdown per tax rule for this shift.
+        // Groups sale_items by their embedded tax_rule snapshot; joins tax_rules
+        // for the canonical name and rate. Falls back to snapshot values so
+        // historic data (pre-rule-rename) is still reported correctly.
+        let tax_rows = sqlx::query(
+            "SELECT COALESCE(t.name, json_extract(si.tax_rule_snapshot,'$.name'), 'Unknown') AS rule_name,
+                    COALESCE(t.rate_basis_points,
+                             CAST(json_extract(si.tax_rule_snapshot,'$.rate_basis_points') AS INTEGER),
+                             0) AS rate_bp,
+                    COALESCE(SUM(si.line_total_minor - si.tax_amount_minor), 0) AS taxable_net,
+                    COALESCE(SUM(si.tax_amount_minor), 0) AS tax_collected
+             FROM sale_items si
+             JOIN sales s ON s.sale_id = si.sale_id
+             LEFT JOIN tax_rules t ON t.tax_rule_id = json_extract(si.tax_rule_snapshot,'$.tax_rule_id')
+             WHERE s.shift_id = ? AND s.status != 'voided' AND si.voided = 0
+             GROUP BY rule_name, rate_bp
+             ORDER BY rate_bp DESC",
+        )
+        .bind(&shift_id)
+        .fetch_all(pool)
+        .await?;
+
+        let tax_by_rule: Vec<TaxBreakdownRow> = tax_rows
+            .iter()
+            .map(|r| TaxBreakdownRow {
+                tax_rule_name: r.get("rule_name"),
+                rate_basis_points: r.get("rate_bp"),
+                net_sales_minor: r.get("taxable_net"),
+                tax_collected_minor: r.get("tax_collected"),
+            })
+            .collect();
+
         let expected = opening + cash_sales - cash_refunds + paid_in - paid_out - safe_drop;
         let variance = counted.map(|c| c - expected);
 
-        total_net += net_sales;
-        total_cash += cash_sales;
+        total_net     += net_sales;
+        total_cash    += cash_sales;
+        total_card    += card_sales;
+        total_other   += other_sales;
+        total_gross   += gross_sales;
+        total_discount += discount_total;
+        total_refund  += refund_total;
         if let Some(c) = counted {
             if let Some(ref mut tc) = total_counted {
                 *tc += c;
@@ -546,13 +676,20 @@ pub(crate) async fn report_eod_cashup_inner(
             closed_at: sh.get("closed_at"),
             opening_minor: opening,
             cash_sales_minor: cash_sales,
+            card_sales_minor: card_sales,
+            other_sales_minor: other_sales,
+            gross_sales_minor: gross_sales,
+            discount_total_minor: discount_total,
+            net_sales_minor: net_sales,
+            refund_count,
+            refund_total_minor: refund_total,
             safe_drop_minor: safe_drop,
             paid_in_minor: paid_in,
             paid_out_minor: paid_out,
             expected_minor: expected,
             counted_minor: counted,
             variance_minor: variance,
-            net_sales_minor: net_sales,
+            tax_by_rule,
         });
     }
 
@@ -570,6 +707,11 @@ pub(crate) async fn report_eod_cashup_inner(
         shifts: rows,
         total_net_minor: total_net,
         total_cash_minor: total_cash,
+        total_card_minor: total_card,
+        total_other_minor: total_other,
+        total_gross_minor: total_gross,
+        total_discount_minor: total_discount,
+        total_refund_minor: total_refund,
         total_counted_minor: total_counted,
         total_variance_minor,
     })
@@ -590,12 +732,14 @@ pub async fn report_eod_cashup(
 /// Z-report: end-of-day cash-up summary with audit trail.
 /// Wraps the EOD cashup logic and records a Z_REPORT_ISSUED audit entry
 /// so every Z-report issuance is tamper-evident and traceable.
+/// Requires manager or owner role — the Z-report is a sensitive financial summary.
 #[tauri::command]
 pub async fn report_z_report(
     date: String,
     actor_user_id: String,
     state: State<'_, AppState>,
 ) -> Result<EodCashupReport, AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     // Resolve active branch — Z-report always targets the current store.
     let branch_id: String = sqlx::query_scalar(
         "SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1",
@@ -638,7 +782,11 @@ pub async fn report_z_report(
 // ─── Integrity check ──────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn db_integrity_check(state: State<'_, AppState>) -> Result<String, AppError> {
+pub async fn db_integrity_check(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let result: String = sqlx::query_scalar("PRAGMA integrity_check")
         .fetch_one(&state.db)
         .await?;
@@ -659,7 +807,11 @@ pub struct ReportsConfig {
 }
 
 #[tauri::command]
-pub async fn reports_config_load(state: State<'_, AppState>) -> Result<ReportsConfig, AppError> {
+pub async fn reports_config_load(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> Result<ReportsConfig, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     let (scope, local_device_id) = report_scope(&state.db).await;
     let device_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM devices WHERE is_active = 1",

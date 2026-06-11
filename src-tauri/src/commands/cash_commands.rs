@@ -105,20 +105,48 @@ pub async fn cash_event_create(
 
     let mut tx = state.db.begin().await?;
 
+    // BUG-6: Reject cash events on a closed shift.
+    // A cash event on a closed shift would corrupt the closing balance that was
+    // already computed and stored in expected_cash_minor at close time.
+    // Status check is INSIDE the tx so no other connection can commit a close
+    // between the check and the INSERT (single-connection WAL write lock).
+    let shift_status: Option<String> =
+        sqlx::query_scalar("SELECT status FROM shifts WHERE shift_id = ?")
+            .bind(&shift_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    match shift_status.as_deref() {
+        Some("open") => {}
+        Some(_) => {
+            return Err(AppError::Conflict(
+                "Cannot add cash event to a closed shift".into(),
+            ))
+        }
+        None => {
+            return Err(AppError::NotFound(format!(
+                "Shift {} not found",
+                shift_id
+            )))
+        }
+    }
+
     sqlx::query(
         "INSERT INTO cash_events
-           (cash_event_id, shift_id, branch_id, device_id, event_type,
-            amount_minor, note, created_by_user_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+           (cash_event_id, shift_id, branch_id, device_id, origin_device_id, event_type,
+            amount_minor, note, created_by_user_id, created_at, updated_at,
+            sync_status, sync_attempts)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0)",
     )
     .bind(&cash_event_id)
     .bind(&shift_id)
     .bind(&branch_id)
     .bind(&device_id)
+    .bind(&device_id)
     .bind(&event_type)
     .bind(amount_minor)
     .bind(note.as_deref())
     .bind(&created_by_user_id)
+    .bind(&now)
     .bind(&now)
     .execute(&mut *tx)
     .await?;
@@ -264,16 +292,23 @@ async fn drawer_summary_inner(
             .map_err(AppError::from)
         },
         async {
-            // Only deduct refunds where the original sale had a cash payment component.
+            // Only deduct the cash portion of refunds: proportionally scale
+            // refund_total by (cash_paid / sale_total) for split-payment sales.
+            // The old EXISTS-based approach overcounted (BUG-REPORTS-3 fix).
             sqlx::query_scalar::<_, i64>(
-                "SELECT COALESCE(SUM(r.refund_total_minor), 0)
+                "SELECT COALESCE(SUM(
+                    CASE WHEN s.net_total_minor <= 0 THEN 0
+                    ELSE MIN(
+                        (SELECT COALESCE(SUM(p2.amount_minor), 0)
+                         FROM payments p2
+                         WHERE p2.sale_id = s.sale_id AND p2.payment_method = 'cash'),
+                        s.net_total_minor
+                    ) * r.refund_total_minor / s.net_total_minor
+                    END
+                ), 0)
                  FROM refunds r
                  JOIN sales s ON s.sale_id = r.original_sale_id
-                 WHERE s.shift_id = ?
-                   AND EXISTS (
-                       SELECT 1 FROM payments p
-                       WHERE p.sale_id = s.sale_id AND p.payment_method = 'cash'
-                   )",
+                 WHERE s.shift_id = ?",
             )
             .bind(shift_id)
             .fetch_one(pool)

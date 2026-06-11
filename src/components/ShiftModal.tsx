@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CashDrawerSummary, SessionUser, Shift, TodaySummary } from "../types";
 import { DEVICE } from "../types";
-import { shiftOpen, shiftClose, reportToday, cashDrawerSummary, printReceiptRaw } from "../tauri/commands";
+import { shiftOpen, shiftClose, shiftGetActive, reportToday, cashDrawerSummary, printReceiptRaw } from "../tauri/commands";
 import { formatMoney, parseMoney } from "../money";
 
 // ─── Denomination sets (minor units) per currency ─────────────────────────────
@@ -63,6 +63,7 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [alreadyOpen, setAlreadyOpen] = useState(false);
   const [todaySummary, setTodaySummary] = useState<TodaySummary | null>(null);
   const [drawerSummary, setDrawerSummary] = useState<CashDrawerSummary | null>(null);
 
@@ -93,24 +94,41 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
     const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" });
     reportToday(user.user_id, DEVICE.branch_id, today)
       .then(data => { if (!cancelled) setTodaySummary(data); })
-      .catch(() => {}); // non-fatal
+      .catch((e: unknown) => { console.warn("Failed to load today's report for Z-report:", e); });
     if (shift) {
       cashDrawerSummary(user.user_id, shift.shift_id)
         .then(data => { if (!cancelled) setDrawerSummary(data); })
-        .catch(() => {}); // non-fatal
+        .catch((e: unknown) => { console.warn("Failed to load cash drawer summary:", e); });
     }
     return () => { cancelled = true; };
-  }, [mode, shift]);
+  }, [mode, shift, user.user_id]);
 
   const handleOpen = async () => {
     setLoading(true);
     setError(null);
+    setAlreadyOpen(false);
     try {
       const cashMinor = openingCash ? parseMoney(openingCash, DEVICE.currency_exponent) : 0;
       const opened = await shiftOpen(DEVICE.branch_id, DEVICE.device_id, user.user_id, cashMinor);
       onShiftOpened(opened);
     } catch (e: unknown) {
-      setError(typeof e === "string" ? e : "Failed to open shift");
+      const msg = typeof e === "string" ? e : "Failed to open shift";
+      setError(msg);
+      if (msg.toLowerCase().includes("already open")) setAlreadyOpen(true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResumeShift = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const active = await shiftGetActive(DEVICE.device_id, user.user_id);
+      if (active) { onShiftOpened(active); return; }
+      setError("Could not find the active shift. Please contact your manager.");
+    } catch (e: unknown) {
+      setError(typeof e === "string" ? e : "Failed to resume shift");
     } finally {
       setLoading(false);
     }
@@ -170,7 +188,7 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
     lines.push(" ");
 
     try {
-      await printReceiptRaw(DEVICE.branch_name, lines);
+      await printReceiptRaw(user.user_id, DEVICE.branch_name, lines);
     } catch {
       // Non-fatal — thermal printer may not be configured
     }
@@ -217,9 +235,15 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
                   Cancel
                 </button>
               )}
-              <button className="modal-btn-primary" onClick={handleOpen} disabled={loading}>
-                {loading ? "Opening…" : "Open Shift"}
-              </button>
+              {alreadyOpen ? (
+                <button className="modal-btn-primary" onClick={handleResumeShift} disabled={loading}>
+                  {loading ? "Resuming…" : "Resume Active Shift →"}
+                </button>
+              ) : (
+                <button className="modal-btn-primary" onClick={handleOpen} disabled={loading}>
+                  {loading ? "Opening…" : "Open Shift"}
+                </button>
+              )}
             </div>
           </>
         ) : (

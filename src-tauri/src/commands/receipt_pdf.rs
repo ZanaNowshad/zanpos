@@ -9,6 +9,8 @@ use std::io::BufWriter;
 pub struct ReceiptItemInput {
     pub product_name: String,
     pub quantity: String,
+    /// Reserved for per-item line-price display in future PDF receipts.
+    #[allow(dead_code)]
     pub unit_price_minor: i64,
     pub line_total_minor: i64,
 }

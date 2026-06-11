@@ -308,6 +308,8 @@ pub fn assistant_msg(text: impl Into<String>) -> OpenAIMessage {
     }
 }
 
+/// Reserved for OpenAI o-series reasoning models.
+#[allow(dead_code)]
 pub fn assistant_msg_with_reasoning(
     text: impl Into<String>,
     reasoning: Option<String>,

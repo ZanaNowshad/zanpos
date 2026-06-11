@@ -1,6 +1,6 @@
 use crate::errors::AppResult;
 use serde::Serialize;
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 
 #[derive(Debug, Serialize)]
 pub struct SyncStatus {

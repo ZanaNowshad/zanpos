@@ -1344,7 +1344,7 @@ pub async fn execute_read_tool(
                 "✗ not configured"
             };
             let last = status.last_successful_sync_at.as_deref().unwrap_or("never");
-            let mut lines = vec![
+            let lines = vec![
                 format!("Sync Status:"),
                 format!("  Hub (LAN sync):   {cloud}"),
                 format!("  Last sync:        {last}"),
@@ -3628,7 +3628,7 @@ pub async fn dry_run_mutation(
                 fields: vec![ToolPreviewField { label: "Product".into(), value: pname.unwrap_or_else(|| pid.to_string()) }] })
         }
         "add_loyalty_points" => {
-            let cid = input.get("customer_id").and_then(|v| v.as_str()).unwrap_or("");
+            let _cid = input.get("customer_id").and_then(|v| v.as_str()).unwrap_or("");
             let pts = input.get("points").and_then(|v| v.as_i64()).unwrap_or(0);
             Ok(ToolPreview { tool_name: tool_name.into(),
                 description: format!("Add {pts} loyalty points to customer"),

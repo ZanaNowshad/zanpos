@@ -81,7 +81,8 @@ pub async fn insert_audit_entry(
     ).await
 }
 
-/// Same as insert_audit_entry but allows setting override_used = 1 for manager-override events.
+/// Reserved for manager-override audit events. Not yet wired into the call path.
+#[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_audit_entry_override(
     pool: &SqlitePool,

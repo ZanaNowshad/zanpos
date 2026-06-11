@@ -17,6 +17,8 @@ use ulid::Ulid;
 
 // ── Internal: fetch or initialize stock level ─────────────────────────────────
 
+/// Reserved: fetch or initialize stock level. Not yet wired into the call path.
+#[allow(dead_code)]
 async fn get_qty(pool: &SqlitePool, product_id: &str, branch_id: &str) -> f64 {
     let qty: Option<String> = sqlx::query_scalar(
         "SELECT quantity_on_hand FROM stock_levels WHERE product_id = ? AND branch_id = ?",

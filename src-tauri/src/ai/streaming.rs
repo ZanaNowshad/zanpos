@@ -43,6 +43,7 @@ enum MsgContent {
 
 // ── SSE event variants we care about ─────────────────────────────────────────
 
+#[allow(dead_code)] // fields exist for Debug/Deserialize compatibility
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum SseEvent {
@@ -56,6 +57,7 @@ enum SseEvent {
     Error { error: Value },
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum SseBlock {
@@ -70,6 +72,7 @@ enum SseDelta {
     InputJsonDelta { partial_json: String },
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize, Debug)]
 struct MsgDeltaData {
     stop_reason: Option<String>,

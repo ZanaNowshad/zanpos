@@ -44,7 +44,7 @@
     "category": "Business",
     "copyright": "© 2025 ZANPOS. All rights reserved.",
     "shortDescription": "Offline-capable retail point-of-sale for Windows",
-    "longDescription": "ZANPOS is a modern, local-first point-of-sale system built for Windows. Designed for Bahraini and Gulf retail businesses with BHD currency support, thermal receipt printing, WhatsApp notifications, AI-powered business insights, and optional Supabase cloud sync.",
+    "longDescription": "ZANPOS is a modern, local-first point-of-sale system built for Windows. Designed for Bahraini and Gulf retail businesses with BHD currency support, thermal receipt printing, WhatsApp notifications, AI-powered business insights, and multi-terminal LAN sync.",
     "windows": {
       "digestAlgorithm": "sha256",
       "timestampUrl": "http://timestamp.digicert.com",

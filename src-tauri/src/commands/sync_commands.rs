@@ -1,8 +1,6 @@
 use crate::commands::rbac;
 use crate::db::repositories::ai_admin_repo;
 use crate::errors::{AppError, AppResult};
-use crate::sync::central_schema::CENTRAL_SCHEMA_SQL;
-use crate::sync::supabase_client::{extract_project_ref, SupabaseClient};
 use crate::AppState;
 use serde::Serialize;
 use sqlx::Row;
@@ -97,21 +95,23 @@ pub async fn sync_status(
     let device_id = active_device_id(&state).await?;
     let pending = count_pending(&state.db).await.unwrap_or(0);
 
-    // Check Supabase configuration (two-phase: OS keyring, then DB fallback)
-    let supabase_configured = {
-        let url: Option<String> =
-            sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'supabase_url'")
-                .fetch_optional(&state.db)
-                .await?
-                .flatten();
-        let key = crate::secure_store::get_secret("supabase_service_key")
-            .unwrap_or_default();
-        url.as_deref().is_some_and(|u| !u.is_empty()) && !key.is_empty()
-    };
-
-    // Online = Supabase is configured AND at least one cycle completed OR worker says so.
-    // Even before the first cycle, if Supabase is configured, we're ready to sync.
-    let online = worker_online || supabase_configured;
+    // Check hub configuration
+    let hub_mode: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM app_config WHERE key='hub_mode'")
+        .fetch_optional(&state.db)
+        .await?
+        .flatten();
+    let hub_url_raw: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM app_config WHERE key='hub_url'")
+        .fetch_optional(&state.db)
+        .await?
+        .flatten();
+    let hub_url = hub_url_raw.filter(|s: &String| !s.is_empty());
+    let is_hub = hub_mode.as_deref() == Some("1");
+    let configured = is_hub || (hub_url.is_some()
+        && crate::secure_store::get_secret("hub_store_token")
+            .is_some_and(|k| !k.is_empty()));
+    let online = is_hub || worker_online || configured;
 
     // Read last successful sync from watermark table
     let last_sync: Option<String> = sqlx::query_scalar(
@@ -129,7 +129,9 @@ pub async fn sync_status(
 
     Ok(serde_json::json!({
         "online": online,
-        "supabase_configured": supabase_configured,
+        "hub_configured": configured,
+        "mode": if is_hub {"hub"} else if hub_url.is_some() {"terminal"} else {"standalone"},
+        "hub_url": hub_url,
         "pending_events": pending,
         "last_successful_sync_at": last_sync,
         "days_since_last_sync": null,
@@ -154,7 +156,7 @@ pub async fn sync_trigger_now(
     } else if let Some(ref e) = worker_state.last_error {
         Ok(format!("Sync attempted — last error: {e}"))
     } else {
-        Ok("Sync not configured — enter Supabase credentials in settings".to_string())
+        Ok("Sync not configured — connect this terminal to the hub in Settings → Hub".to_string())
     }
 }
 
@@ -324,155 +326,6 @@ pub async fn sync_reset_stuck(
     }
 
     Ok(format!("Reset {total} stuck rows across all tables. Sync worker will pick them up on the next cycle."))
-}
-
-// ── admin_setup_supabase ──────────────────────────────────────────────────────
-
-#[tauri::command]
-pub async fn admin_setup_supabase(
-    state: State<'_, AppState>,
-    actor_user_id: Option<String>,
-    url: String,
-    service_key: String,
-    pat: String,
-) -> Result<(), AppError> {
-    // Two calling contexts:
-    // 1. Setup Wizard (pre-auth): actor_user_id is None — only allowed when setup_complete='0'.
-    // 2. Admin Panel re-migration (post-auth): actor_user_id is Some(id) — apply owner_only RBAC.
-    match actor_user_id.as_deref() {
-        Some(uid) if !uid.is_empty() => {
-            rbac::owner_only(&state.db, uid).await?;
-        }
-        _ => {
-            // Pre-auth call: only permitted during initial setup.
-            let setup_done: Option<String> = sqlx::query_scalar(
-                "SELECT value FROM app_config WHERE key = 'setup_complete'",
-            )
-            .fetch_optional(&state.db)
-            .await
-            .unwrap_or(None);
-            if setup_done.as_deref() == Some("1") {
-                return Err(AppError::Permission(
-                    "Setup is already complete. Please log in to update Supabase credentials.".into(),
-                ));
-            }
-        }
-    }
-    let url = url.trim().trim_end_matches('/').to_string();
-    if url.is_empty() {
-        return Err(AppError::Validation("Supabase URL is required".into()));
-    }
-    if service_key.is_empty() {
-        return Err(AppError::Validation("Service role key is required".into()));
-    }
-    if pat.is_empty() {
-        return Err(AppError::Validation("Personal access token is required".into()));
-    }
-
-    let client = SupabaseClient::new(url.clone(), service_key.clone());
-
-    client.validate().await.map_err(|_| {
-        AppError::Validation("Could not connect to Supabase — check the URL and service role key".into())
-    })?;
-
-    let project_ref = extract_project_ref(&url).ok_or_else(|| {
-        AppError::Validation("Invalid Supabase URL format (expected https://xyz.supabase.co)".into())
-    })?;
-
-    client
-        .migrate(&pat, &project_ref, CENTRAL_SCHEMA_SQL)
-        .await
-        .map_err(|e| {
-            let msg = e.to_string();
-            if msg.contains("rate-limited") || msg.contains("ThrottlerException") {
-                AppError::Validation("Supabase is rate-limiting the schema setup. Please wait 60 seconds and try again.".into())
-            } else {
-                AppError::Validation(format!("Schema migration failed: {e}"))
-            }
-        })?;
-
-    ai_admin_repo::set_config(&state.db, "supabase_url", &url).await?;
-    if crate::secure_store::set_secret("supabase_service_key", &service_key) {
-        let _ = ai_admin_repo::set_config(&state.db, "supabase_service_key", "").await;
-    } else {
-        tracing::error!("CRITICAL: Falling back to plaintext secret storage — OS credential store write failed for supabase_service_key. Setup aborted.");
-        return Err(AppError::Internal(
-            "Windows Credential Manager is unavailable. \
-             Cannot store the Supabase service key securely. \
-             Ensure the Credential Manager service is running and try again.".into(),
-        ));
-    }
-
-    let now = chrono::Utc::now().to_rfc3339();
-    sqlx::query(
-        "INSERT INTO app_config(key, value, updated_at) VALUES ('schema_migrated','1',?)
-         ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at",
-    )
-    .bind(&now)
-    .execute(&state.db)
-    .await
-    .ok();
-
-    tracing::info!("Supabase configured: {url}");
-
-    // Set all local data to pending so it pushes on next sync
-    for table in SYNC_TABLES {
-        let sql = format!("UPDATE {} SET sync_status = 'pending' WHERE sync_status = 'synced'", table);
-        let _ = sqlx::query(&sql).execute(&state.db).await;
-    }
-
-    let worker = state.sync_worker.clone();
-    tauri::async_runtime::spawn(async move { let _ = worker.run_once().await; });
-
-    Ok(())
-}
-
-// ── admin_setup_supabase_creds_only ──────────────────────────────────────────
-
-#[tauri::command]
-pub async fn admin_setup_supabase_creds_only(
-    state: State<'_, AppState>,
-    actor_user_id: String,
-    url: String,
-    service_key: String,
-) -> Result<(), AppError> {
-    rbac::owner_only(&state.db, &actor_user_id).await?;
-    let url = url.trim().trim_end_matches('/').to_string();
-    if url.is_empty() {
-        return Err(AppError::Validation("Supabase URL is required".into()));
-    }
-    if service_key.is_empty() {
-        return Err(AppError::Validation("Service role key is required".into()));
-    }
-
-    let client = SupabaseClient::new(url.clone(), service_key.clone());
-    client.validate().await.map_err(|_| {
-        AppError::Validation("Could not connect to Supabase — check the URL and service role key".into())
-    })?;
-
-    ai_admin_repo::set_config(&state.db, "supabase_url", &url).await?;
-    if crate::secure_store::set_secret("supabase_service_key", &service_key) {
-        let _ = ai_admin_repo::set_config(&state.db, "supabase_service_key", "").await;
-    } else {
-        tracing::error!("CRITICAL: Falling back to plaintext secret storage — OS credential store write failed for supabase_service_key. Credential update aborted.");
-        return Err(AppError::Internal(
-            "Windows Credential Manager is unavailable. \
-             Cannot store the Supabase service key securely. \
-             Ensure the Credential Manager service is running and try again.".into(),
-        ));
-    }
-
-    tracing::info!("Supabase credentials stored (no schema migration): {url}");
-
-    for table in SYNC_TABLES {
-        let sql = format!("UPDATE {} SET sync_status = 'pending' WHERE sync_status = 'synced'", table);
-        let _ = sqlx::query(&sql).execute(&state.db).await;
-    }
-
-    let worker = state.sync_worker.clone();
-    tauri::async_runtime::spawn(async move { let _ = worker.run_once().await; });
-
-    Ok(())
 }
 
 // ── sync_queue_list ───────────────────────────────────────────────────────────
@@ -660,8 +513,7 @@ pub struct SyncDiagTable {
 
 #[derive(Serialize)]
 pub struct SyncDiagnostics {
-    pub supabase_configured: bool,
-    pub can_load_client: bool,
+    pub hub_configured: bool,
     pub pending_events: i64,
     pub stuck_events: i64,
     pub last_sync_at: Option<String>,
@@ -681,13 +533,21 @@ pub async fn sync_diagnostics(
     let last_error = worker_state.last_error.clone();
     drop(worker_state);
 
-    let url: Option<String> =
-        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'supabase_url'")
-            .fetch_optional(&state.db)
-            .await?
-            .flatten();
-    let key = crate::secure_store::get_secret("supabase_service_key").unwrap_or_default();
-    let supabase_configured = url.as_deref().is_some_and(|u| !u.is_empty()) && !key.is_empty();
+    let hub_mode: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM app_config WHERE key='hub_mode'")
+        .fetch_optional(&state.db)
+        .await?
+        .flatten();
+    let hub_url_raw: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM app_config WHERE key='hub_url'")
+        .fetch_optional(&state.db)
+        .await?
+        .flatten();
+    let hub_url = hub_url_raw.filter(|s: &String| !s.is_empty());
+    let is_hub = hub_mode.as_deref() == Some("1");
+    let configured = is_hub || (hub_url.is_some()
+        && crate::secure_store::get_secret("hub_store_token")
+            .is_some_and(|k| !k.is_empty()));
 
     let last_sync: Option<String> = sqlx::query_scalar(
         "SELECT last_pushed_at FROM sync_watermark WHERE table_name = 'sales'",
@@ -747,8 +607,7 @@ pub async fn sync_diagnostics(
     tables.sort_by_key(|t| -(t.pending + t.stuck));
 
     Ok(SyncDiagnostics {
-        supabase_configured,
-        can_load_client: supabase_configured,
+        hub_configured: configured,
         pending_events: total_pending,
         stuck_events: total_stuck,
         last_sync_at: last_sync,
@@ -756,29 +615,4 @@ pub async fn sync_diagnostics(
         online,
         tables,
     })
-}
-
-// ── admin_get_supabase_status ─────────────────────────────────────────────────
-
-#[derive(Serialize)]
-pub struct SupabaseStatus {
-    pub configured: bool,
-    pub url: String,
-}
-
-#[tauri::command]
-pub async fn admin_get_supabase_status(
-    actor_user_id: String,
-    state: State<'_, AppState>,
-) -> Result<SupabaseStatus, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
-    let url = ai_admin_repo::get_config(&state.db, "supabase_url")
-        .await?
-        .unwrap_or_default();
-    let key = {
-        let from_os = crate::secure_store::get_secret("supabase_service_key").unwrap_or_default();
-        if !from_os.is_empty() { from_os }
-        else { ai_admin_repo::get_config(&state.db, "supabase_service_key").await.unwrap_or_default().unwrap_or_default() }
-    };
-    Ok(SupabaseStatus { configured: !url.is_empty() && !key.is_empty(), url })
 }

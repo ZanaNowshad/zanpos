@@ -12,11 +12,9 @@ use tauri::State;
 #[derive(Debug, Serialize, Clone)]
 pub struct AppConfig {
     pub setup_complete: bool,
-    /// True when Supabase URL + service key are persisted in app_config.
-    pub supabase_configured: bool,
-    /// ISO datetime when the 7-day cloud-setup grace period expires.
-    /// None = Supabase is configured (grace period not applicable).
-    pub cloud_grace_deadline: Option<String>,
+    /// "hub" | "terminal" | "standalone" — drives Settings/Hub UI + SyncChip.
+    pub hub_mode: String,
+    pub hub_url: Option<String>,
     pub branch_id: String,
     pub device_id: String,
     pub branch_name: String,
@@ -75,23 +73,20 @@ pub async fn app_config_load(state: State<'_, AppState>) -> Result<AppConfig, Ap
             .flatten();
     let setup_complete = setup_val.as_deref() == Some("1");
 
-    // Load Supabase configuration state
-    let sb_url: Option<String> =
-        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'supabase_url'")
+    // Load hub configuration state
+    let hub_flag: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'hub_mode'")
             .fetch_optional(&state.db)
             .await?
             .flatten();
-    let sb_key = crate::secure_store::get_secret("supabase_service_key");
-    let supabase_configured = sb_url.as_deref().is_some_and(|u| !u.is_empty())
-        && sb_key.as_deref().is_some_and(|k| !k.is_empty());
-
-    // Load cloud grace deadline (empty string → None)
-    let grace_raw: Option<String> =
-        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'cloud_grace_deadline'")
+    let hub_url_raw: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'hub_url'")
             .fetch_optional(&state.db)
             .await?
             .flatten();
-    let cloud_grace_deadline = grace_raw.filter(|s| !s.is_empty());
+    let hub_url = hub_url_raw.filter(|s: &String| !s.is_empty());
+    let hub_mode = if hub_flag.as_deref() == Some("1") { "hub" }
+                   else if hub_url.is_some() { "terminal" } else { "standalone" }.to_string();
 
     let wa_benefit: Option<String> =
         sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'whatsapp_benefit_number'")
@@ -112,8 +107,8 @@ pub async fn app_config_load(state: State<'_, AppState>) -> Result<AppConfig, Ap
 
     Ok(AppConfig {
         setup_complete,
-        supabase_configured,
-        cloud_grace_deadline,
+        hub_mode,
+        hub_url,
         branch_id: branch_row.get("branch_id"),
         device_id: device_row.get("device_id"),
         branch_name: branch_row.get("name"),
@@ -236,32 +231,6 @@ pub async fn setup_wizard_complete(
         None
     };
 
-    // Read Supabase config so we can validate BEFORE writing anything
-    let sb_url: Option<String> =
-        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'supabase_url'")
-            .fetch_optional(&state.db)
-            .await?
-            .flatten();
-    let supabase_configured = sb_url.as_deref().is_some_and(|u| !u.is_empty());
-
-    if supabase_configured {
-        // CRITICAL: Guard against New-Store completing without schema migration.
-        // NOTE: this check runs BEFORE writing anything so a failure here does not
-        // permanently leave the DB in a partial state (BUG-BACKEND-6 fix).
-        let schema_migrated: Option<String> =
-            sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'schema_migrated'")
-                .fetch_optional(&state.db)
-                .await?
-                .flatten();
-        if schema_migrated.as_deref() != Some("1") {
-            return Err(AppError::Permission(
-                "Supabase is configured but the schema migration did not complete. \
-                 Go back to the Cloud step and reconnect with a valid Personal Access Token."
-                    .into(),
-            ));
-        }
-    }
-
     // --- PHASE 2: single transaction for all local DB writes ---
     tracing::info!("setup_wizard_complete: starting atomic write transaction…");
     let mut tx = state.db.begin().await?;
@@ -318,29 +287,6 @@ pub async fn setup_wizard_complete(
         .bind(&pin_hash)
         .bind(&owner_role_id)
         .bind(&now)
-        .bind(&now)
-        .execute(&mut *tx)
-        .await?;
-    }
-
-    // Grace deadline / cloud config
-    if supabase_configured {
-        sqlx::query(
-            "INSERT INTO app_config(key, value, updated_at) VALUES ('cloud_grace_deadline','',?)
-             ON CONFLICT(key) DO UPDATE SET value='', updated_at=excluded.updated_at",
-        )
-        .bind(&now)
-        .execute(&mut *tx)
-        .await?;
-    } else {
-        let deadline = (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339();
-        sqlx::query(
-            "INSERT INTO app_config(key, value, updated_at) VALUES ('cloud_grace_deadline',?,?)
-             ON CONFLICT(key) DO UPDATE SET
-               value = CASE WHEN value = '' THEN excluded.value ELSE value END,
-               updated_at = excluded.updated_at",
-        )
-        .bind(&deadline)
         .bind(&now)
         .execute(&mut *tx)
         .await?;
@@ -410,50 +356,6 @@ pub async fn setup_wizard_complete(
 
     tx.commit().await?;
     tracing::info!("setup_wizard_complete: transaction committed");
-
-    // --- PHASE 3: post-commit async side-effects (network I/O) ---
-    if supabase_configured {
-        let sb_key: Option<String> = crate::secure_store::get_secret("supabase_service_key");
-        let branch_row = sqlx::query(
-            "SELECT branch_id, branch_code, name, currency, timezone,
-                    address, phone, receipt_header, receipt_footer, tax_number, cr_number,
-                    created_at
-             FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1",
-        )
-        .fetch_optional(&state.db)
-        .await?;
-
-        if let (Some(key), Some(br)) = (sb_key, branch_row) {
-            use crate::sync::supabase_client::SupabaseClient;
-            let client = SupabaseClient::new(sb_url.unwrap_or_default(), key);
-            let branch_json = serde_json::json!({
-                "branch_id":      br.get::<String, _>("branch_id"),
-                "branch_code":    br.get::<String, _>("branch_code"),
-                "name":           br.get::<String, _>("name"),
-                "currency":       br.get::<String, _>("currency"),
-                "timezone":       br.get::<String, _>("timezone"),
-                "address":        br.get::<Option<String>, _>("address"),
-                "phone":          br.get::<Option<String>, _>("phone"),
-                "receipt_header": br.get::<Option<String>, _>("receipt_header"),
-                "receipt_footer": br.get::<Option<String>, _>("receipt_footer"),
-                "tax_number":     br.get::<Option<String>, _>("tax_number"),
-                "cr_number":      br.get::<Option<String>, _>("cr_number"),
-                "is_active":      true,
-                "created_at":     br.get::<String, _>("created_at"),
-                "updated_at":     &now,
-            });
-            // Best-effort — don't fail setup if cloud upsert fails.
-            tauri::async_runtime::spawn(async move {
-                let _ = client.upsert_branch(&branch_json).await;
-            });
-        }
-
-        // Trigger initial sync so the cloud is notified of the newly configured store.
-        let worker = state.sync_worker.clone();
-        tauri::async_runtime::spawn(async move {
-            let _ = worker.run_once().await;
-        });
-    }
 
     // Return updated config with owner user_id so the frontend can
     // call RBAC-gated commands (CSV import, etc.) as the new owner.
@@ -555,337 +457,10 @@ pub async fn settings_update_branch(
     .execute(&state.db)
     .await?;
 
-    // Push updated branch record to Supabase so other terminals pick it up.
-    // Best-effort — don't fail the save if the cloud upsert errors.
-    {
-        let sb_url: Option<String> = sqlx::query_scalar(
-            "SELECT value FROM app_config WHERE key='supabase_url'",
-        )
-        .fetch_optional(&state.db).await.ok().flatten().flatten();
-        let sb_key = crate::secure_store::get_secret("supabase_service_key");
-
-        if let (Some(url), Some(key)) = (
-            sb_url.filter(|u| !u.is_empty()),
-            sb_key.filter(|k| !k.is_empty()),
-        ) {
-            use sqlx::Row as _;
-            let branch_row = sqlx::query(
-                "SELECT branch_id, branch_code, name, currency, timezone,
-                        address, phone, receipt_header, receipt_footer,
-                        tax_number, cr_number, created_at
-                 FROM branches WHERE is_active=1 ORDER BY created_at LIMIT 1",
-            )
-            .fetch_optional(&state.db).await.ok().flatten();
-
-            if let Some(br) = branch_row {
-                use crate::sync::supabase_client::SupabaseClient;
-                let client = SupabaseClient::new(url, key);
-                let branch_json = serde_json::json!({
-                    "branch_id":      br.get::<String, _>("branch_id"),
-                    "branch_code":    br.get::<String, _>("branch_code"),
-                    "name":           br.get::<String, _>("name"),
-                    "currency":       br.get::<String, _>("currency"),
-                    "timezone":       br.get::<String, _>("timezone"),
-                    "address":        br.get::<Option<String>, _>("address"),
-                    "phone":          br.get::<Option<String>, _>("phone"),
-                    "receipt_header": br.get::<Option<String>, _>("receipt_header"),
-                    "receipt_footer": br.get::<Option<String>, _>("receipt_footer"),
-                    "tax_number":     br.get::<Option<String>, _>("tax_number"),
-                    "cr_number":      br.get::<Option<String>, _>("cr_number"),
-                    "is_active":      true,
-                    "created_at":     br.get::<String, _>("created_at"),
-                    "updated_at":     &now,
-                });
-                let _ = client.upsert_branch(&branch_json).await;
-            }
-        }
-    }
-
     settings_get_branch(input.actor_user_id, state).await
 }
 
-// ─── Join existing store ──────────────────────────────────────────────────────
-
-#[derive(Deserialize)]
-pub struct JoinStoreInput {
-    pub supabase_url: String,
-    pub supabase_key: String,
-    pub device_name: String,
-    pub device_code: String,
-}
-
-/// Second terminal joining an already-provisioned store.
-/// 1. Validate Supabase credentials.
-/// 2. Pull the branch record from Supabase's `branches` table.
-/// 3. Update the local branch row with the central store data.
-/// 4. Register this device locally.
-/// 5. Persist Supabase credentials and mark setup complete.
-#[tauri::command]
-pub async fn setup_join_store(
-    input: JoinStoreInput,
-    state: State<'_, AppState>,
-) -> Result<AppConfig, AppError> {
-    // F-CRIT-02: Reject if setup has already been completed on this terminal.
-    // Prevents store reconfiguration attack (credential overwrite via IPC post-setup).
-    // Note: a legitimately unconfigured terminal will have setup_complete absent or '0'.
-    let already_done: Option<String> =
-        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'setup_complete'")
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten()
-            .flatten();
-    if already_done.as_deref() == Some("1") {
-        return Err(AppError::Permission(
-            "This terminal is already set up. To re-join, reset the app from Back Office → Devices.".into(),
-        ));
-    }
-
-    let url = input.supabase_url.trim().trim_end_matches('/').to_string();
-    if url.is_empty() {
-        return Err(AppError::Validation("Supabase URL is required".into()));
-    }
-    if input.supabase_key.is_empty() {
-        return Err(AppError::Validation("Service role key is required".into()));
-    }
-    let device_name = input.device_name.trim().to_string();
-    let device_code = input.device_code.trim().to_uppercase();
-    if device_name.is_empty() {
-        return Err(AppError::Validation("Device name is required".into()));
-    }
-    if device_code.is_empty() {
-        return Err(AppError::Validation("Device code is required".into()));
-    }
-    // Bug-Join-10: enforce a minimum length so single-char codes cannot be registered.
-    if device_code.len() < 2 {
-        return Err(AppError::Validation(
-            "Device code must be at least 2 characters".into(),
-        ));
-    }
-
-    use crate::sync::supabase_client::SupabaseClient;
-    let client = SupabaseClient::new(url.clone(), input.supabase_key.clone());
-
-    // Validate credentials
-    client.validate().await.map_err(|_| {
-        AppError::Validation(
-            "Could not connect to Supabase — check the URL and service role key".into(),
-        )
-    })?;
-
-    // Pull branch from central store registry
-    let branch_val = client
-        .pull_branch()
-        .await
-        .map_err(|e| AppError::Validation(format!("Failed to read store data: {e}")))?
-        .ok_or_else(|| {
-            AppError::Validation(
-                "No active store found in this Supabase project. \
-             If this is a new store, use 'New Store' setup instead."
-                    .into(),
-            )
-        })?;
-
-    let now = chrono::Utc::now().to_rfc3339();
-
-    // Update local branch with central data
-    let central_name: String = branch_val["name"].as_str().unwrap_or("").to_string();
-    let central_currency: String = branch_val["currency"].as_str().unwrap_or("BHD").to_string();
-    let central_timezone: String = branch_val["timezone"].as_str().unwrap_or("UTC").to_string();
-
-    if central_name.is_empty() {
-        return Err(AppError::Validation(
-            "Store data from Supabase is incomplete".into(),
-        ));
-    }
-
-    // Bug-Join-01: Wrap all local DB writes in an atomic transaction.
-    // A failure at any step rolls back entirely — terminal is never left half-configured.
-    let mut tx = state.db.begin().await?;
-
-    sqlx::query(
-        "UPDATE branches SET name=?, currency=?, timezone=?,
-           address=?, phone=?, receipt_header=?, receipt_footer=?, tax_number=?, cr_number=?,
-           updated_at=?
-         WHERE is_active=1",
-    )
-    .bind(&central_name)
-    .bind(&central_currency)
-    .bind(&central_timezone)
-    .bind(branch_val["address"].as_str())
-    .bind(branch_val["phone"].as_str())
-    .bind(branch_val["receipt_header"].as_str())
-    .bind(branch_val["receipt_footer"].as_str())
-    .bind(branch_val["tax_number"].as_str())
-    .bind(branch_val["cr_number"].as_str())
-    .bind(&now)
-    .execute(&mut *tx)
-    .await?;
-
-    // Register this terminal — use provided code, fall back to ULID-derived
-    let device_id = ulid::Ulid::new().to_string();
-    let branch_id: String =
-        sqlx::query_scalar("SELECT branch_id FROM branches WHERE is_active=1 LIMIT 1")
-            .fetch_one(&mut *tx)
-            .await?;
-
-    // Bug-Join-08: Delete ALL inactive devices (not just hardcoded seed IDs).
-    // Any row with is_active=0 is a safe cleanup candidate; active rows are real terminals.
-    sqlx::query("DELETE FROM devices WHERE is_active = 0")
-        .execute(&mut *tx)
-        .await?;
-
-    sqlx::query(
-        "INSERT OR REPLACE INTO devices (device_id, branch_id, device_code, name, status, is_active, created_at, updated_at)
-         VALUES (?,?,?,?,'online',1,?,?)"
-    )
-    .bind(&device_id)
-    .bind(&branch_id)
-    .bind(&device_code)
-    .bind(&device_name)
-    .bind(&now)
-    .bind(&now)
-    .execute(&mut *tx)
-    .await?;
-
-    // Persist this terminal's identity key — used by sync worker and RBAC to
-    // identify THIS device even after other terminals' records sync locally.
-    sqlx::query(
-        "INSERT INTO app_config(key, value, updated_at) VALUES ('device_id',?,?)
-         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-    )
-    .bind(&device_id)
-    .bind(&now)
-    .execute(&mut *tx)
-    .await?;
-
-    // Persist Supabase URL + clear grace deadline
-    sqlx::query(
-        "INSERT INTO app_config(key, value, updated_at) VALUES ('supabase_url',?,?)
-         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-    )
-    .bind(&url)
-    .bind(&now)
-    .execute(&mut *tx)
-    .await?;
-
-    sqlx::query(
-        "INSERT INTO app_config(key, value, updated_at) VALUES ('cloud_grace_deadline','',?)
-         ON CONFLICT(key) DO UPDATE SET value='', updated_at=excluded.updated_at",
-    )
-    .bind(&now)
-    .execute(&mut *tx)
-    .await?;
-
-    // Mark setup complete
-    sqlx::query(
-        "INSERT INTO app_config(key, value, updated_at) VALUES ('setup_complete','1',?)
-         ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at",
-    )
-    .bind(&now)
-    .execute(&mut *tx)
-    .await?;
-
-    // Commit all DB writes atomically before touching any external resource.
-    tx.commit().await?;
-
-    // Post-commit: write service key to OS credential store.
-    // Runs after commit so a keyring failure does not roll back the completed join.
-    // A keyring failure is a hard error — we REFUSE to store the key in plaintext SQLite.
-    if crate::secure_store::set_secret("supabase_service_key", &input.supabase_key) {
-        // Key is safely in OS credential store — clear any stale plaintext entry.
-        let _ = ai_admin_repo::set_config(&state.db, "supabase_service_key", "").await;
-    } else {
-        tracing::error!("CRITICAL: Falling back to plaintext secret storage — OS credential store write failed for supabase_service_key. Join aborted.");
-        return Err(AppError::Internal(
-            "Windows Credential Manager is unavailable. \
-             Cannot store the Supabase service key securely. \
-             Ensure the Credential Manager service is running and try again.".into(),
-        ));
-    }
-    // Sync supabase_url to AI admin config (post-commit, non-critical).
-    let _ = ai_admin_repo::set_config(&state.db, "supabase_url", &url).await;
-
-    // Bug-Join-03: Do NOT spawn a background run_once() here.
-    // The wizard calls setup_pull_catalog immediately after this returns, which
-    // drives run_once() directly. A concurrent spawn races with it and both
-    // invocations are no-ops due to the execution mutex.
-
-    app_config_load(state).await
-}
-
-// ─── Supabase connection test (setup wizard, read-only probe) ─────────────────
-
-#[derive(Debug, Serialize)]
-pub struct ConnectionTestResult {
-    pub connected: bool,
-    pub store_name: Option<String>,
-    pub error: Option<String>,
-}
-
-/// Lightweight credential + connectivity test for the JoinStore wizard.
-/// Validates URL format, opens a Supabase connection, and returns the store
-/// name if one exists. Never writes to the database — read-only probe.
-#[tauri::command]
-pub async fn setup_test_supabase_connection(
-    url: String,
-    key: String,
-) -> Result<ConnectionTestResult, AppError> {
-    let url = url.trim().trim_end_matches('/').to_string();
-    if url.is_empty() {
-        return Err(AppError::Validation("Supabase URL is required".into()));
-    }
-    if !url.starts_with("https://") {
-        return Err(AppError::Validation(
-            "URL must start with https://".into(),
-        ));
-    }
-    let key = key.trim().to_string();
-    if key.is_empty() {
-        return Err(AppError::Validation("Service role key is required".into()));
-    }
-
-    use crate::sync::supabase_client::SupabaseClient;
-    let client = SupabaseClient::new(url, key);
-
-    if let Err(e) = client.validate().await {
-        let msg = e.to_string();
-        let friendly = if msg.contains("UNAUTHORIZED")
-            || msg.contains("FORBIDDEN")
-            || msg.contains("401")
-            || msg.contains("403")
-            || msg.contains("Invalid API key")
-        {
-            "Invalid credentials — check the URL and service role key.".to_string()
-        } else if msg.contains("connect")
-            || msg.contains("timeout")
-            || msg.contains("dns")
-            || msg.contains("DNS")
-        {
-            "Could not reach Supabase — check your internet connection.".to_string()
-        } else {
-            "Connection failed — check the URL and try again.".to_string()
-        };
-        return Ok(ConnectionTestResult {
-            connected: false,
-            store_name: None,
-            error: Some(friendly),
-        });
-    }
-
-    let store_name = match client.pull_branch().await {
-        Ok(Some(branch)) => branch["name"].as_str().map(|s| s.to_string()),
-        _ => None,
-    };
-
-    Ok(ConnectionTestResult {
-        connected: true,
-        store_name,
-        error: None,
-    })
-}
-
-/// Save BenefitPay number. Requires manager or owner after setup is complete.
+// ─── Save BenefitPay number ──────────────────────────────────────────────────
 /// During initial setup wizard (before any users exist), actor_user_id may be empty —
 /// we skip RBAC in that specific case only.
 #[tauri::command]

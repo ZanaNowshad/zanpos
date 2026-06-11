@@ -55,7 +55,6 @@ pub fn set_secret(key: &str, value: &str) -> bool {
 
 /// Delete a secret from the OS credential store (e.g. when switching provider).
 /// Silently ignores errors.
-#[allow(dead_code)]
 pub fn delete_secret(key: &str) {
     if let Ok(entry) = Entry::new(SERVICE, key) {
         let _ = entry.delete_password();

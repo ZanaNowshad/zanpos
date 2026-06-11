@@ -22,6 +22,14 @@ pub struct AppState {
     /// Written by the Node sidecar on startup; read by every HTTP command so
     /// requests pass the required X-Sidecar-Token auth header.
     pub wa_token_file: std::path::PathBuf,
+    /// Embedded LAN hub server runtime (None = not running).
+    pub hub: Arc<tokio::sync::Mutex<HubRuntime>>,
+}
+
+#[derive(Default)]
+pub struct HubRuntime {
+    pub handle: Option<crate::hub::HubHandle>,
+    pub last_error: Option<String>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -140,60 +148,31 @@ pub fn run() {
             let sync_worker = SyncWorker::new(db.clone());
             SyncWorker::spawn(sync_worker.clone());
 
-            // ── Push branch record to Supabase so second terminals can join ──────────
-            // Runs on every startup (not guarded). Harmless no-op when no Supabase
-            // credentials are configured. Ensures Device 1's branch always exists in
-            // the central `branches` table so Device 2's join flow can find it.
+            // ── Start LAN hub server when this device is the hub ─────────────────────
+            let hub_runtime: Arc<tokio::sync::Mutex<HubRuntime>> = Arc::new(Default::default());
             {
-                let db_br = db.clone();
+                let db_hub = db.clone();
+                let rt = hub_runtime.clone();
                 tauri::async_runtime::spawn(async move {
-                    // Only proceed when setup is complete
-                    let setup_done: Option<String> = sqlx::query_scalar(
-                        "SELECT value FROM app_config WHERE key='setup_complete'",
-                    )
-                    .fetch_optional(&db_br).await.ok().flatten().flatten();
-                    if setup_done.as_deref() != Some("1") { return; }
-
-                    let sb_url: Option<String> = sqlx::query_scalar(
-                        "SELECT value FROM app_config WHERE key='supabase_url'",
-                    ).fetch_optional(&db_br).await.ok().flatten().flatten();
-                    let sb_key = secure_store::get_secret("supabase_service_key");
-
-                    let (Some(url), Some(key)) = (sb_url, sb_key) else { return; };
-                    if url.is_empty() || key.is_empty() { return; }
-
-                    use sqlx::Row;
-                    let branch_row = sqlx::query(
-                        "SELECT branch_id, branch_code, name, currency, timezone,
-                                address, phone, receipt_header, receipt_footer, tax_number, cr_number,
-                                created_at
-                         FROM branches WHERE is_active=1 ORDER BY created_at LIMIT 1",
-                    ).fetch_optional(&db_br).await.ok().flatten();
-
-                    if let Some(br) = branch_row {
-                        use crate::sync::supabase_client::SupabaseClient;
-                        let client = SupabaseClient::new(url, key);
-                        let now = chrono::Utc::now().to_rfc3339();
-                        let branch_json = serde_json::json!({
-                            "branch_id":      br.get::<String, _>("branch_id"),
-                            "branch_code":    br.get::<String, _>("branch_code"),
-                            "name":           br.get::<String, _>("name"),
-                            "currency":       br.get::<String, _>("currency"),
-                            "timezone":       br.get::<String, _>("timezone"),
-                            "address":        br.get::<Option<String>, _>("address"),
-                            "phone":          br.get::<Option<String>, _>("phone"),
-                            "receipt_header": br.get::<Option<String>, _>("receipt_header"),
-                            "receipt_footer": br.get::<Option<String>, _>("receipt_footer"),
-                            "tax_number":     br.get::<Option<String>, _>("tax_number"),
-                            "cr_number":      br.get::<Option<String>, _>("cr_number"),
-                            "is_active":      true,
-                            "created_at":     br.get::<String, _>("created_at"),
-                            "updated_at":     now,
-                        });
-                        if let Err(e) = client.upsert_branch(&branch_json).await {
-                            tracing::warn!("startup branch upsert failed: {e:?}");
-                        } else {
-                            tracing::info!("startup: branch record pushed to Supabase");
+                    let mode: Option<String> = sqlx::query_scalar(
+                        "SELECT value FROM app_config WHERE key='hub_mode'")
+                        .fetch_optional(&db_hub).await.ok().flatten();
+                    if mode.as_deref() != Some("1") { return; }
+                    let port: u16 = sqlx::query_scalar::<_, String>(
+                        "SELECT value FROM app_config WHERE key='hub_port'")
+                        .fetch_optional(&db_hub).await.ok().flatten()
+                        .and_then(|v| v.parse().ok()).unwrap_or(8923);
+                    let Some(token) = crate::secure_store::get_secret("hub_store_token") else {
+                        let msg = "hub_mode=1 but hub_store_token missing from credential store";
+                        tracing::error!("{msg}");
+                        rt.lock().await.last_error = Some(msg.into());
+                        return;
+                    };
+                    match crate::hub::start_hub(db_hub, port, &token).await {
+                        Ok(h) => { rt.lock().await.handle = Some(h); }
+                        Err(e) => {
+                            tracing::error!("Hub start failed: {e}");
+                            rt.lock().await.last_error = Some(e.to_string());
                         }
                     }
                 });
@@ -389,7 +368,7 @@ pub fn run() {
             // called after invoke_handler(), any command that fires before manage()
             // completes would panic with "state not managed".  Keep this order.
             let wa_token_file = wa_session_dir.join(".sidecar_token");
-            app.manage(AppState { db, sync_worker, whatsapp_child: wa_child, wa_token_file });
+            app.manage(AppState { db, sync_worker, whatsapp_child: wa_child, wa_token_file, hub: hub_runtime });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -466,8 +445,6 @@ pub fn run() {
             // Setup & Settings
             commands::setup_commands::app_config_load,
             commands::setup_commands::setup_wizard_complete,
-            commands::setup_commands::setup_join_store,
-            commands::setup_commands::setup_test_supabase_connection,
             commands::setup_commands::settings_get_branch,
             commands::setup_commands::settings_update_branch,
             commands::setup_commands::setup_save_benefit_number,
@@ -492,9 +469,14 @@ pub fn run() {
             commands::sync_commands::sync_queue_dismiss,
             commands::sync_commands::sync_queue_stats,
             commands::sync_commands::sync_diagnostics,
-            commands::sync_commands::admin_setup_supabase,
-            commands::sync_commands::admin_setup_supabase_creds_only,
-            commands::sync_commands::admin_get_supabase_status,
+            // Hub (LAN sync server)
+            commands::hub_commands::hub_status,
+            commands::hub_commands::hub_enable,
+            commands::hub_commands::hub_regenerate_token,
+            commands::hub_commands::hub_test_connection,
+            commands::hub_commands::hub_join,
+            commands::hub_commands::hub_connect_existing,
+            commands::hub_commands::hub_set_url,
             // AI Admin — provider management
             commands::ai_admin_commands::admin_get_provider_config,
             commands::ai_admin_commands::admin_set_anthropic,

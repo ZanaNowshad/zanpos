@@ -551,7 +551,7 @@ web_search, search_market_prices, compare_store_prices, bahrain_market_price_che
 fetch_url, lookup_barcode, smart_barcode_lookup, get_exchange_rates, get_prayer_times,
 get_bahrain_holidays,
 get_sales_list, get_sale_detail, get_z_report, get_eod_cashup, get_x_report,
-get_product_barcodes, get_whatsapp_status, get_branch_settings, get_supabase_status,
+get_product_barcodes, get_whatsapp_status, get_branch_settings, get_hub_status,
 get_held_carts, get_db_integrity, get_thermal_config, get_delivery_detail,
 get_rider_suggestions, get_sync_queue_stats,
 get_sync_diagnostics, sync_queue_list, get_active_shift
@@ -570,7 +570,7 @@ remove_product_barcode, trigger_sync_now, force_full_resync, revert_delivery_pay
 update_branch_settings, register_device, send_whatsapp_delivery_alert,
 send_whatsapp_payment_reminder, send_whatsapp_arrival_notice, disconnect_whatsapp,
 update_thermal_config, open_cash_drawer, reprint_receipt, delete_held_cart,
-update_supabase_config, update_benefit_number
+update_benefit_number
 
 ---
 *Today: {today} | Time: {now} AST (UTC+3, Bahrain — no DST)*"

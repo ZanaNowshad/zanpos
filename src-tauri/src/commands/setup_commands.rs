@@ -1,5 +1,5 @@
 use crate::commands::rbac;
-use crate::db::repositories::{ai_admin_repo, auth_repo};
+use crate::db::repositories::auth_repo;
 use crate::errors::AppError;
 use crate::AppState;
 use serde::{Deserialize, Serialize};

@@ -1,5 +1,4 @@
 use crate::commands::rbac;
-use crate::db::repositories::ai_admin_repo;
 use crate::errors::{AppError, AppResult};
 use crate::AppState;
 use serde::Serialize;
@@ -162,9 +161,9 @@ pub async fn sync_trigger_now(
 
 // ── sync_bulk_initial ─────────────────────────────────────────────────────────
 
-/// Bulk-push ALL local data to Supabase in one shot (no 50-row batch limit).
+/// Bulk-push ALL local data to the hub in one shot (no 50-row batch limit).
 /// Designed for first-time sync during setup — pushes all tables at once.
-/// Called from setup_wizard_complete and setup_join_store.
+/// Called from setup_wizard_complete and hub_join.
 #[tauri::command]
 pub async fn sync_bulk_initial(
     actor_user_id: String,
@@ -173,7 +172,7 @@ pub async fn sync_bulk_initial(
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let client = match state.sync_worker.load_client().await {
         Some(c) => c,
-        None => return Ok("Sync skipped — Supabase not configured".into()),
+        None => return Ok("Sync skipped — hub not configured".into()),
     };
 
     let total = state.sync_worker.push_all_bulk(&client).await
@@ -182,7 +181,7 @@ pub async fn sync_bulk_initial(
     // Also pull so this terminal gets any remote data
     let _ = state.sync_worker.run_once().await;
 
-    Ok(format!("Initial sync complete: {} rows pushed to Supabase", total))
+    Ok(format!("Initial sync complete: {} rows pushed to the hub", total))
 }
 
 // ── setup_pull_catalog ────────────────────────────────────────────────────────

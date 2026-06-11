@@ -72,7 +72,7 @@ pub async fn execute(
         "get_product_barcodes"  => product_barcodes(pool, input).await,
         "get_whatsapp_status"   => whatsapp_status().await,
         "get_branch_settings"   => branch_settings(pool).await,
-        "get_supabase_status"   => supabase_status(pool).await,
+        "get_hub_status"        => hub_status(pool).await,
         "get_held_carts"        => held_carts(pool, &fmt).await,
         "get_db_integrity"      => db_integrity(pool).await,
         "get_thermal_config"    => thermal_config(pool).await,
@@ -294,19 +294,31 @@ async fn branch_settings(pool: &SqlitePool) -> AppResult<String> {
     ))
 }
 
-async fn supabase_status(pool: &SqlitePool) -> AppResult<String> {
-    let url: Option<String> = cfg_val(pool, "supabase_url").await;
-    let has_key = crate::secure_store::get_secret("supabase_service_key")
+async fn hub_status(pool: &SqlitePool) -> AppResult<String> {
+    let hub_mode: Option<String> = cfg_val(pool, "hub_mode").await;
+    let hub_url: Option<String> = cfg_val(pool, "hub_url").await;
+    let hub_port: Option<String> = cfg_val(pool, "hub_port").await;
+    let has_token = crate::secure_store::get_secret("hub_store_token")
         .map_or(false, |k| !k.is_empty());
     let pending: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM products WHERE sync_status = 'pending'"
     ).fetch_one(pool).await.unwrap_or(0);
-    let last_sync: Option<String> = cfg_val(pool, "last_sync_at").await;
+    let last_sync: Option<String> = sqlx::query_scalar(
+        "SELECT last_pushed_at FROM sync_watermark WHERE table_name = 'sales'",
+    ).fetch_optional(pool).await.ok().flatten();
+
+    let role = if hub_mode.as_deref() == Some("1") {
+        format!("HUB — serving terminals on port {}", hub_port.as_deref().unwrap_or("8923"))
+    } else if let Some(url) = hub_url.as_deref().filter(|u| !u.is_empty()) {
+        format!("TERMINAL — connected to {url}")
+    } else {
+        "STANDALONE — no hub configured (Settings → Hub)".to_string()
+    };
 
     Ok(format!(
-        "[DB] Supabase URL: {}\nKey configured: {}\nPending rows (products sample): {}\nLast sync: {}",
-        url.as_deref().unwrap_or("(not configured)"),
-        if has_key { "yes" } else { "no" },
+        "[DB] Sync role: {}\nStore token present: {}\nPending rows (products sample): {}\nLast sync: {}",
+        role,
+        if has_token { "yes" } else { "no" },
         pending,
         last_sync.as_deref().unwrap_or("(never)")
     ))

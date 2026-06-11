@@ -170,7 +170,7 @@ impl SyncWorker {
         let pull_result = self.pull_changes(&client, &device_id).await;
 
         // Update online status — individual table errors don't mean we're offline.
-        // Only mark offline if we have no Supabase client at all.
+        // Only mark offline if we have no hub client at all.
         {
             let mut state = self.state.lock().await;
             state.online = true;
@@ -252,7 +252,7 @@ impl SyncWorker {
         // 2. Transactions: shifts, sales, sale_items, payments, refunds, refund_items,
         //    stock_movements, audit_logs, delivery_orders, product_prices
         let push_order: &[&str] = &[
-            "branches",   // Bug-Push-B: was missing — local branch edits never reached Supabase
+            "branches",   // Bug-Push-B: was missing — local branch edits never reached the hub
             "categories",
             "tax_rules",
             "products",
@@ -300,7 +300,7 @@ impl SyncWorker {
                             let val = value_from_row_column(row, col_name);
                             map.insert(col_name.to_string(), val);
                         }
-                        // Supabase schema requires updated_at NOT NULL with no DEFAULT.
+                        // Hub schema requires updated_at NOT NULL with no DEFAULT.
                         // Fall back to created_at or now() when the local value is missing.
                         if map.get("updated_at").map_or(true, |v| matches!(v, Value::Null)) {
                             let fallback = map.get("created_at")
@@ -375,9 +375,9 @@ impl SyncWorker {
         Ok(total_pushed)
     }
 
-    /// Upsert app_config rows to Supabase (key-value pairs).
+    /// Upsert app_config rows to the hub (key-value pairs).
     /// SECURITY FIX: only push ALLOWED_CONFIG_KEYS — never push supabase_service_key,
-    /// watermarks, or any other device-local internal state to the cloud.
+    /// watermarks, or any other device-local internal state to the hub.
     async fn push_app_config(&self, client: &HttpSyncClient) -> AppResult<u32> {
         let rows = sqlx::query("SELECT key, value, updated_at FROM app_config")
             .fetch_all(&self.pool)
@@ -410,15 +410,15 @@ impl SyncWorker {
     }
 
     /// Bulk push ALL data from all tables during initial setup.
-    /// Not batch-limited — designed for first-time sync to Supabase.
+    /// Not batch-limited — designed for first-time sync to the hub.
     pub async fn push_all_bulk(&self, client: &HttpSyncClient) -> AppResult<u32> {
         let push_order: &[&str] = &[
-            "branches",   // Bug-Push-C: was missing from bulk push — Terminal 2 never pushed branch to Supabase
+            "branches",   // Bug-Push-C: was missing from bulk push — Terminal 2 never pushed branch to hub
             "categories", "tax_rules", "products", "devices", "users", "customers",
             "shifts", "sales", "sale_items", "payments", "refunds", "refund_items",
             "stock_movements", "stock_levels",  // Bug-Push-SL: stock_levels was missing from bulk push
             "audit_logs", "delivery_orders", "product_prices",
-            "cash_events",  // Bug-Push-CE: was missing from bulk push — cash events never reached Supabase
+            "cash_events",  // Bug-Push-CE: was missing from bulk push — cash events never reached hub
         ];
 
         let mut total_pushed = 0u32;
@@ -468,11 +468,11 @@ impl SyncWorker {
         self.push_app_config(client).await?;
         // Branches now sync normally via the hub push/pull path.
 
-        tracing::info!("Bulk initial sync: pushed {} rows to Supabase", total_pushed);
+        tracing::info!("Bulk initial sync: pushed {} rows to hub", total_pushed);
         Ok(total_pushed)
     }
 
-    // ── Pull changes from Supabase ────────────────────────────────────────────
+    // ── Pull changes from hub ────────────────────────────────────────────────
 
     async fn pull_changes(
         &self,

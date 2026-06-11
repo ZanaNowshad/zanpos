@@ -446,7 +446,7 @@ pub fn pk_for_table(table: &str) -> &str {
 }
 
 /// Returns true if a column is local-only and must not be included
-/// in JSON payloads sent to the central database.
+/// in JSON payloads sent to the hub or pulled from the hub.
 pub fn should_skip_column(table: &str, col_name: &str) -> bool {
     if col_name == "sync_status"
         || col_name == "sync_attempts"

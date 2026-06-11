@@ -137,8 +137,6 @@ pub async fn dry_run(
             vec![("Receipt#", req(input, "receipt_number")?)])),
         "delete_held_cart" => Ok(prev(tool_name, "Discard a held/parked cart",
             vec![("Held Cart ID", req(input, "held_cart_id")?)])),
-        "update_supabase_config" => Ok(prev(tool_name, "Update Supabase cloud sync credentials",
-            vec![("URL", req(input, "supabase_url")?), ("Key set", if str(input, "service_key").is_empty() { "no" } else { "yes" }.to_string())])),
         "update_benefit_number" => Ok(prev(tool_name, "Update the Benefit/Sadad payment phone number",
             vec![("Number", req(input, "benefit_number")?)])),
         other => Err(AppError::Validation(format!("Unknown mutation tool: {other}"))),
@@ -365,25 +363,6 @@ pub async fn execute(
             held_cart_repo::delete_held_cart(pool, &held_cart_id).await?;
             audit_ext(pool, "held_cart_deleted", &held_cart_id, "{}").await;
             ok_mut(&format!("Held cart {held_cart_id} deleted."), "held_cart", &held_cart_id)
-        },
-
-        "update_supabase_config" => {
-            let url = req(input, "supabase_url")?;
-            let key = str(input, "service_key");
-            if !url.starts_with("https://") { return Err(AppError::Validation("Supabase URL must start with https://".into())); }
-            let now = chrono::Utc::now().to_rfc3339();
-            sqlx::query("INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES ('supabase_url',?,?)")
-                .bind(&url).bind(&now).execute(pool).await?;
-            if !key.is_empty() {
-                if !crate::secure_store::set_secret("supabase_service_key", &key) {
-                    tracing::error!("CRITICAL: Falling back to plaintext secret storage — OS credential store write failed for supabase_service_key via AI tool.");
-                    return Err(AppError::Internal(
-                        "Windows Credential Manager is unavailable. Cannot store the Supabase service key securely.".into(),
-                    ));
-                }
-            }
-            audit_ext(pool, "supabase_config_updated", "config", &format!("{{\"url\":\"{url}\"}}")).await;
-            ok_mut("Supabase configuration updated. Restart sync for changes to take effect.", "supabase_config", "global")
         },
 
         "update_benefit_number" => {

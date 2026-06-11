@@ -154,12 +154,12 @@ pub fn all_tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "get_sync_status".into(),
-            description: "Check the cloud sync status: whether Supabase is configured, last sync time, pending queue count, and any failed or conflicted events.".into(),
+            description: "Check the multi-terminal sync status: whether the LAN hub is configured, last sync time, pending queue count, and any failed or conflicted events.".into(),
             input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
         },
         ToolDef {
             name: "get_sync_diagnostics".into(),
-            description: "Full sync diagnostics: per-table breakdown showing pending vs stuck (attempts>=10) rows, max/avg attempt counts, last error, whether Supabase is reachable. Use when sync appears stuck or when debugging why events aren't syncing.".into(),
+            description: "Full sync diagnostics: per-table breakdown showing pending vs stuck (attempts>=10) rows, max/avg attempt counts, last error, hub connection state. Use when sync appears stuck or when debugging why events aren't syncing.".into(),
             input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
         },
         // ── Extended analytics & audit tools ──────────────────────────────────
@@ -760,7 +760,7 @@ pub fn all_tool_definitions() -> Vec<ToolDef> {
         // ── Sync repair tools ─────────────────────────────────────────────────
         ToolDef {
             name: "sync_reset_stuck".into(),
-            description: "Reset ALL stuck rows (sync_attempts >= 10) across all tables back to pending with 0 attempts. Use when sync diagnostic shows stuck events blocking the queue. After fixing the root cause (e.g. re-entering Supabase credentials), call this to unblock sync.".into(),
+            description: "Reset ALL stuck rows (sync_attempts >= 10) across all tables back to pending with 0 attempts. Use when sync diagnostic shows stuck events blocking the queue. After fixing the root cause (e.g. reconnecting to the hub in Settings → Hub), call this to unblock sync.".into(),
             input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
         },
         ToolDef {
@@ -888,7 +888,7 @@ pub fn all_tool_definitions() -> Vec<ToolDef> {
         ToolDef { name: "get_product_barcodes".into(), description: "List all extra barcodes registered for a product.".into(), input_schema: json!({"type":"object","properties":{"product_id":{"type":"string"}},"required":["product_id"]}) },
         ToolDef { name: "get_whatsapp_status".into(), description: "Check WhatsApp sidecar connection status (running/connected/disconnected).".into(), input_schema: json!({"type":"object","properties":{}}) },
         ToolDef { name: "get_branch_settings".into(), description: "Get the current branch/store configuration (name, address, VAT, receipt header/footer, phone, currency).".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "get_supabase_status".into(), description: "Check Supabase cloud sync configuration and connection status (URL, key, last sync, pending rows).".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "get_hub_status".into(), description: "Check LAN hub sync configuration: whether this device is the hub or a connected terminal, hub address, store token presence, pending rows, last sync.".into(), input_schema: json!({"type":"object","properties":{}}) },
         ToolDef { name: "get_held_carts".into(), description: "List all parked/held carts on the current device.".into(), input_schema: json!({"type":"object","properties":{}}) },
         ToolDef { name: "get_db_integrity".into(), description: "Run SQLite integrity check on the local database.".into(), input_schema: json!({"type":"object","properties":{}}) },
         ToolDef { name: "get_thermal_config".into(), description: "Get the current thermal printer configuration (port, baud rate, enabled status).".into(), input_schema: json!({"type":"object","properties":{}}) },
@@ -903,7 +903,7 @@ pub fn all_tool_definitions() -> Vec<ToolDef> {
         ToolDef { name: "add_product_barcode".into(), description: "Register an additional barcode for a product.".into(), input_schema: json!({"type":"object","properties":{"product_id":{"type":"string"},"barcode":{"type":"string"}},"required":["product_id","barcode"]}) },
         ToolDef { name: "remove_product_barcode".into(), description: "Remove a barcode registration by barcode_id.".into(), input_schema: json!({"type":"object","properties":{"barcode_id":{"type":"string"}},"required":["barcode_id"]}) },
         ToolDef { name: "trigger_sync_now".into(), description: "Reset sync retry counters so the background sync worker picks up pending rows in the next cycle (within 30 seconds).".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "force_full_resync".into(), description: "Force a complete resync: marks all synced rows as pending and resets all watermarks to epoch. Use when data is inconsistent with Supabase.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "force_full_resync".into(), description: "Force a complete resync: marks all synced rows as pending and resets all watermarks to epoch. Use when data is inconsistent with the hub.".into(), input_schema: json!({"type":"object","properties":{}}) },
         ToolDef { name: "revert_delivery_payment".into(), description: "Reverse a delivery payment — set delivery payment_status from 'paid' back to 'unpaid'.".into(), input_schema: json!({"type":"object","properties":{"delivery_id":{"type":"string"},"reason":{"type":"string"}},"required":["delivery_id"]}) },
         ToolDef { name: "update_branch_settings".into(), description: "Update branch/store configuration. All fields optional; only provided fields are changed.".into(), input_schema: json!({"type":"object","properties":{"name":{"type":"string"},"timezone":{"type":"string"},"address":{"type":"string"},"phone":{"type":"string"},"receipt_header":{"type":"string"},"receipt_footer":{"type":"string"},"tax_number":{"type":"string"},"cr_number":{"type":"string"}}}) },
         ToolDef { name: "register_device".into(), description: "Register a new POS device/terminal. Requires device_code and name.".into(), input_schema: json!({"type":"object","properties":{"device_code":{"type":"string"},"name":{"type":"string"}},"required":["device_code","name"]}) },
@@ -915,7 +915,6 @@ pub fn all_tool_definitions() -> Vec<ToolDef> {
         ToolDef { name: "open_cash_drawer".into(), description: "Send an ESC/POS pulse to physically open the cash drawer connected to the thermal printer.".into(), input_schema: json!({"type":"object","properties":{}}) },
         ToolDef { name: "reprint_receipt".into(), description: "Reprint a past receipt by receipt_number to the configured thermal printer.".into(), input_schema: json!({"type":"object","properties":{"receipt_number":{"type":"string"}},"required":["receipt_number"]}) },
         ToolDef { name: "delete_held_cart".into(), description: "Permanently delete a held/parked cart by held_cart_id.".into(), input_schema: json!({"type":"object","properties":{"held_cart_id":{"type":"string"}},"required":["held_cart_id"]}) },
-        ToolDef { name: "update_supabase_config".into(), description: "Update Supabase cloud sync credentials. supabase_url (required, must start with https://), optional service_key.".into(), input_schema: json!({"type":"object","properties":{"supabase_url":{"type":"string"},"service_key":{"type":"string"}},"required":["supabase_url"]}) },
         ToolDef { name: "update_benefit_number".into(), description: "Update the Benefit/Sadad payment phone number stored in app config.".into(), input_schema: json!({"type":"object","properties":{"benefit_number":{"type":"string"}},"required":["benefit_number"]}) },
     ]
 }
@@ -977,7 +976,6 @@ pub const MUTATION_TOOLS: &[&str] = &[
     "open_cash_drawer",
     "reprint_receipt",
     "delete_held_cart",
-    "update_supabase_config",
     "update_benefit_number",
 ];
 
@@ -1340,7 +1338,7 @@ pub async fn execute_read_tool(
             let pending = status.pending_events;
             let failed: i64 = 0; // new model uses sync_attempts on individual rows
 
-            let cloud = if status.supabase_configured {
+            let cloud = if status.hub_configured {
                 "✓ configured"
             } else {
                 "✗ not configured"
@@ -1348,7 +1346,7 @@ pub async fn execute_read_tool(
             let last = status.last_successful_sync_at.as_deref().unwrap_or("never");
             let mut lines = vec![
                 format!("Sync Status:"),
-                format!("  Cloud (Supabase): {cloud}"),
+                format!("  Hub (LAN sync):   {cloud}"),
                 format!("  Last sync:        {last}"),
                 format!("  Pending rows:     {pending}"),
                 format!("  Stuck rows:       {failed}"),
@@ -1358,12 +1356,21 @@ pub async fn execute_read_tool(
         "get_sync_diagnostics" => {
             let mut lines = vec!["[DB] Sync Diagnostics:".to_string()];
 
-            let url: Option<String> =
-                sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'supabase_url'")
+            let hub_mode: Option<String> =
+                sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'hub_mode'")
                     .fetch_optional(pool).await?.flatten();
-            let key = crate::secure_store::get_secret("supabase_service_key").unwrap_or_default();
-            let configured = url.as_deref().is_some_and(|u| !u.is_empty()) && !key.is_empty();
-            lines.push(format!("  Supabase: {}", if configured { "✓ configured" } else { "✗ NOT configured" }));
+            let hub_url: Option<String> =
+                sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'hub_url'")
+                    .fetch_optional(pool).await?.flatten();
+            let token = crate::secure_store::get_secret("hub_store_token").unwrap_or_default();
+            let hub_label = if hub_mode.as_deref() == Some("1") {
+                "✓ this device IS the hub".to_string()
+            } else if hub_url.as_deref().is_some_and(|u| !u.is_empty()) && !token.is_empty() {
+                format!("✓ terminal connected to {}", hub_url.as_deref().unwrap_or(""))
+            } else {
+                "✗ NOT configured (Settings → Hub)".to_string()
+            };
+            lines.push(format!("  Hub: {hub_label}"));
 
             let last_sync: Option<String> = sqlx::query_scalar(
                 "SELECT last_pushed_at FROM sync_watermark WHERE table_name = 'sales'",

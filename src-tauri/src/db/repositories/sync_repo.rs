@@ -5,7 +5,7 @@ use sqlx::{Row, SqlitePool};
 #[derive(Debug, Serialize)]
 pub struct SyncStatus {
     pub online: bool,
-    pub supabase_configured: bool,
+    pub hub_configured: bool,
     pub pending_events: i64,
     pub last_successful_sync_at: Option<String>,
     pub days_since_last_sync: Option<i64>,
@@ -42,26 +42,21 @@ pub async fn get_sync_status(pool: &SqlitePool, device_id: &str) -> AppResult<Sy
     .await?
     .flatten();
 
-    // Supabase configuration check (two-phase: OS keyring first, DB fallback)
-    let supabase_url: Option<String> =
-        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'supabase_url'")
+    // Hub configuration check: this device IS the hub, or it has a hub_url
+    // plus the store token in the OS credential store.
+    let hub_mode: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'hub_mode'")
             .fetch_optional(pool)
             .await?
             .flatten();
-    let key_from_os = crate::secure_store::get_secret("supabase_service_key").unwrap_or_default();
-    let supabase_key = if !key_from_os.is_empty() {
-        key_from_os
-    } else {
-        sqlx::query_scalar::<_, Option<String>>(
-            "SELECT value FROM app_config WHERE key = 'supabase_service_key'",
-        )
-        .fetch_optional(pool)
-        .await?
-        .flatten()
-        .unwrap_or_default()
-    };
-    let supabase_configured = supabase_url.as_deref().is_some_and(|u| !u.is_empty())
-        && !supabase_key.is_empty();
+    let hub_url: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'hub_url'")
+            .fetch_optional(pool)
+            .await?
+            .flatten();
+    let token = crate::secure_store::get_secret("hub_store_token").unwrap_or_default();
+    let hub_configured = hub_mode.as_deref() == Some("1")
+        || (hub_url.as_deref().is_some_and(|u| !u.is_empty()) && !token.is_empty());
 
     let days_since_last_sync = last_sync.as_deref().and_then(|ts| {
         chrono::DateTime::parse_from_rfc3339(ts)
@@ -71,7 +66,7 @@ pub async fn get_sync_status(pool: &SqlitePool, device_id: &str) -> AppResult<Sy
 
     Ok(SyncStatus {
         online: false,
-        supabase_configured,
+        hub_configured,
         pending_events: pending,
         last_successful_sync_at: last_sync,
         days_since_last_sync,

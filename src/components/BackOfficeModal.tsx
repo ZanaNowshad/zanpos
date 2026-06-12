@@ -153,6 +153,21 @@ export default function BackOfficeModal({ sessionUser, onClose }: Props) {
   const allItems = useMemo(() => sections.flatMap(s => s.items), [sections]);
   const activeItem = allItems.find(i => i.id === tab);
 
+  // Keyboard shortcuts: Escape to close, Ctrl+1-9 to switch tabs
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key >= "1" && e.key <= "9") {
+        e.preventDefault();
+        const idx = parseInt(e.key) - 1;
+        const tabs = sections.flatMap(s => s.items);
+        if (idx < tabs.length) setTab(tabs[idx].id);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [sections, onClose]);
+
   // Avatar initials
   const initials = sessionUser.display_name
     .split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase();

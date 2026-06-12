@@ -110,7 +110,8 @@ export default memo(function CartPanel({
             </div>
             <div className="cart-total-row cart-net-total">
               <span>TOTAL</span>
-              <span className="num cart-grand-total">{fmt(netTotal)}</span>
+              {/* key remount replays the tick animation on every total change */}
+              <span key={netTotal} className="num cart-grand-total cart-total-tick">{fmt(netTotal)}</span>
             </div>
           </div>
 

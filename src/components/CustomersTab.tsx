@@ -25,12 +25,13 @@ export default function CustomersTab({ sessionUserId }: Props) {
     }
   };
 
-  useEffect(() => { load(""); }, []); // load is stable — no deps needed
+  useEffect(() => { load(""); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function handleSearch(q: string) {
-    setSearch(q);
-    load(q);
-  }
+  // Debounced search — avoid firing a backend query on every keystroke
+  useEffect(() => {
+    const t = setTimeout(() => load(search), 300);
+    return () => clearTimeout(t);
+  }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function startCreate() {
     setSelected(null); setCreating(true); setForm(EMPTY_FORM); setError(null);
@@ -95,7 +96,7 @@ export default function CustomersTab({ sessionUserId }: Props) {
             className="bo-search"
             placeholder="Search by name or phone…"
             value={search}
-            onChange={e => handleSearch(e.target.value)}
+            onChange={e => setSearch(e.target.value)}
           />
           <button className="btn-primary bo-add-btn" onClick={startCreate}>+ New</button>
         </div>

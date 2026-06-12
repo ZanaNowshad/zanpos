@@ -191,6 +191,14 @@ export default function PosPage({
       setLastReceiptNumber(result.receipt_number);
       // Open cash drawer — best-effort, non-fatal
       openCashDrawer(sessionUser.user_id).catch((e: unknown) => console.warn("Cash drawer open failed:", e));
+      // Auto-print thermal receipt — same fire-and-forget as regular checkout
+      if (thermalEnabled && branchSettings) {
+        printReceiptRaw(
+          sessionUser.user_id,
+          branchSettings.name,
+          buildReceiptLines(result, branchSettings, false),
+        ).catch((e: unknown) => console.warn("Receipt print failed:", e));
+      }
       // No ReceiptPreview — cart already cleared in finalizeSale
       focusBarcode();
       if (result.low_stock_alerts.length > 0) {
@@ -524,36 +532,14 @@ export default function PosPage({
     // M19: parseInt("0") || 1 would coerce 0 → 1 silently; use explicit NaN guard instead
     const _parsedNumpad = parseInt(numpadRef.current);
     const effectiveQty = qty ?? (Number.isFinite(_parsedNumpad) && _parsedNumpad > 0 ? _parsedNumpad : 1);
-    const cartSnapshot = cart; // capture before-state for zero-price detection
     scanQueueRef.current = scanQueueRef.current.then(async () => {
       try {
-        const updatedCart = await addByBarcode(barcode, effectiveQty);
+        await addByBarcode(barcode, effectiveQty);
         barcodeRef.current?.flashSuccess();
         setNumpadValue("1");
 
-        // Zero-price check: if the newly added/qty-bumped line has no price,
-        // immediately show the price-input popup.
-        const prevIds = new Set(cartSnapshot.lines.map(l => l.cart_line_id));
-        const prevQty = new Map(cartSnapshot.lines.map(l => [l.cart_line_id, l.quantity]));
-        let zeroLine: import("../types").CartLine | undefined;
-        for (const l of updatedCart.lines) {
-          if (!l.voided && l.unit_price_minor === 0 && !prevIds.has(l.cart_line_id)) {
-            zeroLine = l; break;
-          }
-        }
-        if (!zeroLine) {
-          for (const l of updatedCart.lines) {
-            if (!l.voided && l.unit_price_minor === 0 &&
-                prevQty.get(l.cart_line_id) !== l.quantity) {
-              zeroLine = l; break;
-            }
-          }
-        }
-        if (zeroLine) {
-          setActiveModal({ kind: "priceInput", mode: "setExisting",
-            lineId: zeroLine.cart_line_id, productName: zeroLine.product_name });
-          return; // modal open — don't focus barcode yet
-        }
+        // Zero-price items are added to cart with a "no price" badge.
+        // Cashier sets the price later by clicking the cart line (LineEditModal).
         focusBarcode();
       } catch {
         barcodeRef.current?.flashError();
@@ -563,7 +549,7 @@ export default function PosPage({
         focusBarcode();
       }
     });
-  }, [addByBarcode, cart, focusBarcode]);
+  }, [addByBarcode, focusBarcode]);
 
   // ── Shortcut manager ─────────────────────────────────────────────────────────
   const shortcutHandlers = useMemo(() => ({
@@ -780,20 +766,10 @@ export default function PosPage({
             onSelectProduct={async (product) => {
               const qty = parseInt(numpadValue) > 1 ? numpadValue : undefined;
               try {
-                const cartSnapshot = cart;
-                const updatedCart = await addProduct(product, qty);
+                await addProduct(product, qty);
                 barcodeRef.current?.flashSuccess();
                 setNumpadValue("1");
-                // Zero-price check: product may have no selling price set
-                const prevIds = new Set(cartSnapshot.lines.map(l => l.cart_line_id));
-                const zeroLine = updatedCart.lines.find(l =>
-                  !l.voided && l.unit_price_minor === 0 && !prevIds.has(l.cart_line_id)
-                );
-                if (zeroLine) {
-                  setActiveModal({ kind: "priceInput", mode: "setExisting",
-                    lineId: zeroLine.cart_line_id, productName: zeroLine.product_name });
-                  return;
-                }
+                // Zero-price items stay in cart with badge — set price via LineEditModal
               } catch (e) {
                 barcodeRef.current?.flashError();
                 setError(e instanceof Error ? e.message : "Failed to add product — please try again");

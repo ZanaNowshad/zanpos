@@ -336,3 +336,13 @@
 }
 .setup-body-dim { color: var(--text-dim); font-size: 0.88rem; }
 .setup-review-warn strong { color: #b45309; }
+
+/* ── Reduce Motion — animation must be declinable (Apple HIG / WCAG 2.3.3) ── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

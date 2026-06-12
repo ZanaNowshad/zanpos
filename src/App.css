@@ -89,9 +89,11 @@
   --radius-pill: 999px;
 
   /* ── Transition tokens (T28) ── */
-  --t-fast:   80ms ease;
-  --t-base:  120ms ease;
-  --t-slow:  150ms ease;
+  /* Decelerate-dominant curve — same as modal-in; starts fast, settles gently */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --t-fast:   80ms var(--ease-out);
+  --t-base:  120ms var(--ease-out);
+  --t-slow:  150ms var(--ease-out);
   /* T34: spring easing — slight overshoot for tactile feel */
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 
@@ -1233,7 +1235,7 @@ kbd.kbd-primary {
   min-height: 52px;
 }
 .cart-line-wrap:hover { border-color: rgba(240,165,0,0.3); }
-.cart-line-recent { border-color: rgba(240,165,0,0.6); background: rgba(240,165,0,0.05); border-width: 2px; }
+/* Recent-line highlight lives at ".cart-line-wrap.cart-line-recent" (current layout section) */
 
 .cart-line-name-btn {
   flex: 1;
@@ -1376,7 +1378,16 @@ kbd.kbd-primary {
   letter-spacing: -0.02em;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
+  display: inline-block;
 }
+
+/* Total acknowledges every change with a single subtle tick (replayed via keyed remount) */
+@keyframes total-tick {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.045); }
+  100% { transform: scale(1); }
+}
+.cart-total-tick { animation: total-tick 0.18s var(--ease-spring); }
 
 /* Locked cart */
 .cart-panel-locked .cart-lines { opacity: 0.6; pointer-events: none; }
@@ -2939,6 +2950,9 @@ kbd.kbd-primary {
   transform: scale(1.2);
   box-shadow: 0 0 8px rgba(240,165,0,0.4);
 }
+
+/* Wrong PIN — macOS-style head shake (keyframe shared with barcode scan error) */
+.pin-display-shake { animation: scan-error-shake 0.32s var(--ease-spring); }
 
 .pin-pad { display: flex; flex-direction: column; gap: 8px; }
 .pin-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
@@ -7153,11 +7167,7 @@ textarea.field-input { resize: vertical; }
   transition: background 0.1s;
 }
 
-.cart-line-wrap.cart-line-recent {
-  background: rgba(100,120,200,0.05);
-  outline: 1px solid rgba(100,120,200,0.18);
-  outline-offset: -1px;
-}
+/* Recent-line highlight: single source of truth in the compact-density section below */
 
 /* ── Cart line new layout: name row + controls row ───────────────────────── */
 .cart-line-name-btn {
@@ -7959,10 +7969,6 @@ label {
 }
 :is([data-theme="light"],[data-theme="blossom"],[data-theme="sky"],[data-theme="sage"]) .bo-list-row-active {
   background: color-mix(in srgb, var(--accent) 9%, transparent) !important;
-}
-:is([data-theme="light"],[data-theme="blossom"],[data-theme="sky"],[data-theme="sage"]) .cart-line-wrap.cart-line-recent {
-  background: rgba(80,100,200,0.06);
-  outline-color: rgba(80,100,200,0.2);
 }
 :is([data-theme="light"],[data-theme="blossom"],[data-theme="sky"],[data-theme="sage"]) .pay-fast-btn {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
@@ -11817,8 +11823,10 @@ label {
   border-radius: 0;
 }
 .cart-line-wrap.cart-line-recent {
-  background: rgba(217, 144, 0, 0.08);
-  outline: 1px solid rgba(217, 144, 0, 0.28);
+  /* Accent-derived so every theme highlights in its own brand color */
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  outline-offset: -1px;
 }
 .cart-line-name-btn {
   flex: 1;
@@ -14373,4 +14381,16 @@ label {
   letter-spacing: 0;
   color: var(--text-muted);
   margin-left: 4px;
+}
+
+/* ── Reduce Motion — animation must be declinable (Apple HIG / WCAG 2.3.3) ──
+   0.01ms instead of 0s so fill-mode end states still resolve — state changes
+   land instantly rather than getting stuck mid-animation. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

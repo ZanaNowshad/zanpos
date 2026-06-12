@@ -13,6 +13,7 @@ export default function LoginScreen({ onLogin }: Props) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [shake, setShake] = useState(false);
 
   // Refs to avoid stale closures in the keydown listener
   const selectedRef   = useRef(selected);
@@ -108,7 +109,8 @@ export default function LoginScreen({ onLogin }: Props) {
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Invalid PIN");
       setPin("");
-
+      setShake(true);
+      setTimeout(() => setShake(false), 380);
     } finally {
       setLoading(false);
     }
@@ -168,13 +170,13 @@ export default function LoginScreen({ onLogin }: Props) {
                 <p>Enter your 6-digit PIN to continue</p>
               </div>
 
-              <div className="pin-display">
+              <div className={`pin-display${shake ? " pin-display-shake" : ""}`}>
                 {Array.from({ length: 6 }).map((_, i) => (
                   <div key={i} className={`pin-dot ${i < pin.length ? "pin-dot-filled" : ""}`} />
                 ))}
               </div>
 
-              {error && <div className="login-error">{error}</div>}
+              {error && <div className="login-error" role="alert">{error}</div>}
 
               <div className="pin-pad">
                 {PAD.map((row, ri) => (

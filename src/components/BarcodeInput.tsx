@@ -128,7 +128,7 @@ const BarcodeInput = forwardRef<BarcodeInputHandle, Props>(function BarcodeInput
         if (active.isContentEditable) return;
         // Leave alone if inside any modal overlay or dialog
         if (active.closest(
-          ".modal-overlay, .payment-modal, [role='dialog'], " +
+          ".modal-overlay, .payment-modal, .bo-overlay, [role='dialog'], dialog, " +
           ".mig-page, .bulk-modal, .login-screen, .lock-screen"
         )) return;
       }

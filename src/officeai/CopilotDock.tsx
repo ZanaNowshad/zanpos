@@ -1,20 +1,60 @@
-import { useRef } from "react";
+import { Maximize2, Sparkles, X } from "lucide-react";
 import type { ChatController } from "./useChatController";
-import { Bot } from "lucide-react";
+import ChatPanel from "./ChatPanel";
 
-interface Props { ctrl: ChatController; kpi: unknown; open: boolean; onToggle: () => void; onExpand: () => void; businessName: string; }
+interface Props {
+  ctrl: ChatController;
+  userName: string;
+  businessName: string;
+  providerLabel: string;
+  /** false until an AI provider is configured — dock then shows a setup CTA. */
+  configured: boolean;
+  onSetup: () => void;
+  onExpand: () => void;
+  onClose: () => void;
+  composerRef: React.RefObject<HTMLTextAreaElement | null>;
+}
 
-export default function CopilotDock({ ctrl, open, onToggle, onExpand, businessName }: Props) {
-  const composerRef = useRef<HTMLTextAreaElement>(null);
-  if (!open) return null;
+/**
+ * Right-side copilot dock. Pure chrome around ChatPanel — all chat state
+ * lives in the controller owned by OfficeAIPage, so collapsing the dock or
+ * expanding to the Assistant tab never interrupts an in-flight stream.
+ */
+export default function CopilotDock({
+  ctrl, userName, businessName, providerLabel, configured, onSetup, onExpand, onClose, composerRef,
+}: Props) {
   return (
-    <div className="oa-dock">
-      <div className="oa-dock-header"><span className="oa-dock-brand"><Bot size={16} /> ZanAI</span><span className="oa-dock-subtitle">{businessName}</span><div className="oa-dock-actions"><button className="oa-dock-btn" onClick={onExpand} title="Fullscreen">⛶</button><button className="oa-dock-btn" onClick={onToggle} title="Close">×</button></div></div>
-      <div className="oa-dock-composer">
-        <textarea ref={composerRef} className="oa-composer" placeholder="Ask ZanAI…" value={ctrl.input} onChange={e => ctrl.setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && ctrl.chatState === "idle") { e.preventDefault(); ctrl.handleSend(); } }} rows={1} />
-        <button className="oa-send-btn" onClick={() => ctrl.handleSend()} disabled={ctrl.chatState !== "idle"}>↑</button>
+    <aside className="oa-dock" aria-label="ZanAI copilot">
+      <div className="oa-dock-header">
+        <span className="oa-dock-brand">
+          <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
+          ZanAI
+        </span>
+        {providerLabel && <span className="oa-dock-provider">{providerLabel}</span>}
+        <div className="oa-dock-actions">
+          <button className="oa-dock-btn" onClick={onExpand} title="Open fullscreen Assistant">
+            <Maximize2 size={14} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+          <button className="oa-dock-btn" onClick={onClose} title="Collapse copilot (Ctrl+/)">
+            <X size={15} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+        </div>
       </div>
-    </div>
+
+      {configured ? (
+        <ChatPanel
+          ctrl={ctrl}
+          variant="docked"
+          userName={userName}
+          businessName={businessName}
+          composerRef={composerRef}
+        />
+      ) : (
+        <div className="oa-dock-setup">
+          <p>ZanAI needs an AI provider before it can help.</p>
+          <button className="btn-primary" onClick={onSetup}>Set up AI provider</button>
+        </div>
+      )}
+    </aside>
   );
 }

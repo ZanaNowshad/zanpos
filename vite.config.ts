@@ -64,6 +64,10 @@ export default defineConfig(async () => ({
           if (id.includes("/pages/MigrationAgentPage")) {
             return "migration";
           }
+          // OfficeAI workspace (shell + ZanAI chat) — lazy-loaded at App level.
+          if (id.includes("/officeai/")) {
+            return "officeai";
+          }
           // Admin/back-office tabs and modals — loaded via BackOfficeModal.
           // Splitting these keeps the main POS chunk lean (<200 kB).
           // BackOffice tabs, modals, and POS utility modals.

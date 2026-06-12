@@ -8,10 +8,31 @@ export function stripXmlArtifacts(text: string): string {
 }
 
 export function inlineMarkdown(text: string): React.ReactNode {
-  return text
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.+?)\*/g, "<em>$1</em>")
-    .replace(/`([^`]+)`/g, "<code>$1</code>");
+  // Parse bold, italic, inline code into React nodes — string .replace() would
+  // render literal "<strong>" tags since React escapes strings.
+  const parts: React.ReactNode[] = [];
+  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`)/g;
+  let last = 0;
+  let match: RegExpExecArray | null;
+  let key = 0;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > last) {
+      parts.push(text.slice(last, match.index));
+    }
+    if (match[2] !== undefined) {
+      parts.push(<strong key={key++}>{match[2]}</strong>);
+    } else if (match[3] !== undefined) {
+      parts.push(<em key={key++}>{match[3]}</em>);
+    } else if (match[4] !== undefined) {
+      parts.push(<code key={key++} className="md-inline-code">{match[4]}</code>);
+    }
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) {
+    parts.push(text.slice(last));
+  }
+  return parts.length === 0 ? text : parts;
 }
 
 export const MarkdownContent = React.memo(function MarkdownContent({ text }: { text: string }) {

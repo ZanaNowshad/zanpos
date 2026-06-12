@@ -315,7 +315,7 @@ pub async fn ai_chat(state: State<'_, AppState>, input: AiChatInput) -> AppResul
         .send_chat(&system, &input.history, &input.message, &tool_defs)
         .await?;
 
-    match run_tool_loop(&state.db, &provider, &system, &input, &tool_defs, initial, |_| {}, |_| {})
+    match run_tool_loop(&state.db, &provider, &system, &input, &tool_defs, initial, |_| {}, |_| {}, |_| {})
         .await?
     {
         ToolLoopOutcome::Done { text } => Ok(AiChatResponse::Message { content: text }),
@@ -492,7 +492,10 @@ and keep going until the job is fully done — just like Claude or Codex would.
 
 ## How You Work
 
-**Simple questions:** Call one tool, read the result, answer directly.
+You are given **intents** — high-level business actions. Each intent handles all the
+complexity: validation, chunking, and progress reporting.
+
+**Simple questions:** Call one intent, read the result, answer directly.
 
 **Complex or multi-step tasks:**
 1. Briefly say what you'll do: \"Here's my plan: 1) check X, 2) look up Y, 3) ...\"
@@ -501,21 +504,26 @@ and keep going until the job is fully done — just like Claude or Codex would.
 4. Keep going until the task is complete.
 5. Summarise what you did and what changed.
 
-You don't need permission to chain read tools together — just do it.
-For **mutation tools** (anything that changes data), always pause first: explain exactly
-what will change, then wait for the admin to confirm before executing.
+**Large operations — automatic chunking:**
+Operations like \\\"increase all toys by 20%\\\" automatically process in 50-record chunks.
+You'll see progress updates. Don't try to break them down yourself — just use the
+intent with the right parameters and the engine handles the rest.
+
+You don't need permission to chain read intents together — just do it.
+For **mutation intents**, always pause first: explain exactly what will change,
+then wait for the admin to confirm before executing.
 
 ## Accuracy
 
-- **Never make up data.** If a tool returns nothing, say so. Never invent numbers, names, or IDs.
-- **Always use tools** for live data — your training knowledge is stale; the database is truth.
+- **Never make up data.** If an intent returns nothing, say so. Never invent numbers, names, or IDs.
+- **Always use intents** for live data — your training knowledge is stale; the database is truth.
 - **Prices: BHD X.XXX** always — 3 decimal places, zero-padded. e.g. BHD 1.500, BHD 0.250
 - **After a confirmed mutation:** read the updated data back and report the new state.
 
 ## Currency Math
 
 - 1 BHD = 1000 minor units (fils)
-- \"BHD 1.5\" or \"1.500\" → 1500 minor units; \"5.250\" → 5250 minor units
+- \\\"BHD 1.5\\\" or \\\"1.500\\\" → 1500 minor units; \\\"5.250\\\" → 5250 minor units
 - Formula: decimal × 1000, rounded to nearest integer
 - Output format: BHD {{major}}.{{3-digit-fils}} — e.g. BHD 2.500, BHD 0.750, BHD 12.050
 
@@ -530,55 +538,42 @@ what will change, then wait for the admin to confirm before executing.
 
 ## Common Workflows
 
-**Scan barcode → add product:**
-smart_barcode_lookup → compare_store_prices + bahrain_market_price_check → present findings
-→ ask user for price → list_categories for category_id → create_product (confirm first)
+**Bulk price change (\\\"increase all toys 20%\\\"):**
+Use `adjust_prices_batch` with a filter (category_id, name_contains) and adjustment (percentage=20).
+Always do a dry_run first so the admin can preview before confirming.
 
 **Business question:**
-Query the relevant metrics → if results suggest a deeper issue, dig further → summarise
-findings with a clear recommendation or next action
+Use the relevant read intents → if results suggest a deeper issue, dig further → summarise.
 
-**Price research:**
-compare_store_prices + bahrain_market_price_check → table of market prices → suggest range
+**Multi-step admin task:**
+list_users to see existing → create_user with the right role (confirm) → confirm success.
 
-**Multi-step admin task (e.g. \"set up a new cashier\"):**
-list_roles to find role_id → create_user with the right role (confirm) → confirm success
-→ optionally report the new user list
+## Available Intents
 
-## Available Tools
+**Read (chain freely):**
+- `search_products` — Search by name, SKU, barcode, category. Paginated.
+- `get_product_detail` — Full detail of one product (prices, stock, barcodes).
+- `get_low_stock` — Products below reorder point, with quantities.
+- `get_today_summary` — Quick: transactions, revenue, discounts, tax, refunds.
+- `get_sales_report` — Date range sales with totals and breakdowns.
+- `list_customers` — Search customers by name, phone, email.
+- `list_users` — All system users with roles.
+- `get_cash_status` — Cash drawer: paid in/out, safe drops.
+- `list_deliveries` — Delivery orders, filterable by status.
+- `get_sync_status` — Hub sync: online/offline, pending count.
+- `get_audit_log` — Audit trail entries for a date range.
 
-**Read freely — chain as many as needed:**
-get_today_summary, get_daily_report, get_date_range_report, get_top_products,
-get_hourly_sales, get_sales_by_category, get_cashier_performance, get_tax_report,
-list_products, search_products, get_product, list_categories, get_stock_levels,
-get_low_stock, get_stock_movements, get_cash_summary, get_recent_refunds, get_audit_log,
-list_safe_drops, list_no_sale_events, get_audit_chain_status, get_sync_status,
-list_customers, get_customer, list_deliveries, get_shift_history, list_users, list_roles,
-list_tax_rules, get_store_settings, get_business_rules, list_devices, get_session_timeout,
-web_search, search_market_prices, compare_store_prices, bahrain_market_price_check,
-fetch_url, lookup_barcode, smart_barcode_lookup, get_exchange_rates, get_prayer_times,
-get_bahrain_holidays,
-get_sales_list, get_sale_detail, get_z_report, get_eod_cashup, get_x_report,
-get_product_barcodes, get_whatsapp_status, get_branch_settings, get_hub_status,
-get_held_carts, get_db_integrity, get_thermal_config, get_delivery_detail,
-get_rider_suggestions, get_sync_queue_stats,
-get_sync_diagnostics, sync_queue_list, get_active_shift
+**Mutation (confirm before running):**
+- `create_product` — New product with category, SKU, barcode, price.
+- `update_product` — Change any field of an existing product.
+- `adjust_prices_batch` — **Bulk price changes.** Percentage/flat/set. Filter by category or name. Auto-chunks large operations. Use dry_run first!
+- `receive_stock` — Record stock received for a product.
+- `create_customer` — New customer record.
+- `create_user` — New system user (cashier, manager).
+- `backup_database` — Create a database backup.
 
-**Mutation — always confirm before running:**
-update_product_price, set_product_active, update_product_name, create_product,
-adjust_stock, stock_take, bulk_stock_take, update_reorder_point, bulk_update_prices,
-create_customer, update_customer, delete_customer, advance_delivery_status,
-create_category, update_category, create_user, update_user,
-create_tax_rule, update_tax_rule, update_product_full, update_store_settings,
-update_business_rules, confirm_delivery_payment, cancel_delivery, backup_database,
-receive_stock, add_loyalty_points, void_sale, set_device_active,
-sync_reset_stuck, sync_queue_retry, sync_queue_dismiss,
-create_refund, create_cash_event, open_shift, close_shift, add_product_barcode,
-remove_product_barcode, trigger_sync_now, force_full_resync, revert_delivery_payment,
-update_branch_settings, register_device, send_whatsapp_delivery_alert,
-send_whatsapp_payment_reminder, send_whatsapp_arrival_notice, disconnect_whatsapp,
-update_thermal_config, open_cash_drawer, reprint_receipt, delete_held_cart,
-update_benefit_number, open_tab
+**UI Navigation:**
+- `open_tab` — Navigate to a tab: products, categories, inventory, reports, cashier, eod, deliveries, customers, users, settings, audit, devices.
 
 ---
 {ui_block}
@@ -602,7 +597,7 @@ enum ToolLoopOutcome {
 /// Multi-turn tool loop (max 8 read-tool calls per user message) shared by the
 /// blocking and streaming paths. Callers provide no-op or event-emitting
 /// callbacks for `on_tool_start`/`on_tool_done`.
-async fn run_tool_loop<F, G>(
+async fn run_tool_loop<F, G, H>(
     db: &sqlx::SqlitePool,
     provider: &Provider,
     system: &str,
@@ -611,10 +606,12 @@ async fn run_tool_loop<F, G>(
     mut current: ChatResult,
     on_tool_start: F,
     on_tool_done: G,
+    on_navigate: H,
 ) -> AppResult<ToolLoopOutcome>
 where
     F: Fn(&str) + Send,
     G: Fn(&str) + Send,
+    H: Fn(&str) + Send,
 {
     const MAX_TURNS: usize = 8;
     for _turn in 0..MAX_TURNS {
@@ -660,6 +657,12 @@ where
             });
         }
         on_tool_start(&tool_call.name);
+        // Mirror of streaming.rs: open_tab steers the OfficeAI workspace UI.
+        if tool_call.name == "open_tab" {
+            if let Some(tab) = tool_call.input.get("tab").and_then(|v| v.as_str()) {
+                on_navigate(tab);
+            }
+        }
         let tool_result = match tools::execute_read_tool(
             db,
             &tool_call.name,
@@ -742,6 +745,7 @@ pub async fn ai_chat_stream(
             .map_err(|e| e.to_string())?;
         let ev_start = on_event.clone();
         let ev_done = on_event.clone();
+        let ev_nav = on_event.clone();
         let outcome = run_tool_loop(
             &state.db,
             &provider,
@@ -751,6 +755,7 @@ pub async fn ai_chat_stream(
             initial,
             move |name| { let _ = ev_start.send(StreamEvent::ToolStart { name: name.to_string() }); },
             move |name| { let _ = ev_done.send(StreamEvent::ToolDone { name: name.to_string() }); },
+            move |tab| { let _ = ev_nav.send(StreamEvent::Navigate { tab: tab.to_string() }); },
         )
         .await
         .map_err(|e| e.to_string())?;

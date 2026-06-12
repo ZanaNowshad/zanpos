@@ -17,7 +17,6 @@ import { usePosShortcuts } from "../hooks/usePosShortcuts";
 import BarcodeInput, { type BarcodeInputHandle } from "../components/BarcodeInput";
 import Dialpad, { applyDialpadKey } from "../components/Dialpad";
 import CartPanel from "../components/CartPanel";
-import BackOfficeModal from "../components/BackOfficeModal";
 import DiscountModal from "../components/DiscountModal";
 import LineDiscountModal from "../components/LineDiscountModal";
 import PaymentModal from "../components/PaymentModal";
@@ -53,7 +52,6 @@ type ActiveModal =
   | { kind: "report" }
   | { kind: "discount" }
   | { kind: "lineDiscount"; lineId: string }
-  | { kind: "backOffice" }
   | { kind: "customItem" }
   | { kind: "cashEvent" }
   | { kind: "xReport" }
@@ -1137,13 +1135,6 @@ export default function PosPage({
 
       {activeModal.kind === "report" && (
         <TodayReportModal sessionUserId={sessionUser.user_id} onClose={() => { setActiveModal({ kind: "none" }); focusBarcode(); }} />
-      )}
-
-      {activeModal.kind === "backOffice" && (
-        <BackOfficeModal
-          sessionUser={sessionUser}
-          onClose={() => { setActiveModal({ kind: "none" }); focusBarcode(); }}
-        />
       )}
 
       {activeModal.kind === "xReport" && (

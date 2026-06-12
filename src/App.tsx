@@ -16,12 +16,11 @@ import type { StickyNote } from "./utils/stickyNotes";
 import "./App.css";
 import "./setup-styles.css";
 
-const AdminChatPage = lazy(() => import("./pages/AdminChatPage"));
 const OfficeAIPage = lazy(() => import("./officeai/OfficeAIPage"));
 const SetupWizard = lazy(() => import("./pages/SetupWizard"));
 const MigrationAgentPage = lazy(() => import("./pages/MigrationAgentPage"));
 
-type View = "login" | "shift_check" | "shift_open" | "pos" | "admin_chat" | "office_ai";
+type View = "login" | "shift_check" | "shift_open" | "pos" | "office_ai";
 
 export default function App() {
   // ── Theme (initialised early so there's no flash on load) ─────────────────
@@ -269,15 +268,6 @@ export default function App() {
         />
       )}
 
-      {view === "admin_chat" && sessionUser &&
-       (sessionUser.role_name === "owner" || sessionUser.role_name === "manager") && (
-        <Suspense fallback={<div className="app-splash"><div className="app-splash-spinner" /></div>}>
-          <AdminChatPage
-            sessionUser={sessionUser}
-            onBackToPOS={() => setView("pos")}
-          />
-        </Suspense>
-      )}
       {view === "office_ai" && sessionUser &&
        (sessionUser.role_name === "owner" || sessionUser.role_name === "manager") && (
         <Suspense fallback={<div className="app-splash"><div className="app-splash-spinner" /></div>}>
@@ -289,7 +279,7 @@ export default function App() {
       )}
 
       {/* Fallback: if none of the above matched, go to login */}
-      {!["login", "shift_check", "shift_open", "pos", "admin_chat", "office_ai"].includes(view) && (
+      {!["login", "shift_check", "shift_open", "pos", "office_ai"].includes(view) && (
         <LoginScreen onLogin={handleLogin} />
       )}
 

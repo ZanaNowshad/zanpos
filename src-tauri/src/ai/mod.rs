@@ -1,4 +1,6 @@
 pub mod client;
+pub mod intent_engine;
+pub mod oauth;
 pub mod openai_client;
 pub mod provider;
 pub mod streaming;

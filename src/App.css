@@ -14388,6 +14388,128 @@ label {
   margin-left: 4px;
 }
 
+/* ── OfficeAI workspace (oa-*) ──────────────────────────────────────────────
+   Page-level shell: sidebar (reused bo-sidebar) | main (reused bo-main) | dock.
+   Unlike .bo-overlay this is a VIEW, not a modal — no scrim, no z-index. */
+.oa-page {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* ── Chat panel — shared by the Assistant tab (full) and the dock (docked) ── */
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+.chat-panel > .chat-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+.chat-panel-docked > .chat-messages { padding: 12px; }
+.chat-panel-docked .chat-welcome-advanced { padding: 16px 8px; }
+.chat-panel-docked .welcome-suggested-grid { grid-template-columns: 1fr; }
+.chat-panel-docked .chat-footer-area { padding: 8px 10px 10px; }
+.chat-panel-full .chat-footer-area { padding: 10px 24px 16px; }
+
+/* ── Fullscreen Assistant tab: chat + Live Snapshot side by side ── */
+.oa-assistant-host {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+.oa-assistant-host .setup-center { flex: 1; }
+
+/* ── Copilot dock ── */
+.oa-dock {
+  width: 380px;
+  min-width: 340px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+}
+.oa-dock-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.oa-dock-brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 0.92rem;
+  color: var(--accent);
+  letter-spacing: -0.01em;
+}
+.oa-dock-provider {
+  flex: 1;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.oa-dock-actions { display: flex; gap: 2px; margin-left: auto; }
+.oa-dock-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.oa-dock-btn:hover { background: var(--surface3); color: var(--text); }
+.oa-dock-setup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  flex: 1;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.88rem;
+}
+
+/* Narrow screens: dock overlays the main area instead of squeezing the tabs */
+@media (max-width: 1280px) {
+  .oa-dock {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
+    z-index: var(--z-overlay);
+  }
+  .oa-page { position: relative; }
+}
+
 /* ── Reduce Motion — animation must be declinable (Apple HIG / WCAG 2.3.3) ──
    0.01ms instead of 0s so fill-mode end states still resolve — state changes
    land instantly rather than getting stuck mid-animation. */

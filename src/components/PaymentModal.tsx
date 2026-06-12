@@ -385,7 +385,13 @@ export default function PaymentModal({
           {!showSplit && (
             <button
               className="pm-split-toggle"
-              onClick={() => { setShowSplit(true); setLines(p => [...p, mkLine("card")]); }}
+              onClick={() => {
+                setShowSplit(true);
+                const rem = formatMoney(remainingMinor, EXP);
+                const newLine = mkLine("card");
+                if (remainingMinor > 0) newLine.amountStr = rem;
+                setLines(p => [...p, newLine]);
+              }}
             >
               + Split Payment
             </button>

@@ -40,6 +40,7 @@ export default function ReportsTab({ sessionUserId }: Props) {
   const [summary, setSummary]       = useState<RangeSummary | null>(null);
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
   const [salesPage, setSalesPage]   = useState<SaleListPage>({ items: [], total: 0, offset: 0, limit: 200 });
+  const [salesOffset, setSalesOffset] = useState(0);
   const sales = salesPage.items;
   const [taxRows, setTaxRows]       = useState<TaxRow[]>([]);
   const [loading, setLoading]       = useState(false);
@@ -369,10 +370,26 @@ export default function ReportsTab({ sessionUserId }: Props) {
                 </tbody>
               </table>
             )}
-            {salesPage.total > salesPage.items.length && (
-              <p className="rpt-row-limit-notice">
-                ⚠ Showing {salesPage.items.length} of {salesPage.total} sales. Use <strong>↓ CSV</strong> to export the full list, or narrow your date range.
-              </p>
+            {salesPage.total > 100 && (
+              <div className="bo-pagination" style={{ marginTop: 12 }}>
+                <button className="btn-secondary btn-sm" disabled={salesOffset === 0}
+                  onClick={async () => {
+                    const newOff = Math.max(0, salesOffset - 100);
+                    setSalesOffset(newOff);
+                    const pg = await cmd.reportSalesList(sessionUserId, BRANCH_ID, from, to, newOff, 100);
+                    setSalesPage(pg as SaleListPage);
+                  }}>← Prev</button>
+                <span className="bo-pagination-info">
+                  {salesOffset + 1}–{Math.min(salesOffset + sales.length, salesPage.total)} of {salesPage.total}
+                </span>
+                <button className="btn-secondary btn-sm" disabled={salesOffset + sales.length >= salesPage.total}
+                  onClick={async () => {
+                    const newOff = salesOffset + 100;
+                    setSalesOffset(newOff);
+                    const pg = await cmd.reportSalesList(sessionUserId, BRANCH_ID, from, to, newOff, 100);
+                    setSalesPage(pg as SaleListPage);
+                  }}>Next →</button>
+              </div>
             )}
           </div>
         )}

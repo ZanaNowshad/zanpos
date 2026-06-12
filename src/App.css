@@ -3207,6 +3207,8 @@ kbd.kbd-primary {
   font-size: 0.95rem;
   padding: 10px 12px;
   width: 100%;
+  height: var(--input-height);
+  box-sizing: border-box;
 }
 .field-input:focus:not(:focus-visible) { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px rgba(240,165,0,0.12); }
 textarea.field-input { resize: vertical; }
@@ -11141,28 +11143,31 @@ label {
 
 /* Method selector — horizontal icon bar */
 .pm-methods {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 4px;
+  display: flex;
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
 .pm-method {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 3px;
   padding: 10px 2px;
-  border: 2px solid var(--border);
-  border-radius: 10px;
+  border: none;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
   background: var(--bg);
   cursor: pointer;
   transition: background-color var(--t-base), color var(--t-base), border-color var(--t-base), box-shadow var(--t-base), opacity var(--t-base), transform var(--t-base);
   color: var(--text-dim);
 }
-.pm-method:hover { border-color: var(--accent); color: var(--text); }
+.pm-method:last-child { border-right: none; }
+.pm-method:hover { background: var(--surface2); color: var(--text); }
 .pm-method-active {
-  border-color: var(--accent) !important;
-  background: color-mix(in srgb, var(--accent) 12%, transparent) !important;
-  color: var(--accent) !important;
+  background: var(--accent) !important;
+  color: var(--accent-t) !important;
 }
 .pm-method-icon  { font-size: 1.3rem; line-height: 1; }
 .pm-method-label { font-size: 0.7rem; font-weight: 700; }

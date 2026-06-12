@@ -238,6 +238,52 @@ pub async fn run_streaming_chat(
 
         let _ = on_event.send(StreamEvent::ToolDone { name: tool_name.clone() });
 
+        // ── Intent Engine dispatch (ZanAI v2) ──────────────────────────
+        if crate::ai::intent_engine::INTENT_NAMES.contains(&tool_name.as_str()) {
+            if crate::ai::intent_engine::is_mutation_intent(&tool_name) {
+                // Mutation intent — needs confirmation
+                let preview_text = format!("{} with params: {}", tool_name, tool_input);
+                let action = ai_admin_repo::create_action(
+                    pool, &input.user_id, &tool_name,
+                    &tool_input.to_string(), &hash_str(&tool_input.to_string()),
+                    &preview_text, &Ulid::new().to_string(),
+                ).await?;
+                let _ = on_event.send(StreamEvent::MutationPending {
+                    action_id: action.action_id, tool_name: tool_name.clone(), preview: crate::domain::ai_admin::ToolPreview {
+                        tool_name: tool_name.clone(), description: preview_text, fields: vec![],
+                    }, expires_at: action.expires_at, assistant_text: turn_text,
+                });
+                return Ok(accumulated_text);
+            }
+            // Read intent — execute directly
+            let result = crate::ai::intent_engine::execute_intent(pool, &tool_name, &tool_input, &input.branch_id).await;
+            match result {
+                Ok(r) => {
+                    let result_text = serde_json::to_string(&r.data).unwrap_or_else(|_| "{}".into());
+                    // Append result as tool response
+                    msgs.push(AnthropicMsg { role: "assistant".into(), content: vec![
+                        MsgContent::Text { text: turn_text.clone() },
+                        MsgContent::ToolUse { id: tool_id.clone(), name: tool_name.clone(), input: tool_input.clone() },
+                    ]});
+                    msgs.push(AnthropicMsg { role: "user".into(), content: vec![
+                        MsgContent::ToolResult { tool_use_id: tool_id.clone(), content: result_text },
+                    ]});
+                    // Emit Navigate for open_tab
+                    if tool_name == "open_tab" {
+                        if let Some(tab) = tool_input.get("tab").and_then(|v| v.as_str()) {
+                            let _ = on_event.send(StreamEvent::Navigate { tab: tab.to_string() });
+                        }
+                    }
+                    continue;
+                }
+                Err(e) => {
+                    let msg = format!("Intent '{}' failed: {e}", tool_name);
+                    let _ = on_event.send(StreamEvent::Error { message: msg.clone() });
+                    return Err(AppError::Internal(msg));
+                }
+            }
+        }
+
         // Mutation → needs confirmation, emit pending event and exit
         if tools::is_mutation_tool(&tool_name) {
             let preview = tools::dry_run_mutation(

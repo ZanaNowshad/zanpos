@@ -28,7 +28,20 @@ pub struct IntentDef {
     pub parameters: Value, // JSON Schema
 }
 
-/// All intents the AI can choose from. Keep this list small (~15-20).
+/// Whether an intent name performs mutations (needs confirmation).
+pub fn is_mutation_intent(name: &str) -> bool {
+    matches!(name, "create_product" | "update_product" | "adjust_prices_batch" |
+        "receive_stock" | "create_customer" | "create_user" | "backup_database")
+}
+
+/// List of valid intent names the AI may call.
+pub const INTENT_NAMES: &[&str] = &[
+    "search_products", "get_product_detail", "create_product", "update_product",
+    "adjust_prices_batch", "get_low_stock", "receive_stock", "get_sales_report",
+    "get_today_summary", "list_customers", "create_customer", "list_users",
+    "create_user", "get_cash_status", "list_deliveries", "get_sync_status",
+    "get_audit_log", "backup_database", "open_tab",
+];
 pub fn all_intents() -> Vec<IntentDef> {
     vec![
         IntentDef { name: "search_products", description: "Search products by name, SKU, barcode, or category. Returns paginated results.", parameters: json!({"type":"object","properties":{"query":{"type":"string"},"category":{"type":"string"}}}) },

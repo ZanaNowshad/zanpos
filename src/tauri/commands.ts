@@ -423,15 +423,16 @@ export const aiChat = (input: AiChatInput): Promise<AiChatResponse> =>
 export const aiExecuteAction = (input: ExecuteActionInput): Promise<ExecuteActionResult> =>
   invoke("ai_execute_action", { input });
 
-export const aiCancelAction = (actionId: string): Promise<void> =>
-  invoke("ai_cancel_action", { actionId });
+export const aiCancelAction = (actionId: string, actorUserId: string): Promise<void> =>
+  invoke("ai_cancel_action", { actionId, actorUserId });
 
 export const aiUndoAction = (
   undoId: string,
   userId: string,
-  currencyExponent: number
+  currencyExponent: number,
+  actorUserId: string
 ): Promise<UndoActionResult> =>
-  invoke("ai_undo_action", { undoId, userId, currencyExponent });
+  invoke("ai_undo_action", { undoId, userId, currencyExponent, actorUserId });
 
 export const aiChatStream = (
   input: AiChatInput,

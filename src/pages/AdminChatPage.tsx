@@ -1269,7 +1269,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
   const handleCancel = async () => {
     if (!pendingAction) return;
     const capturedCancel = pendingAction;
-    await aiCancelAction(capturedCancel.action_id).catch(() => {});
+    await aiCancelAction(capturedCancel.action_id, sessionUser.user_id).catch(() => {});
     addMessage({ role: "system", text: "Action cancelled." });
     setPendingAction(null);
     // FIX: clear streaming state that OpenAI/Gemini never clears via Done event
@@ -1280,7 +1280,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
 
   const handleUndo = async (undoId: string, msgId: string) => {
     try {
-      const result = await aiUndoAction(undoId, sessionUser.user_id, DEVICE.currency_exponent);
+      const result = await aiUndoAction(undoId, sessionUser.user_id, DEVICE.currency_exponent, sessionUser.user_id);
       setMessages(prev => prev.map(m => m.id === msgId ? { ...m, undoId: undefined } : m));
       addMessage({ role: "system", text: result.followup });
       setTimeout(fetchKpi, 500);

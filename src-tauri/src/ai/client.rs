@@ -2,8 +2,8 @@ use crate::errors::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 
 const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
-/// Valid Anthropic model ID — date-stamped snapshot as required by the API.
-const MODEL: &str = "claude-sonnet-4-20250514";
+/// Valid Anthropic model alias — claude-sonnet-4-20250514 retires 2026-06-15.
+const MODEL: &str = "claude-sonnet-4-6";
 /// 8096 tokens accommodates tool-call JSON + multi-step reasoning loops.
 /// 1024 was too low: tool call JSON alone can exceed it causing mid-stream truncation.
 const MAX_TOKENS: u32 = 8096;

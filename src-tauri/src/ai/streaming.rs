@@ -80,8 +80,8 @@ struct MsgDeltaData {
 
 // ── Main streaming function ───────────────────────────────────────────────────
 
-/// Valid Anthropic model ID — date-stamped snapshot as required by the API.
-const MODEL: &str = "claude-sonnet-4-20250514";
+/// Valid Anthropic model alias — claude-sonnet-4-20250514 retires 2026-06-15.
+const MODEL: &str = "claude-sonnet-4-6";
 /// 8096 tokens accommodates tool-call JSON + multi-step reasoning loops.
 const MAX_TOKENS: u32 = 8096;
 const MAX_TURNS: usize = 8;

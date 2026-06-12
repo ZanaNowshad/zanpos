@@ -178,7 +178,8 @@ pub async fn admin_list_products(
             where_clauses.push(
                 "(p.name LIKE '%' || ? || '%' \
                   OR p.sku LIKE '%' || ? || '%' \
-                  OR p.barcode LIKE '%' || ? || '%')",
+                  OR p.barcode LIKE '%' || ? || '%' \
+                  OR EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.product_id = p.product_id AND pb.barcode LIKE '%' || ? || '%'))",
             );
             bind_search = Some(trimmed.to_string());
         }
@@ -202,7 +203,7 @@ pub async fn admin_list_products(
         ($q:expr) => {{
             let mut q = $q;
             if let Some(ref s) = bind_search {
-                q = q.bind(s).bind(s).bind(s);
+                q = q.bind(s).bind(s).bind(s).bind(s);
             }
             if let Some(ref c) = bind_category {
                 q = q.bind(c);

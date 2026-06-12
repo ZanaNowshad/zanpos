@@ -29,12 +29,8 @@ export function useFocusTrap<T extends HTMLElement>(
   useEffect(() => {
     previouslyFocused.current = document.activeElement;
 
-    // Move focus to the first focusable element inside the container.
-    const container = containerRef.current;
-    if (container) {
-      const first = container.querySelector<HTMLElement>(FOCUSABLE_SELECTORS);
-      first?.focus();
-    }
+    // Don't auto-focus on mount — let the parent component control focus timing.
+    // Auto-focusing here competes with delayed confirm-button focus in PaymentModal.
 
     function handleKeyDown(e: KeyboardEvent) {
       if (!containerRef.current) return;

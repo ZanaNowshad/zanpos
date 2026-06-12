@@ -106,6 +106,41 @@ export default function PaymentModal({
   const remainingMinor = netTotal - allocatedMinor;
 
   const handleDialpadKey = useCallback((key: string) => {
+    // If a real <input> or <textarea> is focused, write to it directly
+    const el = document.activeElement;
+    if (el && (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
+      if (key === "⌫") {
+        const start = el.selectionStart ?? el.value.length;
+        if (start > 0) {
+          el.setSelectionRange(start - 1, start);
+          // Fire input event so React onChange handlers pick up the change
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        // Let the native backspace-delete handle removal via the selection
+        // we just set (next keydown will delete the selected char). For immediate
+        // deletion we use execCommand which works across all modern browsers:
+        document.execCommand("delete", false);
+      } else if (key === "C") {
+        // Treat "C" as clear: select all then delete
+        el.select();
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        document.execCommand("delete", false);
+      } else if (key === "." || key === "00") {
+        // Insert as-is (phone/phone fields may use these)
+        const v = key === "00" ? "00" : ".";
+        const start = el.selectionStart ?? el.value.length;
+        const end = el.selectionEnd ?? el.value.length;
+        el.setRangeText(v, start, end, "end");
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      } else if (key >= "0" && key <= "9") {
+        const start = el.selectionStart ?? el.value.length;
+        const end = el.selectionEnd ?? el.value.length;
+        el.setRangeText(key, start, end, "end");
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      return;
+    }
+    // Fall through to virtual-display-field logic
     if (!activeField) return;
     if (activeField.kind === "amount" || activeField.kind === "tendered") {
       const line = lines.find(l => l.id === activeField.lineId);

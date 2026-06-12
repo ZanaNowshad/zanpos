@@ -168,7 +168,29 @@ export default function PosPage({
   // ── Barcode input ref for programmatic focus ──────────────────────────────────
   const barcodeRef  = useRef<BarcodeInputHandle>(null);
   /** Serialises rapid USB scanner submissions — each scan awaits the previous. */
-  const scanQueueRef = useRef<Promise<void>>(Promise.resolve());
+  // Batch-scan buffer: collects rapid scanner bursts so visual feedback is instant.
+  // Items are dequeued and processed one-at-a-time by drainScanBuffer().
+  const scanBufferRef = useRef<Array<{ barcode: string; qty: number }>>([]);
+  const scanDrainingRef = useRef(false);
+
+  const drainScanBuffer = useCallback(async () => {
+    if (scanDrainingRef.current) return;
+    scanDrainingRef.current = true;
+    while (scanBufferRef.current.length > 0) {
+      const item = scanBufferRef.current.shift()!;
+      try {
+        await addByBarcode(item.barcode, item.qty);
+        setNumpadValue("1");
+      } catch {
+        barcodeRef.current?.flashError();
+        void ghostRecord(sessionUserIdRef.current, item.barcode);
+        setError(`Barcode "${item.barcode}" not found — flagged for your manager. Keep selling.`);
+      }
+    }
+    scanDrainingRef.current = false;
+    barcodeRef.current?.focus();
+  }, [addByBarcode]);
+
   const focusBarcode = useCallback(() => barcodeRef.current?.focus(), []);
 
   // ── noModalOpen — stable boolean for shortcut guard ───────────────────────────
@@ -529,27 +551,15 @@ export default function PosPage({
 
   // ── Barcode scan handler ──────────────────────────────────────────────────────
   const handleBarcode = useCallback((barcode: string, qty?: number) => {
-    // M19: parseInt("0") || 1 would coerce 0 → 1 silently; use explicit NaN guard instead
     const _parsedNumpad = parseInt(numpadRef.current);
     const effectiveQty = qty ?? (Number.isFinite(_parsedNumpad) && _parsedNumpad > 0 ? _parsedNumpad : 1);
-    scanQueueRef.current = scanQueueRef.current.then(async () => {
-      try {
-        await addByBarcode(barcode, effectiveQty);
-        barcodeRef.current?.flashSuccess();
-        setNumpadValue("1");
-
-        // Zero-price items are added to cart with a "no price" badge.
-        // Cashier sets the price later by clicking the cart line (LineEditModal).
-        focusBarcode();
-      } catch {
-        barcodeRef.current?.flashError();
-        void ghostRecord(sessionUserIdRef.current, barcode); // fire-and-forget, never throws
-        // T21: give cashier an actionable message, not a void flash
-        setError(`Barcode "${barcode}" not found — flagged for your manager. Keep selling.`);
-        focusBarcode();
-      }
-    });
-  }, [addByBarcode, focusBarcode]);
+    // Instant visual feedback — green flash fires immediately, before the scan
+    // reaches the cart backend. The item enqueues into the buffer for serial
+    // processing so cart state never races.
+    barcodeRef.current?.flashSuccess();
+    scanBufferRef.current.push({ barcode, qty: effectiveQty });
+    drainScanBuffer();
+  }, [drainScanBuffer]);
 
   // ── Shortcut manager ─────────────────────────────────────────────────────────
   const shortcutHandlers = useMemo(() => ({

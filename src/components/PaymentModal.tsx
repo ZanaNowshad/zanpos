@@ -244,8 +244,9 @@ export default function PaymentModal({
   useEffect(() => { handleConfirmRef.current = handleConfirm; });
   useEffect(() => {
     const onEnterKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement).tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      // Only skip if a dropdown/autocomplete is visible (avoid accidental confirm)
+      const active = document.activeElement as HTMLElement | null;
+      if (active && active.closest(".bo-select-dropdown, [role='listbox'], .customer-drop")) return;
       if (e.key === "Enter" || e.key === "NumpadEnter") {
         e.preventDefault();
         if (canConfirm && !loading) handleConfirmRef.current();

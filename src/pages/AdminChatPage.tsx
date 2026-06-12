@@ -903,7 +903,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
       // Fallback: show provider picker so user can at least configure
       setSetupStep("pick_provider");
     });
-  }, []);
+  }, [sessionUser.user_id]);
 
   // ── Load history when setup is done ────────────────────────────────────────
   useEffect(() => {
@@ -946,7 +946,7 @@ export default function AdminChatPage({ sessionUser, onBackToPOS }: Props) {
     } catch (e) {
       setKpi(prev => ({ ...prev, loading: false, error: String(e) }));
     }
-  }, []);
+  }, [sessionUser.user_id]);
 
   useEffect(() => {
     if (setupStep !== "done") return;

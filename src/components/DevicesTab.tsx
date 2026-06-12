@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { DeviceRow } from "../types";
 import { DEVICE } from "../types";
 import * as cmd from "../tauri/commands";
@@ -14,7 +14,7 @@ export default function DevicesTab({ sessionUserId }: Props) {
   const [name, setName]         = useState("");
   const [saving, setSaving]     = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const rows = await cmd.deviceList(sessionUserId);
@@ -24,9 +24,9 @@ export default function DevicesTab({ sessionUserId }: Props) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [sessionUserId]);
 
-  useEffect(() => { load(); }, []); // load is stable — no deps needed
+  useEffect(() => { load(); }, [load]);
 
   async function handleAdd() {
     if (!code.trim() || !name.trim()) {

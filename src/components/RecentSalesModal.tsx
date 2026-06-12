@@ -39,7 +39,7 @@ export default function RecentSalesModal({ onReprint, onEdit, onClose, sessionUs
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [date]);
+  }, [date, sessionUserId]);
 
   async function handleReprint() {
     if (!selected || working) return;

@@ -189,7 +189,7 @@ export default function PosPage({
     }
     scanDrainingRef.current = false;
     barcodeRef.current?.focus();
-  }, [addByBarcode]);
+  }, [addByBarcode, setError]);
 
   const focusBarcode = useCallback(() => barcodeRef.current?.focus(), []);
 
@@ -233,7 +233,7 @@ export default function PosPage({
     } finally {
       setPayFastLoading(false);
     }
-  }, [lineCount, payFastLoading, noModalOpen, netTotal, finalizeSale, focusBarcode]);
+  }, [lineCount, payFastLoading, noModalOpen, netTotal, finalizeSale, focusBarcode, sessionUser.user_id, thermalEnabled, branchSettings]);
 
   // ── Direct payment (opens modal pre-configured to method) ─────────────────────
   const openPayDirect = useCallback((method: PaymentInput["method"]) => {
@@ -500,14 +500,14 @@ export default function PosPage({
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Reprint failed — check receipt number");
     }
-  }, [lastReceiptNumber, sessionUser.user_id]);
+  }, [lastReceiptNumber, sessionUser.user_id, setError]);
 
   const handleNoSale = useCallback(async () => {
     try { await cashNoSale(shift.shift_id, sessionUser.user_id); }
     catch (e) { setError(typeof e === "string" ? e : "No-sale open failed"); }
     // Open cash drawer — best-effort
     openCashDrawer(sessionUser.user_id).catch((e: unknown) => console.warn("Cash drawer open failed (no-sale):", e));
-  }, [shift.shift_id, sessionUser.user_id]);
+  }, [shift.shift_id, sessionUser.user_id, setError]);
 
   // ── Edit a past sale (load items back into cart as custom items) ──────────────
   // Items are added sequentially — addCustomItem writes to shared SQLite cart
@@ -528,7 +528,7 @@ export default function PosPage({
     } catch (e) {
       setError(typeof e === "string" ? e : "Failed to load sale for edit");
     }
-  }, [clearCart, replaceCart, focusBarcode, shift, sessionUser.user_id]);
+  }, [clearCart, replaceCart, focusBarcode, shift, sessionUser.user_id, setError]);
 
   // ── Clear cart with confirmation ──────────────────────────────────────────────
   const handleClearCartRequest = useCallback(() => {
@@ -618,7 +618,7 @@ export default function PosPage({
     thermalGetConfig(sessionUser.user_id).then(c => { if (!cancelled) setThermalEnabled(c.enabled); })
       .catch((e: unknown) => console.warn("thermalGetConfig failed:", e));
     return () => { cancelled = true; };
-  }, []);
+  }, [sessionUser.user_id]);
 
   // ── Clock ─────────────────────────────────────────────────────────────────────
   const [clockTime, setClockTime] = useState(() =>
@@ -651,6 +651,12 @@ export default function PosPage({
 
   // ── Sync status helpers ───────────────────────────────────────────────────────
   const isOnline      = syncStatus?.online ?? false;
+
+  // Line-discount target — hoisted out of the JSX so no render-time IIFE wraps
+  // the modal's handlers (react-hooks/refs flags ref-reading closures inside one).
+  const discountLine = activeModal.kind === "lineDiscount"
+    ? cart.lines.find(l => l.cart_line_id === activeModal.lineId && !l.voided)
+    : undefined;
 
   return (
     <div className={`pos-layout ${lineCount > 0 ? "pos-has-cart" : "pos-idle"} ${activeModal.kind === "payment" || payFastLoading ? "pos-payment-started" : ""} ${!isOnline ? "pos-offline" : "pos-online"}`}>
@@ -1053,22 +1059,16 @@ export default function PosPage({
         />
       )}
 
-      {activeModal.kind === "lineDiscount" && (
-        (() => {
-          const line = cart.lines.find(l => l.cart_line_id === activeModal.lineId && !l.voided);
-          if (!line) return null;
-          return (
-            <LineDiscountModal
-              line={line}
-              onApply={async (discount_minor, reason) => {
-                await applyLineDiscount(line.cart_line_id, discount_minor, reason);
-                setActiveModal({ kind: "none" });
-                focusBarcode();
-              }}
-              onCancel={() => { setActiveModal({ kind: "none" }); focusBarcode(); }}
-            />
-          );
-        })()
+      {discountLine && (
+        <LineDiscountModal
+          line={discountLine}
+          onApply={async (discount_minor, reason) => {
+            await applyLineDiscount(discountLine.cart_line_id, discount_minor, reason);
+            setActiveModal({ kind: "none" });
+            focusBarcode();
+          }}
+          onCancel={() => { setActiveModal({ kind: "none" }); focusBarcode(); }}
+        />
       )}
 
       {activeModal.kind === "payment" && (

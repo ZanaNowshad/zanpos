@@ -16,7 +16,7 @@ export default function CategoriesTab({ sessionUserId }: Props) {
     let cancelled = false;
     cmd.adminListCategories(sessionUserId).then(data => { if (!cancelled) setCategories(data); });
     return () => { cancelled = true; };
-  }, []);
+  }, [sessionUserId]);
 
   function startCreate() { setSelected(null); setCreating(true); }
   function startEdit(c: CategoryRow) { setCreating(false); setSelected(c); }

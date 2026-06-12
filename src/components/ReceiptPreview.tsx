@@ -23,7 +23,7 @@ export default function ReceiptPreview({ sale, onNewSale, isReprint = false, use
     settingsGetBranch(userId).then(data => { if (!cancelled) setSettings(data); }).catch(() => {});
     thermalGetConfig(userId).then(c => { if (!cancelled) setThermalEnabled(c.enabled); }).catch(() => {});
     return () => { cancelled = true; };
-  }, []);
+  }, [userId]);
 
   const fmt = (n: number) => formatMoney(n, DEVICE.currency_exponent);
 

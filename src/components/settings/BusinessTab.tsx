@@ -34,7 +34,7 @@ export default function BusinessTab(props: BusinessTabProps) {
     reportsConfigLoad(sessionUserId)
       .then(setReportsCfg)
       .catch(() => setReportsCfg({ device_scope: "origin", device_count: 1, local_device_id: "" }));
-  }, []);
+  }, [sessionUserId]);
 
   const handleSaveScope = async () => {
     if (!reportsCfg) return;

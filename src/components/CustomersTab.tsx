@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { UserRound } from "lucide-react";
 import type { CustomerRow } from "../types";
 import * as cmd from "../tauri/commands";
@@ -16,22 +16,22 @@ export default function CustomersTab({ sessionUserId }: Props) {
   const [error, setError]           = useState<string | null>(null);
   const [search, setSearch]         = useState("");
 
-  const load = async (q: string) => {
+  const load = useCallback(async (q: string) => {
     try {
       const rows = await cmd.customerList(sessionUserId, q);
       setCustomers(rows);
     } catch {
       setError("Failed to load customers");
     }
-  };
+  }, [sessionUserId]);
 
-  useEffect(() => { load(""); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(""); }, [load]);
 
   // Debounced search — avoid firing a backend query on every keystroke
   useEffect(() => {
     const t = setTimeout(() => load(search), 300);
     return () => clearTimeout(t);
-  }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [search, load]);
 
   function startCreate() {
     setSelected(null); setCreating(true); setForm(EMPTY_FORM); setError(null);

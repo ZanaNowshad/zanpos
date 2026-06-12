@@ -158,7 +158,7 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
       })
       .catch(() => setSaveError("Failed to load settings"))
       .finally(() => setLoading(false));
-  }, [loadPorts]);
+  }, [loadPorts, sessionUserId]);
 
   const handleSave = async () => {
     if (!name.trim()) { setSaveError("Store name is required"); return; }

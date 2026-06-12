@@ -37,7 +37,7 @@ export default function WhatsAppSection({
     // unreachable sidecar should leave a diagnostic trail.
     try { setStatus(await whatsappStatus(sessionUserId)); }
     catch (e: unknown) { console.warn("WhatsApp status poll failed:", e); }
-  }, []);
+  }, [sessionUserId]);
 
   useEffect(() => {
     refresh();

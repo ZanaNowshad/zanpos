@@ -16,7 +16,7 @@ const WhatsAppStatusPill = memo(function WhatsAppStatusPill({ sessionRole, sessi
       const s = await whatsappStatus(sessionUserId);
       setStatus(s);
     } catch { /* sidecar not running */ }
-  }, []);
+  }, [sessionUserId]);
 
   useEffect(() => {
     poll();

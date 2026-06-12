@@ -26,7 +26,7 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
     let cancelled = false;
     heldCartList(actorUserId, DEVICE.device_id).then(data => { if (!cancelled) setHeldCarts(data); }).catch(() => {});
     return () => { cancelled = true; };
-  }, []);
+  }, [actorUserId]);
 
   const handleHold = async () => {
     if (lineCount === 0) return;

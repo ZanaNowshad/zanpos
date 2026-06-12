@@ -234,7 +234,7 @@ function AiSettingsDrawer({ onClose, onSaved, sessionUserId = "" }: { onClose: (
         if (cfg.openai_model)    setSelectedModel(cfg.openai_model);
       }
     }).catch(() => {});
-  }, []);
+  }, [sessionUserId]);
 
   const inp: React.CSSProperties = { width:"100%", padding:"8px 11px", borderRadius:7, border:"1px solid var(--border)", background:"var(--bg)", color:"var(--text)", fontSize:"0.85rem", boxSizing:"border-box", marginBottom:10 };
   const lbl: React.CSSProperties = { display:"block", fontSize:"0.78rem", fontWeight:600, marginBottom:4, color:"var(--text-dim)" };
@@ -495,7 +495,7 @@ export default function MigrationAgentPage({ onDone, sessionUserId = "" }: Props
         else if (cfg.provider === "openai") setProviderLabel(`⬡ ${cfg.openai_model || "OpenAI"}`);
       })
       .catch(() => setAiReady(false));
-  }, []);
+  }, [sessionUserId]);
 
   // ── Welcome message (once AI is ready) ────────────────────────────────────
   useEffect(() => {

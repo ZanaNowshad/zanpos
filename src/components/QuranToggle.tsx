@@ -66,11 +66,12 @@ export default function QuranToggle() {
     return RECITERS.some(r => r.id === v) ? v : 1;
   });
   // Current surah position (1-114). Resumes where the cashier left off.
-  const surahRef = useRef<number>((() => {
+  const [surahNo, setSurahNo] = useState<number>(() => {
     const v = parseInt(localStorage.getItem(LS_SURAH) ?? "1", 10);
     return v >= 1 && v <= TOTAL_SURAHS ? v : 1;
-  })());
-  const [surahNo, setSurahNo] = useState<number>(surahRef.current);
+  });
+  // Mirror for event handlers (auto-advance) — kept in sync by playSurah.
+  const surahRef = useRef<number>(surahNo);
 
   const [volume, setVolume] = useState<number>(() => {
     const v = parseFloat(localStorage.getItem(LS_VOLUME) ?? "0.6");
@@ -79,13 +80,15 @@ export default function QuranToggle() {
 
   const reciter = RECITERS.find(r => r.id === reciterId) ?? RECITERS[0];
 
-  // Lazily create the audio element once.
-  if (!audioRef.current && typeof Audio !== "undefined") {
-    const a = new Audio();
-    a.preload = "none";
-    a.volume = volume;
-    audioRef.current = a;
-  }
+  // Create the audio element once on mount — refs must stay untouched during
+  // render (react-hooks/refs). The volume effect below applies initial volume.
+  useEffect(() => {
+    if (audioRef.current == null && typeof Audio !== "undefined") {
+      const a = new Audio();
+      a.preload = "none";
+      audioRef.current = a;
+    }
+  }, []);
 
   const stop = useCallback(() => {
     const a = audioRef.current;

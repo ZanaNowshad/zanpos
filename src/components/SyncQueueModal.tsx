@@ -36,7 +36,6 @@ export default function SyncQueueModal({ onClose, sessionUserId }: Props) {
       .finally(() => { if (!cancelledRef.current) setLoading(false); });
   };
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(load, [sessionUserId]);
 
   const handleRetry = async (id: string) => {

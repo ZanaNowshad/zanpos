@@ -118,7 +118,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
       users.forEach(u => map.set(u.user_id, u.display_name));
       setUserMap(map);
     }).catch(() => { /* non-critical */ });
-  }, [isManager]);
+  }, [isManager, sessionUser.user_id]);
 
   // ── Load rider suggestions ──
   useEffect(() => {

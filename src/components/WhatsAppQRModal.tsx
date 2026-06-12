@@ -29,7 +29,7 @@ export default function WhatsAppQRModal({ onClose, onConnected, sessionUserId = 
       setUnreachable(true);
       setLoading(false);
     }
-  }, [onClose, onConnected]);
+  }, [onClose, onConnected, sessionUserId]);
 
   useEffect(() => {
     poll();

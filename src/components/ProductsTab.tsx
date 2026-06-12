@@ -59,7 +59,7 @@ export default function ProductsTab({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [sessionUserId]);
 
   useEffect(() => {
     fetchProducts(search, offset);
@@ -71,7 +71,7 @@ export default function ProductsTab({
         setCategories(cats.filter(c => c.is_active));
         setTaxRules(taxes);
       });
-  }, []);
+  }, [sessionUserId]);
 
   // Open create form with ghost barcode prefill data
   useEffect(() => {

@@ -37,6 +37,11 @@ const METHODS: { id: PaymentInput["method"]; icon: string; label: string; key?: 
   { id: "other",  icon: "•••", label: "Other" },
 ];
 
+// Module-scope so the useState initializer below stays ref-free (react-hooks/refs).
+let lineIdCounter = 200;
+const mkLine = (method: PaymentInput["method"] = "cash"): PaymentLine =>
+  ({ id: lineIdCounter++, method, amountStr: "", tenderedStr: "" });
+
 export default function PaymentModal({
   netTotal, onConfirm, onCancel, loading,
   initialMethod, splitMode, sessionUserId,
@@ -44,10 +49,7 @@ export default function PaymentModal({
   const EXP = DEVICE.currency_exponent;
   const containerRef = useRef<HTMLDivElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
-  const _lineCounterRef = useRef(200);
   const handleConfirmRef = useRef<() => void>(() => {});
-  const mkLine = (method: PaymentInput["method"] = "cash"): PaymentLine =>
-    ({ id: _lineCounterRef.current++, method, amountStr: "", tenderedStr: "" });
   useFocusTrap(containerRef, onCancel);
   const fmt = (n: number) => `${formatMoney(n, EXP)}`;
 
@@ -93,7 +95,7 @@ export default function PaymentModal({
       mounted = false;
       if (searchTimer.current) clearTimeout(searchTimer.current);
     };
-  }, [custSearch]);
+  }, [custSearch, sessionUserId]);
 
   const updateLine = useCallback((id: number, patch: Partial<PaymentLine>) =>
     setLines(prev => prev.map(l => l.id === id ? { ...l, ...patch } : l)), []);

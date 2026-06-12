@@ -21,7 +21,7 @@ export default function UsersTab({ sessionUserId }: Props) {
     Promise.all([cmd.adminListUsersAll(sessionUserId), cmd.adminListRoles(sessionUserId)])
       .then(([u, r]) => { if (!cancelled) { setUsers(u); setRoles(r); } });
     return () => { cancelled = true; };
-  }, []);
+  }, [sessionUserId]);
 
   function startCreate() {
     setSelected(null); setCreating(true);

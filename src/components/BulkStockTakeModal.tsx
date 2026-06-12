@@ -35,7 +35,7 @@ export default function BulkStockTakeModal({ user, onClose }: Props) {
       })
       .catch(() => setError("Failed to load products"))
       .finally(() => setLoading(false));
-  }, []);
+  }, [user.user_id]);
 
   const handleSubmit = async () => {
     const entries = rows

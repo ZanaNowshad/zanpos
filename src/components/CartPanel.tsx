@@ -36,16 +36,19 @@ export default memo(function CartPanel({
   const [saleFlash, setSaleFlash] = useState(false);
   const activeLines = cart.lines.filter(l => !l.voided);
 
-  // T23: flash success when cart transitions from items → empty (sale completed)
+  // T23: flash success when cart transitions from items → empty (sale completed).
+  // Deps keep this off unrelated renders — the old dep-less version skipped the
+  // ref update on the flash path, re-triggering the flash every 750ms on idle.
   const prevLineCnt = useRef(activeLines.length);
   useEffect(() => {
-    if (prevLineCnt.current > 0 && activeLines.length === 0) {
+    const prev = prevLineCnt.current;
+    prevLineCnt.current = activeLines.length;
+    if (prev > 0 && activeLines.length === 0) {
       setSaleFlash(true);
       const t = setTimeout(() => setSaleFlash(false), 750);
       return () => clearTimeout(t);
     }
-    prevLineCnt.current = activeLines.length;
-  });
+  }, [activeLines.length]);
   const fmt = (n: number) => `${DEVICE.currency} ${formatMoney(n, DEVICE.currency_exponent)}`;
   const grossTotal = activeLines.reduce((s, l) => s + l.line_total_minor, 0);
   const totalDiscount = cart.bill_discount_minor + activeLines.reduce((s, l) => s + l.line_discount_minor, 0);

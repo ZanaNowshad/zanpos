@@ -55,43 +55,34 @@ export default function InventoryTab({ sessionUserId }: Props) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [sessionUserId]);
 
   // Reload when search or offset changes
   useEffect(() => {
     fetchPage(search, offset);
   }, [search, offset]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Detail views ─────────────────────────────────────────────────────────
-
-  const openMovements = async (level: StockLevel) => {
-    setSelected(level);
-    setMode("movements");
-    setMovLoading(true);
-    try {
-      const m = await cmd.inventoryGetMovements(sessionUserId, level.product_id);
-      setMovements(m);
-    } finally {
-      setMovLoading(false);
-    }
-  };
+  // ── Detail views (togglable — click again to collapse) ───────────────────
 
   const openReceive = (level: StockLevel) => {
-    setSelected(level);
-    setRecvQty("");
-    setRecvNotes("");
-    setRecvError(null);
-    setMode("receive");
+    setSelected(level); setRecvQty(""); setRecvNotes(""); setRecvError(null);
+    setMode(mode === "receive" && selected?.product_id === level.product_id ? "levels" : "receive");
     setTimeout(() => recvRef.current?.focus(), 50);
   };
-
   const openAdjust = (level: StockLevel) => {
-    setSelected(level);
-    setAdjQty(parseFloat(level.quantity_on_hand).toFixed(3));
-    setAdjNotes("");
-    setAdjError(null);
-    setMode("adjust");
+    setSelected(level); setAdjQty(level.quantity_on_hand); setAdjNotes(""); setAdjError(null);
+    setMode(mode === "adjust" && selected?.product_id === level.product_id ? "levels" : "adjust");
     setTimeout(() => adjRef.current?.focus(), 50);
+  };
+  const openMovements = async (level: StockLevel) => {
+    setSelected(level);
+    setMode(mode === "movements" && selected?.product_id === level.product_id ? "levels" : "movements");
+    if (mode !== "movements" || selected?.product_id !== level.product_id) {
+      setMovLoading(true);
+      try { setMovements(await cmd.inventoryGetMovements(sessionUserId, level.product_id)); }
+      catch { setMovements([]); }
+      finally { setMovLoading(false); }
+    }
   };
 
   const handleReceive = async () => {
@@ -130,142 +121,85 @@ export default function InventoryTab({ sessionUserId }: Props) {
     }
   };
 
-  // ── Sub-views ─────────────────────────────────────────────────────────────
-
-  if (mode === "receive" && selected) {
-    return (
-      <div className="inv-form-pane">
-        <button className="bo-back-btn" onClick={() => setMode("levels")}>← Back to Inventory</button>
-        <h3 className="inv-form-title">Receive Stock — {selected.product_name}</h3>
-        <div className="inv-current">
-          Current stock: <strong>{parseFloat(selected.quantity_on_hand).toLocaleString()}</strong>
-          {selected.is_low_stock && <span className="inv-badge-low"> ⚠ Low</span>}
-        </div>
-        <label className="bo-label">Quantity received *</label>
-        <input
-          ref={recvRef}
-          className="bo-input"
-          type="number"
-          step="0.001"
-          min="0.001"
-          placeholder="0.000"
-          value={recvQty}
-          onChange={e => setRecvQty(e.target.value)}
-        />
-        <label className="bo-label">Notes (PO number, supplier, etc.)</label>
-        <input
-          className="bo-input"
-          type="text"
-          placeholder="Optional"
-          value={recvNotes}
-          onChange={e => setRecvNotes(e.target.value)}
-        />
-        {recvError && <div className="modal-error">{recvError}</div>}
-        <div className="modal-actions" style={{ marginTop: 16 }}>
-          <button className="modal-btn-secondary" onClick={() => setMode("levels")}>Cancel</button>
-          <button
-            className="modal-btn-primary"
-            onClick={handleReceive}
-            disabled={recvLoading || !recvQty || parseFloat(recvQty) <= 0}
-          >
-            {recvLoading ? "Saving…" : "Receive Stock"}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (mode === "adjust" && selected) {
-    const newQty = parseFloat(adjQty) || 0;
-    const oldQty = parseFloat(selected.quantity_on_hand) || 0;
-    const delta  = newQty - oldQty;
-    return (
-      <div className="inv-form-pane">
-        <button className="bo-back-btn" onClick={() => setMode("levels")}>← Back to Inventory</button>
-        <h3 className="inv-form-title">Count Correction — {selected.product_name}</h3>
-        <div className="inv-current">
-          System quantity: <strong>{oldQty.toLocaleString()}</strong>
-        </div>
-        <label className="bo-label">Actual counted quantity *</label>
-        <input
-          ref={adjRef}
-          className="bo-input"
-          type="number"
-          step="0.001"
-          min="0"
-          value={adjQty}
-          onChange={e => setAdjQty(e.target.value)}
-        />
-        {adjQty && !isNaN(delta) && (
-          <div className={`inv-delta ${delta < 0 ? "inv-delta-neg" : delta > 0 ? "inv-delta-pos" : ""}`}>
-            {delta === 0 ? "No change" : `${delta > 0 ? "+" : ""}${delta.toFixed(3)} variance`}
+  // ── Inline expand panel (replaces old sub-view navigation) ──────────────
+  function renderExpandPanel() {
+    if (!selected || mode === "levels") return null;
+    if (mode === "receive") return (
+      <tr className="inv-expanded-row"><td colSpan={6}>
+        <div className="inv-form-inline">
+          <div className="inv-current">
+            Current stock: <strong>{parseFloat(selected.quantity_on_hand).toLocaleString()}</strong>
+            {selected.is_low_stock && <span className="inv-badge-low"> ⚠ Low</span>}
           </div>
-        )}
-        <label className="bo-label">Reason for adjustment</label>
-        <input
-          className="bo-input"
-          type="text"
-          placeholder="e.g. Stocktake, damaged goods…"
-          value={adjNotes}
-          onChange={e => setAdjNotes(e.target.value)}
-        />
-        {adjError && <div className="modal-error">{adjError}</div>}
-        <div className="modal-actions" style={{ marginTop: 16 }}>
-          <button className="modal-btn-secondary" onClick={() => setMode("levels")}>Cancel</button>
-          <button
-            className="modal-btn-primary"
-            onClick={handleAdjust}
-            disabled={adjLoading || !adjQty}
-          >
-            {adjLoading ? "Saving…" : "Save Adjustment"}
-          </button>
+          <label className="bo-label">Quantity received *</label>
+          <input ref={recvRef} className="bo-input" type="number" step="0.001" min="0.001"
+            placeholder="0.000" value={recvQty} onChange={e => setRecvQty(e.target.value)} />
+          <label className="bo-label">Notes (PO number, supplier, etc.)</label>
+          <input className="bo-input" type="text" placeholder="Optional"
+            value={recvNotes} onChange={e => setRecvNotes(e.target.value)} />
+          {recvError && <div className="modal-error">{recvError}</div>}
+          <div className="inv-form-actions">
+            <button className="modal-btn-secondary" onClick={() => setMode("levels")}>Cancel</button>
+            <button className="modal-btn-primary" onClick={handleReceive}
+              disabled={recvLoading || !recvQty || parseFloat(recvQty) <= 0}>{recvLoading ? "Saving…" : "Receive Stock"}</button>
+          </div>
         </div>
-      </div>
-    );
-  }
-
-  if (mode === "movements" && selected) {
-    return (
-      <div className="inv-form-pane">
-        <button className="bo-back-btn" onClick={() => setMode("levels")}>← Back to Inventory</button>
-        <h3 className="inv-form-title">Movement History — {selected.product_name}</h3>
-        <div className="inv-current">
-          Current stock: <strong>{parseFloat(selected.quantity_on_hand).toLocaleString()}</strong>
+      </td></tr>);
+    if (mode === "adjust") {
+      const newQty = parseFloat(adjQty) || 0;
+      const oldQty = parseFloat(selected.quantity_on_hand) || 0;
+      const delta = newQty - oldQty;
+      return (<tr className="inv-expanded-row"><td colSpan={6}>
+        <div className="inv-form-inline">
+          <div className="inv-current">System quantity: <strong>{oldQty.toLocaleString()}</strong></div>
+          <label className="bo-label">Actual counted quantity *</label>
+          <input ref={adjRef} className="bo-input" type="number" step="0.001" min="0"
+            value={adjQty} onChange={e => setAdjQty(e.target.value)} />
+          {adjQty && !isNaN(delta) && (
+            <div className={`inv-delta ${delta < 0 ? "inv-delta-neg" : delta > 0 ? "inv-delta-pos" : ""}`}>
+              {delta === 0 ? "No change" : `${delta > 0 ? "+" : ""}${delta.toFixed(3)} variance`}
+            </div>
+          )}
+          <label className="bo-label">Reason for adjustment</label>
+          <input className="bo-input" type="text" placeholder="e.g. Stocktake, damaged goods…"
+            value={adjNotes} onChange={e => setAdjNotes(e.target.value)} />
+          {adjError && <div className="modal-error">{adjError}</div>}
+          <div className="inv-form-actions">
+            <button className="modal-btn-secondary" onClick={() => setMode("levels")}>Cancel</button>
+            <button className="modal-btn-primary" onClick={handleAdjust}
+              disabled={adjLoading || !adjQty}>{adjLoading ? "Saving…" : "Save Adjustment"}</button>
+          </div>
         </div>
-        {movLoading ? (
-          <div className="bo-empty">Loading…</div>
-        ) : movements.length === 0 ? (
-          <div className="bo-empty">No movements recorded yet.</div>
-        ) : (
-          <table className="rpt-table" style={{ marginTop: 12 }}>
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Type</th>
-                <th className="rpt-num">Delta</th>
-                <th className="rpt-num">After</th>
-                <th>Notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {movements.map(m => (
-                <tr key={m.movement_id}>
-                  <td className="rpt-date">{new Date(m.created_at).toLocaleString([], {
-                    month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"
-                  })}</td>
-                  <td><span className={`inv-move-type inv-move-${m.movement_type}`}>{m.movement_type}</span></td>
-                  <td className={`rpt-num ${parseFloat(m.quantity_delta) < 0 ? "inv-neg" : "inv-pos"}`}>
-                    {parseFloat(m.quantity_delta) > 0 ? "+" : ""}{parseFloat(m.quantity_delta).toLocaleString()}
-                  </td>
-                  <td className="rpt-num">{parseFloat(m.quantity_after).toLocaleString()}</td>
-                  <td className="rpt-dim">{m.notes ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    );
+      </td></tr>);
+    }
+    if (mode === "movements") return (
+      <tr className="inv-expanded-row"><td colSpan={6}>
+        <div className="inv-form-inline">
+          <div className="inv-current">
+            Current stock: <strong>{parseFloat(selected.quantity_on_hand).toLocaleString()}</strong>
+          </div>
+          {movLoading ? <div className="bo-empty">Loading…</div> :
+           movements.length === 0 ? <div className="bo-empty">No movements recorded yet.</div> :
+           <table className="rpt-table" style={{ marginTop: 12 }}><thead><tr>
+             <th>Date</th><th>Type</th><th className="rpt-num">Delta</th><th className="rpt-num">After</th><th>Notes</th>
+           </tr></thead><tbody>
+             {movements.map(m => (
+               <tr key={m.movement_id}>
+                 <td className="rpt-date">{new Date(m.created_at).toLocaleString([], {month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"})}</td>
+                 <td><span className={`inv-move-type inv-move-${m.movement_type}`}>{m.movement_type}</span></td>
+                 <td className={`rpt-num ${parseFloat(m.quantity_delta) < 0 ? "inv-neg" : "inv-pos"}`}>
+                   {parseFloat(m.quantity_delta) > 0 ? "+" : ""}{parseFloat(m.quantity_delta).toLocaleString()}</td>
+                 <td className="rpt-num">{parseFloat(m.quantity_after).toLocaleString()}</td>
+                 <td className="rpt-dim">{m.notes ?? "—"}</td>
+               </tr>
+             ))}
+           </tbody></table>}
+          <div className="inv-form-actions">
+            <button className="modal-btn-secondary" onClick={() => setMode("levels")}>Close</button>
+          </div>
+        </div>
+      </td></tr>);
+    return null;
   }
 
   // ── Main stock levels list ────────────────────────────────────────────────
@@ -345,6 +279,7 @@ export default function InventoryTab({ sessionUserId }: Props) {
                 </td>
               </tr>
             ))}
+            {renderExpandPanel()}
           </tbody>
         </table>
       )}

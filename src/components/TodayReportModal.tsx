@@ -25,7 +25,7 @@ export default function TodayReportModal({ onClose, sessionUserId }: Props) {
       .catch(() => { if (!cancelled) setError("Failed to load report"); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [today]);
+  }, [today, sessionUserId]);
 
   const fmt = (minor: number) =>
     `${DEVICE.currency} ${formatMoney(minor, DEVICE.currency_exponent)}`;

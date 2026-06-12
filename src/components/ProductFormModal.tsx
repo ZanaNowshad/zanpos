@@ -54,7 +54,7 @@ export default function ProductFormModal({
     if (mode === "edit" && product) {
       cmd.productBarcodesList(sessionUserId, product.product_id).then(setExtraBarcodes).catch(() => {});
     }
-  }, [mode, product]);
+  }, [mode, product, sessionUserId]);
 
   async function pickImage() {
     try { const p = await cmd.productPickImage(); if (p) setImagePath(p); }
@@ -112,7 +112,7 @@ export default function ProductFormModal({
           image_path: imagePath.trim() || undefined,
         });
         for (const pb of pendingBarcodes) {
-          try { await cmd.productBarcodeAdd(sessionUserId, created.product_id, pb.barcode); } catch {}
+          try { await cmd.productBarcodeAdd(sessionUserId, created.product_id, pb.barcode); } catch { /* best-effort — extra-barcode failures must not block the save */ }
         }
       } else if (product) {
         await cmd.adminUpdateProduct({
@@ -128,6 +128,10 @@ export default function ProductFormModal({
     } catch (e: unknown) { setError(typeof e === "string" ? e : "Save failed"); }
     finally { setSaving(false); }
   }
+
+  // Union-typed view: TS cannot .map() over ProductBarcodeRow[] | PendingBarcode[] directly.
+  const shownBarcodes: (ProductBarcodeRow | PendingBarcode)[] =
+    mode === "edit" ? extraBarcodes : pendingBarcodes;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -191,18 +195,21 @@ export default function ProductFormModal({
           <label className="bo-label">Additional Barcodes</label>
           {barcodeErr && <div className="bo-form-error" style={{marginTop: 4}}>{barcodeErr}</div>}
           <div style={{marginBottom: 8}}>
-            {(mode === "edit" ? extraBarcodes : pendingBarcodes).map((b: any) => (
-              <div key={b.barcode_id ?? b.tempId} className="bo-barcode-row">
-                <span className="bo-barcode-text">{b.barcode}</span>
-                <button className="bo-barcode-remove"
-                  onClick={() => mode === "edit" ? removeBarcodeForEdit(b.barcode_id) : setPendingBarcodes(p => p.filter(x => x.tempId !== b.tempId))}
-                >✕</button>
-              </div>
-            ))}
+            {shownBarcodes.map(b => {
+              const isSaved = "barcode_id" in b;
+              return (
+                <div key={isSaved ? b.barcode_id : b.tempId} className="bo-barcode-row">
+                  <span className="bo-barcode-text">{b.barcode}</span>
+                  <button className="bo-barcode-remove"
+                    onClick={() => { if (isSaved) removeBarcodeForEdit(b.barcode_id); else setPendingBarcodes(p => p.filter(x => x.tempId !== b.tempId)); }}
+                  >✕</button>
+                </div>
+              );
+            })}
             <div className="bo-barcode-add-row">
               <input ref={newBarcodeRef} className="bo-input" style={{flex: 1}} value={newBarcodeInput}
                 onChange={e => setNewBarcodeInput(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); mode === "create" ? addPending() : addBarcodeForEdit(); } }}
+                onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); if (mode === "create") addPending(); else addBarcodeForEdit(); } }}
                 placeholder="Scan or type barcode…" />
               <button className="btn-secondary" style={{whiteSpace: "nowrap"}}
                 onClick={() => mode === "create" ? addPending() : addBarcodeForEdit()}>Add</button>

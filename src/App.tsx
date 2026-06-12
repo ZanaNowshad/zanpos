@@ -97,7 +97,7 @@ export default function App() {
           const opened = await shiftOpen(DEVICE.branch_id, DEVICE.device_id, user.user_id, 0);
           setShift(opened);
           setView("pos");
-        } catch (autoOpenErr) {
+        } catch {
           // Auto-open can fail with "already open" if shiftGetActive missed a race
           // (e.g. a shift opened by another terminal since the check above).
           // Retry before falling back to the ShiftModal.

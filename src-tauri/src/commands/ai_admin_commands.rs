@@ -309,7 +309,7 @@ pub async fn ai_chat(state: State<'_, AppState>, input: AiChatInput) -> AppResul
     };
 
     let tool_defs = tools::all_tool_definitions();
-    let system = build_system_prompt();
+    let system = build_system_prompt(&state.db, None).await;
 
     let initial = provider
         .send_chat(&system, &input.history, &input.message, &tool_defs)
@@ -394,9 +394,10 @@ pub async fn ai_execute_action(
     .await?;
 
     let followup = if let Ok(Some(provider)) = Provider::from_db(&state.db).await {
+        let sys = build_system_prompt(&state.db, None).await;
         provider
             .get_followup(
-                &build_system_prompt(),
+                &sys,
                 &input.history,
                 &input.assistant_text,
                 &action.tool_name,
@@ -473,11 +474,18 @@ pub async fn ai_undo_action(
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-fn build_system_prompt() -> String {
+async fn build_system_prompt(db: &sqlx::SqlitePool, ui_context: Option<&str>) -> String {
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let now  = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
+    let biz_name = sqlx::query_scalar::<_, String>(
+        "SELECT name FROM branches WHERE is_active=1 ORDER BY created_at LIMIT 1")
+        .fetch_optional(db).await.ok().flatten()
+        .unwrap_or_else(|| "this store".to_string());
+    let ui_block = ui_context.filter(|s| !s.is_empty())
+        .map(|ctx| format!("\n## Current UI Context\n\nThe admin has the following tab open: **{ctx}**.\nUse this context to make your answers more specific.\n"))
+        .unwrap_or_default();
     format!(
-"You are AMWAJ — the AI business assistant for this ZANPOS retail store in Bahrain.
+"You are ZanAI — the {biz_name} AI Admin Agent.
 You think and act like a skilled analyst: you understand what the admin is trying to
 accomplish, plan complex tasks step by step, call tools in sequence, observe each result,
 and keep going until the job is fully done — just like Claude or Codex would.
@@ -570,9 +578,10 @@ remove_product_barcode, trigger_sync_now, force_full_resync, revert_delivery_pay
 update_branch_settings, register_device, send_whatsapp_delivery_alert,
 send_whatsapp_payment_reminder, send_whatsapp_arrival_notice, disconnect_whatsapp,
 update_thermal_config, open_cash_drawer, reprint_receipt, delete_held_cart,
-update_benefit_number
+update_benefit_number, open_tab
 
 ---
+{ui_block}
 *Today: {today} | Time: {now} AST (UTC+3, Bahrain — no DST)*"
     )
 }
@@ -709,7 +718,7 @@ pub async fn ai_chat_stream(
     };
 
     let tool_defs = tools::all_tool_definitions();
-    let system = build_system_prompt();
+    let system = build_system_prompt(&state.db, input.ui_context.as_deref()).await;
 
     // Only Anthropic supports streaming natively; OpenAI falls back to non-streaming
     if provider.is_anthropic() {

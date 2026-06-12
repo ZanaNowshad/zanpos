@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart2, Clock, ClipboardList, Building2, StickyNote,
-  Sparkles, ShoppingBag
+  ShoppingBag
 } from "lucide-react";
 import type { BusinessFlags, CustomerRow, LowStockAlert, PaymentInput, SaleListRow, SaleResult, SessionUser, Shift } from "../types";
 import { type Theme, THEMES } from "../hooks/useTheme";
@@ -73,13 +73,13 @@ interface Props {
   onLogout: () => void;
   onLock?: () => void;
   onShiftClose: (closed: boolean) => void;
-  onOpenAdminChat?: () => void;
+  onOpenOfficeAI?: () => void;
   theme?: Theme;
   onToggleTheme?: () => void;
 }
 
 export default function PosPage({
-  sessionUser, shift, onLogout, onLock, onShiftClose, onOpenAdminChat, theme, onToggleTheme,
+  sessionUser, shift, onLogout, onLock, onShiftClose, onOpenOfficeAI, theme, onToggleTheme,
 }: Props) {
   const session = useMemo(() => ({
     branch_id: DEVICE.branch_id,
@@ -754,9 +754,15 @@ export default function PosPage({
             </button>
           )}
           {canOpenBackOffice && (
-            <button className="pos-sidebar-item" aria-label="Back Office" onClick={() => setActiveModal({ kind: "backOffice" })}>
+            <button className="pos-sidebar-item" aria-label="OfficeAI" onClick={() => {
+              if (lineCount > 0) {
+                setError("Hold or complete the current sale before opening OfficeAI");
+                return;
+              }
+              if (onOpenOfficeAI) onOpenOfficeAI();
+            }}>
               <Building2 size={18} strokeWidth={1.75} aria-hidden="true" />
-              <span>Back Office</span>
+              <span>OfficeAI</span>
             </button>
           )}
           {canOpenBackOffice && (
@@ -766,12 +772,6 @@ export default function PosPage({
             </button>
           )}
           <div className="pos-sidebar-spacer" />
-          {onOpenAdminChat && (
-            <button className="pos-sidebar-item" aria-label="AI Admin" onClick={onOpenAdminChat}>
-              <Sparkles size={18} strokeWidth={1.75} aria-hidden="true" />
-              <span>AI</span>
-            </button>
-          )}
         </div>
 
         {/* Cart column — scan strip + custom item btn + full cart */}

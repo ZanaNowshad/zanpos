@@ -916,6 +916,7 @@ pub fn all_tool_definitions() -> Vec<ToolDef> {
         ToolDef { name: "reprint_receipt".into(), description: "Reprint a past receipt by receipt_number to the configured thermal printer.".into(), input_schema: json!({"type":"object","properties":{"receipt_number":{"type":"string"}},"required":["receipt_number"]}) },
         ToolDef { name: "delete_held_cart".into(), description: "Permanently delete a held/parked cart by held_cart_id.".into(), input_schema: json!({"type":"object","properties":{"held_cart_id":{"type":"string"}},"required":["held_cart_id"]}) },
         ToolDef { name: "update_benefit_number".into(), description: "Update the Benefit/Sadad payment phone number stored in app config.".into(), input_schema: json!({"type":"object","properties":{"benefit_number":{"type":"string"}},"required":["benefit_number"]}) },
+        ToolDef { name: "open_tab".into(), description: "Navigate the admin's workspace to a specific tab: products, categories, inventory, reports, cashier, eod, deliveries, customers, users, settings, audit, devices.".into(), input_schema: json!({"type":"object","properties":{"tab":{"type":"string","enum":["products","categories","inventory","reports","cashier","eod","deliveries","customers","users","settings","audit","devices"]}},"required":["tab"]}) },
     ]
 }
 
@@ -2507,6 +2508,15 @@ pub async fn execute_read_tool(
             let timeout = mins.and_then(|v| v.parse::<i64>().ok()).unwrap_or(5);
             Ok(format!("[DB] Session timeout: {} minutes ({}).", timeout,
                 if timeout == 0 { "never locks" } else { "auto-locks after idle" }))
+        }
+"open_tab" => {
+            let tab = input.get("tab").and_then(|v| v.as_str()).unwrap_or("");
+            const VALID: &[&str] = &["products","categories","inventory","reports","cashier","eod","deliveries","customers","users","settings","audit","devices"];
+            if VALID.contains(&tab) {
+                Ok(format!("{{\"ok\":true,\"tab\":\"{tab}\"}}"))
+            } else {
+                Ok(format!("{{\"ok\":false,\"tab\":\"{tab}\",\"error\":\"invalid tab\"}}"))
+            }
         }
         name => crate::ai::tools_read_ext::execute(pool, name, input, branch_id, currency_exp).await,
     }

@@ -289,6 +289,15 @@ pub async fn run_streaming_chat(
             }
         };
 
+        // Emit Navigate event for open_tab tool results (office-ai workspace)
+        if tool_name == "open_tab" {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&tool_result) {
+                if let Some(tab) = parsed.get("tab").and_then(|v| v.as_str()) {
+                    let _ = on_event.send(StreamEvent::Navigate { tab: tab.to_string() });
+                }
+            }
+        }
+
         // Append assistant turn + tool result to message list
         msgs.push(AnthropicMsg {
             role: "assistant".into(),

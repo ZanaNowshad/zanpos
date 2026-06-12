@@ -67,6 +67,8 @@ pub struct AiChatInput {
     pub user_id: String,
     pub branch_id: String,
     pub currency_exponent: u32,
+    #[serde(default)]
+    pub ui_context: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,6 +139,7 @@ pub enum StreamEvent {
         expires_at: String,
         assistant_text: String,
     },
+    Navigate { tab: String },
     Done,
     Error { message: String },
 }

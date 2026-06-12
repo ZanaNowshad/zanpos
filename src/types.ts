@@ -290,6 +290,7 @@ export interface AiChatInput {
   user_id: string;
   branch_id: string;
   currency_exponent: number;
+  ui_context?: string;
 }
 
 export type AiChatResponse =
@@ -348,6 +349,7 @@ export type StreamEvent =
       expires_at: string;
       assistant_text: string;
     }
+  | { type: "navigate"; tab: string }
   | { type: "done" }
   | { type: "error"; message: string };
 

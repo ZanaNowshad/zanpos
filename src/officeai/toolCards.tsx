@@ -1,6 +1,8 @@
 import type { ToolCallEntry, ToolMetaEntry } from "./officeAiTypes";
 import { Settings } from "lucide-react";
 
+export { QUICK_ACTIONS } from "./officeAiTypes";
+
 export function toolMeta(name: string): ToolMetaEntry {
   return { Icon: Settings, label: name.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()), color: "var(--text-dim)" };
 }

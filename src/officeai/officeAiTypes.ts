@@ -1,4 +1,5 @@
 import type { LucideProps } from "lucide-react";
+import type { FC } from "react";
 
 // ─── Tab identifier — shared with nav ──────────────────────────────────────────
 export type OfficeTab =
@@ -35,7 +36,7 @@ export interface ToolCallEntry {
 }
 
 export interface ToolMetaEntry {
-  Icon: React.FC<LucideProps>;
+  Icon: FC<LucideProps>;
   label: string;
   color: string;
 }

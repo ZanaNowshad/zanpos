@@ -1,3 +1,4 @@
+import type { RefObject } from "react";
 import { Maximize2, Sparkles, X } from "lucide-react";
 import type { ChatController } from "./useChatController";
 import ChatPanel from "./ChatPanel";
@@ -12,7 +13,7 @@ interface Props {
   onSetup: () => void;
   onExpand: () => void;
   onClose: () => void;
-  composerRef: React.RefObject<HTMLTextAreaElement | null>;
+  composerRef: RefObject<HTMLTextAreaElement | null>;
 }
 
 /**

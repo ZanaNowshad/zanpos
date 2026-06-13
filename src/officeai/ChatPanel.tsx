@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, type RefObject, type KeyboardEvent } from "react";
 import type { ChatController } from "./useChatController";
 import { ChatMessageList, QuickChipsBar } from "./ChatMessages";
 import { LiveActivityBar } from "./toolCards";
@@ -9,7 +9,7 @@ interface Props {
   variant: "docked" | "full";
   userName: string;
   businessName: string;
-  composerRef: React.RefObject<HTMLTextAreaElement | null>;
+  composerRef: RefObject<HTMLTextAreaElement | null>;
 }
 
 /**
@@ -27,7 +27,7 @@ export default function ChatPanel({ ctrl, variant, userName, businessName, compo
     }
   }, [ctrl.input, composerRef]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ctrl.handleSend(); }
   };
 

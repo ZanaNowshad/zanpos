@@ -104,6 +104,9 @@ export default defineConfig(async () => ({
               id.includes("/components/ReceiptPreview")) {
             return "backoffice";
           }
+          if (id.includes("/officeai/")) {
+            return "officeai";
+          }
         },
       },
     },

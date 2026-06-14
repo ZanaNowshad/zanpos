@@ -4,7 +4,7 @@ use std::pin::Pin;
 use serde_json::Value;
 use sqlx::SqlitePool;
 
-use crate::errors::{AppError, AppResult};
+use crate::errors::AppResult;
 
 pub trait Operation: Send + Sync {
     fn id(&self) -> &'static str;
@@ -66,7 +66,6 @@ impl Registry {
 
 // ── Concrete operation: bulk.price_adjust ──
 
-use super::runs;
 use super::selector::Selector;
 use super::{apply_price, PriceOp};
 

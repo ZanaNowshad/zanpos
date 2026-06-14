@@ -306,7 +306,7 @@ async fn adjust_prices_batch(
 
 async fn search_products_intent(pool: &SqlitePool, params: &Value) -> AppResult<IntentResult> {
     let query = params.get("query").and_then(|v| v.as_str()).unwrap_or("");
-    let category = params.get("category").and_then(|v| v.as_str());
+    let _category = params.get("category").and_then(|v| v.as_str());
     let results =
         crate::db::repositories::product_repo::search_products_paginated(pool, query, None, 25)
             .await?;

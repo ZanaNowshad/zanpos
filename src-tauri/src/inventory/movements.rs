@@ -1,6 +1,5 @@
 use crate::domain::product::LowStockAlert;
 use crate::errors::AppResult;
-use std::collections::HashMap;
 /// Inventory movement writers.
 /// Each function creates a stock_movement record and updates stock_levels atomically.
 /// Returns a list of LowStockAlert for products that crossed below their reorder point.
@@ -13,6 +12,7 @@ use std::collections::HashMap;
 /// upsert_level cycle so two concurrent operations cannot interleave and silently
 /// lose stock.
 use sqlx::{Row, SqlitePool};
+use std::collections::HashMap;
 use ulid::Ulid;
 
 // ── Internal: fetch or initialize stock level ─────────────────────────────────
@@ -519,10 +519,18 @@ mod tests {
             .await
             .expect("migrations");
         // Activate seed device and branch
-        sqlx::query("UPDATE devices SET is_active = 1 WHERE device_id = '01JDEVICE0000000000000001'")
-            .execute(&pool).await.ok();
-        sqlx::query("UPDATE branches SET is_active = 1 WHERE branch_id = '01JBRANCH0000000000000001'")
-            .execute(&pool).await.ok();
+        sqlx::query(
+            "UPDATE devices SET is_active = 1 WHERE device_id = '01JDEVICE0000000000000001'",
+        )
+        .execute(&pool)
+        .await
+        .ok();
+        sqlx::query(
+            "UPDATE branches SET is_active = 1 WHERE branch_id = '01JBRANCH0000000000000001'",
+        )
+        .execute(&pool)
+        .await
+        .ok();
 
         // Seed tax rules needed by the test products
         sqlx::query(
@@ -539,7 +547,9 @@ mod tests {
         ).execute(&pool).await.expect("seed test admin");
         // Ensure admin is active (seed may have created it as inactive)
         sqlx::query("UPDATE users SET is_active = 1 WHERE user_id = '01JUSER000000000000ADMIN1'")
-            .execute(&pool).await.ok();
+            .execute(&pool)
+            .await
+            .ok();
 
         // Re-seed products needed as FK refs.
         sqlx::query(

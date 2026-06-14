@@ -9,11 +9,10 @@ use tauri::State;
 /// Prefers the app_config 'device_id' key written at setup time so the correct
 /// identity is returned even after other terminals' device records sync locally.
 async fn active_device_id(state: &AppState) -> AppResult<String> {
-    if let Ok(Some(id)) = sqlx::query_scalar::<_, String>(
-        "SELECT value FROM app_config WHERE key = 'device_id'",
-    )
-    .fetch_optional(&state.db)
-    .await
+    if let Ok(Some(id)) =
+        sqlx::query_scalar::<_, String>("SELECT value FROM app_config WHERE key = 'device_id'")
+            .fetch_optional(&state.db)
+            .await
     {
         if !id.is_empty() {
             return Ok(id);
@@ -30,12 +29,25 @@ async fn active_device_id(state: &AppState) -> AppResult<String> {
 
 /// Tables that participate in sync (in FK-safe push order).
 pub const SYNC_TABLES: &[&str] = &[
-    "branches",          // was missing — local branch edits were invisible to admin commands
-    "categories", "tax_rules", "products", "devices", "users", "customers",
-    "shifts", "sales", "sale_items", "payments", "refunds", "refund_items",
-    "stock_movements", "stock_levels",  // was missing — stock levels invisible to admin commands
-    "audit_logs", "delivery_orders", "product_prices",
-    "cash_events",       // was missing — cash events invisible to admin commands
+    "branches", // was missing — local branch edits were invisible to admin commands
+    "categories",
+    "tax_rules",
+    "products",
+    "devices",
+    "users",
+    "customers",
+    "shifts",
+    "sales",
+    "sale_items",
+    "payments",
+    "refunds",
+    "refund_items",
+    "stock_movements",
+    "stock_levels", // was missing — stock levels invisible to admin commands
+    "audit_logs",
+    "delivery_orders",
+    "product_prices",
+    "cash_events", // was missing — cash events invisible to admin commands
 ];
 
 /// Maps each sync table to its primary key column.
@@ -95,31 +107,30 @@ pub async fn sync_status(
     let pending = count_pending(&state.db).await.unwrap_or(0);
 
     // Check hub configuration
-    let hub_mode: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM app_config WHERE key='hub_mode'")
-        .fetch_optional(&state.db)
-        .await?
-        .flatten();
-    let hub_url_raw: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM app_config WHERE key='hub_url'")
-        .fetch_optional(&state.db)
-        .await?
-        .flatten();
+    let hub_mode: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_config WHERE key='hub_mode'")
+            .fetch_optional(&state.db)
+            .await?
+            .flatten();
+    let hub_url_raw: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_config WHERE key='hub_url'")
+            .fetch_optional(&state.db)
+            .await?
+            .flatten();
     let hub_url = hub_url_raw.filter(|s: &String| !s.is_empty());
     let is_hub = hub_mode.as_deref() == Some("1");
-    let configured = is_hub || (hub_url.is_some()
-        && crate::secure_store::get_secret("hub_store_token")
-            .is_some_and(|k| !k.is_empty()));
+    let configured = is_hub
+        || (hub_url.is_some()
+            && crate::secure_store::get_secret("hub_store_token").is_some_and(|k| !k.is_empty()));
     let online = is_hub || worker_online || configured;
 
     // Read last successful sync from watermark table
-    let last_sync: Option<String> = sqlx::query_scalar(
-        "SELECT last_pushed_at FROM sync_watermark WHERE table_name = 'sales'",
-    )
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
+    let last_sync: Option<String> =
+        sqlx::query_scalar("SELECT last_pushed_at FROM sync_watermark WHERE table_name = 'sales'")
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
 
     let consecutive_failure_count = {
         let st = state.sync_worker.state.lock().await;
@@ -175,13 +186,19 @@ pub async fn sync_bulk_initial(
         None => return Ok("Sync skipped — hub not configured".into()),
     };
 
-    let total = state.sync_worker.push_all_bulk(&client).await
+    let total = state
+        .sync_worker
+        .push_all_bulk(&client)
+        .await
         .map_err(|e| AppError::Internal(format!("Bulk sync failed: {e}")))?;
 
     // Also pull so this terminal gets any remote data
     let _ = state.sync_worker.run_once().await;
 
-    Ok(format!("Initial sync complete: {} rows pushed to the hub", total))
+    Ok(format!(
+        "Initial sync complete: {} rows pushed to the hub",
+        total
+    ))
 }
 
 // ── setup_pull_catalog ────────────────────────────────────────────────────────
@@ -199,17 +216,14 @@ pub struct PullSummary {
 }
 
 #[tauri::command]
-pub async fn setup_pull_catalog(
-    state: State<'_, AppState>,
-) -> Result<PullSummary, AppError> {
+pub async fn setup_pull_catalog(state: State<'_, AppState>) -> Result<PullSummary, AppError> {
     // Called from the JoinStore wizard before the session user is established.
     // Gate on setup_complete to prevent post-setup abuse.
-    let setup_done: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM app_config WHERE key = 'setup_complete'",
-    )
-    .fetch_optional(&state.db)
-    .await
-    .unwrap_or(None);
+    let setup_done: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'setup_complete'")
+            .fetch_optional(&state.db)
+            .await
+            .unwrap_or(None);
     if setup_done.as_deref() == Some("1") {
         return Err(AppError::Permission(
             "Setup is already complete. Use the sync panel to pull catalog updates.".into(),
@@ -220,15 +234,18 @@ pub async fn setup_pull_catalog(
     state.sync_worker.run_once().await;
 
     // Count key catalog rows as a concrete success indicator
-    let products: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM products WHERE is_active = 1")
-            .fetch_one(&state.db).await.unwrap_or(0);
-    let categories: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM categories")
-            .fetch_one(&state.db).await.unwrap_or(0);
-    let users: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE is_active = 1")
-            .fetch_one(&state.db).await.unwrap_or(0);
+    let products: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products WHERE is_active = 1")
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+    let categories: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM categories")
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
+    let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE is_active = 1")
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
 
     let worker_state = state.sync_worker.state.lock().await;
     // Bug-Join-09: derive ok from catalog presence OR worker online state.
@@ -269,11 +286,9 @@ pub async fn sync_force_full_resync(
         .await;
     // FIX: also reset v2 app_config watermarks — the v2 worker uses these,
     // not the sync_watermark table. Without this, re-pull never actually happens.
-    let _ = sqlx::query(
-        "DELETE FROM app_config WHERE key LIKE 'sync_v2_watermark_%'"
-    )
-    .execute(&state.db)
-    .await;
+    let _ = sqlx::query("DELETE FROM app_config WHERE key LIKE 'sync_v2_watermark_%'")
+        .execute(&state.db)
+        .await;
 
     // Reset consecutive failure counter and clear last_error so adaptive backoff
     // is lifted immediately — without this, force-resync still waits up to 5x the
@@ -293,7 +308,9 @@ pub async fn sync_force_full_resync(
     if worker_state.online {
         Ok(format!("Full re-sync started. {queued} rows pending push."))
     } else if let Some(ref e) = worker_state.last_error {
-        Ok(format!("Re-sync queued {queued} rows but push reported: {e}"))
+        Ok(format!(
+            "Re-sync queued {queued} rows but push reported: {e}"
+        ))
     } else {
         Ok(format!("Re-sync queued {queued} rows."))
     }
@@ -332,7 +349,7 @@ pub async fn sync_reset_stuck(
 #[derive(Serialize)]
 pub struct SyncQueueItem {
     #[serde(rename = "sync_event_id")]
-    pub id: String,            // composite: {table}:{row_id}
+    pub id: String, // composite: {table}:{row_id}
     pub entity_type: String,
     pub entity_id: String,
     pub operation: String,
@@ -391,8 +408,9 @@ pub async fn sync_queue_retry(
 ) -> Result<(), AppError> {
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
 
-    let (table, row_id) = id.split_once(':')
-        .ok_or_else(|| AppError::Validation("Invalid sync item id format. Expected table:id".into()))?;
+    let (table, row_id) = id.split_once(':').ok_or_else(|| {
+        AppError::Validation("Invalid sync item id format. Expected table:id".into())
+    })?;
     let pk = table_pk(table);
 
     // FIX: the v2 worker never writes sync_status='failed' — stuck rows remain at
@@ -401,10 +419,16 @@ pub async fn sync_queue_retry(
         "UPDATE {table} SET sync_status = 'pending', sync_attempts = 0 \
          WHERE {pk} = ? AND (sync_status = 'failed' OR (sync_status = 'pending' AND sync_attempts >= 10))",
     );
-    let rows = sqlx::query(&sql).bind(row_id).execute(&state.db).await?.rows_affected();
+    let rows = sqlx::query(&sql)
+        .bind(row_id)
+        .execute(&state.db)
+        .await?
+        .rows_affected();
 
     if rows == 0 {
-        return Err(AppError::NotFound(format!("Sync item {id} not found or not in retryable state")));
+        return Err(AppError::NotFound(format!(
+            "Sync item {id} not found or not in retryable state"
+        )));
     }
     Ok(())
 }
@@ -421,12 +445,17 @@ pub async fn sync_queue_dismiss(
 ) -> Result<(), AppError> {
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
 
-    let (table, row_id) = id.split_once(':')
-        .ok_or_else(|| AppError::Validation("Invalid sync item id format. Expected table:id".into()))?;
+    let (table, row_id) = id.split_once(':').ok_or_else(|| {
+        AppError::Validation("Invalid sync item id format. Expected table:id".into())
+    })?;
     let pk = table_pk(table);
 
     let sql = format!("UPDATE {table} SET sync_status = 'synced' WHERE {pk} = ?");
-    let rows = sqlx::query(&sql).bind(row_id).execute(&state.db).await?.rows_affected();
+    let rows = sqlx::query(&sql)
+        .bind(row_id)
+        .execute(&state.db)
+        .await?
+        .rows_affected();
 
     if rows == 0 {
         return Err(AppError::NotFound(format!("Sync item {id} not found")));
@@ -454,25 +483,23 @@ pub async fn sync_queue_stats(
     let mut stats = Vec::new();
 
     for table in SYNC_TABLES {
-        let pending: i64 = sqlx::query_scalar(
-            &format!("SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending'"),
-        )
+        let pending: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending'"
+        ))
         .fetch_one(&state.db)
         .await
         .unwrap_or(0);
 
-        let failed: i64 = sqlx::query_scalar(
-            &format!(
-                "SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending' AND sync_attempts >= 10"
-            ),
-        )
+        let failed: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending' AND sync_attempts >= 10"
+        ))
         .fetch_one(&state.db)
         .await
         .unwrap_or(0);
 
-        let max_attempts: i64 = sqlx::query_scalar(
-            &format!("SELECT COALESCE(MAX(sync_attempts), 0) FROM {table}"),
-        )
+        let max_attempts: i64 = sqlx::query_scalar(&format!(
+            "SELECT COALESCE(MAX(sync_attempts), 0) FROM {table}"
+        ))
         .fetch_one(&state.db)
         .await
         .unwrap_or(0);
@@ -532,52 +559,51 @@ pub async fn sync_diagnostics(
     let last_error = worker_state.last_error.clone();
     drop(worker_state);
 
-    let hub_mode: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM app_config WHERE key='hub_mode'")
-        .fetch_optional(&state.db)
-        .await?
-        .flatten();
-    let hub_url_raw: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM app_config WHERE key='hub_url'")
-        .fetch_optional(&state.db)
-        .await?
-        .flatten();
+    let hub_mode: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_config WHERE key='hub_mode'")
+            .fetch_optional(&state.db)
+            .await?
+            .flatten();
+    let hub_url_raw: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_config WHERE key='hub_url'")
+            .fetch_optional(&state.db)
+            .await?
+            .flatten();
     let hub_url = hub_url_raw.filter(|s: &String| !s.is_empty());
     let is_hub = hub_mode.as_deref() == Some("1");
-    let configured = is_hub || (hub_url.is_some()
-        && crate::secure_store::get_secret("hub_store_token")
-            .is_some_and(|k| !k.is_empty()));
+    let configured = is_hub
+        || (hub_url.is_some()
+            && crate::secure_store::get_secret("hub_store_token").is_some_and(|k| !k.is_empty()));
 
-    let last_sync: Option<String> = sqlx::query_scalar(
-        "SELECT last_pushed_at FROM sync_watermark WHERE table_name = 'sales'",
-    )
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten();
+    let last_sync: Option<String> =
+        sqlx::query_scalar("SELECT last_pushed_at FROM sync_watermark WHERE table_name = 'sales'")
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten();
 
     let mut tables = Vec::new();
     let mut total_pending: i64 = 0;
     let mut total_stuck: i64 = 0;
 
     for table in SYNC_TABLES {
-        let pending: i64 = sqlx::query_scalar(
-            &format!("SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending' AND sync_attempts < 10"),
-        )
+        let pending: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending' AND sync_attempts < 10"
+        ))
         .fetch_one(&state.db)
         .await
         .unwrap_or(0);
 
-        let stuck: i64 = sqlx::query_scalar(
-            &format!("SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending' AND sync_attempts >= 10"),
-        )
+        let stuck: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending' AND sync_attempts >= 10"
+        ))
         .fetch_one(&state.db)
         .await
         .unwrap_or(0);
 
-        let max_att: i64 = sqlx::query_scalar(
-            &format!("SELECT COALESCE(MAX(sync_attempts), 0) FROM {table}"),
-        )
+        let max_att: i64 = sqlx::query_scalar(&format!(
+            "SELECT COALESCE(MAX(sync_attempts), 0) FROM {table}"
+        ))
         .fetch_one(&state.db)
         .await
         .unwrap_or(0);

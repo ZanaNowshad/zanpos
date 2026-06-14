@@ -67,17 +67,11 @@ pub async fn load_history(
         .collect())
 }
 
-pub async fn clear_history(
-    pool: &SqlitePool,
-    branch_id: &str,
-    user_id: &str,
-) -> AppResult<()> {
-    sqlx::query(
-        "DELETE FROM ai_chat_messages WHERE branch_id = ? AND user_id = ?",
-    )
-    .bind(branch_id)
-    .bind(user_id)
-    .execute(pool)
-    .await?;
+pub async fn clear_history(pool: &SqlitePool, branch_id: &str, user_id: &str) -> AppResult<()> {
+    sqlx::query("DELETE FROM ai_chat_messages WHERE branch_id = ? AND user_id = ?")
+        .bind(branch_id)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
     Ok(())
 }

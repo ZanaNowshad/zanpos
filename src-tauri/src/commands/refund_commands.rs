@@ -1,5 +1,5 @@
-use crate::commands::rbac;
 use crate::commands::override_token;
+use crate::commands::rbac;
 use crate::db::repositories::refund_repo;
 use crate::domain::refund::{RefundItemInput, RefundResult, SaleForRefund};
 use crate::domain::sale::SaleResult;
@@ -37,7 +37,12 @@ pub async fn receipt_reprint(
 ) -> Result<SaleResult, AppError> {
     // Any active user (cashier, manager, or owner) may reprint a receipt.
     // The user_id must be valid and active in the DB — unauthenticated callers are rejected.
-    rbac::require_role(&state.db, &requesting_user_id, &["owner", "manager", "cashier"]).await?;
+    rbac::require_role(
+        &state.db,
+        &requesting_user_id,
+        &["owner", "manager", "cashier"],
+    )
+    .await?;
     refund_repo::get_sale_result_by_receipt(&state.db, &receipt_number).await
         .map_err(|e| {
             if matches!(e, AppError::NotFound(_)) {
@@ -95,13 +100,12 @@ pub async fn refund_create(
 
     // Step 3 — Resolve the current device id and compare with the sale's origin.
     let device_id = current_device_id(&state.db).await;
-    let sale_device: Option<String> = sqlx::query_scalar(
-        "SELECT origin_device_id FROM sales WHERE sale_id = ?",
-    )
-    .bind(&input.original_sale_id)
-    .fetch_optional(&state.db)
-    .await?
-    .flatten();
+    let sale_device: Option<String> =
+        sqlx::query_scalar("SELECT origin_device_id FROM sales WHERE sale_id = ?")
+            .bind(&input.original_sale_id)
+            .fetch_optional(&state.db)
+            .await?
+            .flatten();
 
     let is_cross_device = sale_device.as_deref().map_or(false, |sd| sd != device_id);
 
@@ -117,12 +121,14 @@ pub async fn refund_create(
                     "Cross-device refund requires manager override. Enter manager PIN.".into(),
                 )
             })?;
-            let _manager_id = override_token::consume_override_token(&state.db, token).await.ok_or_else(|| {
-                AppError::Permission(
-                    "Invalid or expired manager override token. Please re-enter manager PIN."
-                        .into(),
-                )
-            })?;
+            let _manager_id = override_token::consume_override_token(&state.db, token)
+                .await
+                .ok_or_else(|| {
+                    AppError::Permission(
+                        "Invalid or expired manager override token. Please re-enter manager PIN."
+                            .into(),
+                    )
+                })?;
             true
         }
     } else {

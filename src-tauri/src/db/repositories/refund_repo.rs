@@ -349,7 +349,11 @@ pub async fn create_refund(
     .await
     .unwrap_or(1); // default to 1 (not fully refunded) on error
 
-    let new_status = if unreffunded_count == 0 { "refunded" } else { "partially_refunded" };
+    let new_status = if unreffunded_count == 0 {
+        "refunded"
+    } else {
+        "partially_refunded"
+    };
 
     if let Err(e) = sqlx::query(
         "UPDATE sales SET status = ?, updated_at = ?, sync_status = 'pending'
@@ -504,10 +508,18 @@ mod tests {
             .await
             .expect("migrations");
         // Activate seed device and branch
-        sqlx::query("UPDATE devices SET is_active = 1 WHERE device_id = '01JDEVICE0000000000000001'")
-            .execute(&pool).await.ok();
-        sqlx::query("UPDATE branches SET is_active = 1 WHERE branch_id = '01JBRANCH0000000000000001'")
-            .execute(&pool).await.ok();
+        sqlx::query(
+            "UPDATE devices SET is_active = 1 WHERE device_id = '01JDEVICE0000000000000001'",
+        )
+        .execute(&pool)
+        .await
+        .ok();
+        sqlx::query(
+            "UPDATE branches SET is_active = 1 WHERE branch_id = '01JBRANCH0000000000000001'",
+        )
+        .execute(&pool)
+        .await
+        .ok();
 
         // Seed tax rules needed by the test product
         sqlx::query(
@@ -672,9 +684,17 @@ mod tests {
             refund_amount_minor: 100,
         }];
 
-        let err = create_refund(&pool, "FAKE-SALE-ID", items, "test", "other", CASHIER, false)
-            .await
-            .unwrap_err();
+        let err = create_refund(
+            &pool,
+            "FAKE-SALE-ID",
+            items,
+            "test",
+            "other",
+            CASHIER,
+            false,
+        )
+        .await
+        .unwrap_err();
 
         assert!(
             matches!(err, AppError::NotFound(_)),
@@ -779,9 +799,17 @@ mod tests {
             refund_amount_minor: 999, // > 880 line_total
         }];
 
-        let err = create_refund(&pool, &sale_id, items, "test ceiling", "other", CASHIER, false)
-            .await
-            .unwrap_err();
+        let err = create_refund(
+            &pool,
+            &sale_id,
+            items,
+            "test ceiling",
+            "other",
+            CASHIER,
+            false,
+        )
+        .await
+        .unwrap_err();
 
         assert!(
             matches!(err, AppError::Validation(_)),
@@ -811,9 +839,17 @@ mod tests {
             refund_amount_minor: 440,
         }];
 
-        let err = create_refund(&pool, &sale_id, items, "refund void", "other", CASHIER, false)
-            .await
-            .unwrap_err();
+        let err = create_refund(
+            &pool,
+            &sale_id,
+            items,
+            "refund void",
+            "other",
+            CASHIER,
+            false,
+        )
+        .await
+        .unwrap_err();
 
         assert!(
             matches!(err, AppError::Validation(_)),
@@ -883,9 +919,17 @@ mod tests {
             refund_amount_minor: 440,
         }];
 
-        create_refund(&pool, &sale_id, items, "reason", "INVALID_CODE", CASHIER, false)
-            .await
-            .expect("refund with invalid code");
+        create_refund(
+            &pool,
+            &sale_id,
+            items,
+            "reason",
+            "INVALID_CODE",
+            CASHIER,
+            false,
+        )
+        .await
+        .expect("refund with invalid code");
 
         let code: String = sqlx::query_scalar(
             "SELECT return_reason_code FROM refunds WHERE original_sale_id = ? LIMIT 1",

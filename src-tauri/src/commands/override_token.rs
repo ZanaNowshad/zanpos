@@ -13,10 +13,7 @@ static OVERRIDE_TOKENS: std::sync::LazyLock<Mutex<HashMap<String, OverrideToken>
 
 /// Issue a short-lived override token (60s TTL). Persists to `app_config` so the
 /// token survives a process restart, and also caches in memory for fast-path lookup.
-pub async fn store_override_token(
-    pool: &sqlx::SqlitePool,
-    manager_user_id: String,
-) -> String {
+pub async fn store_override_token(pool: &sqlx::SqlitePool, manager_user_id: String) -> String {
     let token = Ulid::new().to_string();
     let expires_at = SystemTime::now() + Duration::from_secs(60);
     let expires_secs = expires_at
@@ -60,10 +57,7 @@ pub async fn store_override_token(
 /// Consume a previously-issued override token. Returns manager_user_id if valid.
 /// Checks in-memory cache first, then falls back to DB (for restart-surviving tokens).
 /// Deletes the token from both stores on successful use.
-pub async fn consume_override_token(
-    pool: &sqlx::SqlitePool,
-    token: &str,
-) -> Option<String> {
+pub async fn consume_override_token(pool: &sqlx::SqlitePool, token: &str) -> Option<String> {
     // 1. In-memory cache (fast path)
     let cache_hit: Option<String> = {
         let mut map = OVERRIDE_TOKENS.lock().unwrap_or_else(|e| e.into_inner());
@@ -83,14 +77,12 @@ pub async fn consume_override_token(
 
     // 2. DB fallback (token may have been issued before a restart)
     let key = format!("override_token_{token}");
-    let row: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM app_config WHERE key = ?",
-    )
-    .bind(&key)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
+    let row: Option<String> = sqlx::query_scalar("SELECT value FROM app_config WHERE key = ?")
+        .bind(&key)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten();
 
     if let Some(raw) = row {
         // Parse the JSON value

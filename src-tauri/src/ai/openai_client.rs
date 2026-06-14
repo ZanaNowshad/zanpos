@@ -238,7 +238,9 @@ impl OpenAIClient {
                 Err(e) => {
                     tracing::warn!(
                         "OpenAI tool-call '{}' has malformed args JSON: {} — args: {}",
-                        tc.function.name, e, tc.function.arguments
+                        tc.function.name,
+                        e,
+                        tc.function.arguments
                     );
                     serde_json::Value::Object(Default::default())
                 }

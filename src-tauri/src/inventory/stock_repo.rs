@@ -154,7 +154,12 @@ pub async fn get_levels_paged(
         })
         .collect();
 
-    Ok(StockLevelPage { items, total, offset, limit })
+    Ok(StockLevelPage {
+        items,
+        total,
+        offset,
+        limit,
+    })
 }
 
 /// Products at or below reorder point for the given branch.

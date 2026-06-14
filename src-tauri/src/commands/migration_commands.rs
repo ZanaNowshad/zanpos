@@ -1,7 +1,7 @@
 // ─── Imports ──────────────────────────────────────────────────────────────────
-use crate::commands::rbac;
 use crate::ai::client::ToolDef;
 use crate::ai::provider::{Provider, ToolCallResult};
+use crate::commands::rbac;
 use crate::db::repositories::audit_hash;
 use crate::domain::ai_admin::ChatMessage;
 use crate::errors::{AppError, AppResult};
@@ -58,12 +58,31 @@ pub struct ColumnMapping {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MigrationProgress {
-    Started { total_sheets: usize },
-    SheetStart { sheet: String, target: String, total_rows: usize },
-    SheetProgress { sheet: String, done: usize, total: usize },
-    SheetDone { sheet: String, target: String, inserted: usize, skipped: usize },
-    Done { message: String },
-    Error { message: String },
+    Started {
+        total_sheets: usize,
+    },
+    SheetStart {
+        sheet: String,
+        target: String,
+        total_rows: usize,
+    },
+    SheetProgress {
+        sheet: String,
+        done: usize,
+        total: usize,
+    },
+    SheetDone {
+        sheet: String,
+        target: String,
+        inserted: usize,
+        skipped: usize,
+    },
+    Done {
+        message: String,
+    },
+    Error {
+        message: String,
+    },
 }
 
 /// Parse a decimal price string (e.g. "12.500") to minor units using integer arithmetic.
@@ -148,10 +167,7 @@ pub async fn migration_inspect_file(
     let lower = path.to_lowercase();
     if lower.ends_with(".csv") {
         inspect_csv(path).await
-    } else if lower.ends_with(".xlsx")
-        || lower.ends_with(".xls")
-        || lower.ends_with(".xlsm")
-    {
+    } else if lower.ends_with(".xlsx") || lower.ends_with(".xls") || lower.ends_with(".xlsm") {
         inspect_excel(path).await
     } else if lower.ends_with(".db")
         || lower.ends_with(".sqlite")
@@ -231,7 +247,10 @@ async fn inspect_csv(path: String) -> AppResult<FileSchema> {
                     .take(3)
                     .cloned()
                     .collect();
-                ColumnSchema { name: name.clone(), samples }
+                ColumnSchema {
+                    name: name.clone(),
+                    samples,
+                }
             })
             .collect();
 
@@ -302,7 +321,10 @@ async fn inspect_excel(path: String) -> AppResult<FileSchema> {
                         .take(3)
                         .cloned()
                         .collect();
-                    ColumnSchema { name: name.clone(), samples }
+                    ColumnSchema {
+                        name: name.clone(),
+                        samples,
+                    }
                 })
                 .collect();
 
@@ -345,14 +367,18 @@ async fn inspect_sqlite(path: String) -> AppResult<FileSchema> {
     for table in &table_names {
         // Finding 5: reject table names that contain SQL-injection characters
         if !is_safe_sql_identifier(table) {
-            tracing::warn!("inspect_sqlite: skipping table '{}' — unsafe identifier", table);
+            tracing::warn!(
+                "inspect_sqlite: skipping table '{}' — unsafe identifier",
+                table
+            );
             continue;
         }
 
         // Get columns via pragma
-        let cols: Vec<(String, String)> = sqlx::query_as::<_, (String, String)>(
-            &format!("SELECT name, type FROM pragma_table_info('{}')", table),
-        )
+        let cols: Vec<(String, String)> = sqlx::query_as::<_, (String, String)>(&format!(
+            "SELECT name, type FROM pragma_table_info('{}')",
+            table
+        ))
         .fetch_all(&pool)
         .await
         .unwrap_or_default();
@@ -362,11 +388,10 @@ async fn inspect_sqlite(path: String) -> AppResult<FileSchema> {
         }
 
         // Row count
-        let row_count: i64 =
-            sqlx::query_scalar(&format!("SELECT COUNT(*) FROM \"{}\"", table))
-                .fetch_one(&pool)
-                .await
-                .unwrap_or(0);
+        let row_count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM \"{}\"", table))
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(0);
 
         // Sample rows
         let sample_rows = sqlx::query(&format!("SELECT * FROM \"{}\" LIMIT 3", table))
@@ -390,7 +415,10 @@ async fn inspect_sqlite(path: String) -> AppResult<FileSchema> {
                     .filter(|v| !v.is_empty())
                     .take(3)
                     .collect();
-                ColumnSchema { name: col_name.clone(), samples }
+                ColumnSchema {
+                    name: col_name.clone(),
+                    samples,
+                }
             })
             .collect();
 
@@ -417,7 +445,8 @@ async fn inspect_sql_dump(path: String) -> AppResult<FileSchema> {
         let content = std::fs::read_to_string(&path)
             .map_err(|e| AppError::Internal(format!("Cannot read SQL file: {}", e)))?;
 
-        let mut tables: std::collections::HashMap<String, (Vec<ColumnSchema>, usize)> = std::collections::HashMap::new();
+        let mut tables: std::collections::HashMap<String, (Vec<ColumnSchema>, usize)> =
+            std::collections::HashMap::new();
         let mut order: Vec<String> = Vec::new();
 
         let lines: Vec<&str> = content.lines().collect();
@@ -441,7 +470,9 @@ async fn inspect_sql_dump(path: String) -> AppResult<FileSchema> {
                     .trim_start_matches('`')
                     .trim_start_matches('"')
                     .trim_start_matches('[')
-                    .split(|c: char| c.is_whitespace() || c == '(' || c == '`' || c == '"' || c == ']')
+                    .split(|c: char| {
+                        c.is_whitespace() || c == '(' || c == '`' || c == '"' || c == ']'
+                    })
                     .next()
                     .unwrap_or("")
                     .trim_matches('`')
@@ -464,13 +495,20 @@ async fn inspect_sql_dump(path: String) -> AppResult<FileSchema> {
                     for c in l.chars() {
                         match c {
                             '(' => depth += 1,
-                            ')' => { depth -= 1; if depth <= 0 { break; } }
+                            ')' => {
+                                depth -= 1;
+                                if depth <= 0 {
+                                    break;
+                                }
+                            }
                             _ => {}
                         }
                     }
                     col_block.push_str(l);
                     col_block.push('\n');
-                    if depth <= 0 && col_block.contains('(') { break; }
+                    if depth <= 0 && col_block.contains('(') {
+                        break;
+                    }
                     j += 1;
                 }
 
@@ -485,8 +523,14 @@ async fn inspect_sql_dump(path: String) -> AppResult<FileSchema> {
                 let mut nest = 0i32;
                 for ch in col_section.chars() {
                     match ch {
-                        '(' => { nest += 1; current.push(ch); }
-                        ')' => { nest -= 1; current.push(ch); }
+                        '(' => {
+                            nest += 1;
+                            current.push(ch);
+                        }
+                        ')' => {
+                            nest -= 1;
+                            current.push(ch);
+                        }
                         ',' if nest == 0 => {
                             let trimmed = current.trim().to_string();
                             current.clear();
@@ -512,25 +556,43 @@ async fn inspect_sql_dump(path: String) -> AppResult<FileSchema> {
                                     .trim_matches(']')
                                     .to_string();
                                 if !col_name.is_empty() {
-                                    cols.push(ColumnSchema { name: col_name, samples: vec![] });
+                                    cols.push(ColumnSchema {
+                                        name: col_name,
+                                        samples: vec![],
+                                    });
                                 }
                             }
                         }
-                        _ => { current.push(ch); }
+                        _ => {
+                            current.push(ch);
+                        }
                     }
                 }
                 // Handle last column in block
                 let trimmed = current.trim().to_string();
                 let upper_trim = trimmed.to_uppercase();
                 if !trimmed.is_empty()
-                    && !upper_trim.starts_with("KEY") && !upper_trim.starts_with("INDEX")
-                    && !upper_trim.starts_with("UNIQUE") && !upper_trim.starts_with("PRIMARY")
-                    && !upper_trim.starts_with("CONSTRAINT") && !upper_trim.starts_with("FOREIGN")
+                    && !upper_trim.starts_with("KEY")
+                    && !upper_trim.starts_with("INDEX")
+                    && !upper_trim.starts_with("UNIQUE")
+                    && !upper_trim.starts_with("PRIMARY")
+                    && !upper_trim.starts_with("CONSTRAINT")
+                    && !upper_trim.starts_with("FOREIGN")
                 {
-                    let col_name = trimmed.split_whitespace().next().unwrap_or("")
-                        .trim_matches('`').trim_matches('"').trim_matches('[').trim_matches(']').to_string();
+                    let col_name = trimmed
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("")
+                        .trim_matches('`')
+                        .trim_matches('"')
+                        .trim_matches('[')
+                        .trim_matches(']')
+                        .to_string();
                     if !col_name.is_empty() {
-                        cols.push(ColumnSchema { name: col_name, samples: vec![] });
+                        cols.push(ColumnSchema {
+                            name: col_name,
+                            samples: vec![],
+                        });
                     }
                 }
 
@@ -543,16 +605,32 @@ async fn inspect_sql_dump(path: String) -> AppResult<FileSchema> {
             }
 
             // Count INSERT INTO rows
-            if upper.starts_with("INSERT INTO") || upper.starts_with("INSERT IGNORE INTO") || upper.starts_with("REPLACE INTO") {
+            if upper.starts_with("INSERT INTO")
+                || upper.starts_with("INSERT IGNORE INTO")
+                || upper.starts_with("REPLACE INTO")
+            {
                 // Extract table name
-                let after = if upper.starts_with("INSERT IGNORE INTO") { &line[18..] }
-                    else if upper.starts_with("REPLACE INTO") { &line[12..] }
-                    else { &line[11..] };
-                let tname = after.trim()
-                    .trim_start_matches('`').trim_start_matches('"').trim_start_matches('[')
-                    .split(|c: char| c.is_whitespace() || c == '(' || c == '`' || c == '"' || c == ']')
-                    .next().unwrap_or("")
-                    .trim_matches('`').trim_matches('"').trim_matches('[').trim_matches(']')
+                let after = if upper.starts_with("INSERT IGNORE INTO") {
+                    &line[18..]
+                } else if upper.starts_with("REPLACE INTO") {
+                    &line[12..]
+                } else {
+                    &line[11..]
+                };
+                let tname = after
+                    .trim()
+                    .trim_start_matches('`')
+                    .trim_start_matches('"')
+                    .trim_start_matches('[')
+                    .split(|c: char| {
+                        c.is_whitespace() || c == '(' || c == '`' || c == '"' || c == ']'
+                    })
+                    .next()
+                    .unwrap_or("")
+                    .trim_matches('`')
+                    .trim_matches('"')
+                    .trim_matches('[')
+                    .trim_matches(']')
                     .to_string();
                 if let Some(entry) = tables.get_mut(&tname) {
                     entry.1 += 1;
@@ -566,15 +644,22 @@ async fn inspect_sql_dump(path: String) -> AppResult<FileSchema> {
             i += 1;
         }
 
-        let sheets = order.iter().filter_map(|name| {
-            tables.get(name).map(|(cols, count)| SheetSchema {
-                name: name.clone(),
-                columns: cols.clone(),
-                row_count: *count,
+        let sheets = order
+            .iter()
+            .filter_map(|name| {
+                tables.get(name).map(|(cols, count)| SheetSchema {
+                    name: name.clone(),
+                    columns: cols.clone(),
+                    row_count: *count,
+                })
             })
-        }).collect();
+            .collect();
 
-        Ok(FileSchema { file_path: path, file_type: "sql".into(), sheets })
+        Ok(FileSchema {
+            file_path: path,
+            file_type: "sql".into(),
+            sheets,
+        })
     })
     .await
     .map_err(|e| AppError::Internal(e.to_string()))?
@@ -596,46 +681,107 @@ async fn inspect_json(path: String) -> AppResult<FileSchema> {
             // Top-level array of objects: [{"col1":..., "col2":...}, ...]
             serde_json::Value::Array(arr) => {
                 let cols = if let Some(serde_json::Value::Object(first)) = arr.first() {
-                    first.keys().take(50).map(|k| {
-                        let samples: Vec<String> = arr.iter().take(3).filter_map(|row| {
-                            row.get(k).map(|v| match v {
-                                serde_json::Value::String(s) => s[..s.len().min(40)].to_string(),
-                                other => other.to_string()[..other.to_string().len().min(40)].to_string(),
-                            })
-                        }).collect();
-                        ColumnSchema { name: k.clone(), samples }
-                    }).collect()
-                } else { vec![] };
-                sheets.push(SheetSchema { name: "data".into(), columns: cols, row_count: arr.len() });
+                    first
+                        .keys()
+                        .take(50)
+                        .map(|k| {
+                            let samples: Vec<String> = arr
+                                .iter()
+                                .take(3)
+                                .filter_map(|row| {
+                                    row.get(k).map(|v| match v {
+                                        serde_json::Value::String(s) => {
+                                            s[..s.len().min(40)].to_string()
+                                        }
+                                        other => other.to_string()
+                                            [..other.to_string().len().min(40)]
+                                            .to_string(),
+                                    })
+                                })
+                                .collect();
+                            ColumnSchema {
+                                name: k.clone(),
+                                samples,
+                            }
+                        })
+                        .collect()
+                } else {
+                    vec![]
+                };
+                sheets.push(SheetSchema {
+                    name: "data".into(),
+                    columns: cols,
+                    row_count: arr.len(),
+                });
             }
             // Top-level object with array values: {"products": [...], "customers": [...]}
             serde_json::Value::Object(map) => {
                 for (key, val) in map {
                     if let serde_json::Value::Array(arr) = val {
                         let cols = if let Some(serde_json::Value::Object(first)) = arr.first() {
-                            first.keys().take(50).map(|k| {
-                                let samples: Vec<String> = arr.iter().take(3).filter_map(|row| {
-                                    row.get(k).map(|v| match v {
-                                        serde_json::Value::String(s) => s[..s.len().min(40)].to_string(),
-                                        other => other.to_string()[..other.to_string().len().min(40)].to_string(),
-                                    })
-                                }).collect();
-                                ColumnSchema { name: k.clone(), samples }
-                            }).collect()
-                        } else { vec![] };
-                        sheets.push(SheetSchema { name: key.clone(), columns: cols, row_count: arr.len() });
+                            first
+                                .keys()
+                                .take(50)
+                                .map(|k| {
+                                    let samples: Vec<String> = arr
+                                        .iter()
+                                        .take(3)
+                                        .filter_map(|row| {
+                                            row.get(k).map(|v| match v {
+                                                serde_json::Value::String(s) => {
+                                                    s[..s.len().min(40)].to_string()
+                                                }
+                                                other => other.to_string()
+                                                    [..other.to_string().len().min(40)]
+                                                    .to_string(),
+                                            })
+                                        })
+                                        .collect();
+                                    ColumnSchema {
+                                        name: k.clone(),
+                                        samples,
+                                    }
+                                })
+                                .collect()
+                        } else {
+                            vec![]
+                        };
+                        sheets.push(SheetSchema {
+                            name: key.clone(),
+                            columns: cols,
+                            row_count: arr.len(),
+                        });
                     }
                 }
                 if sheets.is_empty() {
                     // Flat object — treat keys as a single-row sheet
-                    let cols = map.keys().take(50).map(|k| ColumnSchema { name: k.clone(), samples: vec![] }).collect();
-                    sheets.push(SheetSchema { name: "config".into(), columns: cols, row_count: 1 });
+                    let cols = map
+                        .keys()
+                        .take(50)
+                        .map(|k| ColumnSchema {
+                            name: k.clone(),
+                            samples: vec![],
+                        })
+                        .collect();
+                    sheets.push(SheetSchema {
+                        name: "config".into(),
+                        columns: cols,
+                        row_count: 1,
+                    });
                 }
             }
-            _ => return Err(AppError::Internal("JSON root must be an array or object".into())),
+            _ => {
+                return Err(AppError::Internal(
+                    "JSON root must be an array or object".into(),
+                ))
+            }
         }
 
-        Ok(FileSchema { file_path: path, file_type: "json".into(), sheets })
+        Ok(FileSchema {
+            file_path: path,
+            file_type: "json".into(),
+            sheets,
+        })
     })
     .await
     .map_err(|e| AppError::Internal(e.to_string()))?
@@ -711,9 +857,7 @@ Only return the raw JSON — no markdown, no explanation."#,
 
     let system = "You are a database schema mapping assistant for ZANPOS POS system.\nAnalyze the source schema and produce a column mapping to ZANPOS target tables.\nRespond with ONLY a valid JSON object — no explanation, no markdown fences, just the raw JSON.";
 
-    let result = provider
-        .send_chat(system, &[], &user_message, &[])
-        .await?;
+    let result = provider.send_chat(system, &[], &user_message, &[]).await?;
 
     let json_str = extract_json_from_text(&result.text);
 
@@ -864,10 +1008,22 @@ pub async fn migration_execute(
             })
             .to_string();
             if let Err(e) = audit_hash::insert_audit_entry(
-                &pool, "MIGRATION_EXECUTED", "migration", &migration_id,
-                &actor_user_id, "user", &device_id, &branch_id,
-                None, Some(&after), None,
-            ).await { tracing::error!("AUDIT WRITE FAILED [MIGRATION_EXECUTED]: {:?}", e); }
+                &pool,
+                "MIGRATION_EXECUTED",
+                "migration",
+                &migration_id,
+                &actor_user_id,
+                "user",
+                &device_id,
+                &branch_id,
+                None,
+                Some(&after),
+                None,
+            )
+            .await
+            {
+                tracing::error!("AUDIT WRITE FAILED [MIGRATION_EXECUTED]: {:?}", e);
+            }
         }
     }
 
@@ -886,15 +1042,9 @@ async fn load_source_data(path: &str) -> AppResult<SourceData> {
     let lower = path.to_lowercase();
     if lower.ends_with(".csv") {
         load_csv_data(path.to_string()).await
-    } else if lower.ends_with(".xlsx")
-        || lower.ends_with(".xls")
-        || lower.ends_with(".xlsm")
-    {
+    } else if lower.ends_with(".xlsx") || lower.ends_with(".xls") || lower.ends_with(".xlsm") {
         load_excel_data(path.to_string()).await
-    } else if lower.ends_with(".db")
-        || lower.ends_with(".sqlite")
-        || lower.ends_with(".sqlite3")
-    {
+    } else if lower.ends_with(".db") || lower.ends_with(".sqlite") || lower.ends_with(".sqlite3") {
         load_sqlite_data(path.to_string()).await
     } else {
         let path2 = path.to_string();
@@ -931,12 +1081,7 @@ async fn load_csv_data(path: String) -> AppResult<SourceData> {
                 headers
                     .iter()
                     .enumerate()
-                    .map(|(i, h)| {
-                        (
-                            h.clone(),
-                            record.get(i).unwrap_or("").to_string(),
-                        )
-                    })
+                    .map(|(i, h)| (h.clone(), record.get(i).unwrap_or("").to_string()))
                     .collect()
             })
             .collect();
@@ -1013,7 +1158,10 @@ async fn load_sqlite_data(path: String) -> AppResult<SourceData> {
     for table in &table_names {
         // Finding 5: reject table names containing SQL-injection characters
         if !is_safe_sql_identifier(table) {
-            tracing::warn!("load_sqlite_data: skipping table '{}' — unsafe identifier", table);
+            tracing::warn!(
+                "load_sqlite_data: skipping table '{}' — unsafe identifier",
+                table
+            );
             continue;
         }
 
@@ -1074,16 +1222,38 @@ async fn execute_sheet_mapping(
     for (row_idx, row) in rows.iter().enumerate() {
         let ok = match target {
             "categories" => {
-                insert_category(&mut tx, sheet_mapping, row, row_idx, category_cache, currency_exponent).await
+                insert_category(
+                    &mut tx,
+                    sheet_mapping,
+                    row,
+                    row_idx,
+                    category_cache,
+                    currency_exponent,
+                )
+                .await
             }
             "products" => {
-                insert_product(pool, &mut tx, sheet_mapping, row, category_cache, product_cache, currency_exponent).await
+                insert_product(
+                    pool,
+                    &mut tx,
+                    sheet_mapping,
+                    row,
+                    category_cache,
+                    product_cache,
+                    currency_exponent,
+                )
+                .await
             }
-            "customers" => {
-                insert_customer(&mut tx, sheet_mapping, row, currency_exponent).await
-            }
+            "customers" => insert_customer(&mut tx, sheet_mapping, row, currency_exponent).await,
             "stock_levels" => {
-                insert_stock_level(&mut tx, sheet_mapping, row, product_cache, currency_exponent).await
+                insert_stock_level(
+                    &mut tx,
+                    sheet_mapping,
+                    row,
+                    product_cache,
+                    currency_exponent,
+                )
+                .await
             }
             // F-HIGH-01: Historical sales + line items now import via a synthetic
             // "Imported History" shift so FK constraints are satisfied.
@@ -1091,7 +1261,15 @@ async fn execute_sheet_mapping(
                 insert_sale(&mut tx, sheet_mapping, row, sale_cache, currency_exponent).await
             }
             "sale_items" => {
-                insert_sale_item(&mut tx, sheet_mapping, row, sale_cache, product_cache, currency_exponent).await
+                insert_sale_item(
+                    &mut tx,
+                    sheet_mapping,
+                    row,
+                    sale_cache,
+                    product_cache,
+                    currency_exponent,
+                )
+                .await
             }
             _ => Ok(false),
         };
@@ -1306,9 +1484,10 @@ async fn insert_product(
 
     let barcode = get_mapped_value(sheet_mapping, row, "barcode", currency_exponent);
     let sku = get_mapped_value(sheet_mapping, row, "sku", currency_exponent);
-    let track_inventory = get_mapped_value(sheet_mapping, row, "track_inventory", currency_exponent)
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(0);
+    let track_inventory =
+        get_mapped_value(sheet_mapping, row, "track_inventory", currency_exponent)
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0);
     let is_active = get_mapped_value(sheet_mapping, row, "is_active", currency_exponent)
         .and_then(|v| v.parse::<i64>().ok())
         .unwrap_or(1);
@@ -1319,7 +1498,7 @@ async fn insert_product(
           track_inventory, allow_decimal_quantity, is_active, \
           tax_rule_id, reorder_point, cost_minor, currency, \
           created_at, updated_at, version) \
-         VALUES (?, ?, ?, ?, ?, ?, 0, ?, NULL, 0, 0, 'BHD', datetime('now'), datetime('now'), 1)"
+         VALUES (?, ?, ?, ?, ?, ?, 0, ?, NULL, 0, 0, 'BHD', datetime('now'), datetime('now'), 1)",
     )
     .bind(&product_id)
     .bind(&category_id)
@@ -1345,7 +1524,7 @@ async fn insert_product(
         "INSERT OR IGNORE INTO product_prices \
          (price_id, product_id, price_type, price_minor, currency, \
           effective_from, created_at) \
-         VALUES (?, ?, 'selling', ?, 'BHD', datetime('now'), datetime('now'))"
+         VALUES (?, ?, 'selling', ?, 'BHD', datetime('now'), datetime('now'))",
     )
     .bind(&price_id)
     .bind(&product_id)
@@ -1638,19 +1817,20 @@ pub async fn migration_list_tables(
                     });
                     continue;
                 }
-                let count: i64 =
-                    sqlx::query_scalar(&format!("SELECT COUNT(*) FROM \"{}\"", table))
-                        .fetch_one(&pool)
+                let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM \"{}\"", table))
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap_or(0);
+                let cols: Vec<String> =
+                    sqlx::query_scalar(&format!("SELECT name FROM pragma_table_info('{}')", table))
+                        .fetch_all(&pool)
                         .await
-                        .unwrap_or(0);
-                let cols: Vec<String> = sqlx::query_scalar(&format!(
-                    "SELECT name FROM pragma_table_info('{}')",
-                    table
-                ))
-                .fetch_all(&pool)
-                .await
-                .unwrap_or_default();
-                result.push(RemoteTableInfo { name: table.clone(), row_count: count, columns: cols });
+                        .unwrap_or_default();
+                result.push(RemoteTableInfo {
+                    name: table.clone(),
+                    row_count: count,
+                    columns: cols,
+                });
             }
             pool.close().await;
             Ok(result)
@@ -1661,7 +1841,9 @@ pub async fn migration_list_tables(
                 use mysql::prelude::Queryable;
                 let pool = mysql::Pool::new(conn.as_str())
                     .map_err(|e| AppError::Internal(e.to_string()))?;
-                let mut c = pool.get_conn().map_err(|e| AppError::Internal(e.to_string()))?;
+                let mut c = pool
+                    .get_conn()
+                    .map_err(|e| AppError::Internal(e.to_string()))?;
 
                 let tables: Vec<String> = c
                     .query_map("SHOW TABLES", |row: mysql::Row| {
@@ -1681,7 +1863,11 @@ pub async fn migration_list_tables(
                             |row: mysql::Row| row.get::<String, usize>(0).unwrap_or_default(),
                         )
                         .unwrap_or_default();
-                    result.push(RemoteTableInfo { name: table.clone(), row_count: count, columns: cols });
+                    result.push(RemoteTableInfo {
+                        name: table.clone(),
+                        row_count: count,
+                        columns: cols,
+                    });
                 }
                 Ok(result)
             })
@@ -1708,7 +1894,11 @@ pub async fn migration_list_tables(
                     let name: String = row.get::<&str, usize>(0).unwrap_or("").to_string();
                     let count: i64 = row.get::<i64, usize>(1).unwrap_or(0);
                     if !name.is_empty() {
-                        tables.push(RemoteTableInfo { name, row_count: count, columns: Vec::new() });
+                        tables.push(RemoteTableInfo {
+                            name,
+                            row_count: count,
+                            columns: Vec::new(),
+                        });
                     }
                 }
             }
@@ -1736,7 +1926,10 @@ pub async fn migration_list_tables(
 
             Ok(tables)
         }
-        _ => Err(AppError::Internal(format!("Unsupported db_type: {}", db_type))),
+        _ => Err(AppError::Internal(format!(
+            "Unsupported db_type: {}",
+            db_type
+        ))),
     }
 }
 
@@ -1754,14 +1947,28 @@ pub async fn migration_query_remote(
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     // Finding 6: block CTE-wrapped destructive queries (e.g. WITH x AS (SELECT 1) DELETE …)
     let q_upper = query.trim().to_uppercase();
-    let allowed_starts = ["SELECT", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "PRAGMA", "WITH"];
+    let allowed_starts = [
+        "SELECT", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "PRAGMA", "WITH",
+    ];
     let is_read_intent = allowed_starts.iter().any(|s| q_upper.starts_with(s));
 
     // Block destructive keywords anywhere in the query (catches WITH…DELETE CTEs)
     let destructive_keywords = [
-        " DELETE ", " UPDATE ", " INSERT ", " MERGE ", " DROP ",
-        " TRUNCATE ", " ALTER ", " CREATE ", " REPLACE ", " GRANT ", " REVOKE ",
-        "\nDELETE ", "\nUPDATE ", "\nINSERT ", "\nDROP ",
+        " DELETE ",
+        " UPDATE ",
+        " INSERT ",
+        " MERGE ",
+        " DROP ",
+        " TRUNCATE ",
+        " ALTER ",
+        " CREATE ",
+        " REPLACE ",
+        " GRANT ",
+        " REVOKE ",
+        "\nDELETE ",
+        "\nUPDATE ",
+        "\nINSERT ",
+        "\nDROP ",
     ];
     let has_destructive = destructive_keywords.iter().any(|kw| q_upper.contains(kw));
 
@@ -1820,7 +2027,12 @@ pub async fn migration_query_remote(
                 .collect();
 
             let total = result_rows.len();
-            Ok(QueryResult { columns, rows: result_rows, row_count: total, truncated: total >= limit })
+            Ok(QueryResult {
+                columns,
+                rows: result_rows,
+                row_count: total,
+                truncated: total >= limit,
+            })
         }
         "mysql" => {
             let conn = conn_str.clone();
@@ -1829,7 +2041,9 @@ pub async fn migration_query_remote(
                 use mysql::prelude::Queryable;
                 let pool = mysql::Pool::new(conn.as_str())
                     .map_err(|e| AppError::Internal(e.to_string()))?;
-                let mut c = pool.get_conn().map_err(|e| AppError::Internal(e.to_string()))?;
+                let mut c = pool
+                    .get_conn()
+                    .map_err(|e| AppError::Internal(e.to_string()))?;
 
                 let db_rows: Vec<mysql::Row> =
                     c.query(q).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -1895,11 +2109,7 @@ pub async fn migration_query_remote(
             while let Some(item) = stream.next().await {
                 if let Ok(tiberius::QueryItem::Row(row)) = item {
                     if columns.is_empty() {
-                        columns = row
-                            .columns()
-                            .iter()
-                            .map(|c| c.name().to_string())
-                            .collect();
+                        columns = row.columns().iter().map(|c| c.name().to_string()).collect();
                     }
                     let vals: Vec<String> = (0..row.len())
                         .map(|i| {
@@ -1923,7 +2133,10 @@ pub async fn migration_query_remote(
                 truncated: total >= limit,
             })
         }
-        _ => Err(AppError::Internal(format!("Unsupported db_type: {}", db_type))),
+        _ => Err(AppError::Internal(format!(
+            "Unsupported db_type: {}",
+            db_type
+        ))),
     }
 }
 
@@ -1965,7 +2178,11 @@ pub async fn migration_list_processes(
                     continue;
                 }
             }
-            processes.push(ProcessInfo { name, pid, memory_kb: mem });
+            processes.push(ProcessInfo {
+                name,
+                pid,
+                memory_kb: mem,
+            });
         }
         Ok(processes)
     })
@@ -1983,7 +2200,10 @@ pub async fn migration_find_db_files(
 ) -> AppResult<Vec<DbFileInfo>> {
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     tokio::task::spawn_blocking(move || -> AppResult<Vec<DbFileInfo>> {
-        let db_exts = ["db", "sqlite", "sqlite3", "db3", "s3db", "mdf", "ndf", "mdb", "accdb", "fdb", "gdb", "bak", "sql", "json"];
+        let db_exts = [
+            "db", "sqlite", "sqlite3", "db3", "s3db", "mdf", "ndf", "mdb", "accdb", "fdb", "gdb",
+            "bak", "sql", "json",
+        ];
 
         let mut roots: Vec<std::path::PathBuf> = Vec::new();
         if let Ok(appdata) = std::env::var("APPDATA") {
@@ -2034,8 +2254,15 @@ fn walk_for_db_files(
         Err(_) => return,
     };
     let skip_dirs = [
-        "windows", "system32", "syswow64", "winsxs", "$recycle.bin",
-        "node_modules", ".git", "temp", "tmp",
+        "windows",
+        "system32",
+        "syswow64",
+        "winsxs",
+        "$recycle.bin",
+        "node_modules",
+        ".git",
+        "temp",
+        "tmp",
     ];
     for entry in entries.flatten() {
         let path = entry.path();
@@ -2083,28 +2310,28 @@ fn walk_for_db_files(
 // ─── Command 9: migration_read_file ──────────────────────────────────────────
 
 #[tauri::command]
-pub async fn migration_read_file(
-    path: String,
-    max_chars: Option<usize>,
-) -> AppResult<String> {
+pub async fn migration_read_file(path: String, max_chars: Option<usize>) -> AppResult<String> {
     // Finding 4: reject paths outside approved directories or in sensitive locations
     if !is_safe_read_path(&path) {
         return Err(AppError::Validation(
-            "Access denied: path is outside approved directories or is a sensitive system path.".into(),
+            "Access denied: path is outside approved directories or is a sensitive system path."
+                .into(),
         ));
     }
     let limit = max_chars.unwrap_or(8000).min(32_000);
     tokio::task::spawn_blocking(move || -> AppResult<String> {
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| {
-                tracing::error!("Cannot read '{}': {}", path, e);
-                AppError::Internal("Cannot read the requested file. Check logs.".into())
-            })?;
+        let content = std::fs::read_to_string(&path).map_err(|e| {
+            tracing::error!("Cannot read '{}': {}", path, e);
+            AppError::Internal("Cannot read the requested file. Check logs.".into())
+        })?;
         if content.len() <= limit {
             Ok(content)
         } else {
             let truncated: String = content.chars().take(limit).collect();
-            Ok(format!("{}\n\n[... truncated at {} chars]", truncated, limit))
+            Ok(format!(
+                "{}\n\n[... truncated at {} chars]",
+                truncated, limit
+            ))
         }
     })
     .await
@@ -2172,9 +2399,11 @@ pub async fn migration_decompress(
             // Finding 8: reject any entry that resolves outside the destination directory
             // (zip-slip protection — enclosed_name already strips "..", this is belt-and-suspenders)
             {
-                let resolved = std::fs::canonicalize(&entry_path)
-                    .unwrap_or_else(|_| entry_path.clone());
-                if !resolved.starts_with(&dest_canonical) && !entry_path.starts_with(&dest_canonical) {
+                let resolved =
+                    std::fs::canonicalize(&entry_path).unwrap_or_else(|_| entry_path.clone());
+                if !resolved.starts_with(&dest_canonical)
+                    && !entry_path.starts_with(&dest_canonical)
+                {
                     continue; // skip zip-slip attempt
                 }
             }
@@ -2223,24 +2452,41 @@ pub async fn migration_decompress(
 // ─── Command 11: migration_zanpos_stats ──────────────────────────────────────
 
 #[tauri::command]
-pub async fn migration_zanpos_stats(
-    state: State<'_, AppState>,
-) -> AppResult<ZanposStats> {
+pub async fn migration_zanpos_stats(state: State<'_, AppState>) -> AppResult<ZanposStats> {
     let pool = &state.db;
     let products: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
-        .fetch_one(pool).await.unwrap_or(0);
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
     let categories: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM categories")
-        .fetch_one(pool).await.unwrap_or(0);
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
     let customers: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM customers")
-        .fetch_one(pool).await.unwrap_or(0);
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
     let sales: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sales")
-        .fetch_one(pool).await.unwrap_or(0);
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
     let sale_items: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sale_items")
-        .fetch_one(pool).await.unwrap_or(0);
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
     let stock_levels: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM stock_levels")
-        .fetch_one(pool).await.unwrap_or(0);
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
 
-    Ok(ZanposStats { products, categories, customers, sales, sale_items, stock_levels })
+    Ok(ZanposStats {
+        products,
+        categories,
+        customers,
+        sales,
+        sale_items,
+        stock_levels,
+    })
 }
 
 // ─── Command 12: migration_rollback ──────────────────────────────────────────
@@ -2260,13 +2506,13 @@ pub async fn migration_rollback(
 
     // Reverse FK order: items → sales → stock → product_prices → products → customers → categories
     let tables_and_ts_col: &[(&str, &str)] = &[
-        ("sale_items",      "created_at"),
-        ("sales",           "created_at"),
-        ("stock_levels",    "updated_at"),
-        ("product_prices",  "created_at"),
-        ("products",        "created_at"),
-        ("customers",       "created_at"),
-        ("categories",      "created_at"),
+        ("sale_items", "created_at"),
+        ("sales", "created_at"),
+        ("stock_levels", "updated_at"),
+        ("product_prices", "created_at"),
+        ("products", "created_at"),
+        ("customers", "created_at"),
+        ("categories", "created_at"),
     ];
 
     let mut deleted_counts: Vec<(String, i64)> = Vec::new();
@@ -2274,10 +2520,7 @@ pub async fn migration_rollback(
 
     for (table, ts_col) in tables_and_ts_col {
         let sql = format!("DELETE FROM {} WHERE {} >= ?", table, ts_col);
-        let result = sqlx::query(&sql)
-            .bind(&since_iso)
-            .execute(&mut *tx)
-            .await;
+        let result = sqlx::query(&sql).bind(&since_iso).execute(&mut *tx).await;
         match result {
             Ok(r) => {
                 let n = r.rows_affected() as i64;
@@ -2307,7 +2550,10 @@ pub async fn migration_rollback(
     .execute(pool)
     .await;
 
-    Ok(RollbackResult { deleted_counts, total_deleted })
+    Ok(RollbackResult {
+        deleted_counts,
+        total_deleted,
+    })
 }
 
 // ─── Original insert_stock_level (unchanged below) ────────────────────────────
@@ -2352,8 +2598,9 @@ async fn insert_stock_level(
         .await?
         .ok_or_else(|| crate::errors::AppError::NotFound("No active branch configured".into()))?,
     };
-    let quantity_on_hand = get_mapped_value(sheet_mapping, row, "quantity_on_hand", currency_exponent)
-        .unwrap_or_else(|| "0".to_string());
+    let quantity_on_hand =
+        get_mapped_value(sheet_mapping, row, "quantity_on_hand", currency_exponent)
+            .unwrap_or_else(|| "0".to_string());
 
     let result = sqlx::query(
         "INSERT OR IGNORE INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at) VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))"
@@ -2381,16 +2628,18 @@ const IMPORT_SHIFT_ID: &str = "SHIFT-IMPORTED-HISTORY-000001";
 async fn ensure_import_anchors(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
 ) -> AppResult<(String, String, String, String)> {
-    let branch_id: String =
-        sqlx::query_scalar("SELECT branch_id FROM branches WHERE is_active=1 ORDER BY created_at LIMIT 1")
-            .fetch_optional(&mut **tx)
-            .await?
-            .ok_or_else(|| crate::errors::AppError::NotFound("No active branch".into()))?;
-    let device_id: String =
-        sqlx::query_scalar("SELECT device_id FROM devices WHERE is_active=1 ORDER BY device_code LIMIT 1")
-            .fetch_optional(&mut **tx)
-            .await?
-            .ok_or_else(|| crate::errors::AppError::NotFound("No active device".into()))?;
+    let branch_id: String = sqlx::query_scalar(
+        "SELECT branch_id FROM branches WHERE is_active=1 ORDER BY created_at LIMIT 1",
+    )
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or_else(|| crate::errors::AppError::NotFound("No active branch".into()))?;
+    let device_id: String = sqlx::query_scalar(
+        "SELECT device_id FROM devices WHERE is_active=1 ORDER BY device_code LIMIT 1",
+    )
+    .fetch_optional(&mut **tx)
+    .await?
+    .ok_or_else(|| crate::errors::AppError::NotFound("No active device".into()))?;
     // Prefer an owner; fall back to any active user.
     let cashier_user_id: String = sqlx::query_scalar(
         "SELECT u.user_id FROM users u JOIN roles r ON r.role_id = u.role_id
@@ -2416,7 +2665,12 @@ async fn ensure_import_anchors(
     .execute(&mut **tx)
     .await?;
 
-    Ok((branch_id, device_id, cashier_user_id, IMPORT_SHIFT_ID.to_string()))
+    Ok((
+        branch_id,
+        device_id,
+        cashier_user_id,
+        IMPORT_SHIFT_ID.to_string(),
+    ))
 }
 
 /// Import one historical sale. The legacy receipt number is the join key that
@@ -2429,11 +2683,11 @@ async fn insert_sale(
     currency_exponent: u32,
 ) -> AppResult<bool> {
     // Legacy receipt number — required as the join key for line items.
-    let legacy_receipt = match get_mapped_value(sheet_mapping, row, "receipt_number", currency_exponent)
-    {
-        Some(r) if !r.trim().is_empty() => r.trim().to_string(),
-        _ => return Ok(false), // no receipt → cannot anchor line items, skip
-    };
+    let legacy_receipt =
+        match get_mapped_value(sheet_mapping, row, "receipt_number", currency_exponent) {
+            Some(r) if !r.trim().is_empty() => r.trim().to_string(),
+            _ => return Ok(false), // no receipt → cannot anchor line items, skip
+        };
 
     let (branch_id, device_id, cashier_user_id, shift_id) = ensure_import_anchors(tx).await?;
 
@@ -2448,9 +2702,14 @@ async fn insert_sale(
     let tax = get_mapped_value(sheet_mapping, row, "tax_total_minor", currency_exponent)
         .and_then(|v| v.parse::<i64>().ok())
         .unwrap_or(0);
-    let discount = get_mapped_value(sheet_mapping, row, "discount_total_minor", currency_exponent)
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(0);
+    let discount = get_mapped_value(
+        sheet_mapping,
+        row,
+        "discount_total_minor",
+        currency_exponent,
+    )
+    .and_then(|v| v.parse::<i64>().ok())
+    .unwrap_or(0);
     // Business date / sold_at — accept either, default to now.
     let sold_at = get_mapped_value(sheet_mapping, row, "sold_at", currency_exponent)
         .filter(|s| !s.trim().is_empty())
@@ -2515,11 +2774,11 @@ async fn insert_sale_item(
     currency_exponent: u32,
 ) -> AppResult<bool> {
     // Resolve parent sale via legacy receipt number.
-    let legacy_receipt = match get_mapped_value(sheet_mapping, row, "receipt_number", currency_exponent)
-    {
-        Some(r) if !r.trim().is_empty() => r.trim().to_lowercase(),
-        _ => return Ok(false),
-    };
+    let legacy_receipt =
+        match get_mapped_value(sheet_mapping, row, "receipt_number", currency_exponent) {
+            Some(r) if !r.trim().is_empty() => r.trim().to_lowercase(),
+            _ => return Ok(false),
+        };
     let sale_id = match sale_cache.get(&legacy_receipt) {
         Some(id) => id.clone(),
         None => return Ok(false), // parent sale not imported → skip orphan line
@@ -2534,21 +2793,25 @@ async fn insert_sale_item(
         .unwrap_or_else(|| "Imported Item".to_string());
 
     // Optional product FK from cache (by name).
-    let product_id: Option<String> =
-        product_cache.get(&product_name.trim().to_lowercase()).cloned();
+    let product_id: Option<String> = product_cache
+        .get(&product_name.trim().to_lowercase())
+        .cloned();
 
     let quantity = get_mapped_value(sheet_mapping, row, "quantity", currency_exponent)
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "1".to_string());
-    let unit_price_minor = get_mapped_value(sheet_mapping, row, "unit_price_minor", currency_exponent)
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(0);
-    let line_total_minor = get_mapped_value(sheet_mapping, row, "line_total_minor", currency_exponent)
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(unit_price_minor);
-    let tax_amount_minor = get_mapped_value(sheet_mapping, row, "tax_amount_minor", currency_exponent)
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(0);
+    let unit_price_minor =
+        get_mapped_value(sheet_mapping, row, "unit_price_minor", currency_exponent)
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0);
+    let line_total_minor =
+        get_mapped_value(sheet_mapping, row, "line_total_minor", currency_exponent)
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(unit_price_minor);
+    let tax_amount_minor =
+        get_mapped_value(sheet_mapping, row, "tax_amount_minor", currency_exponent)
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(0);
 
     let sale_item_id = Ulid::new().to_string();
     let res = sqlx::query(
@@ -2743,19 +3006,36 @@ async fn execute_migration_agent_tool(
 ) -> AppResult<String> {
     match name {
         "mg_inspect_file" => {
-            let path = input.get("path").and_then(|v| v.as_str())
+            let path = input
+                .get("path")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Validation("Missing path".into()))?;
-            let schema = migration_inspect_file(path.to_string(), actor_user_id.to_string(), state.clone()).await?;
-            let mut out = format!("File: {}\nType: {}\nSheets/Tables: {}\n\n",
-                schema.file_path, schema.file_type, schema.sheets.len());
+            let schema =
+                migration_inspect_file(path.to_string(), actor_user_id.to_string(), state.clone())
+                    .await?;
+            let mut out = format!(
+                "File: {}\nType: {}\nSheets/Tables: {}\n\n",
+                schema.file_path,
+                schema.file_type,
+                schema.sheets.len()
+            );
             for sheet in &schema.sheets {
-                out += &format!("── {} ({} rows, {} columns)\n",
-                    sheet.name, sheet.row_count, sheet.columns.len());
+                out += &format!(
+                    "── {} ({} rows, {} columns)\n",
+                    sheet.name,
+                    sheet.row_count,
+                    sheet.columns.len()
+                );
                 for col in &sheet.columns {
                     let samples = if col.samples.is_empty() {
                         "(empty)".to_string()
                     } else {
-                        col.samples.iter().take(3).map(|s| format!("\"{}\"", s)).collect::<Vec<_>>().join(", ")
+                        col.samples
+                            .iter()
+                            .take(3)
+                            .map(|s| format!("\"{}\"", s))
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     };
                     out += &format!("   {} → samples: {}\n", col.name, samples);
                 }
@@ -2765,46 +3045,89 @@ async fn execute_migration_agent_tool(
         }
 
         "mg_connect_db" => {
-            let db_type = input.get("db_type").and_then(|v| v.as_str())
+            let db_type = input
+                .get("db_type")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Validation("Missing db_type".into()))?;
-            let conn_str = input.get("conn_str").and_then(|v| v.as_str())
+            let conn_str = input
+                .get("conn_str")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Validation("Missing conn_str".into()))?;
 
-            let test = migration_connect_test(db_type.to_string(), conn_str.to_string(), actor_user_id.to_string(), state.clone()).await?;
+            let test = migration_connect_test(
+                db_type.to_string(),
+                conn_str.to_string(),
+                actor_user_id.to_string(),
+                state.clone(),
+            )
+            .await?;
             if !test.success {
                 return Ok(format!("Connection FAILED: {}", test.message));
             }
-            let tables = migration_list_tables(db_type.to_string(), conn_str.to_string(), actor_user_id.to_string(), state.clone()).await?;
-            let mut out = format!("Connected! {}\n\n{} tables:\n",
-                test.server_version.as_deref().unwrap_or(""), tables.len());
+            let tables = migration_list_tables(
+                db_type.to_string(),
+                conn_str.to_string(),
+                actor_user_id.to_string(),
+                state.clone(),
+            )
+            .await?;
+            let mut out = format!(
+                "Connected! {}\n\n{} tables:\n",
+                test.server_version.as_deref().unwrap_or(""),
+                tables.len()
+            );
             for t in &tables {
-                out += &format!("  {} — {} rows | columns: {}\n",
-                    t.name, t.row_count,
-                    t.columns.iter().take(8).cloned().collect::<Vec<_>>().join(", "));
+                out += &format!(
+                    "  {} — {} rows | columns: {}\n",
+                    t.name,
+                    t.row_count,
+                    t.columns
+                        .iter()
+                        .take(8)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
             }
             Ok(out)
         }
 
         "mg_query_db" => {
-            let db_type = input.get("db_type").and_then(|v| v.as_str())
+            let db_type = input
+                .get("db_type")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Validation("Missing db_type".into()))?;
-            let conn_str = input.get("conn_str").and_then(|v| v.as_str())
+            let conn_str = input
+                .get("conn_str")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Validation("Missing conn_str".into()))?;
-            let sql = input.get("sql").and_then(|v| v.as_str())
+            let sql = input
+                .get("sql")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Validation("Missing sql".into()))?;
             let max_rows = input.get("max_rows").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
 
             let result = migration_query_remote(
-                db_type.to_string(), conn_str.to_string(), sql.to_string(), Some(max_rows),
-                actor_user_id.to_string(), state.clone()
-            ).await?;
+                db_type.to_string(),
+                conn_str.to_string(),
+                sql.to_string(),
+                Some(max_rows),
+                actor_user_id.to_string(),
+                state.clone(),
+            )
+            .await?;
 
-            let mut out = format!("Query: {}\n{} rows{}\nColumns: {}\n\n",
-                sql, result.row_count,
+            let mut out = format!(
+                "Query: {}\n{} rows{}\nColumns: {}\n\n",
+                sql,
+                result.row_count,
                 if result.truncated { " (truncated)" } else { "" },
-                result.columns.join(", "));
+                result.columns.join(", ")
+            );
             for row in &result.rows {
-                out += &row.iter().zip(result.columns.iter())
+                out += &row
+                    .iter()
+                    .zip(result.columns.iter())
                     .map(|(v, c)| format!("{}: {}", c, v))
                     .collect::<Vec<_>>()
                     .join(" | ");
@@ -2814,32 +3137,72 @@ async fn execute_migration_agent_tool(
         }
 
         "mg_find_db_files" => {
-            let extra: Vec<String> = input.get("extra_paths")
+            let extra: Vec<String> = input
+                .get("extra_paths")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
                 .unwrap_or_default();
-            let files = migration_find_db_files(if extra.is_empty() { None } else { Some(extra) }, actor_user_id.to_string(), state.clone()).await?;
+            let files = migration_find_db_files(
+                if extra.is_empty() { None } else { Some(extra) },
+                actor_user_id.to_string(),
+                state.clone(),
+            )
+            .await?;
             if files.is_empty() {
                 return Ok("No database files found in common locations.".to_string());
             }
             let mut out = format!("Found {} database files:\n", files.len());
             for f in files.iter().take(40) {
-                out += &format!("  {} ({}, {} KB, modified {})\n",
-                    f.path, f.file_type, f.size_bytes / 1024, f.modified);
+                out += &format!(
+                    "  {} ({}, {} KB, modified {})\n",
+                    f.path,
+                    f.file_type,
+                    f.size_bytes / 1024,
+                    f.modified
+                );
             }
-            if files.len() > 40 { out += &format!("  ...and {} more\n", files.len() - 40); }
+            if files.len() > 40 {
+                out += &format!("  ...and {} more\n", files.len() - 40);
+            }
             Ok(out)
         }
 
         "mg_list_processes" => {
-            let filter = input.get("filter").and_then(|v| v.as_str()).map(|s| s.to_string());
-            let procs = migration_list_processes(filter, actor_user_id.to_string(), state.clone()).await?;
+            let filter = input
+                .get("filter")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let procs =
+                migration_list_processes(filter, actor_user_id.to_string(), state.clone()).await?;
             if procs.is_empty() {
                 return Ok("No processes found.".to_string());
             }
-            let pos_kw = ["pos","retail","revel","lightspeed","square","shopify",
-                "odoo","quickbooks","quicksale","loyverse","vend","toast","clover","talech",
-                "restaurant","cashier","billing","erp","sage","inventory"];
+            let pos_kw = [
+                "pos",
+                "retail",
+                "revel",
+                "lightspeed",
+                "square",
+                "shopify",
+                "odoo",
+                "quickbooks",
+                "quicksale",
+                "loyverse",
+                "vend",
+                "toast",
+                "clover",
+                "talech",
+                "restaurant",
+                "cashier",
+                "billing",
+                "erp",
+                "sage",
+                "inventory",
+            ];
             let mut interesting = vec![];
             let mut rest = vec![];
             for p in &procs {
@@ -2866,29 +3229,45 @@ async fn execute_migration_agent_tool(
         }
 
         "mg_read_file" => {
-            let path = input.get("path").and_then(|v| v.as_str())
+            let path = input
+                .get("path")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Validation("Missing path".into()))?;
             // Finding 4: reject paths outside approved directories or in sensitive locations
             if !is_safe_read_path(path) {
                 return Ok("❌ Access denied: path is outside approved directories or is a sensitive system path.".to_string());
             }
-            let max_chars = input.get("max_chars").and_then(|v| v.as_u64()).unwrap_or(4000) as usize;
+            let max_chars = input
+                .get("max_chars")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(4000) as usize;
             migration_read_file(path.to_string(), Some(max_chars)).await
         }
 
         "mg_shell" => {
-            let command = input.get("command").and_then(|v| v.as_str())
+            let command = input
+                .get("command")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Validation("Missing command".into()))?
                 .to_string();
             exec_safe_shell(command).await
         }
 
         "mg_extract_zip" => {
-            let archive_path = input.get("archive_path").and_then(|v| v.as_str())
+            let archive_path = input
+                .get("archive_path")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Validation("Missing archive_path".into()))?;
-            let dest_dir = input.get("dest_dir").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let dest_dir = input
+                .get("dest_dir")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
             let r = migration_decompress(archive_path.to_string(), dest_dir).await?;
-            let mut out = format!("Extracted {} files to: {}\n", r.extracted_files.len(), r.dest_dir);
+            let mut out = format!(
+                "Extracted {} files to: {}\n",
+                r.extracted_files.len(),
+                r.dest_dir
+            );
             if !r.db_files.is_empty() {
                 out += &format!("\n✅ Found {} database file(s):\n", r.db_files.len());
                 for f in &r.db_files {
@@ -2897,15 +3276,21 @@ async fn execute_migration_agent_tool(
             } else {
                 out += "\nNo database files found inside the archive.";
             }
-            if let Some(e) = &r.error { out += &format!("\nWarning: {}", e); }
+            if let Some(e) = &r.error {
+                out += &format!("\nWarning: {}", e);
+            }
             Ok(out)
         }
 
         "mg_attach_mdf" => {
-            let mdf_path = input.get("mdf_path").and_then(|v| v.as_str())
+            let mdf_path = input
+                .get("mdf_path")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Validation("Missing mdf_path".into()))?
                 .to_string();
-            let db_name = input.get("db_name").and_then(|v| v.as_str())
+            let db_name = input
+                .get("db_name")
+                .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| {
                     let stem = std::path::Path::new(&mdf_path)
@@ -2913,11 +3298,16 @@ async fn execute_migration_agent_tool(
                         .map(|s| s.to_string_lossy().to_string())
                         .unwrap_or_else(|| "imported_db".to_string());
                     // Sanitize stem: keep only alphanumeric, underscore, hyphen; fall back if invalid
-                    let sanitized: String = stem.chars()
+                    let sanitized: String = stem
+                        .chars()
                         .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
                         .collect();
                     if sanitized.is_empty()
-                        || !sanitized.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false)
+                        || !sanitized
+                            .chars()
+                            .next()
+                            .map(|c| c.is_ascii_alphabetic() || c == '_')
+                            .unwrap_or(false)
                     {
                         "imported_db".to_string()
                     } else {
@@ -2928,30 +3318,53 @@ async fn execute_migration_agent_tool(
         }
 
         "mg_access_query" => {
-            let db_path = input.get("db_path").and_then(|v| v.as_str())
+            let db_path = input
+                .get("db_path")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Validation("Missing db_path".into()))?
                 .to_string();
-            let sql = input.get("sql").and_then(|v| v.as_str())
+            let sql = input
+                .get("sql")
+                .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
             exec_access_query(db_path, sql).await
         }
 
         "mg_read_sql_dump" => {
-            let path = input.get("path").and_then(|v| v.as_str())
+            let path = input
+                .get("path")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Validation("Missing path".into()))?
                 .to_string();
             let schema = inspect_sql_dump(path.clone()).await?;
-            let mut out = format!("SQL dump: {}\n{} tables detected:\n\n", path, schema.sheets.len());
+            let mut out = format!(
+                "SQL dump: {}\n{} tables detected:\n\n",
+                path,
+                schema.sheets.len()
+            );
             for sheet in &schema.sheets {
-                out += &format!("  {} — {} INSERT rows, {} columns: {}\n",
-                    sheet.name, sheet.row_count,
+                out += &format!(
+                    "  {} — {} INSERT rows, {} columns: {}\n",
+                    sheet.name,
+                    sheet.row_count,
                     sheet.columns.len(),
-                    sheet.columns.iter().take(10).map(|c| c.name.as_str()).collect::<Vec<_>>().join(", "));
+                    sheet
+                        .columns
+                        .iter()
+                        .take(10)
+                        .map(|c| c.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
             }
             // Also show first 20 INSERT lines for context
             let content = std::fs::read_to_string(&path).unwrap_or_default();
-            let inserts: Vec<&str> = content.lines()
-                .filter(|l| { let u = l.to_uppercase(); u.starts_with("INSERT") || u.starts_with("REPLACE") })
+            let inserts: Vec<&str> = content
+                .lines()
+                .filter(|l| {
+                    let u = l.to_uppercase();
+                    u.starts_with("INSERT") || u.starts_with("REPLACE")
+                })
                 .take(15)
                 .collect();
             if !inserts.is_empty() {
@@ -2964,19 +3377,40 @@ async fn execute_migration_agent_tool(
         }
 
         "mg_zanpos_stats" => {
-            let products: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products").fetch_one(pool).await.unwrap_or(0);
-            let categories: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM categories").fetch_one(pool).await.unwrap_or(0);
-            let customers: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM customers").fetch_one(pool).await.unwrap_or(0);
-            let sales: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sales").fetch_one(pool).await.unwrap_or(0);
-            let sale_items: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sale_items").fetch_one(pool).await.unwrap_or(0);
-            let stock_levels: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM stock_levels").fetch_one(pool).await.unwrap_or(0);
+            let products: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
+            let categories: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM categories")
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
+            let customers: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM customers")
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
+            let sales: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sales")
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
+            let sale_items: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sale_items")
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
+            let stock_levels: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM stock_levels")
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
             Ok(format!(
                 "Current ZANPOS records:\n  Products: {}\n  Categories: {}\n  Customers: {}\n  Sales: {}\n  Sale Items: {}\n  Stock Levels: {}",
                 products, categories, customers, sales, sale_items, stock_levels
             ))
         }
 
-        other => Err(AppError::Validation(format!("Unknown migration tool: {}", other))),
+        other => Err(AppError::Validation(format!(
+            "Unknown migration tool: {}",
+            other
+        ))),
     }
 }
 
@@ -2986,8 +3420,14 @@ async fn exec_attach_mdf(mdf_path: String, db_name: String) -> AppResult<String>
     // Validate db_name: must be a safe SQL identifier
     let db_name_valid = !db_name.is_empty()
         && db_name.len() <= 64
-        && db_name.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false)
-        && db_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        && db_name
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_alphabetic() || c == '_')
+            .unwrap_or(false)
+        && db_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
     if !db_name_valid {
         return Ok(format!(
             "❌ Invalid database name '{db_name}'. Use only letters, digits, underscores, and hyphens."
@@ -2999,7 +3439,10 @@ async fn exec_attach_mdf(mdf_path: String, db_name: String) -> AppResult<String>
     if !mdf_lower.ends_with(".mdf") {
         return Ok("❌ Path must end in .mdf".to_string());
     }
-    if mdf_path.chars().any(|c| matches!(c, '\'' | ';' | '[' | ']' | '\n' | '\r')) {
+    if mdf_path
+        .chars()
+        .any(|c| matches!(c, '\'' | ';' | '[' | ']' | '\n' | '\r'))
+    {
         return Ok("❌ MDF path contains invalid characters.".to_string());
     }
 
@@ -3081,15 +3524,22 @@ async fn exec_access_query(db_path: String, sql_query: Option<String>) -> AppRes
     if !db_lower.ends_with(".accdb") && !db_lower.ends_with(".mdb") {
         return Ok("❌ Path must end in .accdb or .mdb".to_string());
     }
-    if db_path.chars().any(|c| matches!(c, '\'' | '"' | ';' | '`' | '\n' | '\r' | '$')) {
+    if db_path
+        .chars()
+        .any(|c| matches!(c, '\'' | '"' | ';' | '`' | '\n' | '\r' | '$'))
+    {
         return Ok("❌ Database path contains invalid characters.".to_string());
     }
     // Validate the SQL query if provided: reject obviously destructive statements
     if let Some(ref q) = sql_query {
         let q_up = q.to_uppercase();
-        for banned in &["DELETE", "UPDATE", "INSERT", "DROP", "CREATE", "ALTER", "TRUNCATE", "EXEC", "EXECUTE"] {
+        for banned in &[
+            "DELETE", "UPDATE", "INSERT", "DROP", "CREATE", "ALTER", "TRUNCATE", "EXEC", "EXECUTE",
+        ] {
             if q_up.contains(banned) {
-                return Ok(format!("❌ Destructive keyword '{banned}' is not allowed in Access queries."));
+                return Ok(format!(
+                    "❌ Destructive keyword '{banned}' is not allowed in Access queries."
+                ));
             }
         }
     }
@@ -3098,7 +3548,8 @@ async fn exec_access_query(db_path: String, sql_query: Option<String>) -> AppRes
     // Build PowerShell script using OleDb / ACE driver
     let ps_script = if let Some(ref query) = sql {
         // Execute a query
-        format!(r#"
+        format!(
+            r#"
 try {{
     $conn = New-Object System.Data.OleDb.OleDbConnection
     # Try ACE (Office 2016+), then Jet (older)
@@ -3126,10 +3577,14 @@ try {{
     $conn.Close()
     Write-Output "--- $n rows returned ---"
 }} catch {{ Write-Error $_.Exception.Message }}
-"#, path = db_path, query = query.replace('\'', "''"))
+"#,
+            path = db_path,
+            query = query.replace('\'', "''")
+        )
     } else {
         // List tables
-        format!(r#"
+        format!(
+            r#"
 try {{
     $conn = New-Object System.Data.OleDb.OleDbConnection
     $providers = @('Microsoft.ACE.OLEDB.16.0','Microsoft.ACE.OLEDB.12.0','Microsoft.Jet.OLEDB.4.0')
@@ -3155,11 +3610,16 @@ try {{
     }}
     $conn.Close()
 }} catch {{ Write-Error $_.Exception.Message }}
-"#, path = db_path)
+"#,
+            path = db_path
+        )
     };
 
     // Run via PowerShell
-    let cmd = format!("powershell -NoProfile -Command \"{}\"", ps_script.replace('"', "\\\""));
+    let cmd = format!(
+        "powershell -NoProfile -Command \"{}\"",
+        ps_script.replace('"', "\\\"")
+    );
     exec_safe_shell(cmd).await
 }
 
@@ -3180,27 +3640,52 @@ async fn exec_safe_shell(command: String) -> AppResult<String> {
     // Whitelist: only safe read-only commands allowed
     let lower = command.trim().to_lowercase();
     let allowed_prefixes = [
-        "dir ", "dir\n", "type ", "where ", "tasklist", "reg query",
-        "wmic process", "sqlite3 ", "powershell get-", "powershell -command \"get-",
-        "powershell -command \"select-", "powershell -noprofile",
-        "findstr ", "find ", "echo ", "more ", "sort ", "attrib "
+        "dir ",
+        "dir\n",
+        "type ",
+        "where ",
+        "tasklist",
+        "reg query",
+        "wmic process",
+        "sqlite3 ",
+        "powershell get-",
+        "powershell -command \"get-",
+        "powershell -command \"select-",
+        "powershell -noprofile",
+        "findstr ",
+        "find ",
+        "echo ",
+        "more ",
+        "sort ",
+        "attrib ",
     ];
     let allowed_exact = ["dir", "tasklist", "where"];
 
-    let dangerous = lower.contains("remove-item") || lower.contains("del ") || lower.contains("rd ")
-        || lower.contains("invoke-expression") || lower.contains("iex ")
-        || lower.contains(" | iex") || lower.contains("net user") || lower.contains("format-disk")
-        || lower.contains("clear-disk") || lower.contains("set-acl") || lower.contains("start-process cmd");
+    let dangerous = lower.contains("remove-item")
+        || lower.contains("del ")
+        || lower.contains("rd ")
+        || lower.contains("invoke-expression")
+        || lower.contains("iex ")
+        || lower.contains(" | iex")
+        || lower.contains("net user")
+        || lower.contains("format-disk")
+        || lower.contains("clear-disk")
+        || lower.contains("set-acl")
+        || lower.contains("start-process cmd");
 
-    let is_allowed = !dangerous && (
-        allowed_prefixes.iter().any(|p| lower.starts_with(p))
-        || allowed_exact.iter().any(|e| lower == *e)
-        || lower.starts_with("dir ")
-        || lower.starts_with("sqlite3 ")
-        || (lower.starts_with("powershell") && !lower.contains("remove") && !lower.contains("delete")
-            && !lower.contains("write-") && !lower.contains("set-content") && !lower.contains("new-item")
-            && !lower.contains("invoke-expression") && !lower.contains("iex "))
-    );
+    let is_allowed = !dangerous
+        && (allowed_prefixes.iter().any(|p| lower.starts_with(p))
+            || allowed_exact.iter().any(|e| lower == *e)
+            || lower.starts_with("dir ")
+            || lower.starts_with("sqlite3 ")
+            || (lower.starts_with("powershell")
+                && !lower.contains("remove")
+                && !lower.contains("delete")
+                && !lower.contains("write-")
+                && !lower.contains("set-content")
+                && !lower.contains("new-item")
+                && !lower.contains("invoke-expression")
+                && !lower.contains("iex ")));
 
     if !is_allowed {
         return Ok(format!(
@@ -3624,7 +4109,9 @@ pub async fn migration_agent_chat(
 ) -> AppResult<String> {
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let Some(provider) = Provider::from_db(&state.db).await? else {
-        return Err(AppError::Internal("No AI provider configured. Please set up your API key.".into()));
+        return Err(AppError::Internal(
+            "No AI provider configured. Please set up your API key.".into(),
+        ));
     };
 
     let system = migration_agent_system_prompt();
@@ -3655,9 +4142,10 @@ pub async fn migration_agent_chat(
             }
         }
 
-        let tool_result = execute_migration_agent_tool(&tc.name, &tc.input, &state.db, &actor_user_id, &state)
-            .await
-            .unwrap_or_else(|e| format!("Tool error: {}", e));
+        let tool_result =
+            execute_migration_agent_tool(&tc.name, &tc.input, &state.db, &actor_user_id, &state)
+                .await
+                .unwrap_or_else(|e| format!("Tool error: {}", e));
 
         let prev_reasoning = current.reasoning_content.clone();
         current = provider

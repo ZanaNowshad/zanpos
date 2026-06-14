@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 // ── Persisted action lifecycle ────────────────────────────────────────────────
 
@@ -118,9 +119,9 @@ pub struct AiChatMessage {
     pub session_id: String,
     pub branch_id: String,
     pub user_id: String,
-    pub role: String,          // "user" | "assistant" | "system_event"
+    pub role: String, // "user" | "assistant" | "system_event"
     pub content: String,
-    pub message_type: String,  // "text" | "action_card" | "error"
+    pub message_type: String, // "text" | "action_card" | "error"
     pub created_at: String,
 }
 
@@ -129,9 +130,15 @@ pub struct AiChatMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StreamEvent {
-    Token { text: String },
-    ToolStart { name: String },
-    ToolDone { name: String },
+    Token {
+        text: String,
+    },
+    ToolStart {
+        name: String,
+    },
+    ToolDone {
+        name: String,
+    },
     MutationPending {
         action_id: String,
         tool_name: String,
@@ -139,9 +146,32 @@ pub enum StreamEvent {
         expires_at: String,
         assistant_text: String,
     },
-    Navigate { tab: String },
+    Navigate {
+        tab: String,
+    },
+    RunPreview {
+        run_id: String,
+        op_id: String,
+        description: String,
+        count: i64,
+        samples: Vec<Value>,
+    },
+    RunProgress {
+        run_id: String,
+        done: i64,
+        total: i64,
+    },
+    RunDone {
+        run_id: String,
+    },
+    RunFailed {
+        run_id: String,
+        error: String,
+    },
     Done,
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 // ── Provider config ────────────────────────────────────────────────────────────

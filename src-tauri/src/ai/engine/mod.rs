@@ -2,6 +2,7 @@
 //! batched execution, and whole-run undo. See docs/superpowers/specs.
 
 pub mod batch;
+pub mod ops;
 pub mod runs;
 pub mod selector;
 

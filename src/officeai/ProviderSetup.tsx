@@ -24,6 +24,13 @@ export default function ProviderSetup({ actorUserId, onDone, onBack }: Props) {
 
   return <div className="setup-center"><div className="setup-card"><h2>{step === "anthropic_key" ? "Anthropic API Key" : "Setup"}</h2>
     {step === "openai_url_key" && <input className="field-input" placeholder="Base URL" value={baseUrl} onChange={e => setBaseUrl(e.target.value)} />}
+    {step === "openai_url_key" && <div className="setup-url-examples">
+      {["https://api.openai.com/v1", "https://api.groq.com/openai/v1", "https://openrouter.ai/api/v1", "https://api.deepseek.com/v1", "http://localhost:11434/v1"].map(u => (
+        <button key={u} className="setup-url-chip" onClick={() => setBaseUrl(u)}>
+          {u.replace(/https?:\/\//, "").split("/")[0]}
+        </button>
+      ))}
+    </div>}
     <input className="field-input" type="password" placeholder="API Key" value={apiKey} onChange={e => setApiKey(e.target.value)} />
     {step === "openai_url_key" && <button className="btn-primary" onClick={handleValidateOpenAI} disabled={loading}>Validate →</button>}
     {step === "gemini_key" && <button className="btn-primary" onClick={handleValidateGemini} disabled={loading}>Validate →</button>}

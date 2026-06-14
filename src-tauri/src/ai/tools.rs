@@ -1286,12 +1286,10 @@ pub async fn execute_read_tool(
             // Bahrain midnight = UTC midnight − 3 h, i.e. previous day 21:00 UTC.
             const BAHRAIN_OFFSET_HOURS: i64 = 3;
             let utc_now = chrono::Utc::now();
-            let bahrain_naive_now = utc_now.naive_utc() + chrono::Duration::hours(BAHRAIN_OFFSET_HOURS);
+            let bahrain_naive_now =
+                utc_now.naive_utc() + chrono::Duration::hours(BAHRAIN_OFFSET_HOURS);
             let bahrain_today = bahrain_naive_now.date();
-            let today_utc_start = (bahrain_today
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc()
+            let today_utc_start = (bahrain_today.and_hms_opt(0, 0, 0).unwrap().and_utc()
                 - chrono::Duration::hours(BAHRAIN_OFFSET_HOURS))
             .to_rfc3339();
             let rows = if let Some(et) = event_filter {
@@ -1381,15 +1379,22 @@ pub async fn execute_read_tool(
 
             let hub_mode: Option<String> =
                 sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'hub_mode'")
-                    .fetch_optional(pool).await?.flatten();
+                    .fetch_optional(pool)
+                    .await?
+                    .flatten();
             let hub_url: Option<String> =
                 sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'hub_url'")
-                    .fetch_optional(pool).await?.flatten();
+                    .fetch_optional(pool)
+                    .await?
+                    .flatten();
             let token = crate::secure_store::get_secret("hub_store_token").unwrap_or_default();
             let hub_label = if hub_mode.as_deref() == Some("1") {
                 "✓ this device IS the hub".to_string()
             } else if hub_url.as_deref().is_some_and(|u| !u.is_empty()) && !token.is_empty() {
-                format!("✓ terminal connected to {}", hub_url.as_deref().unwrap_or(""))
+                format!(
+                    "✓ terminal connected to {}",
+                    hub_url.as_deref().unwrap_or("")
+                )
             } else {
                 "✗ NOT configured (Settings → Hub)".to_string()
             };
@@ -1397,11 +1402,21 @@ pub async fn execute_read_tool(
 
             let last_sync: Option<String> = sqlx::query_scalar(
                 "SELECT last_pushed_at FROM sync_watermark WHERE table_name = 'sales'",
-            ).fetch_optional(pool).await.ok().flatten();
-            lines.push(format!("  Last Sync: {}", last_sync.as_deref().unwrap_or("never")));
+            )
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+            lines.push(format!(
+                "  Last Sync: {}",
+                last_sync.as_deref().unwrap_or("never")
+            ));
 
             lines.push("".to_string());
-            lines.push("  Per-table breakdown — pending / stuck (attempts>=10) / max-att / avg-att:".to_string());
+            lines.push(
+                "  Per-table breakdown — pending / stuck (attempts>=10) / max-att / avg-att:"
+                    .to_string(),
+            );
 
             for table in crate::commands::sync_commands::SYNC_TABLES {
                 let pending: i64 = sqlx::query_scalar(
@@ -1410,14 +1425,25 @@ pub async fn execute_read_tool(
                 let stuck: i64 = sqlx::query_scalar(
                     &format!("SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending' AND sync_attempts >= 10"),
                 ).fetch_one(pool).await.unwrap_or(0);
-                if pending == 0 && stuck == 0 { continue; }
-                let max_att: i64 = sqlx::query_scalar(
-                    &format!("SELECT COALESCE(MAX(sync_attempts),0) FROM {table}"),
-                ).fetch_one(pool).await.unwrap_or(0);
+                if pending == 0 && stuck == 0 {
+                    continue;
+                }
+                let max_att: i64 = sqlx::query_scalar(&format!(
+                    "SELECT COALESCE(MAX(sync_attempts),0) FROM {table}"
+                ))
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
                 let avg = sqlx::query_scalar::<_, f64>(
                     &format!("SELECT COALESCE(AVG(CAST(sync_attempts AS REAL)),0) FROM {table} WHERE sync_status = 'pending'"),
                 ).fetch_one(pool).await.unwrap_or(0.0);
-                let flag = if stuck > 0 { " ⚠ STUCK" } else if pending > 0 { " ⏳ pending" } else { " ✓ clean" };
+                let flag = if stuck > 0 {
+                    " ⚠ STUCK"
+                } else if pending > 0 {
+                    " ⏳ pending"
+                } else {
+                    " ✓ clean"
+                };
                 lines.push(format!(
                     "    {table}: {pending} pending, {stuck} stuck, max {max_att} att, avg {avg:.1}{flag}"
                 ));
@@ -1440,13 +1466,25 @@ pub async fn execute_read_tool(
                         let status: String = r.get("sync_status");
                         let att: i64 = r.get("sync_attempts");
                         let at: String = r.get("created_at");
-                        items.push(format!("{}|{}|{}|{}|{}", table, &id[..12.min(id.len())], status, att, &at[11..19]));
+                        items.push(format!(
+                            "{}|{}|{}|{}|{}",
+                            table,
+                            &id[..12.min(id.len())],
+                            status,
+                            att,
+                            &at[11..19]
+                        ));
                     }
                 }
             }
-            if items.is_empty() { return Ok("[DB] Sync queue is empty — all events synced.".into()); }
+            if items.is_empty() {
+                return Ok("[DB] Sync queue is empty — all events synced.".into());
+            }
             items.truncate(50);
-            Ok(format!("[DB] Sync Queue (top 50):\n  table|entity|status|att|created\n  {}", items.join("\n  ")))
+            Ok(format!(
+                "[DB] Sync Queue (top 50):\n  table|entity|status|att|created\n  {}",
+                items.join("\n  ")
+            ))
         }
         "get_active_shift" => {
             let shift: Option<(String, String, String, i64, String)> = sqlx::query_as(
@@ -1966,7 +2004,10 @@ pub async fn execute_read_tool(
                     let phone: Option<String> = r.get("phone");
                     let pts: i64 = r.get("loyalty_points");
                     // PII-01: mask phone — only last 4 digits shown in AI context
-                    let masked = phone.as_deref().map(mask_phone).unwrap_or_else(|| "—".into());
+                    let masked = phone
+                        .as_deref()
+                        .map(mask_phone)
+                        .unwrap_or_else(|| "—".into());
                     format!(
                         "- {} (ID: {}) | Phone: {} | Loyalty: {} pts",
                         name,
@@ -1998,7 +2039,10 @@ pub async fn execute_read_tool(
             let notes: Option<String> = r.get("notes");
             let at: String = r.get("created_at");
             // PII-01: mask phone — only last 4 digits shown in AI context
-            let masked_phone = phone.as_deref().map(mask_phone).unwrap_or_else(|| "—".into());
+            let masked_phone = phone
+                .as_deref()
+                .map(mask_phone)
+                .unwrap_or_else(|| "—".into());
             Ok(format!(
                 "Customer: {name}\nID: {customer_id}\nPhone: {}\nEmail: {}\nLoyalty: {pts} pts\nNotes: {}\nSince: {}",
                 masked_phone,
@@ -2124,12 +2168,11 @@ pub async fn execute_read_tool(
                 return Ok("No stock movements found for this product.".into());
             }
             // Get product name for context
-            let pname: Option<String> = sqlx::query_scalar(
-                "SELECT name FROM products WHERE product_id = ?",
-            )
-            .bind(product_id)
-            .fetch_optional(pool)
-            .await?;
+            let pname: Option<String> =
+                sqlx::query_scalar("SELECT name FROM products WHERE product_id = ?")
+                    .bind(product_id)
+                    .fetch_optional(pool)
+                    .await?;
             let lines: Vec<String> = rows
                 .iter()
                 .map(|r| {
@@ -2234,13 +2277,28 @@ pub async fn execute_read_tool(
         }
         // ── Smart barcode lookup (OFFF + web fallback) ─────────────────────────
         "smart_barcode_lookup" => {
-            let barcode = input.get("barcode").and_then(|v| v.as_str()).unwrap_or("").trim();
-            if barcode.is_empty() || barcode.len() < 8 || barcode.len() > 14 || !barcode.chars().all(|c| c.is_ascii_digit()) {
-                return Err(AppError::Validation("barcode must be 8-14 digits (UPC/EAN)".into()));
+            let barcode = input
+                .get("barcode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            if barcode.is_empty()
+                || barcode.len() < 8
+                || barcode.len() > 14
+                || !barcode.chars().all(|c| c.is_ascii_digit())
+            {
+                return Err(AppError::Validation(
+                    "barcode must be 8-14 digits (UPC/EAN)".into(),
+                ));
             }
             // First try Open Food Facts
             let off_result = match open_food_facts_lookup(barcode).await {
-                Ok(result) if !result.contains("not found") && !result.contains("product data unavailable") => Some(result),
+                Ok(result)
+                    if !result.contains("not found")
+                        && !result.contains("product data unavailable") =>
+                {
+                    Some(result)
+                }
                 _ => None,
             };
             // If OFFF failed or got sparse data, search the web
@@ -2263,7 +2321,10 @@ pub async fn execute_read_tool(
             });
             let has_off = off_result.is_some();
             let has_web = web_results.is_some();
-            let mut lines = vec![format!("[SCAN] **Smart Barcode Lookup: {barcode}**"), String::new()];
+            let mut lines = vec![
+                format!("[SCAN] **Smart Barcode Lookup: {barcode}**"),
+                String::new(),
+            ];
             if let Some(off) = off_result {
                 lines.push("### Open Food Facts Data".into());
                 lines.push(off);
@@ -2275,13 +2336,19 @@ pub async fn execute_read_tool(
             }
             if !has_off && !has_web {
                 lines.push("This barcode was not found in Open Food Facts and web search returned no results.".into());
-                lines.push("Try searching by product name instead, or manually enter the product details.".into());
+                lines.push(
+                    "Try searching by product name instead, or manually enter the product details."
+                        .into(),
+                );
             }
             // Append product creation instructions if we found a name
             if let Some(ref name) = name_hint {
                 if !name.is_empty() && name != "—" {
                     lines.push(String::new());
-                    lines.push(format!("### Suggested Category: {}", categorize_product(&name)));
+                    lines.push(format!(
+                        "### Suggested Category: {}",
+                        categorize_product(&name)
+                    ));
                     lines.push(String::new());
                     lines.push("📋 **To create this product, I need:**".into());
                     lines.push("- Product name (extracted from lookup above)".into());
@@ -2295,15 +2362,36 @@ pub async fn execute_read_tool(
         }
         // ── Multi-store price comparison ────────────────────────────────────────
         "compare_store_prices" => {
-            let product = input.get("product_name").and_then(|v| v.as_str()).unwrap_or("");
-            let location = input.get("location").and_then(|v| v.as_str()).unwrap_or("Bahrain");
+            let product = input
+                .get("product_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let location = input
+                .get("location")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Bahrain");
             // Search multiple stores in parallel
             let stores = [
-                ("Lulu Hypermarket", format!("{product} price luluhypermarket.com bahrain BHD")),
-                ("Carrefour Bahrain", format!("{product} price carrefourbahrain.com BHD")),
-                ("Alosra Supermarket", format!("{product} price alosra bahrain BHD")),
-                ("Talabat Mart", format!("{product} talabat bahrain price BHD")),
-                ("General Search", format!("{product} price {location} BHD supermarket")),
+                (
+                    "Lulu Hypermarket",
+                    format!("{product} price luluhypermarket.com bahrain BHD"),
+                ),
+                (
+                    "Carrefour Bahrain",
+                    format!("{product} price carrefourbahrain.com BHD"),
+                ),
+                (
+                    "Alosra Supermarket",
+                    format!("{product} price alosra bahrain BHD"),
+                ),
+                (
+                    "Talabat Mart",
+                    format!("{product} talabat bahrain price BHD"),
+                ),
+                (
+                    "General Search",
+                    format!("{product} price {location} BHD supermarket"),
+                ),
             ];
             let mut results: Vec<(String, String)> = Vec::new();
             for (store, query) in &stores {
@@ -2316,7 +2404,13 @@ pub async fn execute_read_tool(
                     _ => {}
                 }
             }
-            let mut out = vec![format!("[WEB] **Price Comparison: \"{}\" in {}**", product, location), String::new()];
+            let mut out = vec![
+                format!(
+                    "[WEB] **Price Comparison: \"{}\" in {}**",
+                    product, location
+                ),
+                String::new(),
+            ];
             if results.is_empty() {
                 out.push("No prices found across the checked stores. Try a more specific product name or search manually on the store websites.".into());
             } else {
@@ -2333,13 +2427,29 @@ pub async fn execute_read_tool(
         }
         // ── Bahrain grocery delivery price check ────────────────────────────────
         "bahrain_market_price_check" => {
-            let product = input.get("product_name").and_then(|v| v.as_str()).unwrap_or("");
-            let max = input.get("max_results").and_then(|v| v.as_i64()).unwrap_or(3).min(5) as usize;
+            let product = input
+                .get("product_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let max = input
+                .get("max_results")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(3)
+                .min(5) as usize;
             let sources = [
-                ("Talabat / Talabat Mart", format!("\"{product}\" site:talabat.com bahrain")),
-                ("Lulu Online", format!("\"{product}\" price luluhypermarket bahrain BHD")),
+                (
+                    "Talabat / Talabat Mart",
+                    format!("\"{product}\" site:talabat.com bahrain"),
+                ),
+                (
+                    "Lulu Online",
+                    format!("\"{product}\" price luluhypermarket bahrain BHD"),
+                ),
             ];
-            let mut out = vec![format!("[WEB] **Bahrain Market Check: \"{}\"**", product), String::new()];
+            let mut out = vec![
+                format!("[WEB] **Bahrain Market Check: \"{}\"**", product),
+                String::new(),
+            ];
             let mut found_any = false;
             for (label, query) in &sources {
                 match duckduckgo_search(query, max).await {
@@ -2420,7 +2530,11 @@ pub async fn execute_read_tool(
         }
         // ── Bahrain public holidays via nager.date (no API key) ───────────────
         "get_bahrain_holidays" => {
-            let current_year = chrono::Local::now().format("%Y").to_string().parse::<i64>().unwrap_or(2026);
+            let current_year = chrono::Local::now()
+                .format("%Y")
+                .to_string()
+                .parse::<i64>()
+                .unwrap_or(2026);
             let year = input
                 .get("year")
                 .and_then(|v| v.as_i64())
@@ -2430,13 +2544,19 @@ pub async fn execute_read_tool(
         // ── Roles ─────────────────────────────────────────────────────────────
         "list_roles" => {
             let rows = sqlx::query("SELECT role_id, name FROM roles ORDER BY name")
-                .fetch_all(pool).await?;
-            if rows.is_empty() { return Ok("No roles found.".into()); }
-            let lines: Vec<String> = rows.iter().map(|r| {
-                let id: String = r.get("role_id");
-                let name: String = r.get("name");
-                format!("- {} ({})", name, id)
-            }).collect();
+                .fetch_all(pool)
+                .await?;
+            if rows.is_empty() {
+                return Ok("No roles found.".into());
+            }
+            let lines: Vec<String> = rows
+                .iter()
+                .map(|r| {
+                    let id: String = r.get("role_id");
+                    let name: String = r.get("name");
+                    format!("- {} ({})", name, id)
+                })
+                .collect();
             Ok(format!("[DB] {} roles:\n{}", rows.len(), lines.join("\n")))
         }
         // ── Tax rules ─────────────────────────────────────────────────────────
@@ -2444,20 +2564,33 @@ pub async fn execute_read_tool(
             let rows = sqlx::query(
                 "SELECT tax_rule_id, name, rate_basis_points, inclusive, is_active FROM tax_rules ORDER BY name"
             ).fetch_all(pool).await?;
-            if rows.is_empty() { return Ok("[DB] No tax rules defined.".into()); }
-            let lines: Vec<String> = rows.iter().map(|r| {
-                let id: String = r.get("tax_rule_id");
-                let name: String = r.get("name");
-                let bp: i64 = r.get("rate_basis_points");
-                let inclusive: bool = r.get("inclusive");
-                let active: bool = r.get("is_active");
-                let pct = bp as f64 / 100.0;
-                format!("- {} (ID: {}) — {}% {} — {}",
-                    name, id, pct,
-                    if inclusive { "inclusive" } else { "exclusive" },
-                    if active { "Active" } else { "Inactive" })
-            }).collect();
-            Ok(format!("[DB] {} tax rule(s):\n{}", rows.len(), lines.join("\n")))
+            if rows.is_empty() {
+                return Ok("[DB] No tax rules defined.".into());
+            }
+            let lines: Vec<String> = rows
+                .iter()
+                .map(|r| {
+                    let id: String = r.get("tax_rule_id");
+                    let name: String = r.get("name");
+                    let bp: i64 = r.get("rate_basis_points");
+                    let inclusive: bool = r.get("inclusive");
+                    let active: bool = r.get("is_active");
+                    let pct = bp as f64 / 100.0;
+                    format!(
+                        "- {} (ID: {}) — {}% {} — {}",
+                        name,
+                        id,
+                        pct,
+                        if inclusive { "inclusive" } else { "exclusive" },
+                        if active { "Active" } else { "Inactive" }
+                    )
+                })
+                .collect();
+            Ok(format!(
+                "[DB] {} tax rule(s):\n{}",
+                rows.len(),
+                lines.join("\n")
+            ))
         }
         // ── Store settings ────────────────────────────────────────────────────
         "get_store_settings" => {
@@ -2488,14 +2621,38 @@ pub async fn execute_read_tool(
         }
         // ── Business rules ────────────────────────────────────────────────────
         "get_business_rules" => {
-            let neg = sqlx::query_scalar::<_, Option<String>>("SELECT value FROM app_config WHERE key='flag_allow_negative_stock'")
-                .fetch_optional(pool).await?.flatten().unwrap_or_default() == "1";
-            let dis = sqlx::query_scalar::<_, Option<String>>("SELECT value FROM app_config WHERE key='flag_require_discount_reason'")
-                .fetch_optional(pool).await?.flatten().unwrap_or_default() == "1";
-            let cc = sqlx::query_scalar::<_, Option<String>>("SELECT value FROM app_config WHERE key='flag_cashier_can_discount'")
-                .fetch_optional(pool).await?.flatten().unwrap_or_default() == "1";
-            let ap = sqlx::query_scalar::<_, Option<String>>("SELECT value FROM app_config WHERE key='flag_auto_print_receipt'")
-                .fetch_optional(pool).await?.flatten().unwrap_or_default() == "1";
+            let neg = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT value FROM app_config WHERE key='flag_allow_negative_stock'",
+            )
+            .fetch_optional(pool)
+            .await?
+            .flatten()
+            .unwrap_or_default()
+                == "1";
+            let dis = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT value FROM app_config WHERE key='flag_require_discount_reason'",
+            )
+            .fetch_optional(pool)
+            .await?
+            .flatten()
+            .unwrap_or_default()
+                == "1";
+            let cc = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT value FROM app_config WHERE key='flag_cashier_can_discount'",
+            )
+            .fetch_optional(pool)
+            .await?
+            .flatten()
+            .unwrap_or_default()
+                == "1";
+            let ap = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT value FROM app_config WHERE key='flag_auto_print_receipt'",
+            )
+            .fetch_optional(pool)
+            .await?
+            .flatten()
+            .unwrap_or_default()
+                == "1";
             Ok(format!(
                 "[DB] Business Rules:\n- Allow negative stock: {}\n- Require discount reason: {}\n- Cashier can discount: {}\n- Auto-print receipt: {}",
                 if neg { "Yes" } else { "No" },
@@ -2509,38 +2666,80 @@ pub async fn execute_read_tool(
             let rows = sqlx::query(
                 "SELECT device_id, device_code, is_active, created_at FROM devices ORDER BY device_code"
             ).fetch_all(pool).await?;
-            if rows.is_empty() { return Ok("[DB] No devices registered.".into()); }
-            let lines: Vec<String> = rows.iter().map(|r| {
-                let id: String = r.get("device_id");
-                let code: String = r.get("device_code");
-                let active: bool = r.get("is_active");
-                let created: Option<String> = r.get("created_at");
-                format!("- {} ({}) — {} — Created: {}",
-                    code, &id[..8.min(id.len())],
-                    if active { "Active" } else { "Inactive" },
-                    created.as_deref().map(|s| &s[..10.min(s.len())]).unwrap_or("never"))
-            }).collect();
-            Ok(format!("[DB] {} device(s):\n{}", rows.len(), lines.join("\n")))
+            if rows.is_empty() {
+                return Ok("[DB] No devices registered.".into());
+            }
+            let lines: Vec<String> = rows
+                .iter()
+                .map(|r| {
+                    let id: String = r.get("device_id");
+                    let code: String = r.get("device_code");
+                    let active: bool = r.get("is_active");
+                    let created: Option<String> = r.get("created_at");
+                    format!(
+                        "- {} ({}) — {} — Created: {}",
+                        code,
+                        &id[..8.min(id.len())],
+                        if active { "Active" } else { "Inactive" },
+                        created
+                            .as_deref()
+                            .map(|s| &s[..10.min(s.len())])
+                            .unwrap_or("never")
+                    )
+                })
+                .collect();
+            Ok(format!(
+                "[DB] {} device(s):\n{}",
+                rows.len(),
+                lines.join("\n")
+            ))
         }
         // ── Session timeout ───────────────────────────────────────────────────
         "get_session_timeout" => {
             let mins: Option<String> = sqlx::query_scalar(
-                "SELECT value FROM app_config WHERE key = 'idle_timeout_minutes'"
-            ).fetch_optional(pool).await?.flatten();
+                "SELECT value FROM app_config WHERE key = 'idle_timeout_minutes'",
+            )
+            .fetch_optional(pool)
+            .await?
+            .flatten();
             let timeout = mins.and_then(|v| v.parse::<i64>().ok()).unwrap_or(5);
-            Ok(format!("[DB] Session timeout: {} minutes ({}).", timeout,
-                if timeout == 0 { "never locks" } else { "auto-locks after idle" }))
+            Ok(format!(
+                "[DB] Session timeout: {} minutes ({}).",
+                timeout,
+                if timeout == 0 {
+                    "never locks"
+                } else {
+                    "auto-locks after idle"
+                }
+            ))
         }
-"open_tab" => {
+        "open_tab" => {
             let tab = input.get("tab").and_then(|v| v.as_str()).unwrap_or("");
-            const VALID: &[&str] = &["products","categories","inventory","reports","cashier","eod","deliveries","customers","users","settings","audit","devices"];
+            const VALID: &[&str] = &[
+                "products",
+                "categories",
+                "inventory",
+                "reports",
+                "cashier",
+                "eod",
+                "deliveries",
+                "customers",
+                "users",
+                "settings",
+                "audit",
+                "devices",
+            ];
             if VALID.contains(&tab) {
                 Ok(format!("{{\"ok\":true,\"tab\":\"{tab}\"}}"))
             } else {
-                Ok(format!("{{\"ok\":false,\"tab\":\"{tab}\",\"error\":\"invalid tab\"}}"))
+                Ok(format!(
+                    "{{\"ok\":false,\"tab\":\"{tab}\",\"error\":\"invalid tab\"}}"
+                ))
             }
         }
-        name => crate::ai::tools_read_ext::execute(pool, name, input, branch_id, currency_exp).await,
+        name => {
+            crate::ai::tools_read_ext::execute(pool, name, input, branch_id, currency_exp).await
+        }
     }
 }
 
@@ -2595,7 +2794,10 @@ async fn duckduckgo_search(query: &str, max_results: usize) -> AppResult<String>
                 // Extract href value
                 let current_url = if let Some(h) = tag_text.find("href=\"") {
                     let after = h + 6;
-                    let end = tag_text[after..].find('"').map(|e| after + e).unwrap_or(after);
+                    let end = tag_text[after..]
+                        .find('"')
+                        .map(|e| after + e)
+                        .unwrap_or(after);
                     let raw = &tag_text[after..end];
                     // DDG lite hrefs are relative like //duckduckgo.com/l/?uddg=...
                     if raw.starts_with("//") {
@@ -2610,7 +2812,10 @@ async fn duckduckgo_search(query: &str, max_results: usize) -> AppResult<String>
                 // Extract link text (between > and </a>)
                 let current_title = if let Some(gt) = html[abs..].find('>') {
                     let after = abs + gt + 1;
-                    let close = html[after..].find("</a>").map(|e| after + e).unwrap_or(after);
+                    let close = html[after..]
+                        .find("</a>")
+                        .map(|e| after + e)
+                        .unwrap_or(after);
                     strip_html_tags(&html[after..close]).trim().to_string()
                 } else {
                     String::new()
@@ -2624,7 +2829,10 @@ async fn duckduckgo_search(query: &str, max_results: usize) -> AppResult<String>
                     let sabs = pos + srel;
                     if let Some(gt) = html[sabs..].find('>') {
                         let after = sabs + gt + 1;
-                        let close = html[after..].find("</td>").map(|e| after + e).unwrap_or(after);
+                        let close = html[after..]
+                            .find("</td>")
+                            .map(|e| after + e)
+                            .unwrap_or(after);
                         strip_html_tags(&html[after..close]).trim().to_string()
                     } else {
                         String::new()
@@ -2647,25 +2855,25 @@ async fn duckduckgo_search(query: &str, max_results: usize) -> AppResult<String>
         ));
     }
 
-            let lines: Vec<String> = results
-                .iter()
-                .enumerate()
-                .map(|(i, (title, url, snippet))| {
-                    let mut parts = vec![format!("{}. **{}**", i + 1, title)];
-                    if !url.is_empty() {
-                        parts.push(format!("   [LINK] {url}"));
-                    }
-                    if !snippet.is_empty() {
-                        parts.push(format!("   {snippet}"));
-                    }
-                    parts.join("\n")
-                })
-                .collect();
+    let lines: Vec<String> = results
+        .iter()
+        .enumerate()
+        .map(|(i, (title, url, snippet))| {
+            let mut parts = vec![format!("{}. **{}**", i + 1, title)];
+            if !url.is_empty() {
+                parts.push(format!("   [LINK] {url}"));
+            }
+            if !snippet.is_empty() {
+                parts.push(format!("   {snippet}"));
+            }
+            parts.join("\n")
+        })
+        .collect();
 
-            Ok(format!(
-                "[WEB] Results for: \"{query}\"\n\n{}",
-                lines.join("\n\n")
-            ))
+    Ok(format!(
+        "[WEB] Results for: \"{query}\"\n\n{}",
+        lines.join("\n\n")
+    ))
 }
 
 // ── Jina.ai Reader: fetch any URL as clean text (free, no API key) ────────────
@@ -2757,38 +2965,70 @@ async fn open_food_facts_lookup(barcode: &str) -> AppResult<String> {
             .trim()
     };
 
-    let name        = s("product_name");
-    let brand       = s("brands");
-    let categories  = s("categories");
-    let quantity    = s("quantity");
-    let countries   = s("countries");
+    let name = s("product_name");
+    let brand = s("brands");
+    let categories = s("categories");
+    let quantity = s("quantity");
+    let countries = s("countries");
     let ingredients = s("ingredients_text");
 
     // Nutrition per 100g
     let nut = product.get("nutriments");
     let nutriments = if let Some(n) = nut {
-        let energy  = n.get("energy-kcal_100g").and_then(|v| v.as_f64());
-        let fat     = n.get("fat_100g").and_then(|v| v.as_f64());
-        let carbs   = n.get("carbohydrates_100g").and_then(|v| v.as_f64());
+        let energy = n.get("energy-kcal_100g").and_then(|v| v.as_f64());
+        let fat = n.get("fat_100g").and_then(|v| v.as_f64());
+        let carbs = n.get("carbohydrates_100g").and_then(|v| v.as_f64());
         let protein = n.get("proteins_100g").and_then(|v| v.as_f64());
         let mut parts = vec![];
-        if let Some(e) = energy  { parts.push(format!("{e:.0} kcal")); }
-        if let Some(f) = fat     { parts.push(format!("fat {f:.1}g")); }
-        if let Some(c) = carbs   { parts.push(format!("carbs {c:.1}g")); }
-        if let Some(p) = protein { parts.push(format!("protein {p:.1}g")); }
-        if parts.is_empty() { String::new() } else { format!("Per 100g: {}", parts.join(", ")) }
+        if let Some(e) = energy {
+            parts.push(format!("{e:.0} kcal"));
+        }
+        if let Some(f) = fat {
+            parts.push(format!("fat {f:.1}g"));
+        }
+        if let Some(c) = carbs {
+            parts.push(format!("carbs {c:.1}g"));
+        }
+        if let Some(p) = protein {
+            parts.push(format!("protein {p:.1}g"));
+        }
+        if parts.is_empty() {
+            String::new()
+        } else {
+            format!("Per 100g: {}", parts.join(", "))
+        }
     } else {
         String::new()
     };
 
     let mut lines = vec![format!("[WEB] **Barcode {barcode}**")];
-    if !name.is_empty()        { lines.push(format!("Product: {name}")); }
-    if !brand.is_empty()       { lines.push(format!("Brand: {brand}")); }
-    if !quantity.is_empty()    { lines.push(format!("Size/Qty: {quantity}")); }
-    if !categories.is_empty()  { lines.push(format!("Categories: {}", &categories[..categories.len().min(120)])); }
-    if !countries.is_empty()   { lines.push(format!("Sold in: {countries}")); }
-    if !nutriments.is_empty()  { lines.push(nutriments); }
-    if !ingredients.is_empty() { lines.push(format!("Ingredients: {}", &ingredients[..ingredients.len().min(300)])); }
+    if !name.is_empty() {
+        lines.push(format!("Product: {name}"));
+    }
+    if !brand.is_empty() {
+        lines.push(format!("Brand: {brand}"));
+    }
+    if !quantity.is_empty() {
+        lines.push(format!("Size/Qty: {quantity}"));
+    }
+    if !categories.is_empty() {
+        lines.push(format!(
+            "Categories: {}",
+            &categories[..categories.len().min(120)]
+        ));
+    }
+    if !countries.is_empty() {
+        lines.push(format!("Sold in: {countries}"));
+    }
+    if !nutriments.is_empty() {
+        lines.push(nutriments);
+    }
+    if !ingredients.is_empty() {
+        lines.push(format!(
+            "Ingredients: {}",
+            &ingredients[..ingredients.len().min(300)]
+        ));
+    }
 
     Ok(lines.join("\n"))
 }
@@ -2804,9 +3044,7 @@ async fn frankfurter_rates(currencies: &[String]) -> AppResult<String> {
         currencies.join(",")
     };
 
-    let url = format!(
-        "https://api.frankfurter.dev/v1/latest?base=BHD&symbols={symbols_param}"
-    );
+    let url = format!("https://api.frankfurter.dev/v1/latest?base=BHD&symbols={symbols_param}");
 
     let http = reqwest::Client::builder()
         .user_agent("ZANPOS/1.0")
@@ -2909,12 +3147,7 @@ async fn aladhan_prayer_times(date_str: &str) -> AppResult<String> {
         .and_then(|v| v.as_str())
         .unwrap_or(date_str);
 
-    let s = |key: &str| -> &str {
-        timings
-            .get(key)
-            .and_then(|v| v.as_str())
-            .unwrap_or("--:--")
-    };
+    let s = |key: &str| -> &str { timings.get(key).and_then(|v| v.as_str()).unwrap_or("--:--") };
 
     let lines = vec![
         format!("[WEB] **Prayer Times — Manama, Bahrain ({date_info})**"),
@@ -2962,9 +3195,8 @@ async fn nager_bahrain_holidays(year: u16) -> AppResult<String> {
         ));
     }
 
-    let holidays: Vec<Value> = serde_json::from_str(&text).map_err(|e| {
-        AppError::Internal(format!("Holidays JSON parse failed: {e}"))
-    })?;
+    let holidays: Vec<Value> = serde_json::from_str(&text)
+        .map_err(|e| AppError::Internal(format!("Holidays JSON parse failed: {e}")))?;
 
     if holidays.is_empty() {
         return Ok(format!(
@@ -2972,7 +3204,10 @@ async fn nager_bahrain_holidays(year: u16) -> AppResult<String> {
         ));
     }
 
-    let mut lines = vec![format!("[WEB] **Bahrain Public Holidays {year}**"), String::new()];
+    let mut lines = vec![
+        format!("[WEB] **Bahrain Public Holidays {year}**"),
+        String::new(),
+    ];
 
     for h in &holidays {
         let date = h.get("date").and_then(|v| v.as_str()).unwrap_or("?");
@@ -2995,37 +3230,108 @@ async fn nager_bahrain_holidays(year: u16) -> AppResult<String> {
 /// Used by smart_barcode_lookup to suggest a category_id to the AI.
 fn categorize_product(name: &str) -> String {
     let lower = name.to_lowercase();
-    if lower.contains("milk") || lower.contains("laban") || lower.contains("yogurt") || lower.contains("cheese") || lower.contains("cream") || lower.contains("butter") {
+    if lower.contains("milk")
+        || lower.contains("laban")
+        || lower.contains("yogurt")
+        || lower.contains("cheese")
+        || lower.contains("cream")
+        || lower.contains("butter")
+    {
         return "Dairy".into();
     }
-    if lower.contains("bread") || lower.contains("roti") || lower.contains("bun") || lower.contains("croissant") || lower.contains("bakery") {
+    if lower.contains("bread")
+        || lower.contains("roti")
+        || lower.contains("bun")
+        || lower.contains("croissant")
+        || lower.contains("bakery")
+    {
         return "Bakery".into();
     }
-    if lower.contains("water") || lower.contains("juice") || lower.contains("pepsi") || lower.contains("coca") || lower.contains("soda") || lower.contains("drink") || lower.contains("tea") || lower.contains("coffee") {
+    if lower.contains("water")
+        || lower.contains("juice")
+        || lower.contains("pepsi")
+        || lower.contains("coca")
+        || lower.contains("soda")
+        || lower.contains("drink")
+        || lower.contains("tea")
+        || lower.contains("coffee")
+    {
         return "Beverages".into();
     }
-    if lower.contains("rice") || lower.contains("flour") || lower.contains("sugar") || lower.contains("oil") || lower.contains("salt") || lower.contains("spice") || lower.contains("grain") || lower.contains("lentil") || lower.contains("dal") || lower.contains("pasta") || lower.contains("noodle") {
+    if lower.contains("rice")
+        || lower.contains("flour")
+        || lower.contains("sugar")
+        || lower.contains("oil")
+        || lower.contains("salt")
+        || lower.contains("spice")
+        || lower.contains("grain")
+        || lower.contains("lentil")
+        || lower.contains("dal")
+        || lower.contains("pasta")
+        || lower.contains("noodle")
+    {
         return "Groceries".into();
     }
-    if lower.contains("chicken") || lower.contains("meat") || lower.contains("beef") || lower.contains("mutton") || lower.contains("fish") || lower.contains("shrimp") || lower.contains("egg") || lower.contains("sausage") {
+    if lower.contains("chicken")
+        || lower.contains("meat")
+        || lower.contains("beef")
+        || lower.contains("mutton")
+        || lower.contains("fish")
+        || lower.contains("shrimp")
+        || lower.contains("egg")
+        || lower.contains("sausage")
+    {
         return "Meat & Poultry".into();
     }
-    if lower.contains("fruit") || lower.contains("apple") || lower.contains("banana") || lower.contains("orange") || lower.contains("vegetable") || lower.contains("tomato") || lower.contains("potato") || lower.contains("onion") {
+    if lower.contains("fruit")
+        || lower.contains("apple")
+        || lower.contains("banana")
+        || lower.contains("orange")
+        || lower.contains("vegetable")
+        || lower.contains("tomato")
+        || lower.contains("potato")
+        || lower.contains("onion")
+    {
         return "Fruits & Vegetables".into();
     }
-    if lower.contains("chocolate") || lower.contains("biscuit") || lower.contains("cookie") || lower.contains("cake") || lower.contains("candy") || lower.contains("chip") || lower.contains("snack") || lower.contains("nut") || lower.contains("wafer") {
+    if lower.contains("chocolate")
+        || lower.contains("biscuit")
+        || lower.contains("cookie")
+        || lower.contains("cake")
+        || lower.contains("candy")
+        || lower.contains("chip")
+        || lower.contains("snack")
+        || lower.contains("nut")
+        || lower.contains("wafer")
+    {
         return "Snacks & Confectionery".into();
     }
-    if lower.contains("soap") || lower.contains("shampoo") || lower.contains("detergent") || lower.contains("toothpaste") || lower.contains("clean") || lower.contains("tissue") || lower.contains("diaper") {
+    if lower.contains("soap")
+        || lower.contains("shampoo")
+        || lower.contains("detergent")
+        || lower.contains("toothpaste")
+        || lower.contains("clean")
+        || lower.contains("tissue")
+        || lower.contains("diaper")
+    {
         return "Personal Care & Cleaning".into();
     }
-    if lower.contains("cigarette") || lower.contains("tobacco") || lower.contains("vape") || lower.contains("shisha") {
+    if lower.contains("cigarette")
+        || lower.contains("tobacco")
+        || lower.contains("vape")
+        || lower.contains("shisha")
+    {
         return "Tobacco".into();
     }
     if lower.contains("frozen") || lower.contains("ice cream") || lower.contains("nugget") {
         return "Frozen Foods".into();
     }
-    if lower.contains("oil") || lower.contains("lubricant") || lower.contains("battery") || lower.contains("bulb") || lower.contains("tool") {
+    if lower.contains("oil")
+        || lower.contains("lubricant")
+        || lower.contains("battery")
+        || lower.contains("bulb")
+        || lower.contains("tool")
+    {
         return "Hardware & Automotive".into();
     }
     "General".into()
@@ -3349,10 +3655,22 @@ pub async fn dry_run_mutation(
                 tool_name: tool_name.into(),
                 description: format!("Create new customer '{}'", name),
                 fields: vec![
-                    ToolPreviewField { label: "Name".into(), value: name.into() },
-                    ToolPreviewField { label: "Phone".into(), value: phone.into() },
-                    ToolPreviewField { label: "Email".into(), value: email.into() },
-                    ToolPreviewField { label: "Notes".into(), value: notes.into() },
+                    ToolPreviewField {
+                        label: "Name".into(),
+                        value: name.into(),
+                    },
+                    ToolPreviewField {
+                        label: "Phone".into(),
+                        value: phone.into(),
+                    },
+                    ToolPreviewField {
+                        label: "Email".into(),
+                        value: email.into(),
+                    },
+                    ToolPreviewField {
+                        label: "Notes".into(),
+                        value: notes.into(),
+                    },
                 ],
             })
         }
@@ -3375,10 +3693,22 @@ pub async fn dry_run_mutation(
                 tool_name: tool_name.into(),
                 description: format!("Update customer '{}' → '{}'", old_name, new_name),
                 fields: vec![
-                    ToolPreviewField { label: "Old Name".into(), value: old_name },
-                    ToolPreviewField { label: "New Name".into(), value: new_name.into() },
-                    ToolPreviewField { label: "Phone".into(), value: phone.into() },
-                    ToolPreviewField { label: "Email".into(), value: email.into() },
+                    ToolPreviewField {
+                        label: "Old Name".into(),
+                        value: old_name,
+                    },
+                    ToolPreviewField {
+                        label: "New Name".into(),
+                        value: new_name.into(),
+                    },
+                    ToolPreviewField {
+                        label: "Phone".into(),
+                        value: phone.into(),
+                    },
+                    ToolPreviewField {
+                        label: "Email".into(),
+                        value: email.into(),
+                    },
                 ],
             })
         }
@@ -3420,10 +3750,22 @@ pub async fn dry_run_mutation(
                     display_new
                 ),
                 fields: vec![
-                    ToolPreviewField { label: "Delivery ID".into(), value: delivery_id[..8.min(delivery_id.len())].to_string() },
-                    ToolPreviewField { label: "Customer".into(), value: cust_name },
-                    ToolPreviewField { label: "Current Status".into(), value: old_status },
-                    ToolPreviewField { label: "New Status".into(), value: display_new.into() },
+                    ToolPreviewField {
+                        label: "Delivery ID".into(),
+                        value: delivery_id[..8.min(delivery_id.len())].to_string(),
+                    },
+                    ToolPreviewField {
+                        label: "Customer".into(),
+                        value: cust_name,
+                    },
+                    ToolPreviewField {
+                        label: "Current Status".into(),
+                        value: old_status,
+                    },
+                    ToolPreviewField {
+                        label: "New Status".into(),
+                        value: display_new.into(),
+                    },
                 ],
             })
         }
@@ -3458,149 +3800,379 @@ pub async fn dry_run_mutation(
         // ── Category dry-runs ─────────────────────────────────────────────────
         "create_category" => {
             let name = input.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-            let order = input.get("sort_order").and_then(|v| v.as_i64()).unwrap_or(0);
+            let order = input
+                .get("sort_order")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
             Ok(ToolPreview {
                 tool_name: tool_name.into(),
                 description: format!("Create category '{}'", name),
                 fields: vec![
-                    ToolPreviewField { label: "Name".into(), value: name.into() },
-                    ToolPreviewField { label: "Sort order".into(), value: order.to_string() },
+                    ToolPreviewField {
+                        label: "Name".into(),
+                        value: name.into(),
+                    },
+                    ToolPreviewField {
+                        label: "Sort order".into(),
+                        value: order.to_string(),
+                    },
                 ],
             })
         }
         "update_category" => {
-            let category_id = input.get("category_id").and_then(|v| v.as_str()).unwrap_or("?");
+            let category_id = input
+                .get("category_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             let row = sqlx::query("SELECT name FROM categories WHERE category_id = ?")
-                .bind(category_id).fetch_optional(pool).await?;
-            let old_name = row.map(|r| r.get::<String,_>("name")).unwrap_or_else(|| "?".into());
+                .bind(category_id)
+                .fetch_optional(pool)
+                .await?;
+            let old_name = row
+                .map(|r| r.get::<String, _>("name"))
+                .unwrap_or_else(|| "?".into());
             let name = input.get("name").and_then(|v| v.as_str());
             let active = input.get("is_active").and_then(|v| v.as_bool());
-            let mut fields = vec![ToolPreviewField { label: "Category".into(), value: old_name.clone() }];
-            if let Some(n) = name { fields.push(ToolPreviewField { label: "New name".into(), value: n.into() }); }
-            if let Some(a) = active { fields.push(ToolPreviewField { label: "Active".into(), value: (if a { "Yes" } else { "No" }).into() }); }
-            Ok(ToolPreview { tool_name: tool_name.into(), description: format!("Update category '{}'", old_name), fields })
+            let mut fields = vec![ToolPreviewField {
+                label: "Category".into(),
+                value: old_name.clone(),
+            }];
+            if let Some(n) = name {
+                fields.push(ToolPreviewField {
+                    label: "New name".into(),
+                    value: n.into(),
+                });
+            }
+            if let Some(a) = active {
+                fields.push(ToolPreviewField {
+                    label: "Active".into(),
+                    value: (if a { "Yes" } else { "No" }).into(),
+                });
+            }
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
+                description: format!("Update category '{}'", old_name),
+                fields,
+            })
         }
         // ── User dry-runs ─────────────────────────────────────────────────────
         "create_user" => {
-            let display = input.get("display_name").and_then(|v| v.as_str()).unwrap_or("?");
-            let username = input.get("username").and_then(|v| v.as_str()).unwrap_or("?");
+            let display = input
+                .get("display_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let username = input
+                .get("username")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             let role_id = input.get("role_id").and_then(|v| v.as_str()).unwrap_or("?");
-            let role_name: Option<String> = sqlx::query_scalar("SELECT name FROM roles WHERE role_id = ?")
-                .bind(role_id).fetch_optional(pool).await?.flatten();
+            let role_name: Option<String> =
+                sqlx::query_scalar("SELECT name FROM roles WHERE role_id = ?")
+                    .bind(role_id)
+                    .fetch_optional(pool)
+                    .await?
+                    .flatten();
             Ok(ToolPreview {
                 tool_name: tool_name.into(),
                 description: format!("Create staff account '{}'", display),
                 fields: vec![
-                    ToolPreviewField { label: "Name".into(), value: display.into() },
-                    ToolPreviewField { label: "Username".into(), value: username.into() },
-                    ToolPreviewField { label: "Role".into(), value: role_name.unwrap_or_else(|| role_id.into()) },
+                    ToolPreviewField {
+                        label: "Name".into(),
+                        value: display.into(),
+                    },
+                    ToolPreviewField {
+                        label: "Username".into(),
+                        value: username.into(),
+                    },
+                    ToolPreviewField {
+                        label: "Role".into(),
+                        value: role_name.unwrap_or_else(|| role_id.into()),
+                    },
                 ],
             })
         }
         "update_user" => {
             let user_id = input.get("user_id").and_then(|v| v.as_str()).unwrap_or("?");
             let row = sqlx::query("SELECT display_name, is_active FROM users WHERE user_id = ?")
-                .bind(user_id).fetch_optional(pool).await?
+                .bind(user_id)
+                .fetch_optional(pool)
+                .await?
                 .ok_or_else(|| AppError::NotFound("User not found".into()))?;
             let old_name: String = row.get("display_name");
             let _old_active: bool = row.get("is_active");
             let name = input.get("display_name").and_then(|v| v.as_str());
             let active = input.get("is_active").and_then(|v| v.as_bool());
-            let mut fields = vec![ToolPreviewField { label: "User".into(), value: old_name.clone() }];
-            if let Some(n) = name { fields.push(ToolPreviewField { label: "New name".into(), value: n.into() }); }
-            if let Some(a) = active { fields.push(ToolPreviewField { label: "Active".into(), value: (if a { "Yes" } else { "No" }).into() }); }
-            Ok(ToolPreview { tool_name: tool_name.into(), description: format!("Update user '{}'", old_name), fields })
+            let mut fields = vec![ToolPreviewField {
+                label: "User".into(),
+                value: old_name.clone(),
+            }];
+            if let Some(n) = name {
+                fields.push(ToolPreviewField {
+                    label: "New name".into(),
+                    value: n.into(),
+                });
+            }
+            if let Some(a) = active {
+                fields.push(ToolPreviewField {
+                    label: "Active".into(),
+                    value: (if a { "Yes" } else { "No" }).into(),
+                });
+            }
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
+                description: format!("Update user '{}'", old_name),
+                fields,
+            })
         }
         // ── Tax rule dry-runs ─────────────────────────────────────────────────
         "create_tax_rule" => {
             let name = input.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-            let bp = input.get("rate_basis_points").and_then(|v| v.as_i64()).unwrap_or(0);
-            let inclusive = input.get("inclusive").and_then(|v| v.as_bool()).unwrap_or(true);
+            let bp = input
+                .get("rate_basis_points")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let inclusive = input
+                .get("inclusive")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
             Ok(ToolPreview {
                 tool_name: tool_name.into(),
                 description: format!("Create tax rule '{}'", name),
                 fields: vec![
-                    ToolPreviewField { label: "Name".into(), value: name.into() },
-                    ToolPreviewField { label: "Rate".into(), value: format!("{} bp", bp) },
-                    ToolPreviewField { label: "Type".into(), value: (if inclusive { "Inclusive" } else { "Exclusive" }).into() },
+                    ToolPreviewField {
+                        label: "Name".into(),
+                        value: name.into(),
+                    },
+                    ToolPreviewField {
+                        label: "Rate".into(),
+                        value: format!("{} bp", bp),
+                    },
+                    ToolPreviewField {
+                        label: "Type".into(),
+                        value: (if inclusive { "Inclusive" } else { "Exclusive" }).into(),
+                    },
                 ],
             })
         }
         "update_tax_rule" => {
-            let tax_rule_id = input.get("tax_rule_id").and_then(|v| v.as_str()).unwrap_or("?");
-            let row = sqlx::query("SELECT name, rate_basis_points FROM tax_rules WHERE tax_rule_id = ?")
-                .bind(tax_rule_id).fetch_optional(pool).await?
-                .ok_or_else(|| AppError::NotFound("Tax rule not found".into()))?;
+            let tax_rule_id = input
+                .get("tax_rule_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let row =
+                sqlx::query("SELECT name, rate_basis_points FROM tax_rules WHERE tax_rule_id = ?")
+                    .bind(tax_rule_id)
+                    .fetch_optional(pool)
+                    .await?
+                    .ok_or_else(|| AppError::NotFound("Tax rule not found".into()))?;
             let old_name: String = row.get("name");
             let old_bp: i64 = row.get("rate_basis_points");
             let name = input.get("name").and_then(|v| v.as_str());
             let bp_val = input.get("rate_basis_points").and_then(|v| v.as_i64());
             let inclusive = input.get("inclusive").and_then(|v| v.as_bool());
             let active = input.get("is_active").and_then(|v| v.as_bool());
-            let mut fields = vec![
-                ToolPreviewField { label: "Tax Rule".into(), value: format!("{} ({} bp)", old_name, old_bp) },
-            ];
-            if let Some(n) = name { fields.push(ToolPreviewField { label: "New name".into(), value: n.into() }); }
-            if let Some(b) = bp_val { fields.push(ToolPreviewField { label: "New rate".into(), value: format!("{} bp", b) }); }
-            if let Some(i) = inclusive { fields.push(ToolPreviewField { label: "Inclusive".into(), value: (if i {"Yes"} else {"No"}).into() }); }
-            if let Some(a) = active { fields.push(ToolPreviewField { label: "Active".into(), value: (if a {"Yes"} else {"No"}).into() }); }
-            Ok(ToolPreview { tool_name: tool_name.into(), description: format!("Update tax rule '{}'", old_name), fields })
+            let mut fields = vec![ToolPreviewField {
+                label: "Tax Rule".into(),
+                value: format!("{} ({} bp)", old_name, old_bp),
+            }];
+            if let Some(n) = name {
+                fields.push(ToolPreviewField {
+                    label: "New name".into(),
+                    value: n.into(),
+                });
+            }
+            if let Some(b) = bp_val {
+                fields.push(ToolPreviewField {
+                    label: "New rate".into(),
+                    value: format!("{} bp", b),
+                });
+            }
+            if let Some(i) = inclusive {
+                fields.push(ToolPreviewField {
+                    label: "Inclusive".into(),
+                    value: (if i { "Yes" } else { "No" }).into(),
+                });
+            }
+            if let Some(a) = active {
+                fields.push(ToolPreviewField {
+                    label: "Active".into(),
+                    value: (if a { "Yes" } else { "No" }).into(),
+                });
+            }
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
+                description: format!("Update tax rule '{}'", old_name),
+                fields,
+            })
         }
         // ── Holistic product update dry-run ────────────────────────────────────
         "update_product_full" => {
-            let product_id = input.get("product_id").and_then(|v| v.as_str()).unwrap_or("?");
-            let p = product_repo::get_product_by_id(pool, product_id).await?
+            let product_id = input
+                .get("product_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let p = product_repo::get_product_by_id(pool, product_id)
+                .await?
                 .ok_or_else(|| AppError::NotFound("Product not found".into()))?;
             let mut changes: Vec<String> = Vec::new();
-            if let Some(n) = input.get("name").and_then(|v| v.as_str()) { if n != p.product.name { changes.push(format!("Name: {} → {}", p.product.name, n)); } }
-            if let Some(v) = input.get("price_minor").and_then(|v| v.as_i64()) { if v != p.price_minor { changes.push(format!("Price: BHD {} → BHD {}", fmt(p.price_minor), fmt(v))); } }
-            if let Some(v) = input.get("is_active").and_then(|v| v.as_bool()) { if v != p.product.is_active { changes.push(format!("Active: {} → {}", p.product.is_active, v)); } }
-            if let Some(v) = input.get("track_inventory").and_then(|v| v.as_bool()) { if v != p.product.track_inventory { changes.push(format!("Track inventory: {} → {}", p.product.track_inventory, v)); } }
-            if changes.is_empty() { changes.push("No changes detected".into()); }
-            Ok(ToolPreview { tool_name: tool_name.into(), description: format!("Update product '{}'", p.product.name), fields: vec![ToolPreviewField { label: "Changes".into(), value: changes.join("; ") }] })
+            if let Some(n) = input.get("name").and_then(|v| v.as_str()) {
+                if n != p.product.name {
+                    changes.push(format!("Name: {} → {}", p.product.name, n));
+                }
+            }
+            if let Some(v) = input.get("price_minor").and_then(|v| v.as_i64()) {
+                if v != p.price_minor {
+                    changes.push(format!(
+                        "Price: BHD {} → BHD {}",
+                        fmt(p.price_minor),
+                        fmt(v)
+                    ));
+                }
+            }
+            if let Some(v) = input.get("is_active").and_then(|v| v.as_bool()) {
+                if v != p.product.is_active {
+                    changes.push(format!("Active: {} → {}", p.product.is_active, v));
+                }
+            }
+            if let Some(v) = input.get("track_inventory").and_then(|v| v.as_bool()) {
+                if v != p.product.track_inventory {
+                    changes.push(format!(
+                        "Track inventory: {} → {}",
+                        p.product.track_inventory, v
+                    ));
+                }
+            }
+            if changes.is_empty() {
+                changes.push("No changes detected".into());
+            }
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
+                description: format!("Update product '{}'", p.product.name),
+                fields: vec![ToolPreviewField {
+                    label: "Changes".into(),
+                    value: changes.join("; "),
+                }],
+            })
         }
         // ── Store settings dry-run ─────────────────────────────────────────────
         "update_store_settings" => {
             let r = sqlx::query("SELECT name FROM branches WHERE is_active=1 LIMIT 1")
-                .fetch_optional(pool).await?
-                .map(|r| r.get::<String,_>("name")).unwrap_or_else(|| "?".into());
+                .fetch_optional(pool)
+                .await?
+                .map(|r| r.get::<String, _>("name"))
+                .unwrap_or_else(|| "?".into());
             let mut changes = vec![];
-            for key in &["name", "address", "phone", "tax_number", "cr_number", "receipt_header", "receipt_footer", "timezone"] {
-                if let Some(v) = input.get(*key).and_then(|v| v.as_str()) { changes.push(format!("{} = {}", key, v)); }
+            for key in &[
+                "name",
+                "address",
+                "phone",
+                "tax_number",
+                "cr_number",
+                "receipt_header",
+                "receipt_footer",
+                "timezone",
+            ] {
+                if let Some(v) = input.get(*key).and_then(|v| v.as_str()) {
+                    changes.push(format!("{} = {}", key, v));
+                }
             }
-            Ok(ToolPreview { tool_name: tool_name.into(), description: format!("Update store '{}' settings", r), fields: vec![ToolPreviewField { label: "Changes".into(), value: if changes.is_empty() { "(none)".into() } else { changes.join(", ") } }] })
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
+                description: format!("Update store '{}' settings", r),
+                fields: vec![ToolPreviewField {
+                    label: "Changes".into(),
+                    value: if changes.is_empty() {
+                        "(none)".into()
+                    } else {
+                        changes.join(", ")
+                    },
+                }],
+            })
         }
         // ── Business rules dry-run ─────────────────────────────────────────────
         "update_business_rules" => {
             let mut changes = vec![];
-            for key in &["allow_negative_stock", "require_discount_reason", "cashier_can_discount", "auto_print_receipt"] {
-                if let Some(v) = input.get(*key).and_then(|v| v.as_bool()) { changes.push(format!("{} = {}", key, v)); }
+            for key in &[
+                "allow_negative_stock",
+                "require_discount_reason",
+                "cashier_can_discount",
+                "auto_print_receipt",
+            ] {
+                if let Some(v) = input.get(*key).and_then(|v| v.as_bool()) {
+                    changes.push(format!("{} = {}", key, v));
+                }
             }
-            Ok(ToolPreview { tool_name: tool_name.into(), description: "Update business rules".into(), fields: vec![ToolPreviewField { label: "Setting".into(), value: if changes.is_empty() { "(none)".into() } else { changes.join(", ") } }] })
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
+                description: "Update business rules".into(),
+                fields: vec![ToolPreviewField {
+                    label: "Setting".into(),
+                    value: if changes.is_empty() {
+                        "(none)".into()
+                    } else {
+                        changes.join(", ")
+                    },
+                }],
+            })
         }
         // ── Delivery dry-runs ──────────────────────────────────────────────────
         "confirm_delivery_payment" => {
-            let delivery_id = input.get("delivery_id").and_then(|v| v.as_str()).unwrap_or("?");
+            let delivery_id = input
+                .get("delivery_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
             let row = sqlx::query("SELECT delivery_status, payment_status, amount_minor FROM delivery_orders WHERE delivery_id = ?")
                 .bind(delivery_id).fetch_optional(pool).await?
                 .ok_or_else(|| AppError::NotFound("Delivery not found".into()))?;
             let amt: i64 = row.get("amount_minor");
             let ps: String = row.get("payment_status");
-            Ok(ToolPreview { tool_name: tool_name.into(), description: format!("Confirm payment for delivery {}", &delivery_id[..8.min(delivery_id.len())]), fields: vec![
-                ToolPreviewField { label: "Amount".into(), value: format!("BHD {}", fmt(amt)) },
-                ToolPreviewField { label: "Status".into(), value: format!("{} → paid", ps) },
-            ]})
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
+                description: format!(
+                    "Confirm payment for delivery {}",
+                    &delivery_id[..8.min(delivery_id.len())]
+                ),
+                fields: vec![
+                    ToolPreviewField {
+                        label: "Amount".into(),
+                        value: format!("BHD {}", fmt(amt)),
+                    },
+                    ToolPreviewField {
+                        label: "Status".into(),
+                        value: format!("{} → paid", ps),
+                    },
+                ],
+            })
         }
         "cancel_delivery" => {
-            let delivery_id = input.get("delivery_id").and_then(|v| v.as_str()).unwrap_or("?");
-            let row = sqlx::query("SELECT delivery_status FROM delivery_orders WHERE delivery_id = ?")
-                .bind(delivery_id).fetch_optional(pool).await?
-                .ok_or_else(|| AppError::NotFound("Delivery not found".into()))?;
+            let delivery_id = input
+                .get("delivery_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let row =
+                sqlx::query("SELECT delivery_status FROM delivery_orders WHERE delivery_id = ?")
+                    .bind(delivery_id)
+                    .fetch_optional(pool)
+                    .await?
+                    .ok_or_else(|| AppError::NotFound("Delivery not found".into()))?;
             let status: String = row.get("delivery_status");
-            Ok(ToolPreview { tool_name: tool_name.into(), description: format!("Cancel delivery {}", &delivery_id[..8.min(delivery_id.len())]), fields: vec![
-                ToolPreviewField { label: "Current status".into(), value: status },
-                ToolPreviewField { label: "New status".into(), value: "cancelled".into() },
-            ]})
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
+                description: format!(
+                    "Cancel delivery {}",
+                    &delivery_id[..8.min(delivery_id.len())]
+                ),
+                fields: vec![
+                    ToolPreviewField {
+                        label: "Current status".into(),
+                        value: status,
+                    },
+                    ToolPreviewField {
+                        label: "New status".into(),
+                        value: "cancelled".into(),
+                    },
+                ],
+            })
         }
         // ── Sync repair dry-runs ──────────────────────────────────────────────
         "sync_reset_stuck" => {
@@ -3611,71 +4183,161 @@ pub async fn dry_run_mutation(
                 ).fetch_one(pool).await.unwrap_or(0);
                 stuck += n;
             }
-            Ok(ToolPreview { tool_name: tool_name.into(),
-                description: format!("Reset {stuck} stuck rows across all tables back to pending with 0 attempts"),
-                fields: vec![ToolPreviewField { label: "Stuck rows".into(), value: stuck.to_string() }] })
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
+                description: format!(
+                    "Reset {stuck} stuck rows across all tables back to pending with 0 attempts"
+                ),
+                fields: vec![ToolPreviewField {
+                    label: "Stuck rows".into(),
+                    value: stuck.to_string(),
+                }],
+            })
         }
         "sync_queue_retry" => {
             let event_id = input.get("event_id").and_then(|v| v.as_str()).unwrap_or("");
-            Ok(ToolPreview { tool_name: tool_name.into(),
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
                 description: format!("Retry sync event: {event_id}"),
-                fields: vec![ToolPreviewField { label: "Event".into(), value: event_id.to_string() }] })
+                fields: vec![ToolPreviewField {
+                    label: "Event".into(),
+                    value: event_id.to_string(),
+                }],
+            })
         }
         "sync_queue_dismiss" => {
             let event_id = input.get("event_id").and_then(|v| v.as_str()).unwrap_or("");
-            Ok(ToolPreview { tool_name: tool_name.into(),
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
                 description: format!("Dismiss sync event: {event_id}"),
-                fields: vec![ToolPreviewField { label: "Event".into(), value: event_id.to_string() }] })
+                fields: vec![ToolPreviewField {
+                    label: "Event".into(),
+                    value: event_id.to_string(),
+                }],
+            })
         }
         "void_sale" => {
-            let receipt = input.get("receipt_number").and_then(|v| v.as_str()).unwrap_or("");
+            let receipt = input
+                .get("receipt_number")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let reason = input.get("reason").and_then(|v| v.as_str()).unwrap_or("");
-            Ok(ToolPreview { tool_name: tool_name.into(),
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
                 description: format!("Void sale {receipt}: {reason}"),
                 fields: vec![
-                    ToolPreviewField { label: "Receipt".into(), value: receipt.to_string() },
-                    ToolPreviewField { label: "Reason".into(), value: reason.to_string() },
-                ] })
+                    ToolPreviewField {
+                        label: "Receipt".into(),
+                        value: receipt.to_string(),
+                    },
+                    ToolPreviewField {
+                        label: "Reason".into(),
+                        value: reason.to_string(),
+                    },
+                ],
+            })
         }
         "delete_customer" => {
-            let cid = input.get("customer_id").and_then(|v| v.as_str()).unwrap_or("");
-            let name: Option<String> = sqlx::query_scalar("SELECT name FROM customers WHERE customer_id=?").bind(cid).fetch_optional(pool).await?.flatten();
-            Ok(ToolPreview { tool_name: tool_name.into(),
+            let cid = input
+                .get("customer_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let name: Option<String> =
+                sqlx::query_scalar("SELECT name FROM customers WHERE customer_id=?")
+                    .bind(cid)
+                    .fetch_optional(pool)
+                    .await?
+                    .flatten();
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
                 description: format!("Delete customer: {}", name.as_deref().unwrap_or(cid)),
-                fields: vec![ToolPreviewField { label: "Customer".into(), value: name.unwrap_or_else(|| cid.to_string()) }] })
+                fields: vec![ToolPreviewField {
+                    label: "Customer".into(),
+                    value: name.unwrap_or_else(|| cid.to_string()),
+                }],
+            })
         }
         "set_device_active" => {
-            let did = input.get("device_id").and_then(|v| v.as_str()).unwrap_or("");
-            let active = input.get("is_active").and_then(|v| v.as_bool()).unwrap_or(true);
-            Ok(ToolPreview { tool_name: tool_name.into(),
+            let did = input
+                .get("device_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let active = input
+                .get("is_active")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
                 description: format!("Set device {did} active={active}"),
-                fields: vec![ToolPreviewField { label: "Device".into(), value: did.to_string() }] })
+                fields: vec![ToolPreviewField {
+                    label: "Device".into(),
+                    value: did.to_string(),
+                }],
+            })
         }
         "receive_stock" => {
-            let pid = input.get("product_id").and_then(|v| v.as_str()).unwrap_or("");
-            let qty = input.get("quantity").and_then(|v| v.as_str()).unwrap_or("0");
-            let pname: Option<String> = sqlx::query_scalar("SELECT name FROM products WHERE product_id=?").bind(pid).fetch_optional(pool).await?.flatten();
-            Ok(ToolPreview { tool_name: tool_name.into(),
+            let pid = input
+                .get("product_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let qty = input
+                .get("quantity")
+                .and_then(|v| v.as_str())
+                .unwrap_or("0");
+            let pname: Option<String> =
+                sqlx::query_scalar("SELECT name FROM products WHERE product_id=?")
+                    .bind(pid)
+                    .fetch_optional(pool)
+                    .await?
+                    .flatten();
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
                 description: format!("Receive {qty} of {}", pname.as_deref().unwrap_or(pid)),
-                fields: vec![ToolPreviewField { label: "Product".into(), value: pname.unwrap_or_else(|| pid.to_string()) }] })
+                fields: vec![ToolPreviewField {
+                    label: "Product".into(),
+                    value: pname.unwrap_or_else(|| pid.to_string()),
+                }],
+            })
         }
         "add_loyalty_points" => {
-            let _cid = input.get("customer_id").and_then(|v| v.as_str()).unwrap_or("");
+            let _cid = input
+                .get("customer_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let pts = input.get("points").and_then(|v| v.as_i64()).unwrap_or(0);
-            Ok(ToolPreview { tool_name: tool_name.into(),
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
                 description: format!("Add {pts} loyalty points to customer"),
-                fields: vec![ToolPreviewField { label: "Points".into(), value: pts.to_string() }] })
+                fields: vec![ToolPreviewField {
+                    label: "Points".into(),
+                    value: pts.to_string(),
+                }],
+            })
         }
         "bulk_update_prices" => {
-            let count = input.get("updates").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-            Ok(ToolPreview { tool_name: tool_name.into(),
+            let count = input
+                .get("updates")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
                 description: format!("Bulk update prices for {count} products"),
-                fields: vec![ToolPreviewField { label: "Products".into(), value: count.to_string() }] })
+                fields: vec![ToolPreviewField {
+                    label: "Products".into(),
+                    value: count.to_string(),
+                }],
+            })
         }
         // ── Backup dry-run ─────────────────────────────────────────────────────
-        "backup_database" => {
-            Ok(ToolPreview { tool_name: tool_name.into(), description: "Create full database backup".into(), fields: vec![ToolPreviewField { label: "Action".into(), value: "Backup to app data directory".into() }] })
-        }
+        "backup_database" => Ok(ToolPreview {
+            tool_name: tool_name.into(),
+            description: "Create full database backup".into(),
+            fields: vec![ToolPreviewField {
+                label: "Action".into(),
+                value: "Backup to app data directory".into(),
+            }],
+        }),
         name => crate::ai::tools_write_ext::dry_run(pool, name, input, currency_exp).await,
     }
 }
@@ -3698,7 +4360,11 @@ async fn active_branch_id(pool: &SqlitePool) -> crate::errors::AppResult<String>
     )
     .fetch_optional(pool)
     .await?
-    .ok_or_else(|| crate::errors::AppError::NotFound("No active branch configured — complete store setup first".into()))
+    .ok_or_else(|| {
+        crate::errors::AppError::NotFound(
+            "No active branch configured — complete store setup first".into(),
+        )
+    })
 }
 
 /// Look up the active device_id and branch_id from the database.
@@ -3734,13 +4400,19 @@ async fn active_device_branch(pool: &SqlitePool) -> crate::errors::AppResult<(St
 fn validate_mutation_input(tool_name: &str, input: &Value) -> AppResult<()> {
     match tool_name {
         "update_product_price" | "create_product" => {
-            let price = input.get("new_price_minor").or_else(|| input.get("price_minor"));
+            let price = input
+                .get("new_price_minor")
+                .or_else(|| input.get("price_minor"));
             if let Some(p) = price.and_then(|v| v.as_i64()) {
                 if p <= 0 {
-                    return Err(AppError::Validation("Price must be positive (minor units > 0)".into()));
+                    return Err(AppError::Validation(
+                        "Price must be positive (minor units > 0)".into(),
+                    ));
                 }
                 if p > 100_000_000 {
-                    return Err(AppError::Validation("Price exceeds maximum (100M minor units)".into()));
+                    return Err(AppError::Validation(
+                        "Price exceeds maximum (100M minor units)".into(),
+                    ));
                 }
             }
             if tool_name == "create_product" {
@@ -3749,7 +4421,9 @@ fn validate_mutation_input(tool_name: &str, input: &Value) -> AppResult<()> {
                     return Err(AppError::Validation("Product name cannot be empty".into()));
                 }
                 if name.len() > 200 {
-                    return Err(AppError::Validation("Product name too long (max 200 chars)".into()));
+                    return Err(AppError::Validation(
+                        "Product name too long (max 200 chars)".into(),
+                    ));
                 }
             }
         }
@@ -3759,38 +4433,61 @@ fn validate_mutation_input(tool_name: &str, input: &Value) -> AppResult<()> {
                 return Err(AppError::Validation("Product name cannot be empty".into()));
             }
             if name.len() > 200 {
-                return Err(AppError::Validation("Product name too long (max 200 chars)".into()));
+                return Err(AppError::Validation(
+                    "Product name too long (max 200 chars)".into(),
+                ));
             }
         }
         "set_product_active" => {
-            let _is_active = input.get("is_active").and_then(|v| v.as_bool())
+            let _is_active = input
+                .get("is_active")
+                .and_then(|v| v.as_bool())
                 .ok_or_else(|| AppError::Validation("is_active must be a boolean".into()))?;
         }
         "adjust_stock" => {
-            let delta = input.get("quantity_delta").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let delta = input
+                .get("quantity_delta")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
             if delta == 0.0 {
                 return Err(AppError::Validation("quantity_delta cannot be zero".into()));
             }
             if delta.abs() > 10_000_000.0 {
-                return Err(AppError::Validation("quantity_delta exceeds maximum (±10M)".into()));
+                return Err(AppError::Validation(
+                    "quantity_delta exceeds maximum (±10M)".into(),
+                ));
             }
         }
         "stock_take" | "bulk_stock_take" => {
-            let qty = input.get("new_quantity").and_then(|v| v.as_f64()).unwrap_or(-1.0);
+            let qty = input
+                .get("new_quantity")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(-1.0);
             if qty < 0.0 {
-                return Err(AppError::Validation("new_quantity cannot be negative".into()));
+                return Err(AppError::Validation(
+                    "new_quantity cannot be negative".into(),
+                ));
             }
             if qty > 10_000_000.0 {
-                return Err(AppError::Validation("new_quantity exceeds maximum (10M)".into()));
+                return Err(AppError::Validation(
+                    "new_quantity exceeds maximum (10M)".into(),
+                ));
             }
         }
         "update_reorder_point" => {
-            let rp = input.get("reorder_point").and_then(|v| v.as_f64()).unwrap_or(-1.0);
+            let rp = input
+                .get("reorder_point")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(-1.0);
             if rp < 0.0 {
-                return Err(AppError::Validation("reorder_point cannot be negative".into()));
+                return Err(AppError::Validation(
+                    "reorder_point cannot be negative".into(),
+                ));
             }
             if rp > 1_000_000.0 {
-                return Err(AppError::Validation("reorder_point exceeds maximum (1M)".into()));
+                return Err(AppError::Validation(
+                    "reorder_point exceeds maximum (1M)".into(),
+                ));
             }
         }
         "create_customer" | "update_customer" => {
@@ -3799,13 +4496,21 @@ fn validate_mutation_input(tool_name: &str, input: &Value) -> AppResult<()> {
                 return Err(AppError::Validation("Customer name cannot be empty".into()));
             }
             if name.len() > 200 {
-                return Err(AppError::Validation("Customer name too long (max 200 chars)".into()));
+                return Err(AppError::Validation(
+                    "Customer name too long (max 200 chars)".into(),
+                ));
             }
         }
         "advance_delivery_status" => {
-            let status = input.get("new_status").and_then(|v| v.as_str()).unwrap_or("");
+            let status = input
+                .get("new_status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if !matches!(status, "in_transit" | "delivered" | "cancelled") {
-                return Err(AppError::Validation(format!("Invalid delivery status: '{}'. Must be in_transit | delivered | cancelled", status)));
+                return Err(AppError::Validation(format!(
+                    "Invalid delivery status: '{}'. Must be in_transit | delivered | cancelled",
+                    status
+                )));
             }
         }
         other => {
@@ -4297,7 +5002,10 @@ pub async fn execute_mutation(
             let old_email: Option<String> = row.get("email");
             let old_notes: Option<String> = row.get("notes");
 
-            let new_name = input.get("name").and_then(|v| v.as_str()).unwrap_or(&old_name);
+            let new_name = input
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&old_name);
             let new_phone = input.get("phone").and_then(|v| v.as_str());
             let new_email = input.get("email").and_then(|v| v.as_str());
             let new_notes = input.get("notes").and_then(|v| v.as_str());
@@ -4358,13 +5066,12 @@ pub async fn execute_mutation(
             } else {
                 new_status_input
             };
-            let row = sqlx::query(
-                "SELECT delivery_status FROM delivery_orders WHERE delivery_id = ?",
-            )
-            .bind(delivery_id)
-            .fetch_optional(pool)
-            .await?
-            .ok_or_else(|| AppError::NotFound("Delivery not found".into()))?;
+            let row =
+                sqlx::query("SELECT delivery_status FROM delivery_orders WHERE delivery_id = ?")
+                    .bind(delivery_id)
+                    .fetch_optional(pool)
+                    .await?
+                    .ok_or_else(|| AppError::NotFound("Delivery not found".into()))?;
             let old_status: String = row.get("delivery_status");
             let now = chrono::Utc::now().to_rfc3339();
             sqlx::query(
@@ -4507,7 +5214,12 @@ pub async fn execute_mutation(
                 .await?;
 
                 undo_items.push(json!({ "product_id": product_id, "new_quantity": old_qty }));
-                results.push(format!("{}: {} → {}", &product_id[..8.min(product_id.len())], old_qty, new_qty));
+                results.push(format!(
+                    "{}: {} → {}",
+                    &product_id[..8.min(product_id.len())],
+                    old_qty,
+                    new_qty
+                ));
             }
 
             Ok(MutationResult {
@@ -4522,34 +5234,69 @@ pub async fn execute_mutation(
         // ── Category executions ─────────────────────────────────────────────────
         "create_category" => {
             let name = input.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let sort = input.get("sort_order").and_then(|v| v.as_i64()).unwrap_or(0);
+            let sort = input
+                .get("sort_order")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
             let category_id = ulid::Ulid::new().to_string();
             let now = chrono::Utc::now().to_rfc3339();
             sqlx::query("INSERT INTO categories (category_id, name, sort_order, is_active, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)")
                 .bind(&category_id).bind(name).bind(sort).bind(&now).bind(&now).execute(pool).await?;
-            write_audit(pool, "AI_ADMIN", "category.create", &category_id, &json!({"name":name,"sort_order":sort})).await?;
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "category.create",
+                &category_id,
+                &json!({"name":name,"sort_order":sort}),
+            )
+            .await?;
             Ok(MutationResult {
                 description: format!("Category '{}' created", name),
                 undo_snapshot_json: json!({"category_id":&category_id}).to_string(),
                 rollback_tool: "update_category".into(),
-                rollback_input_json: json!({"category_id":&category_id,"is_active":false}).to_string(),
-                entity_type: "category".into(), entity_id: category_id,
+                rollback_input_json: json!({"category_id":&category_id,"is_active":false})
+                    .to_string(),
+                entity_type: "category".into(),
+                entity_id: category_id,
             })
         }
         "update_category" => {
-            let category_id = input.get("category_id").and_then(|v| v.as_str()).unwrap_or("");
-            let row = sqlx::query("SELECT name, sort_order, is_active FROM categories WHERE category_id = ?")
-                .bind(category_id).fetch_optional(pool).await?
-                .ok_or_else(|| AppError::NotFound("Category not found".into()))?;
+            let category_id = input
+                .get("category_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let row = sqlx::query(
+                "SELECT name, sort_order, is_active FROM categories WHERE category_id = ?",
+            )
+            .bind(category_id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Category not found".into()))?;
             let old_name: String = row.get("name");
             let old_sort: i64 = row.get("sort_order");
             let old_active: bool = row.get("is_active");
-            let name = input.get("name").and_then(|v| v.as_str()).unwrap_or(&old_name);
-            let sort = input.get("sort_order").and_then(|v| v.as_i64()).unwrap_or(old_sort);
-            let active_val = input.get("is_active").and_then(|v| v.as_bool()).unwrap_or(old_active);
+            let name = input
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&old_name);
+            let sort = input
+                .get("sort_order")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(old_sort);
+            let active_val = input
+                .get("is_active")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(old_active);
             sqlx::query("UPDATE categories SET name=?, sort_order=?, is_active=?, updated_at=?, version = version + 1, sync_status = 'pending' WHERE category_id=?")
                 .bind(name).bind(sort).bind(active_val as i64).bind(chrono::Utc::now().to_rfc3339()).bind(category_id).execute(pool).await?;
-            write_audit(pool, "AI_ADMIN", "category.update", category_id, &json!({"name":name,"is_active":active_val})).await?;
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "category.update",
+                category_id,
+                &json!({"name":name,"is_active":active_val}),
+            )
+            .await?;
             Ok(MutationResult {
                 description: format!("Category '{}' updated", name),
                 undo_snapshot_json: json!({"name":old_name,"sort_order":old_sort,"is_active":old_active}).to_string(),
@@ -4560,31 +5307,47 @@ pub async fn execute_mutation(
         }
         // ── User executions ─────────────────────────────────────────────────────
         "create_user" => {
-            let display = input.get("display_name").and_then(|v| v.as_str()).unwrap_or("");
+            let display = input
+                .get("display_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let username = input.get("username").and_then(|v| v.as_str()).unwrap_or("");
             let pin = input.get("pin").and_then(|v| v.as_str()).unwrap_or("");
             let role_id = input.get("role_id").and_then(|v| v.as_str()).unwrap_or("");
-            if pin.len() < 4 { return Err(AppError::Validation("PIN must be 4+ digits".into())); }
+            if pin.len() < 4 {
+                return Err(AppError::Validation("PIN must be 4+ digits".into()));
+            }
             let user_id = ulid::Ulid::new().to_string();
             let now = chrono::Utc::now().to_rfc3339();
             let pin_hash = crate::db::repositories::auth_repo::hash_pin(pin)?;
             let branch_id = active_branch_id(pool).await?;
             sqlx::query("INSERT INTO users (user_id, branch_id, display_name, username, pin_hash, role_id, is_active, created_at, updated_at) VALUES (?,?,?,?,?,?,1,?,?)")
                 .bind(&user_id).bind(&branch_id).bind(display).bind(username).bind(&pin_hash).bind(role_id).bind(&now).bind(&now).execute(pool).await?;
-            write_audit(pool, "AI_ADMIN", "user.create", &user_id, &json!({"display_name":display,"username":username})).await?;
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "user.create",
+                &user_id,
+                &json!({"display_name":display,"username":username}),
+            )
+            .await?;
             Ok(MutationResult {
                 description: format!("Staff '{}' (@{}) created", display, username),
                 undo_snapshot_json: json!({"user_id":&user_id}).to_string(),
                 rollback_tool: "update_user".into(),
                 rollback_input_json: json!({"user_id":&user_id,"is_active":false}).to_string(),
-                entity_type: "user".into(), entity_id: user_id,
+                entity_type: "user".into(),
+                entity_id: user_id,
             })
         }
         "update_user" => {
             let user_id = input.get("user_id").and_then(|v| v.as_str()).unwrap_or("");
-            let row = sqlx::query("SELECT display_name, role_id, is_active FROM users WHERE user_id = ?")
-                .bind(user_id).fetch_optional(pool).await?
-                .ok_or_else(|| AppError::NotFound("User not found".into()))?;
+            let row =
+                sqlx::query("SELECT display_name, role_id, is_active FROM users WHERE user_id = ?")
+                    .bind(user_id)
+                    .fetch_optional(pool)
+                    .await?
+                    .ok_or_else(|| AppError::NotFound("User not found".into()))?;
             let old_name: String = row.get("display_name");
             let old_role: String = row.get("role_id");
             let old_active: bool = row.get("is_active");
@@ -4593,18 +5356,38 @@ pub async fn execute_mutation(
             let mut binds: Vec<SqlBind> = Vec::new();
             let mut undo = serde_json::Map::new();
             undo.insert("user_id".into(), json!(user_id));
-            if let Some(n) = input.get("display_name").and_then(|v| v.as_str()) { sets.push("display_name = ?"); binds.push(SqlBind::S(n.to_string())); undo.insert("display_name".into(), json!(old_name)); }
-            if let Some(r) = input.get("role_id").and_then(|v| v.as_str()) { sets.push("role_id = ?"); binds.push(SqlBind::S(r.to_string())); undo.insert("role_id".into(), json!(old_role)); }
-            if let Some(a) = input.get("is_active").and_then(|v| v.as_bool()) { sets.push("is_active = ?"); binds.push(SqlBind::I(if a {1} else {0})); undo.insert("is_active".into(), json!(old_active)); }
+            if let Some(n) = input.get("display_name").and_then(|v| v.as_str()) {
+                sets.push("display_name = ?");
+                binds.push(SqlBind::S(n.to_string()));
+                undo.insert("display_name".into(), json!(old_name));
+            }
+            if let Some(r) = input.get("role_id").and_then(|v| v.as_str()) {
+                sets.push("role_id = ?");
+                binds.push(SqlBind::S(r.to_string()));
+                undo.insert("role_id".into(), json!(old_role));
+            }
+            if let Some(a) = input.get("is_active").and_then(|v| v.as_bool()) {
+                sets.push("is_active = ?");
+                binds.push(SqlBind::I(if a { 1 } else { 0 }));
+                undo.insert("is_active".into(), json!(old_active));
+            }
             if let Some(pin_val) = input.get("pin").and_then(|v| v.as_str()) {
-                if pin_val.len() < 4 { return Err(AppError::Validation("PIN must be 4+ digits".into())); }
+                if pin_val.len() < 4 {
+                    return Err(AppError::Validation("PIN must be 4+ digits".into()));
+                }
                 let pin_hash = crate::db::repositories::auth_repo::hash_pin(pin_val)?;
-                sets.push("pin_hash = ?"); binds.push(SqlBind::S(pin_hash));
+                sets.push("pin_hash = ?");
+                binds.push(SqlBind::S(pin_hash));
             }
             if !sets.is_empty() {
-                let sql = format!("UPDATE users SET {}, sync_status = 'pending' WHERE user_id = ?", sets.join(", "));
+                let sql = format!(
+                    "UPDATE users SET {}, sync_status = 'pending' WHERE user_id = ?",
+                    sets.join(", ")
+                );
                 let mut q = sqlx::query(&sql);
-                for b in &binds { q = b.apply(q); }
+                for b in &binds {
+                    q = b.apply(q);
+                }
                 q.bind(user_id).execute(pool).await?;
             }
             write_audit(pool, "AI_ADMIN", "user.update", user_id, &json!({})).await?;
@@ -4613,29 +5396,53 @@ pub async fn execute_mutation(
                 undo_snapshot_json: serde_json::Value::Object(undo.clone()).to_string(),
                 rollback_tool: "update_user".into(),
                 rollback_input_json: serde_json::Value::Object(undo).to_string(),
-                entity_type: "user".into(), entity_id: user_id.into(),
+                entity_type: "user".into(),
+                entity_id: user_id.into(),
             })
         }
         // ── Tax rule executions ─────────────────────────────────────────────────
         "create_tax_rule" => {
             let name = input.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let bp = input.get("rate_basis_points").and_then(|v| v.as_i64()).unwrap_or(0);
-            let inclusive = input.get("inclusive").and_then(|v| v.as_bool()).unwrap_or(true);
+            let bp = input
+                .get("rate_basis_points")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let inclusive = input
+                .get("inclusive")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
             let tax_rule_id = ulid::Ulid::new().to_string();
             let now = chrono::Utc::now().to_rfc3339();
             sqlx::query("INSERT INTO tax_rules (tax_rule_id, name, rate_basis_points, inclusive, is_active, effective_from, created_at, updated_at) VALUES (?,?,?,?,1,?,?,?)")
                 .bind(&tax_rule_id).bind(name).bind(bp).bind(inclusive).bind(&now).bind(&now).bind(&now).execute(pool).await?;
-            write_audit(pool, "AI_ADMIN", "tax_rule.create", &tax_rule_id, &json!({"name":name,"rate_basis_points":bp})).await?;
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "tax_rule.create",
+                &tax_rule_id,
+                &json!({"name":name,"rate_basis_points":bp}),
+            )
+            .await?;
             Ok(MutationResult {
-                description: format!("Tax rule '{}' created ({} bp {})", name, bp, if inclusive {"inclusive"} else {"exclusive"}),
+                description: format!(
+                    "Tax rule '{}' created ({} bp {})",
+                    name,
+                    bp,
+                    if inclusive { "inclusive" } else { "exclusive" }
+                ),
                 undo_snapshot_json: json!({"tax_rule_id":&tax_rule_id}).to_string(),
                 rollback_tool: "update_tax_rule".into(),
-                rollback_input_json: json!({"tax_rule_id":&tax_rule_id,"is_active":false}).to_string(),
-                entity_type: "tax_rule".into(), entity_id: tax_rule_id,
+                rollback_input_json: json!({"tax_rule_id":&tax_rule_id,"is_active":false})
+                    .to_string(),
+                entity_type: "tax_rule".into(),
+                entity_id: tax_rule_id,
             })
         }
         "update_tax_rule" => {
-            let tax_rule_id = input.get("tax_rule_id").and_then(|v| v.as_str()).unwrap_or("");
+            let tax_rule_id = input
+                .get("tax_rule_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let row = sqlx::query("SELECT name, rate_basis_points, inclusive, is_active FROM tax_rules WHERE tax_rule_id = ?")
                 .bind(tax_rule_id).fetch_optional(pool).await?
                 .ok_or_else(|| AppError::NotFound("Tax rule not found".into()))?;
@@ -4643,13 +5450,32 @@ pub async fn execute_mutation(
             let old_bp: i64 = row.get("rate_basis_points");
             let old_inclusive: bool = row.get("inclusive");
             let old_active: bool = row.get("is_active");
-            let name = input.get("name").and_then(|v| v.as_str()).unwrap_or(&old_name);
-            let bp = input.get("rate_basis_points").and_then(|v| v.as_i64()).unwrap_or(old_bp);
-            let inc = input.get("inclusive").and_then(|v| v.as_bool()).unwrap_or(old_inclusive);
-            let active_val = input.get("is_active").and_then(|v| v.as_bool()).unwrap_or(old_active);
+            let name = input
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&old_name);
+            let bp = input
+                .get("rate_basis_points")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(old_bp);
+            let inc = input
+                .get("inclusive")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(old_inclusive);
+            let active_val = input
+                .get("is_active")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(old_active);
             sqlx::query("UPDATE tax_rules SET name=?, rate_basis_points=?, inclusive=?, is_active=?, updated_at=?, sync_status = 'pending' WHERE tax_rule_id=?")
                 .bind(name).bind(bp).bind(inc).bind(active_val as i64).bind(chrono::Utc::now().to_rfc3339()).bind(tax_rule_id).execute(pool).await?;
-            write_audit(pool, "AI_ADMIN", "tax_rule.update", tax_rule_id, &json!({"name":name,"rate_basis_points":bp})).await?;
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "tax_rule.update",
+                tax_rule_id,
+                &json!({"name":name,"rate_basis_points":bp}),
+            )
+            .await?;
             Ok(MutationResult {
                 description: format!("Tax rule '{}' updated", name),
                 undo_snapshot_json: json!({"name":old_name,"rate_basis_points":old_bp,"inclusive":old_inclusive,"is_active":old_active}).to_string(),
@@ -4660,19 +5486,38 @@ pub async fn execute_mutation(
         }
         // ── Holistic product update ────────────────────────────────────────────
         "update_product_full" => {
-            let product_id = input.get("product_id").and_then(|v| v.as_str()).unwrap_or("");
-            let p = product_repo::get_product_by_id(pool, product_id).await?
+            let product_id = input
+                .get("product_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let p = product_repo::get_product_by_id(pool, product_id)
+                .await?
                 .ok_or_else(|| AppError::NotFound("Product not found".into()))?;
-            let name = input.get("name").and_then(|v| v.as_str()).unwrap_or(&p.product.name);
-            let cat_id = input.get("category_id").and_then(|v| v.as_str()).unwrap_or(&p.product.category_id);
+            let name = input
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&p.product.name);
+            let cat_id = input
+                .get("category_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&p.product.category_id);
             let sku = input.get("sku").and_then(|v| v.as_str());
             let barcode = input.get("barcode").and_then(|v| v.as_str());
             let price = input.get("price_minor").and_then(|v| v.as_i64());
             let tax = input.get("tax_rule_id").and_then(|v| v.as_str());
-            let track = input.get("track_inventory").and_then(|v| v.as_bool()).unwrap_or(p.product.track_inventory);
-            let decimal = input.get("allow_decimal_quantity").and_then(|v| v.as_bool()).unwrap_or(p.product.allow_decimal_quantity);
+            let track = input
+                .get("track_inventory")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(p.product.track_inventory);
+            let decimal = input
+                .get("allow_decimal_quantity")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(p.product.allow_decimal_quantity);
             let rp = input.get("reorder_point").and_then(|v| v.as_f64());
-            let active = input.get("is_active").and_then(|v| v.as_bool()).unwrap_or(p.product.is_active);
+            let active = input
+                .get("is_active")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(p.product.is_active);
             let now = chrono::Utc::now().to_rfc3339();
             sqlx::query("UPDATE products SET name=?,category_id=?,sku=COALESCE(?,sku),barcode=COALESCE(?,barcode),tax_rule_id=COALESCE(?,tax_rule_id),track_inventory=?,allow_decimal_quantity=?,is_active=?,version=version+1,updated_at=?, sync_status = 'pending' WHERE product_id=?")
                 .bind(name).bind(cat_id).bind(sku).bind(barcode).bind(tax).bind(track as i64).bind(decimal as i64).bind(active as i64).bind(&now).bind(product_id).execute(pool).await?;
@@ -4686,7 +5531,14 @@ pub async fn execute_mutation(
                 sqlx::query("INSERT INTO product_prices (price_id,product_id,branch_id,price_type,price_minor,currency,effective_from,created_by_user_id,created_at) VALUES (?,?,NULL,'selling',?,'BHD',?,'AI_ADMIN',?)")
                     .bind(&pid).bind(product_id).bind(new_price).bind(&now).bind(&now).execute(pool).await?;
             }
-            write_audit(pool, "AI_ADMIN", "product.update_full", product_id, &json!({"name":name})).await?;
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "product.update_full",
+                product_id,
+                &json!({"name":name}),
+            )
+            .await?;
             Ok(MutationResult {
                 description: format!("Product '{}' fully updated", name),
                 undo_snapshot_json: json!({"product_id":product_id}).to_string(),
@@ -4704,67 +5556,168 @@ pub async fn execute_mutation(
             let mut updates: Vec<String> = Vec::new();
             let mut binds: Vec<SqlBind> = Vec::new();
             let mut undo_map = serde_json::Map::new();
-            for (key, old_val) in [("name", row.get::<String,_>("name")), ("address", row.get::<Option<String>,_>("address").unwrap_or_default()), ("phone", row.get::<Option<String>,_>("phone").unwrap_or_default()), ("tax_number", row.get::<Option<String>,_>("tax_number").unwrap_or_default()), ("cr_number", row.get::<Option<String>,_>("cr_number").unwrap_or_default()), ("receipt_header", row.get::<Option<String>,_>("receipt_header").unwrap_or_default()), ("receipt_footer", row.get::<Option<String>,_>("receipt_footer").unwrap_or_default()), ("timezone", row.get::<Option<String>,_>("timezone").unwrap_or("Asia/Bahrain".into()))].iter() {
-                if let Some(v) = input.get(*key).and_then(|v| v.as_str()) { updates.push(format!("{} = ?", key)); binds.push(SqlBind::S(v.to_string())); undo_map.insert(key.to_string(), json!(old_val)); }
+            for (key, old_val) in [
+                ("name", row.get::<String, _>("name")),
+                (
+                    "address",
+                    row.get::<Option<String>, _>("address").unwrap_or_default(),
+                ),
+                (
+                    "phone",
+                    row.get::<Option<String>, _>("phone").unwrap_or_default(),
+                ),
+                (
+                    "tax_number",
+                    row.get::<Option<String>, _>("tax_number")
+                        .unwrap_or_default(),
+                ),
+                (
+                    "cr_number",
+                    row.get::<Option<String>, _>("cr_number")
+                        .unwrap_or_default(),
+                ),
+                (
+                    "receipt_header",
+                    row.get::<Option<String>, _>("receipt_header")
+                        .unwrap_or_default(),
+                ),
+                (
+                    "receipt_footer",
+                    row.get::<Option<String>, _>("receipt_footer")
+                        .unwrap_or_default(),
+                ),
+                (
+                    "timezone",
+                    row.get::<Option<String>, _>("timezone")
+                        .unwrap_or("Asia/Bahrain".into()),
+                ),
+            ]
+            .iter()
+            {
+                if let Some(v) = input.get(*key).and_then(|v| v.as_str()) {
+                    updates.push(format!("{} = ?", key));
+                    binds.push(SqlBind::S(v.to_string()));
+                    undo_map.insert(key.to_string(), json!(old_val));
+                }
             }
             if !updates.is_empty() {
-                let sql = format!("UPDATE branches SET {} WHERE is_active=1", updates.join(", "));
+                let sql = format!(
+                    "UPDATE branches SET {} WHERE is_active=1",
+                    updates.join(", ")
+                );
                 let mut q = sqlx::query(&sql);
-                for b in &binds { q = b.apply(q); }
+                for b in &binds {
+                    q = b.apply(q);
+                }
                 q.execute(pool).await?;
             }
-            write_audit(pool, "AI_ADMIN", "store_settings.update", "branch", &json!({})).await?;
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "store_settings.update",
+                "branch",
+                &json!({}),
+            )
+            .await?;
             Ok(MutationResult {
                 description: format!("Store settings updated"),
                 undo_snapshot_json: serde_json::Value::Object(undo_map.clone()).to_string(),
                 rollback_tool: "update_store_settings".into(),
                 rollback_input_json: serde_json::Value::Object(undo_map).to_string(),
-                entity_type: "branch".into(), entity_id: "active".into(),
+                entity_type: "branch".into(),
+                entity_id: "active".into(),
             })
         }
         // ── Business rules ──────────────────────────────────────────────────────
         "update_business_rules" => {
-            for (key, api_name) in [("flag_allow_negative_stock", "allow_negative_stock"), ("flag_require_discount_reason", "require_discount_reason"), ("flag_cashier_can_discount", "cashier_can_discount"), ("flag_auto_print_receipt", "auto_print_receipt")].iter() {
+            for (key, api_name) in [
+                ("flag_allow_negative_stock", "allow_negative_stock"),
+                ("flag_require_discount_reason", "require_discount_reason"),
+                ("flag_cashier_can_discount", "cashier_can_discount"),
+                ("flag_auto_print_receipt", "auto_print_receipt"),
+            ]
+            .iter()
+            {
                 if let Some(v) = input.get(*api_name).and_then(|v| v.as_bool()) {
                     let val = if v { "1" } else { "0" };
                     sqlx::query("INSERT INTO app_config (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at")
                         .bind(key).bind(val).bind(chrono::Utc::now().to_rfc3339()).execute(pool).await?;
                 }
             }
-            write_audit(pool, "AI_ADMIN", "business_rules.update", "rules", &json!({})).await?;
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "business_rules.update",
+                "rules",
+                &json!({}),
+            )
+            .await?;
             Ok(MutationResult {
                 description: "Business rules updated".into(),
-                undo_snapshot_json: "{}".into(), rollback_tool: "_no_undo".into(), rollback_input_json: "{}".into(),
-                entity_type: "app_config".into(), entity_id: "flags".into(),
+                undo_snapshot_json: "{}".into(),
+                rollback_tool: "_no_undo".into(),
+                rollback_input_json: "{}".into(),
+                entity_type: "app_config".into(),
+                entity_id: "flags".into(),
             })
         }
         // ── Delivery payment/cancel ────────────────────────────────────────────
         "confirm_delivery_payment" => {
-            let delivery_id = input.get("delivery_id").and_then(|v| v.as_str()).unwrap_or("");
-            let row = sqlx::query("SELECT payment_status FROM delivery_orders WHERE delivery_id = ?")
-                .bind(delivery_id).fetch_optional(pool).await?
-                .ok_or_else(|| AppError::NotFound("Delivery not found".into()))?;
+            let delivery_id = input
+                .get("delivery_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let row =
+                sqlx::query("SELECT payment_status FROM delivery_orders WHERE delivery_id = ?")
+                    .bind(delivery_id)
+                    .fetch_optional(pool)
+                    .await?
+                    .ok_or_else(|| AppError::NotFound("Delivery not found".into()))?;
             let old_payment: String = row.get("payment_status");
             sqlx::query("UPDATE delivery_orders SET payment_status='paid', updated_at=?, sync_status = 'pending', version = version + 1 WHERE delivery_id=?")
                 .bind(chrono::Utc::now().to_rfc3339()).bind(delivery_id).execute(pool).await?;
-            write_audit(pool, "AI_ADMIN", "delivery.payment_confirmed", delivery_id, &json!({})).await?;
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "delivery.payment_confirmed",
+                delivery_id,
+                &json!({}),
+            )
+            .await?;
             Ok(MutationResult {
-                description: format!("Payment confirmed for delivery {}", &delivery_id[..8.min(delivery_id.len())]),
+                description: format!(
+                    "Payment confirmed for delivery {}",
+                    &delivery_id[..8.min(delivery_id.len())]
+                ),
                 undo_snapshot_json: json!({"payment_status":old_payment}).to_string(),
                 rollback_tool: "confirm_delivery_payment".into(),
                 rollback_input_json: json!({"delivery_id":delivery_id}).to_string(),
-                entity_type: "delivery_order".into(), entity_id: delivery_id.into(),
+                entity_type: "delivery_order".into(),
+                entity_id: delivery_id.into(),
             })
         }
         "cancel_delivery" => {
-            let delivery_id = input.get("delivery_id").and_then(|v| v.as_str()).unwrap_or("");
-            let row = sqlx::query("SELECT delivery_status FROM delivery_orders WHERE delivery_id = ?")
-                .bind(delivery_id).fetch_optional(pool).await?
-                .ok_or_else(|| AppError::NotFound("Delivery not found".into()))?;
+            let delivery_id = input
+                .get("delivery_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let row =
+                sqlx::query("SELECT delivery_status FROM delivery_orders WHERE delivery_id = ?")
+                    .bind(delivery_id)
+                    .fetch_optional(pool)
+                    .await?
+                    .ok_or_else(|| AppError::NotFound("Delivery not found".into()))?;
             let old_status: String = row.get("delivery_status");
             sqlx::query("UPDATE delivery_orders SET delivery_status='cancelled', updated_at=?, sync_status = 'pending', version = version + 1 WHERE delivery_id=?")
                 .bind(chrono::Utc::now().to_rfc3339()).bind(delivery_id).execute(pool).await?;
-            write_audit(pool, "AI_ADMIN", "delivery.cancelled", delivery_id, &json!({})).await?;
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "delivery.cancelled",
+                delivery_id,
+                &json!({}),
+            )
+            .await?;
             Ok(MutationResult {
                 description: format!("Delivery {} cancelled", &delivery_id[..8.min(delivery_id.len())]),
                 undo_snapshot_json: json!({"delivery_status":old_status}).to_string(),
@@ -4782,134 +5735,294 @@ pub async fn execute_mutation(
                 ).execute(pool).await?.rows_affected();
                 total += rows as u32;
             }
-            write_audit(pool, "AI_ADMIN", "sync.reset_stuck", "sync", &json!({"reset":total})).await?;
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "sync.reset_stuck",
+                "sync",
+                &json!({"reset":total}),
+            )
+            .await?;
             Ok(MutationResult {
-                description: format!("Reset {total} stuck rows — sync worker will retry on next cycle"),
-                undo_snapshot_json: "{}".into(), rollback_tool: "_no_undo".into(), rollback_input_json: "{}".into(),
-                entity_type: "sync".into(), entity_id: "reset_stuck".into(),
+                description: format!(
+                    "Reset {total} stuck rows — sync worker will retry on next cycle"
+                ),
+                undo_snapshot_json: "{}".into(),
+                rollback_tool: "_no_undo".into(),
+                rollback_input_json: "{}".into(),
+                entity_type: "sync".into(),
+                entity_id: "reset_stuck".into(),
             })
         }
         "sync_queue_retry" => {
             let event_id = input.get("event_id").and_then(|v| v.as_str()).unwrap_or("");
-            let (table, row_id) = event_id.split_once(':').ok_or_else(|| AppError::Validation("Expected format table:entity_id".into()))?;
+            let (table, row_id) = event_id
+                .split_once(':')
+                .ok_or_else(|| AppError::Validation("Expected format table:entity_id".into()))?;
             let pk = crate::commands::sync_commands::table_pk(table);
-            let sql = format!("UPDATE {table} SET sync_status='pending', sync_attempts=0 WHERE {pk}=?");
-            let rows = sqlx::query(&sql).bind(row_id).execute(pool).await?.rows_affected();
-            write_audit(pool, "AI_ADMIN", "sync.queue_retry", "sync", &json!({"event":event_id})).await?;
+            let sql =
+                format!("UPDATE {table} SET sync_status='pending', sync_attempts=0 WHERE {pk}=?");
+            let rows = sqlx::query(&sql)
+                .bind(row_id)
+                .execute(pool)
+                .await?
+                .rows_affected();
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "sync.queue_retry",
+                "sync",
+                &json!({"event":event_id}),
+            )
+            .await?;
             Ok(MutationResult {
                 description: format!("Retried sync event {event_id} ({rows} row reset)"),
-                undo_snapshot_json: "{}".into(), rollback_tool: "_no_undo".into(), rollback_input_json: "{}".into(),
-                entity_type: "sync".into(), entity_id: event_id.into(),
+                undo_snapshot_json: "{}".into(),
+                rollback_tool: "_no_undo".into(),
+                rollback_input_json: "{}".into(),
+                entity_type: "sync".into(),
+                entity_id: event_id.into(),
             })
         }
         "sync_queue_dismiss" => {
             let event_id = input.get("event_id").and_then(|v| v.as_str()).unwrap_or("");
-            let (table, row_id) = event_id.split_once(':').ok_or_else(|| AppError::Validation("Expected format table:entity_id".into()))?;
+            let (table, row_id) = event_id
+                .split_once(':')
+                .ok_or_else(|| AppError::Validation("Expected format table:entity_id".into()))?;
             let pk = crate::commands::sync_commands::table_pk(table);
-            let sql = format!("UPDATE {table} SET sync_status='synced', sync_attempts=0 WHERE {pk}=?");
-            let rows = sqlx::query(&sql).bind(row_id).execute(pool).await?.rows_affected();
-            write_audit(pool, "AI_ADMIN", "sync.queue_dismiss", "sync", &json!({"event":event_id})).await?;
+            let sql =
+                format!("UPDATE {table} SET sync_status='synced', sync_attempts=0 WHERE {pk}=?");
+            let rows = sqlx::query(&sql)
+                .bind(row_id)
+                .execute(pool)
+                .await?
+                .rows_affected();
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "sync.queue_dismiss",
+                "sync",
+                &json!({"event":event_id}),
+            )
+            .await?;
             Ok(MutationResult {
                 description: format!("Dismissed sync event {event_id} ({rows} row dismissed)"),
-                undo_snapshot_json: "{}".into(), rollback_tool: "_no_undo".into(), rollback_input_json: "{}".into(),
-                entity_type: "sync".into(), entity_id: event_id.into(),
+                undo_snapshot_json: "{}".into(),
+                rollback_tool: "_no_undo".into(),
+                rollback_input_json: "{}".into(),
+                entity_type: "sync".into(),
+                entity_id: event_id.into(),
             })
         }
         "void_sale" => {
-            let receipt = input.get("receipt_number").and_then(|v| v.as_str()).unwrap_or("");
+            let receipt = input
+                .get("receipt_number")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let reason = input.get("reason").and_then(|v| v.as_str()).unwrap_or("");
-            if reason.trim().is_empty() { return Err(AppError::Validation("Reason is required for void".into())); }
-            let sale_id: Option<String> = sqlx::query_scalar("SELECT sale_id FROM sales WHERE receipt_number=? AND status='completed'").bind(receipt).fetch_optional(pool).await?.flatten();
-            let sale_id = sale_id.ok_or_else(|| AppError::NotFound(format!("Sale {receipt} not found or already voided")))?;
+            if reason.trim().is_empty() {
+                return Err(AppError::Validation("Reason is required for void".into()));
+            }
+            let sale_id: Option<String> = sqlx::query_scalar(
+                "SELECT sale_id FROM sales WHERE receipt_number=? AND status='completed'",
+            )
+            .bind(receipt)
+            .fetch_optional(pool)
+            .await?
+            .flatten();
+            let sale_id = sale_id.ok_or_else(|| {
+                AppError::NotFound(format!("Sale {receipt} not found or already voided"))
+            })?;
             let now = chrono::Utc::now().to_rfc3339();
             sqlx::query("UPDATE sales SET status='voided', updated_at=?, sync_status='pending' WHERE sale_id=?")
                 .bind(&now).bind(&sale_id).execute(pool).await?;
             sqlx::query("UPDATE sale_items SET voided=1 WHERE sale_id=?")
-                .bind(&sale_id).execute(pool).await?;
-            write_audit(pool, "AI_ADMIN", "sale.voided", "sale", &json!({"sale_id":sale_id,"reason":reason})).await?;
+                .bind(&sale_id)
+                .execute(pool)
+                .await?;
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "sale.voided",
+                "sale",
+                &json!({"sale_id":sale_id,"reason":reason}),
+            )
+            .await?;
             Ok(MutationResult {
                 description: format!("Voided sale {receipt}: {reason}"),
                 undo_snapshot_json: json!({"sale_id":sale_id,"receipt":receipt}).to_string(),
-                rollback_tool: "_no_undo".into(), rollback_input_json: "{}".into(),
-                entity_type: "sale".into(), entity_id: sale_id,
+                rollback_tool: "_no_undo".into(),
+                rollback_input_json: "{}".into(),
+                entity_type: "sale".into(),
+                entity_id: sale_id,
             })
         }
         "delete_customer" => {
-            let cid = input.get("customer_id").and_then(|v| v.as_str()).unwrap_or("");
-            let name: Option<String> = sqlx::query_scalar("SELECT name FROM customers WHERE customer_id=?").bind(cid).fetch_optional(pool).await?.flatten();
+            let cid = input
+                .get("customer_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let name: Option<String> =
+                sqlx::query_scalar("SELECT name FROM customers WHERE customer_id=?")
+                    .bind(cid)
+                    .fetch_optional(pool)
+                    .await?
+                    .flatten();
             let name = name.ok_or_else(|| AppError::NotFound("Customer not found".into()))?;
             let snapshot = json!({"customer_id": cid, "name": name});
-            sqlx::query("DELETE FROM customers WHERE customer_id=?").bind(cid).execute(pool).await?;
+            sqlx::query("DELETE FROM customers WHERE customer_id=?")
+                .bind(cid)
+                .execute(pool)
+                .await?;
             write_audit(pool, "AI_ADMIN", "customer.deleted", "customer", &snapshot).await?;
             Ok(MutationResult {
                 description: format!("Deleted customer: {name}"),
                 undo_snapshot_json: snapshot.to_string(),
-                rollback_tool: "create_customer".into(), rollback_input_json: snapshot.to_string(),
-                entity_type: "customer".into(), entity_id: cid.into(),
+                rollback_tool: "create_customer".into(),
+                rollback_input_json: snapshot.to_string(),
+                entity_type: "customer".into(),
+                entity_id: cid.into(),
             })
         }
         "set_device_active" => {
-            let did = input.get("device_id").and_then(|v| v.as_str()).unwrap_or("");
-            let active = input.get("is_active").and_then(|v| v.as_bool()).unwrap_or(true);
-            let name: Option<String> = sqlx::query_scalar("SELECT name FROM devices WHERE device_id=?").bind(did).fetch_optional(pool).await?.flatten();
+            let did = input
+                .get("device_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let active = input
+                .get("is_active")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let name: Option<String> =
+                sqlx::query_scalar("SELECT name FROM devices WHERE device_id=?")
+                    .bind(did)
+                    .fetch_optional(pool)
+                    .await?
+                    .flatten();
             let name = name.unwrap_or_else(|| did.to_string());
             let now = chrono::Utc::now().to_rfc3339();
             sqlx::query("UPDATE devices SET is_active=?, updated_at=?, sync_status='pending' WHERE device_id=?")
                 .bind(active as i64).bind(&now).bind(did).execute(pool).await?;
-            write_audit(pool, "AI_ADMIN", "device.toggle", "device", &json!({"device_id":did,"active":active})).await?;
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "device.toggle",
+                "device",
+                &json!({"device_id":did,"active":active}),
+            )
+            .await?;
             Ok(MutationResult {
                 description: format!("Device '{name}' set to active={active}"),
                 undo_snapshot_json: json!({"device_id":did,"is_active":!active}).to_string(),
-                rollback_tool: "set_device_active".into(), rollback_input_json: json!({"device_id":did,"is_active":!active}).to_string(),
-                entity_type: "device".into(), entity_id: did.into(),
+                rollback_tool: "set_device_active".into(),
+                rollback_input_json: json!({"device_id":did,"is_active":!active}).to_string(),
+                entity_type: "device".into(),
+                entity_id: did.into(),
             })
         }
         "receive_stock" => {
-            let pid = input.get("product_id").and_then(|v| v.as_str()).unwrap_or("");
-            let qty = input.get("quantity").and_then(|v| v.as_str()).unwrap_or("0");
+            let pid = input
+                .get("product_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let qty = input
+                .get("quantity")
+                .and_then(|v| v.as_str())
+                .unwrap_or("0");
             let notes = input.get("notes").and_then(|v| v.as_str()).unwrap_or("");
-            let pname: Option<String> = sqlx::query_scalar("SELECT name FROM products WHERE product_id=?").bind(pid).fetch_optional(pool).await?.flatten();
+            let pname: Option<String> =
+                sqlx::query_scalar("SELECT name FROM products WHERE product_id=?")
+                    .bind(pid)
+                    .fetch_optional(pool)
+                    .await?
+                    .flatten();
             let _ = pname.ok_or_else(|| AppError::NotFound("Product not found".into()))?;
-            let branch_id: String = sqlx::query_scalar("SELECT branch_id FROM branches WHERE is_active=1 LIMIT 1").fetch_one(pool).await?;
+            let branch_id: String =
+                sqlx::query_scalar("SELECT branch_id FROM branches WHERE is_active=1 LIMIT 1")
+                    .fetch_one(pool)
+                    .await?;
             let now = chrono::Utc::now().to_rfc3339();
             let level_id = format!("SL-{}-{}", pid, branch_id);
             sqlx::query("INSERT INTO stock_levels (stock_level_id,product_id,branch_id,quantity_on_hand,last_movement_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(product_id,branch_id) DO UPDATE SET quantity_on_hand = CAST(CAST(stock_levels.quantity_on_hand AS REAL) + CAST(? AS REAL) AS TEXT), last_movement_at=?, updated_at=?, sync_status='pending'")
                 .bind(&level_id).bind(pid).bind(&branch_id).bind(qty).bind(&now).bind(&now).bind(&now).bind(qty).bind(&now).bind(&now).execute(pool).await?;
             let mid = ulid::Ulid::new().to_string();
-            let qty_after: String = sqlx::query_scalar("SELECT quantity_on_hand FROM stock_levels WHERE product_id=? AND branch_id=?").bind(pid).bind(&branch_id).fetch_one(pool).await?;
+            let qty_after: String = sqlx::query_scalar(
+                "SELECT quantity_on_hand FROM stock_levels WHERE product_id=? AND branch_id=?",
+            )
+            .bind(pid)
+            .bind(&branch_id)
+            .fetch_one(pool)
+            .await?;
             sqlx::query("INSERT INTO stock_movements (movement_id,product_id,branch_id,device_id,origin_device_id,movement_type,quantity_delta,quantity_after,reference_type,notes,created_by_user_id,created_at) VALUES (?,?,?,?,(SELECT device_id FROM devices WHERE is_active=1 LIMIT 1),'receive',?,?,'receive',?,'AI_ADMIN',?)")
                 .bind(&mid).bind(pid).bind(&branch_id).bind(&branch_id).bind(qty).bind(&qty_after).bind(notes).bind(&now).execute(pool).await?;
-            write_audit(pool, "AI_ADMIN", "stock.receive", "product", &json!({"product_id":pid,"qty":qty,"notes":notes})).await?;
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "stock.receive",
+                "product",
+                &json!({"product_id":pid,"qty":qty,"notes":notes}),
+            )
+            .await?;
             Ok(MutationResult {
                 description: format!("Received {qty} of product {pid}"),
                 undo_snapshot_json: json!({"product_id":pid,"qty":qty}).to_string(),
-                rollback_tool: "adjust_stock".into(), rollback_input_json: json!({"product_id":pid,"delta":format!("-{}",qty)}).to_string(),
-                entity_type: "stock".into(), entity_id: mid,
+                rollback_tool: "adjust_stock".into(),
+                rollback_input_json: json!({"product_id":pid,"delta":format!("-{}",qty)})
+                    .to_string(),
+                entity_type: "stock".into(),
+                entity_id: mid,
             })
         }
         "add_loyalty_points" => {
-            let cid = input.get("customer_id").and_then(|v| v.as_str()).unwrap_or("");
+            let cid = input
+                .get("customer_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let pts = input.get("points").and_then(|v| v.as_i64()).unwrap_or(0);
             let now = chrono::Utc::now().to_rfc3339();
             sqlx::query("UPDATE customers SET loyalty_points = loyalty_points + ?, updated_at = ?, sync_status = 'pending' WHERE customer_id = ?")
                 .bind(pts).bind(&now).bind(cid).execute(pool).await?;
-            let new_total: i64 = sqlx::query_scalar("SELECT loyalty_points FROM customers WHERE customer_id=?").bind(cid).fetch_one(pool).await?;
-            write_audit(pool, "AI_ADMIN", "customer.loyalty", "customer", &json!({"customer_id":cid,"added":pts,"total":new_total})).await?;
+            let new_total: i64 =
+                sqlx::query_scalar("SELECT loyalty_points FROM customers WHERE customer_id=?")
+                    .bind(cid)
+                    .fetch_one(pool)
+                    .await?;
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "customer.loyalty",
+                "customer",
+                &json!({"customer_id":cid,"added":pts,"total":new_total}),
+            )
+            .await?;
             Ok(MutationResult {
                 description: format!("Added {pts} loyalty points, new total: {new_total}"),
                 undo_snapshot_json: json!({"customer_id":cid,"points":-pts}).to_string(),
-                rollback_tool: "add_loyalty_points".into(), rollback_input_json: json!({"customer_id":cid,"points":-pts}).to_string(),
-                entity_type: "customer".into(), entity_id: cid.into(),
+                rollback_tool: "add_loyalty_points".into(),
+                rollback_input_json: json!({"customer_id":cid,"points":-pts}).to_string(),
+                entity_type: "customer".into(),
+                entity_id: cid.into(),
             })
         }
         "bulk_update_prices" => {
-            let updates = input.get("updates").and_then(|v| v.as_array()).ok_or_else(|| AppError::Validation("updates array required".into()))?;
+            let updates = input
+                .get("updates")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| AppError::Validation("updates array required".into()))?;
             let now = chrono::Utc::now().to_rfc3339();
             let mut updated = 0;
             for item in updates {
-                let pid = item.get("product_id").and_then(|v| v.as_str()).unwrap_or("");
-                let price = item.get("price_minor").and_then(|v| v.as_i64()).unwrap_or(0);
-                if pid.is_empty() { continue; }
+                let pid = item
+                    .get("product_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let price = item
+                    .get("price_minor")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                if pid.is_empty() {
+                    continue;
+                }
                 sqlx::query("UPDATE product_prices SET effective_to=?, sync_status='pending' WHERE product_id=? AND price_type='selling' AND effective_to IS NULL")
                     .bind(&now).bind(pid).execute(pool).await?;
                 let npid = ulid::Ulid::new().to_string();
@@ -4917,11 +6030,21 @@ pub async fn execute_mutation(
                     .bind(&npid).bind(pid).bind(price).bind(&now).bind(&now).execute(pool).await?;
                 updated += 1;
             }
-            write_audit(pool, "AI_ADMIN", "product.bulk_price", "product", &json!({"count":updated})).await?;
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "product.bulk_price",
+                "product",
+                &json!({"count":updated}),
+            )
+            .await?;
             Ok(MutationResult {
                 description: format!("Updated prices for {updated} products"),
-                undo_snapshot_json: "{}".into(), rollback_tool: "_no_undo".into(), rollback_input_json: "{}".into(),
-                entity_type: "product".into(), entity_id: "bulk".into(),
+                undo_snapshot_json: "{}".into(),
+                rollback_tool: "_no_undo".into(),
+                rollback_input_json: "{}".into(),
+                entity_type: "product".into(),
+                entity_id: "bulk".into(),
             })
         }
         // ── Database backup ────────────────────────────────────────────────────
@@ -4932,14 +6055,26 @@ pub async fn execute_mutation(
             let _ = std::fs::create_dir_all(&backup_dir);
             let ts = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
             let backup_path = format!("{}/zanpos_backup_{}.db", backup_dir, ts);
-            sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)").execute(pool).await?;
+            sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+                .execute(pool)
+                .await?;
             std::fs::copy(&db_src, &backup_path)
                 .map_err(|e| AppError::Internal(format!("Backup failed: {e}")))?;
-            write_audit(pool, "AI_ADMIN", "backup.created", &ts, &json!({"path":&backup_path})).await?;
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "backup.created",
+                &ts,
+                &json!({"path":&backup_path}),
+            )
+            .await?;
             Ok(MutationResult {
                 description: format!("Database backed up to {}", backup_path),
-                undo_snapshot_json: "{}".into(), rollback_tool: "_no_undo".into(), rollback_input_json: "{}".into(),
-                entity_type: "backup".into(), entity_id: ts,
+                undo_snapshot_json: "{}".into(),
+                rollback_tool: "_no_undo".into(),
+                rollback_input_json: "{}".into(),
+                entity_type: "backup".into(),
+                entity_id: ts,
             })
         }
         name => crate::ai::tools_write_ext::execute(pool, name, input, currency_exp).await,

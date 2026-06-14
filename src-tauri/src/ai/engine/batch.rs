@@ -1,5 +1,5 @@
 use crate::ai::engine::selector::Selector;
-use crate::ai::engine::{runs, apply_price, PriceOp};
+use crate::ai::engine::{apply_price, runs, PriceOp};
 use crate::errors::AppResult;
 use sqlx::SqlitePool;
 
@@ -127,8 +127,7 @@ pub async fn undo_run(pool: &SqlitePool, run_id: &str) -> AppResult<i64> {
     let mut restored = 0i64;
     let mut tx = pool.begin().await?;
     for (entry_id, reverse_json) in &entries {
-        let reverses: Vec<Reverse> =
-            serde_json::from_str(reverse_json).unwrap_or_default();
+        let reverses: Vec<Reverse> = serde_json::from_str(reverse_json).unwrap_or_default();
         for r in &reverses {
             sqlx::query(
                 "UPDATE product_prices SET effective_to=?, sync_status='pending' \
@@ -181,7 +180,11 @@ mod tests {
             .unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         let now = "2026-01-01T00:00:00Z";
-        for (id, parent) in [("toys", None), ("girls", Some("toys")), ("boys", Some("toys"))] {
+        for (id, parent) in [
+            ("toys", None),
+            ("girls", Some("toys")),
+            ("boys", Some("toys")),
+        ] {
             sqlx::query("INSERT INTO categories (category_id,parent_category_id,name,sort_order,is_active,created_at,updated_at) VALUES (?,?,?,0,1,?,?)")
                 .bind(id).bind(parent).bind(id).bind(now).bind(now).execute(&pool).await.unwrap();
         }
@@ -223,23 +226,16 @@ mod tests {
             .await
             .unwrap();
 
-        let changed =
-            execute_price_adjust(&pool, &run_id, &sel, &PriceOp::Percent(20.0), 100)
-                .await
-                .unwrap();
+        let changed = execute_price_adjust(&pool, &run_id, &sel, &PriceOp::Percent(20.0), 100)
+            .await
+            .unwrap();
 
         assert_eq!(changed, 250);
         assert_eq!(current_price(&pool, "g0000").await, 15000);
         assert_eq!(current_price(&pool, "g0249").await, 15000);
         assert_eq!(current_price(&pool, "b0001").await, 12500);
-        assert_eq!(
-            runs::get_run(&pool, &run_id).await.unwrap().status,
-            "done"
-        );
-        assert_eq!(
-            runs::get_run(&pool, &run_id).await.unwrap().done_count,
-            250
-        );
+        assert_eq!(runs::get_run(&pool, &run_id).await.unwrap().status, "done");
+        assert_eq!(runs::get_run(&pool, &run_id).await.unwrap().done_count, 250);
     }
 
     #[tokio::test]

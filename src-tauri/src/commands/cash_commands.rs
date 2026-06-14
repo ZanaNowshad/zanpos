@@ -122,12 +122,7 @@ pub async fn cash_event_create(
                 "Cannot add cash event to a closed shift".into(),
             ))
         }
-        None => {
-            return Err(AppError::NotFound(format!(
-                "Shift {} not found",
-                shift_id
-            )))
-        }
+        None => return Err(AppError::NotFound(format!("Shift {} not found", shift_id))),
     }
 
     sqlx::query(

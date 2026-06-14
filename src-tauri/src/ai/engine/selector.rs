@@ -44,9 +44,7 @@ impl Selector {
             conds.push(format!("p.is_active = {}", if active { 1 } else { 0 }));
         }
         if let Some(text) = &self.text {
-            conds.push(
-                "(p.name LIKE ? OR p.sku LIKE ? OR p.barcode LIKE ?)".into(),
-            );
+            conds.push("(p.name LIKE ? OR p.sku LIKE ? OR p.barcode LIKE ?)".into());
             let like = format!("%{}%", text);
             binds.push(like.clone());
             binds.push(like.clone());

@@ -32,12 +32,14 @@ async fn active_branch_id(state: &AppState) -> AppResult<String> {
 
 /// Resolve the active device_id from the database at runtime.
 async fn active_device_id(state: &AppState) -> String {
-    sqlx::query_scalar("SELECT device_id FROM devices WHERE is_active=1 ORDER BY device_code LIMIT 1")
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| "unknown".to_string())
+    sqlx::query_scalar(
+        "SELECT device_id FROM devices WHERE is_active=1 ORDER BY device_code LIMIT 1",
+    )
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_else(|| "unknown".to_string())
 }
 
 // ─── Response types ───────────────────────────────────────────────────────────
@@ -268,16 +270,22 @@ pub async fn admin_create_product(
         return Err(AppError::Validation("Product name is required".into()));
     }
     if name_trimmed.len() > 255 {
-        return Err(AppError::Validation("Product name must not exceed 255 characters".into()));
+        return Err(AppError::Validation(
+            "Product name must not exceed 255 characters".into(),
+        ));
     }
     if let Some(ref sku) = input.sku {
         if sku.trim().len() > 100 {
-            return Err(AppError::Validation("SKU must not exceed 100 characters".into()));
+            return Err(AppError::Validation(
+                "SKU must not exceed 100 characters".into(),
+            ));
         }
     }
     if let Some(ref bc) = input.barcode {
         if bc.trim().len() > 100 {
-            return Err(AppError::Validation("Barcode must not exceed 100 characters".into()));
+            return Err(AppError::Validation(
+                "Barcode must not exceed 100 characters".into(),
+            ));
         }
     }
 
@@ -316,7 +324,12 @@ pub async fn admin_create_product(
     .bind(input.image_path.as_deref().filter(|s| !s.is_empty()))
     .bind(input.cost_minor)
     .bind(input.description.as_deref().filter(|s| !s.is_empty()))
-    .bind(input.default_supplier_id.as_deref().filter(|s| !s.is_empty()))
+    .bind(
+        input
+            .default_supplier_id
+            .as_deref()
+            .filter(|s| !s.is_empty()),
+    )
     .bind(&now)
     .bind(&now)
     .execute(&mut *tx)
@@ -373,12 +386,25 @@ pub async fn admin_create_product(
         "product_id": product_id, "name": input.name,
         "category_id": input.category_id, "sku": input.sku,
         "price_minor": input.price_minor, "is_active": true,
-    }).to_string();
+    })
+    .to_string();
     if let Err(e) = audit_hash::insert_audit_entry(
-        &state.db, "PRODUCT_CREATED", "product", &product_id,
-        &input.created_by_user_id, "user", &device_id, &branch_id,
-        None, Some(&after), None,
-    ).await { tracing::error!("AUDIT WRITE FAILED [PRODUCT_CREATED]: {:?}", e); }
+        &state.db,
+        "PRODUCT_CREATED",
+        "product",
+        &product_id,
+        &input.created_by_user_id,
+        "user",
+        &device_id,
+        &branch_id,
+        None,
+        Some(&after),
+        None,
+    )
+    .await
+    {
+        tracing::error!("AUDIT WRITE FAILED [PRODUCT_CREATED]: {:?}", e);
+    }
 
     // Return the newly created product
     let sql = format!("{} WHERE p.product_id = ?", ADMIN_PRODUCT_QUERY);
@@ -422,16 +448,22 @@ pub async fn admin_update_product(
         return Err(AppError::Validation("Product name is required".into()));
     }
     if name_trimmed.len() > 255 {
-        return Err(AppError::Validation("Product name must not exceed 255 characters".into()));
+        return Err(AppError::Validation(
+            "Product name must not exceed 255 characters".into(),
+        ));
     }
     if let Some(ref sku) = input.sku {
         if sku.trim().len() > 100 {
-            return Err(AppError::Validation("SKU must not exceed 100 characters".into()));
+            return Err(AppError::Validation(
+                "SKU must not exceed 100 characters".into(),
+            ));
         }
     }
     if let Some(ref bc) = input.barcode {
         if bc.trim().len() > 100 {
-            return Err(AppError::Validation("Barcode must not exceed 100 characters".into()));
+            return Err(AppError::Validation(
+                "Barcode must not exceed 100 characters".into(),
+            ));
         }
     }
 
@@ -489,7 +521,12 @@ pub async fn admin_update_product(
     .bind(input.image_path.as_deref().filter(|s| !s.is_empty()))
     .bind(input.cost_minor)
     .bind(input.description.as_deref().filter(|s| !s.is_empty()))
-    .bind(input.default_supplier_id.as_deref().filter(|s| !s.is_empty()))
+    .bind(
+        input
+            .default_supplier_id
+            .as_deref()
+            .filter(|s| !s.is_empty()),
+    )
     .bind(&now)
     .bind(&input.product_id)
     .execute(&mut *tx)
@@ -557,12 +594,25 @@ pub async fn admin_update_product(
         "product_id": input.product_id, "name": input.name,
         "category_id": input.category_id, "sku": input.sku,
         "price_minor": input.price_minor, "is_active": input.is_active,
-    }).to_string();
+    })
+    .to_string();
     if let Err(e) = audit_hash::insert_audit_entry(
-        &state.db, "PRODUCT_UPDATED", "product", &input.product_id,
-        &input.updated_by_user_id, "user", &device_id, &branch_id,
-        None, Some(&after), None,
-    ).await { tracing::error!("AUDIT WRITE FAILED [PRODUCT_UPDATED]: {:?}", e); }
+        &state.db,
+        "PRODUCT_UPDATED",
+        "product",
+        &input.product_id,
+        &input.updated_by_user_id,
+        "user",
+        &device_id,
+        &branch_id,
+        None,
+        Some(&after),
+        None,
+    )
+    .await
+    {
+        tracing::error!("AUDIT WRITE FAILED [PRODUCT_UPDATED]: {:?}", e);
+    }
 
     let sql = format!("{} WHERE p.product_id = ?", ADMIN_PRODUCT_QUERY);
     let row = sqlx::query(&sql)
@@ -659,7 +709,9 @@ pub async fn admin_save_tax_rule(
         return Err(AppError::Validation("Tax rule name is required".into()));
     }
     if input.rate_basis_points < 0 || input.rate_basis_points > 10000 {
-        return Err(AppError::Validation("Rate must be between 0% and 100%".into()));
+        return Err(AppError::Validation(
+            "Rate must be between 0% and 100%".into(),
+        ));
     }
     let rate_basis_points = input.rate_basis_points;
     let now = chrono::Utc::now().to_rfc3339();
@@ -728,17 +780,34 @@ pub async fn admin_save_tax_rule(
     // H8: Audit log — tax rule created/updated
     let device_id = active_device_id(&state).await;
     let branch_id = active_branch_id(&state).await?;
-    let tax_event = if is_tax_update { "TAX_RULE_UPDATED" } else { "TAX_RULE_CREATED" };
+    let tax_event = if is_tax_update {
+        "TAX_RULE_UPDATED"
+    } else {
+        "TAX_RULE_CREATED"
+    };
     let after = serde_json::json!({
         "tax_rule_id": result.tax_rule_id, "name": result.name,
         "rate_basis_points": result.rate_basis_points, "inclusive": result.inclusive,
         "is_active": result.is_active,
-    }).to_string();
+    })
+    .to_string();
     if let Err(e) = audit_hash::insert_audit_entry(
-        &state.db, tax_event, "tax_rule", &result.tax_rule_id,
-        &input.actor_user_id, "user", &device_id, &branch_id,
-        None, Some(&after), None,
-    ).await { tracing::error!("AUDIT WRITE FAILED [TAX_RULE]: {:?}", e); }
+        &state.db,
+        tax_event,
+        "tax_rule",
+        &result.tax_rule_id,
+        &input.actor_user_id,
+        "user",
+        &device_id,
+        &branch_id,
+        None,
+        Some(&after),
+        None,
+    )
+    .await
+    {
+        tracing::error!("AUDIT WRITE FAILED [TAX_RULE]: {:?}", e);
+    }
 
     Ok(result)
 }
@@ -779,12 +848,25 @@ pub async fn admin_delete_tax_rule(
     let branch_id = active_branch_id(&state).await?;
     let after = serde_json::json!({
         "tax_rule_id": input.tax_rule_id, "is_active": false, "deleted": true,
-    }).to_string();
+    })
+    .to_string();
     if let Err(e) = audit_hash::insert_audit_entry(
-        &state.db, "TAX_RULE_DELETED", "tax_rule", &input.tax_rule_id,
-        &input.actor_user_id, "user", &device_id, &branch_id,
-        None, Some(&after), None,
-    ).await { tracing::error!("AUDIT WRITE FAILED [TAX_RULE_DELETED]: {:?}", e); }
+        &state.db,
+        "TAX_RULE_DELETED",
+        "tax_rule",
+        &input.tax_rule_id,
+        &input.actor_user_id,
+        "user",
+        &device_id,
+        &branch_id,
+        None,
+        Some(&after),
+        None,
+    )
+    .await
+    {
+        tracing::error!("AUDIT WRITE FAILED [TAX_RULE_DELETED]: {:?}", e);
+    }
 
     Ok(())
 }
@@ -827,7 +909,8 @@ pub async fn admin_save_category(
             .bind(parent_id)
             .fetch_one(&state.db)
             .await
-            .unwrap_or(0) > 0;
+            .unwrap_or(0)
+                > 0;
             if !parent_exists {
                 return Err(AppError::Validation(
                     "Parent category does not exist".into(),
@@ -851,7 +934,8 @@ pub async fn admin_save_category(
             .bind(&id)
             .fetch_one(&state.db)
             .await
-            .unwrap_or(0) != 0;
+            .unwrap_or(0)
+                != 0;
 
             if cycle_found {
                 return Err(AppError::Validation(
@@ -884,7 +968,8 @@ pub async fn admin_save_category(
             .bind(parent_id)
             .fetch_one(&state.db)
             .await
-            .unwrap_or(0) > 0;
+            .unwrap_or(0)
+                > 0;
             if !parent_exists {
                 return Err(AppError::Validation(
                     "Parent category does not exist".into(),
@@ -929,17 +1014,34 @@ pub async fn admin_save_category(
     // H8: Audit log — category created/updated
     let device_id = active_device_id(&state).await;
     let branch_id = active_branch_id(&state).await?;
-    let event = if is_update { "CATEGORY_UPDATED" } else { "CATEGORY_CREATED" };
+    let event = if is_update {
+        "CATEGORY_UPDATED"
+    } else {
+        "CATEGORY_CREATED"
+    };
     let after = serde_json::json!({
         "category_id": result.category_id, "name": result.name,
         "sort_order": result.sort_order, "is_active": result.is_active,
         "parent_category_id": result.parent_category_id,
-    }).to_string();
+    })
+    .to_string();
     if let Err(e) = audit_hash::insert_audit_entry(
-        &state.db, event, "category", &result.category_id,
-        &input.actor_user_id, "user", &device_id, &branch_id,
-        None, Some(&after), None,
-    ).await { tracing::error!("AUDIT WRITE FAILED [CATEGORY]: {:?}", e); }
+        &state.db,
+        event,
+        "category",
+        &result.category_id,
+        &input.actor_user_id,
+        "user",
+        &device_id,
+        &branch_id,
+        None,
+        Some(&after),
+        None,
+    )
+    .await
+    {
+        tracing::error!("AUDIT WRITE FAILED [CATEGORY]: {:?}", e);
+    }
 
     Ok(result)
 }
@@ -997,12 +1099,11 @@ pub async fn admin_bulk_import_categories(
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
 
     // Determine the current max sort_order so auto-assigned ones don't collide.
-    let max_order: i64 = sqlx::query_scalar::<_, i64>(
-        "SELECT COALESCE(MAX(sort_order), 0) FROM categories",
-    )
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(0);
+    let max_order: i64 =
+        sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(sort_order), 0) FROM categories")
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0);
 
     let now = chrono::Utc::now().to_rfc3339();
     let mut inserted = 0usize;
@@ -1012,7 +1113,11 @@ pub async fn admin_bulk_import_categories(
     for (idx, row) in rows.iter().enumerate() {
         let name = row.name.trim();
         if name.is_empty() {
-            errors.push(BulkRowError { row: idx + 1, name: row.name.clone(), reason: "Name is empty".into() });
+            errors.push(BulkRowError {
+                row: idx + 1,
+                name: row.name.clone(),
+                reason: "Name is empty".into(),
+            });
             continue;
         }
 
@@ -1023,7 +1128,8 @@ pub async fn admin_bulk_import_categories(
         .bind(name)
         .fetch_one(&state.db)
         .await
-        .unwrap_or(0) > 0;
+        .unwrap_or(0)
+            > 0;
 
         if exists {
             skipped += 1;
@@ -1060,7 +1166,11 @@ pub async fn admin_bulk_import_categories(
 
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
-    Ok(BulkImportResult { inserted, skipped, errors })
+    Ok(BulkImportResult {
+        inserted,
+        skipped,
+        errors,
+    })
 }
 
 /// Bulk-import products from CSV rows.
@@ -1118,23 +1228,39 @@ pub async fn admin_bulk_import_products(
     for (idx, row) in rows.iter().enumerate() {
         let name = row.name.trim();
         if name.is_empty() {
-            errors.push(BulkRowError { row: idx + 1, name: row.name.clone(), reason: "Name is empty".into() });
+            errors.push(BulkRowError {
+                row: idx + 1,
+                name: row.name.clone(),
+                reason: "Name is empty".into(),
+            });
             continue;
         }
 
         // Parse price — decimal string → minor integer (no float)
         let price_minor = match crate::domain::money::parse_major_to_minor(&row.price, 3) {
             Some(v) if v <= 0 => {
-                errors.push(BulkRowError { row: idx + 1, name: row.name.clone(), reason: "Price must be greater than zero".into() });
+                errors.push(BulkRowError {
+                    row: idx + 1,
+                    name: row.name.clone(),
+                    reason: "Price must be greater than zero".into(),
+                });
                 continue;
             }
             Some(v) if v <= 999_999_000 => v, // max 999.999 BHD
             Some(_) => {
-                errors.push(BulkRowError { row: idx + 1, name: row.name.clone(), reason: format!("Price out of range: {}", row.price) });
+                errors.push(BulkRowError {
+                    row: idx + 1,
+                    name: row.name.clone(),
+                    reason: format!("Price out of range: {}", row.price),
+                });
                 continue;
             }
             None => {
-                errors.push(BulkRowError { row: idx + 1, name: row.name.clone(), reason: format!("Invalid price: '{}'", row.price) });
+                errors.push(BulkRowError {
+                    row: idx + 1,
+                    name: row.name.clone(),
+                    reason: format!("Invalid price: '{}'", row.price),
+                });
                 continue;
             }
         };
@@ -1142,7 +1268,11 @@ pub async fn admin_bulk_import_products(
         // Resolve or create category
         let cat_key = row.category_name.trim().to_lowercase();
         if cat_key.is_empty() {
-            errors.push(BulkRowError { row: idx + 1, name: row.name.clone(), reason: "category_name is empty".into() });
+            errors.push(BulkRowError {
+                row: idx + 1,
+                name: row.name.clone(),
+                reason: "category_name is empty".into(),
+            });
             continue;
         }
         let category_id = if let Some(id) = cat_map.get(&cat_key) {
@@ -1150,10 +1280,11 @@ pub async fn admin_bulk_import_products(
         } else {
             // Auto-create the category
             let new_cat_id = Ulid::new().to_string();
-            let max_order: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(sort_order), 0) FROM categories")
-                .fetch_one(&mut *tx)
-                .await
-                .unwrap_or(0);
+            let max_order: i64 =
+                sqlx::query_scalar("SELECT COALESCE(MAX(sort_order), 0) FROM categories")
+                    .fetch_one(&mut *tx)
+                    .await
+                    .unwrap_or(0);
             let res = sqlx::query(
                 "INSERT OR IGNORE INTO categories (category_id, name, sort_order, is_active, created_at, updated_at, version)
                  VALUES (?,?,?,1,?,?,1)",
@@ -1184,7 +1315,14 @@ pub async fn admin_bulk_import_products(
                             id
                         }
                         _ => {
-                            errors.push(BulkRowError { row: idx + 1, name: row.name.clone(), reason: format!("Could not resolve category '{}'", row.category_name) });
+                            errors.push(BulkRowError {
+                                row: idx + 1,
+                                name: row.name.clone(),
+                                reason: format!(
+                                    "Could not resolve category '{}'",
+                                    row.category_name
+                                ),
+                            });
                             continue;
                         }
                     }
@@ -1203,10 +1341,18 @@ pub async fn admin_bulk_import_products(
 
         // Resolve barcodes — pipe-separated `barcodes` field takes priority over single `barcode`
         let all_barcodes: Vec<&str> = if let Some(ref bc_str) = row.barcodes {
-            bc_str.split('|').map(str::trim).filter(|s| !s.is_empty()).collect()
+            bc_str
+                .split('|')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .collect()
         } else if let Some(ref bc) = row.barcode {
             let bc = bc.trim();
-            if bc.is_empty() { vec![] } else { vec![bc] }
+            if bc.is_empty() {
+                vec![]
+            } else {
+                vec![bc]
+            }
         } else {
             vec![]
         };
@@ -1228,7 +1374,8 @@ pub async fn admin_bulk_import_products(
             .bind(bc)
             .fetch_one(&mut *tx)
             .await
-            .unwrap_or(0) != 0;
+            .unwrap_or(0)
+                != 0;
 
             if already_exists {
                 errors.push(BulkRowError {
@@ -1278,7 +1425,11 @@ pub async fn admin_bulk_import_products(
                 continue;
             }
             Err(e) => {
-                errors.push(BulkRowError { row: idx + 1, name: row.name.clone(), reason: format!("DB error: {}", e) });
+                errors.push(BulkRowError {
+                    row: idx + 1,
+                    name: row.name.clone(),
+                    reason: format!("DB error: {}", e),
+                });
                 continue;
             }
             Ok(_) => {}
@@ -1325,13 +1476,17 @@ pub async fn admin_bulk_import_products(
         .execute(&mut *tx)
         .await
         {
-            errors.push(BulkRowError { row: idx + 1, name: row.name.clone(), reason: format!("Price write failed: {}", e) });
+            errors.push(BulkRowError {
+                row: idx + 1,
+                name: row.name.clone(),
+                reason: format!("Price write failed: {}", e),
+            });
             continue;
         }
 
         // Init stock level (INSERT OR IGNORE — duplicate safe)
         if track {
-        let sl_id = format!("SL-{}-{}", product_id, branch_id);
+            let sl_id = format!("SL-{}-{}", product_id, branch_id);
             let _ = sqlx::query(
                 "INSERT OR IGNORE INTO stock_levels
                    (stock_level_id, product_id, branch_id, quantity_on_hand, created_at, updated_at)
@@ -1353,7 +1508,11 @@ pub async fn admin_bulk_import_products(
 
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
-    Ok(BulkImportResult { inserted, skipped, errors })
+    Ok(BulkImportResult {
+        inserted,
+        skipped,
+        errors,
+    })
 }
 
 // ─── User commands ────────────────────────────────────────────────────────────
@@ -1484,12 +1643,25 @@ pub async fn admin_create_user(
         "user_id": result.user_id, "display_name": result.display_name,
         "username": result.username, "role_id": result.role_id,
         "is_active": result.is_active,
-    }).to_string();
+    })
+    .to_string();
     if let Err(e) = audit_hash::insert_audit_entry(
-        &state.db, "USER_CREATED", "user", &result.user_id,
-        &input.actor_user_id, "user", &device_id, &branch_id,
-        None, Some(&after), None,
-    ).await { tracing::error!("AUDIT WRITE FAILED [USER_CREATED]: {:?}", e); }
+        &state.db,
+        "USER_CREATED",
+        "user",
+        &result.user_id,
+        &input.actor_user_id,
+        "user",
+        &device_id,
+        &branch_id,
+        None,
+        Some(&after),
+        None,
+    )
+    .await
+    {
+        tracing::error!("AUDIT WRITE FAILED [USER_CREATED]: {:?}", e);
+    }
 
     Ok(result)
 }
@@ -1509,7 +1681,9 @@ pub async fn product_barcode_add(
         return Err(AppError::Validation("Barcode is required".into()));
     }
     if barcode.len() > 100 {
-        return Err(AppError::Validation("Barcode must not exceed 100 characters".into()));
+        return Err(AppError::Validation(
+            "Barcode must not exceed 100 characters".into(),
+        ));
     }
     let barcode_id = format!("PBC-{}", Ulid::new());
     let now = chrono::Utc::now().to_rfc3339();
@@ -1537,12 +1711,25 @@ pub async fn product_barcode_add(
     let branch_id = active_branch_id(&state).await?;
     let after = serde_json::json!({
         "barcode_id": barcode_id, "product_id": product_id, "barcode": barcode,
-    }).to_string();
+    })
+    .to_string();
     if let Err(e) = audit_hash::insert_audit_entry(
-        &state.db, "BARCODE_ADDED", "product", &product_id,
-        &actor_user_id, "user", &device_id, &branch_id,
-        None, Some(&after), None,
-    ).await { tracing::error!("AUDIT WRITE FAILED [BARCODE_ADDED]: {:?}", e); }
+        &state.db,
+        "BARCODE_ADDED",
+        "product",
+        &product_id,
+        &actor_user_id,
+        "user",
+        &device_id,
+        &branch_id,
+        None,
+        Some(&after),
+        None,
+    )
+    .await
+    {
+        tracing::error!("AUDIT WRITE FAILED [BARCODE_ADDED]: {:?}", e);
+    }
     // Also re-enqueue the product so other terminals pick up the new barcode field
     // (product_barcodes is a separate table but barcode on products is the primary one)
     drop((device_id, branch_id));
@@ -1564,12 +1751,11 @@ pub async fn product_barcode_remove(
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
 
     // Fetch the barcode record before deleting so we can audit it
-    let record = sqlx::query(
-        "SELECT product_id, barcode FROM product_barcodes WHERE barcode_id = ?",
-    )
-    .bind(&barcode_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let record =
+        sqlx::query("SELECT product_id, barcode FROM product_barcodes WHERE barcode_id = ?")
+            .bind(&barcode_id)
+            .fetch_optional(&state.db)
+            .await?;
 
     let affected = sqlx::query("DELETE FROM product_barcodes WHERE barcode_id = ?")
         .bind(&barcode_id)
@@ -1594,10 +1780,22 @@ pub async fn product_barcode_remove(
             "barcode_id": barcode_id, "product_id": product_id, "barcode": barcode_val, "removed": true,
         }).to_string();
         if let Err(e) = audit_hash::insert_audit_entry(
-            &state.db, "BARCODE_REMOVED", "product", &product_id,
-            &actor_user_id, "user", &device_id, &branch_id,
-            None, Some(&after), None,
-        ).await { tracing::error!("AUDIT WRITE FAILED [BARCODE_REMOVED]: {:?}", e); }
+            &state.db,
+            "BARCODE_REMOVED",
+            "product",
+            &product_id,
+            &actor_user_id,
+            "user",
+            &device_id,
+            &branch_id,
+            None,
+            Some(&after),
+            None,
+        )
+        .await
+        {
+            tracing::error!("AUDIT WRITE FAILED [BARCODE_REMOVED]: {:?}", e);
+        }
     }
 
     Ok(())
@@ -1718,12 +1916,25 @@ pub async fn admin_update_user(
         "user_id": result.user_id, "display_name": result.display_name,
         "role_id": result.role_id, "is_active": result.is_active,
         "pin_changed": input.pin.is_some(),
-    }).to_string();
+    })
+    .to_string();
     if let Err(e) = audit_hash::insert_audit_entry(
-        &state.db, "USER_UPDATED", "user", &result.user_id,
-        &input.actor_user_id, "user", &device_id, &branch_id,
-        None, Some(&after), None,
-    ).await { tracing::error!("AUDIT WRITE FAILED [USER_UPDATED]: {:?}", e); }
+        &state.db,
+        "USER_UPDATED",
+        "user",
+        &result.user_id,
+        &input.actor_user_id,
+        "user",
+        &device_id,
+        &branch_id,
+        None,
+        Some(&after),
+        None,
+    )
+    .await
+    {
+        tracing::error!("AUDIT WRITE FAILED [USER_UPDATED]: {:?}", e);
+    }
 
     Ok(result)
 }

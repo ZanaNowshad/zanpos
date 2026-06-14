@@ -1,7 +1,10 @@
 use crate::db::repositories::ai_admin_repo;
 use crate::errors::{AppError, AppResult};
 use crate::secure_store;
-use crate::sync_v2::apply::{self, ALLOWED_CONFIG_KEYS, has_origin_device_id, pk_for_table, should_skip_column, value_from_row_column};
+use crate::sync_v2::apply::{
+    self, has_origin_device_id, pk_for_table, should_skip_column, value_from_row_column,
+    ALLOWED_CONFIG_KEYS,
+};
 use crate::sync_v2::client::HttpSyncClient;
 use serde_json::Value;
 use sqlx::Column;
@@ -50,7 +53,9 @@ impl SyncWorker {
         })
     }
 
-    pub(crate) fn pool(&self) -> &SqlitePool { &self.pool }
+    pub(crate) fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
 
     /// Spawn background loop with supervisor restart on panic.
     /// Uses adaptive backoff: 3+ consecutive failures → 2× interval, 6+ → 5× interval.
@@ -67,10 +72,19 @@ impl SyncWorker {
                             st.consecutive_failures
                         };
                         let hub_mode: bool = sqlx::query_scalar::<_, String>(
-                            "SELECT value FROM app_config WHERE key='hub_mode'")
-                            .fetch_optional(worker_inner.pool()).await.ok().flatten()
-                            .map(|v| v == "1").unwrap_or(false);
-                        let base = if hub_mode { HUB_INTERVAL_SECS } else { INTERVAL_SECS };
+                            "SELECT value FROM app_config WHERE key='hub_mode'",
+                        )
+                        .fetch_optional(worker_inner.pool())
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|v| v == "1")
+                        .unwrap_or(false);
+                        let base = if hub_mode {
+                            HUB_INTERVAL_SECS
+                        } else {
+                            INTERVAL_SECS
+                        };
                         let wait_secs = if consecutive_failures >= 6 {
                             base * 5
                         } else if consecutive_failures >= 3 {
@@ -85,7 +99,9 @@ impl SyncWorker {
                 let handle = tauri::async_runtime::spawn(result);
                 match handle.await {
                     Ok(_) => {
-                        tracing::warn!("Sync v2 worker loop exited unexpectedly — restarting in 5 s");
+                        tracing::warn!(
+                            "Sync v2 worker loop exited unexpectedly — restarting in 5 s"
+                        );
                     }
                     Err(e) => {
                         tracing::error!("Sync v2 worker panicked: {:?} — restarting in 5 s", e);
@@ -105,7 +121,9 @@ impl SyncWorker {
         let _run_guard = match self.running.try_lock() {
             Ok(g) => g,
             Err(_) => {
-                tracing::debug!("Sync v2: run_once already in progress — skipping concurrent invocation");
+                tracing::debug!(
+                    "Sync v2: run_once already in progress — skipping concurrent invocation"
+                );
                 return;
             }
         };
@@ -133,19 +151,25 @@ impl SyncWorker {
         // Its own UI writes land directly in the served DB; mark them synced so
         // the SyncChip shows clean and terminals (which pull by updated_at, not
         // sync_status) are unaffected.
-        let hub_mode: bool = sqlx::query_scalar::<_, String>(
-            "SELECT value FROM app_config WHERE key='hub_mode'")
-            .fetch_optional(&self.pool).await.ok().flatten()
-            .map(|v| v == "1").unwrap_or(false);
+        let hub_mode: bool =
+            sqlx::query_scalar::<_, String>("SELECT value FROM app_config WHERE key='hub_mode'")
+                .fetch_optional(&self.pool)
+                .await
+                .ok()
+                .flatten()
+                .map(|v| v == "1")
+                .unwrap_or(false);
         if hub_mode {
             for table in apply::SYNC_TABLES.iter().filter(|t| **t != "app_config") {
-                let sql = format!(
-                    "UPDATE {table} SET sync_status='synced' WHERE sync_status='pending'");
+                let sql =
+                    format!("UPDATE {table} SET sync_status='synced' WHERE sync_status='pending'");
                 let _ = sqlx::query(&sql).execute(&self.pool).await;
             }
             {
                 let mut st = self.state.lock().await;
-                st.online = true; st.last_error = None; st.consecutive_failures = 0;
+                st.online = true;
+                st.last_error = None;
+                st.consecutive_failures = 0;
             }
             self.prune_old_data().await;
             return;
@@ -184,7 +208,9 @@ impl SyncWorker {
                     state.consecutive_failures = state.consecutive_failures.saturating_add(1);
                     // Only log transient errors as warnings; permanent errors are normal
                     // (schema mismatches, 404s on unmigrated tables, etc.)
-                    if e.to_string().contains(crate::sync_v2::client::TRANSIENT_TAG) {
+                    if e.to_string()
+                        .contains(crate::sync_v2::client::TRANSIENT_TAG)
+                    {
                         tracing::warn!("Sync v2 transient error: {e}");
                     } else {
                         tracing::info!("Sync v2 cycle finished with table-level errors");
@@ -197,12 +223,10 @@ impl SyncWorker {
         // BUG-SYNC-7: update last_pushed_at for ALL tables, not just 'sales'.
         if push_result.is_ok() && pull_result.is_ok() {
             let now = chrono::Utc::now().to_rfc3339();
-            if let Err(e) = sqlx::query(
-                "UPDATE sync_watermark SET last_pushed_at = ?",
-            )
-            .bind(&now)
-            .execute(&self.pool)
-            .await
+            if let Err(e) = sqlx::query("UPDATE sync_watermark SET last_pushed_at = ?")
+                .bind(&now)
+                .execute(&self.pool)
+                .await
             {
                 tracing::warn!("Sync v2: failed to record last_pushed_at: {e}");
             }
@@ -217,21 +241,28 @@ impl SyncWorker {
     /// Terminal mode: hub_url (app_config) + hub_store_token (OS credential store).
     /// Returns None when this device is the hub or not yet joined.
     pub async fn load_client(&self) -> Option<HttpSyncClient> {
-        let url = ai_admin_repo::get_config(&self.pool, "hub_url").await.ok().flatten()
+        let url = ai_admin_repo::get_config(&self.pool, "hub_url")
+            .await
+            .ok()
+            .flatten()
             .filter(|u| !u.is_empty())?;
         let token = secure_store::get_secret("hub_store_token").unwrap_or_default();
         if token.is_empty() {
             tracing::error!(
                 "Sync v2: hub_url is set but hub_store_token is missing from the OS \
-                 credential store. Re-enter the store token in Settings -> Hub.");
+                 credential store. Re-enter the store token in Settings -> Hub."
+            );
             let mut st = self.state.lock().await;
             st.online = false;
             st.last_error = Some("Store token missing — re-enter it in Settings → Hub.".into());
             return None;
         }
-        let device_id = sqlx::query_scalar::<_, String>(
-            "SELECT value FROM app_config WHERE key='device_id'")
-            .fetch_optional(&self.pool).await.ok().flatten();
+        let device_id =
+            sqlx::query_scalar::<_, String>("SELECT value FROM app_config WHERE key='device_id'")
+                .fetch_optional(&self.pool)
+                .await
+                .ok()
+                .flatten();
         Some(HttpSyncClient::new(&url, &token, device_id.as_deref()))
     }
 
@@ -252,7 +283,7 @@ impl SyncWorker {
         // 2. Transactions: shifts, sales, sale_items, payments, refunds, refund_items,
         //    stock_movements, audit_logs, delivery_orders, product_prices
         let push_order: &[&str] = &[
-            "branches",   // Bug-Push-B: was missing — local branch edits never reached the hub
+            "branches", // Bug-Push-B: was missing — local branch edits never reached the hub
             "categories",
             "tax_rules",
             "products",
@@ -266,11 +297,11 @@ impl SyncWorker {
             "refunds",
             "refund_items",
             "stock_movements",
-            "stock_levels",  // Bug-Push-SL: was missing — stock_levels has sync_status but was never pushed
+            "stock_levels", // Bug-Push-SL: was missing — stock_levels has sync_status but was never pushed
             "audit_logs",
             "delivery_orders",
             "product_prices",
-            "cash_events",   // Bug-Push-CE: was missing — cash_events has sync_status but was never pushed
+            "cash_events", // Bug-Push-CE: was missing — cash_events has sync_status but was never pushed
         ];
 
         let mut total_pushed = 0u32;
@@ -302,8 +333,12 @@ impl SyncWorker {
                         }
                         // Hub schema requires updated_at NOT NULL with no DEFAULT.
                         // Fall back to created_at or now() when the local value is missing.
-                        if map.get("updated_at").map_or(true, |v| matches!(v, Value::Null)) {
-                            let fallback = map.get("created_at")
+                        if map
+                            .get("updated_at")
+                            .map_or(true, |v| matches!(v, Value::Null))
+                        {
+                            let fallback = map
+                                .get("created_at")
                                 .cloned()
                                 .filter(|v| !matches!(v, Value::Null))
                                 .unwrap_or_else(|| Value::String(chrono::Utc::now().to_rfc3339()));
@@ -315,17 +350,16 @@ impl SyncWorker {
 
                 // Collect row IDs for marking
                 let id_col = pk_for_table(table);
-                let row_ids: Vec<String> = rows
-                    .iter()
-                    .map(|r| r.get::<String, _>(id_col))
-                    .collect();
+                let row_ids: Vec<String> =
+                    rows.iter().map(|r| r.get::<String, _>(id_col)).collect();
 
                 match client.upsert_rows(table, &json_rows).await {
                     Ok(()) => {
                         // Mark all rows synced atomically in one UPDATE … IN (…) statement.
                         // A single statement is crash-safe: either all are marked or none are,
                         // preventing a partial-mark state that would cause redundant re-pushes.
-                        let placeholders = row_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                        let placeholders =
+                            row_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
                         let sql = format!(
                             "UPDATE {} SET sync_status = 'synced' WHERE {} IN ({})",
                             table, id_col, placeholders
@@ -351,9 +385,13 @@ impl SyncWorker {
                         }
 
                         if transient {
-                            tracing::warn!("Sync v2: transient error on {table}, skipping to next table: {e}");
+                            tracing::warn!(
+                                "Sync v2: transient error on {table}, skipping to next table: {e}"
+                            );
                         } else {
-                            tracing::warn!("Sync v2: permanent error on {table}, skipping to next table: {e}");
+                            tracing::warn!(
+                                "Sync v2: permanent error on {table}, skipping to next table: {e}"
+                            );
                         }
                         // Always break inner loop and continue to next table.
                         // Never abort the entire push — one stuck table must not
@@ -413,12 +451,25 @@ impl SyncWorker {
     /// Not batch-limited — designed for first-time sync to the hub.
     pub async fn push_all_bulk(&self, client: &HttpSyncClient) -> AppResult<u32> {
         let push_order: &[&str] = &[
-            "branches",   // Bug-Push-C: was missing from bulk push — Terminal 2 never pushed branch to hub
-            "categories", "tax_rules", "products", "devices", "users", "customers",
-            "shifts", "sales", "sale_items", "payments", "refunds", "refund_items",
-            "stock_movements", "stock_levels",  // Bug-Push-SL: stock_levels was missing from bulk push
-            "audit_logs", "delivery_orders", "product_prices",
-            "cash_events",  // Bug-Push-CE: was missing from bulk push — cash events never reached hub
+            "branches", // Bug-Push-C: was missing from bulk push — Terminal 2 never pushed branch to hub
+            "categories",
+            "tax_rules",
+            "products",
+            "devices",
+            "users",
+            "customers",
+            "shifts",
+            "sales",
+            "sale_items",
+            "payments",
+            "refunds",
+            "refund_items",
+            "stock_movements",
+            "stock_levels", // Bug-Push-SL: stock_levels was missing from bulk push
+            "audit_logs",
+            "delivery_orders",
+            "product_prices",
+            "cash_events", // Bug-Push-CE: was missing from bulk push — cash events never reached hub
         ];
 
         let mut total_pushed = 0u32;
@@ -441,8 +492,12 @@ impl SyncWorker {
                         }
                         map.insert(col_name.to_string(), value_from_row_column(row, col_name));
                     }
-                    if map.get("updated_at").map_or(true, |v| matches!(v, Value::Null)) {
-                        let fallback = map.get("created_at")
+                    if map
+                        .get("updated_at")
+                        .map_or(true, |v| matches!(v, Value::Null))
+                    {
+                        let fallback = map
+                            .get("created_at")
                             .cloned()
                             .filter(|v| !matches!(v, Value::Null))
                             .unwrap_or_else(|| Value::String(chrono::Utc::now().to_rfc3339()));
@@ -474,11 +529,7 @@ impl SyncWorker {
 
     // ── Pull changes from hub ────────────────────────────────────────────────
 
-    async fn pull_changes(
-        &self,
-        client: &HttpSyncClient,
-        device_id: &str,
-    ) -> AppResult<u32> {
+    async fn pull_changes(&self, client: &HttpSyncClient, device_id: &str) -> AppResult<u32> {
         // Tables to pull from central (same set as push, but orderly)
         let pull_tables: &[&str] = &[
             "branches",
@@ -495,11 +546,11 @@ impl SyncWorker {
             "refunds",
             "refund_items",
             "stock_movements",
-            "stock_levels",   // Fix-Pull-SL: was missing from pull_tables — remote stock changes were never applied locally
+            "stock_levels", // Fix-Pull-SL: was missing from pull_tables — remote stock changes were never applied locally
             "audit_logs",
             "delivery_orders",
             "product_prices",
-            "cash_events",    // Fix-Pull-CE: was missing from pull_tables — remote cash events were never applied locally
+            "cash_events", // Fix-Pull-CE: was missing from pull_tables — remote cash events were never applied locally
             "app_config",
         ];
 
@@ -563,7 +614,7 @@ impl SyncWorker {
                 let mut hit_failure = false;
 
                 for row in &rows {
-                                match apply::apply_row(&self.pool, table, row).await {
+                    match apply::apply_row(&self.pool, table, row).await {
                         Ok(()) => {
                             // BUG-SYNC-4: Only advance watermark past rows that were
                             // successfully applied — never skip past a failed row.
@@ -584,7 +635,9 @@ impl SyncWorker {
                                 );
                                 applied += 1; // advance watermark past this row
                                 if let Some(ts) = row.get("updated_at").and_then(|v| v.as_str()) {
-                                    if ts > max_ts.as_str() { max_ts = ts.to_string(); }
+                                    if ts > max_ts.as_str() {
+                                        max_ts = ts.to_string();
+                                    }
                                 }
                                 continue;
                             }
@@ -596,9 +649,11 @@ impl SyncWorker {
                                     "Sync v2: DB busy on {table} apply_row, retrying in 4 s"
                                 );
                                 tokio::time::sleep(std::time::Duration::from_secs(4)).await;
-                    match apply::apply_row(&self.pool, table, row).await {
+                                match apply::apply_row(&self.pool, table, row).await {
                                     Ok(()) => {
-                                        if let Some(ts) = row.get("updated_at").and_then(|v| v.as_str()) {
+                                        if let Some(ts) =
+                                            row.get("updated_at").and_then(|v| v.as_str())
+                                        {
                                             if ts > max_ts.as_str() {
                                                 max_ts = ts.to_string();
                                             }
@@ -609,8 +664,12 @@ impl SyncWorker {
                                     Err(e2) => {
                                         if e2.to_string().contains("FOREIGN KEY") {
                                             tracing::info!("Sync v2: FK skip on {table} (retry) — dependency not yet synced");
-                                            if let Some(ts) = row.get("updated_at").and_then(|v| v.as_str()) {
-                                                if ts > max_ts.as_str() { max_ts = ts.to_string(); }
+                                            if let Some(ts) =
+                                                row.get("updated_at").and_then(|v| v.as_str())
+                                            {
+                                                if ts > max_ts.as_str() {
+                                                    max_ts = ts.to_string();
+                                                }
                                             }
                                             applied += 1;
                                             continue;
@@ -699,11 +758,10 @@ impl SyncWorker {
         // Prefer the identity key written during setup — guaranteed to be THIS terminal's
         // device_id regardless of how many other devices sync into the local `devices` table.
         // ORDER BY device_code falls back for terminals set up before this key was introduced.
-        if let Ok(Some(id)) = sqlx::query_scalar::<_, String>(
-            "SELECT value FROM app_config WHERE key = 'device_id'",
-        )
-        .fetch_optional(&self.pool)
-        .await
+        if let Ok(Some(id)) =
+            sqlx::query_scalar::<_, String>("SELECT value FROM app_config WHERE key = 'device_id'")
+                .fetch_optional(&self.pool)
+                .await
         {
             if !id.is_empty() {
                 return Ok(id);
@@ -760,10 +818,8 @@ impl SyncWorker {
         .flatten()
         .unwrap_or(30);
 
-        let sales_cutoff =
-            (chrono::Utc::now() - chrono::Duration::days(sales_days)).to_rfc3339();
-        let log_cutoff =
-            (chrono::Utc::now() - chrono::Duration::days(log_days)).to_rfc3339();
+        let sales_cutoff = (chrono::Utc::now() - chrono::Duration::days(sales_days)).to_rfc3339();
+        let log_cutoff = (chrono::Utc::now() - chrono::Duration::days(log_days)).to_rfc3339();
 
         // 1. FK-safe delete: sale_items + payments before sales
         let _ = sqlx::query(
@@ -785,20 +841,17 @@ impl SyncWorker {
         .await;
 
         // 2. Sales themselves (only synced rows)
-        let _ = sqlx::query(
-            "DELETE FROM sales WHERE sync_status = 'synced' AND sold_at < ?",
-        )
-        .bind(&sales_cutoff)
-        .execute(&self.pool)
-        .await;
+        let _ = sqlx::query("DELETE FROM sales WHERE sync_status = 'synced' AND sold_at < ?")
+            .bind(&sales_cutoff)
+            .execute(&self.pool)
+            .await;
 
         // 3. Audit logs older than log_days
-        let _ = sqlx::query(
-            "DELETE FROM audit_logs WHERE created_at < ? AND sync_status = 'synced'",
-        )
-        .bind(&log_cutoff)
-        .execute(&self.pool)
-        .await;
+        let _ =
+            sqlx::query("DELETE FROM audit_logs WHERE created_at < ? AND sync_status = 'synced'")
+                .bind(&log_cutoff)
+                .execute(&self.pool)
+                .await;
 
         // 4. Stock movements older than log_days
         let _ = sqlx::query(

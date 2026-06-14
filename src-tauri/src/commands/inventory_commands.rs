@@ -137,8 +137,7 @@ pub async fn inventory_receive_stock(
     .fetch_optional(&state.db)
     .await?;
     let old_qty_str = old_qty_read.as_deref().unwrap_or("0");
-    let before_json =
-        serde_json::json!({"quantity_on_hand": old_qty_str}).to_string();
+    let before_json = serde_json::json!({"quantity_on_hand": old_qty_str}).to_string();
 
     // ── Transaction: read old qty → compute new → upsert → movement → sync_status ──
     let mut tx = state.db.begin().await?;
@@ -151,9 +150,7 @@ pub async fn inventory_receive_stock(
     .bind(&branch_id)
     .fetch_optional(&mut *tx)
     .await?;
-    let old_qty = old_qty_in_tx
-        .as_deref()
-        .unwrap_or("0");
+    let old_qty = old_qty_in_tx.as_deref().unwrap_or("0");
     let old_qty_dec = Decimal::from_str(old_qty).unwrap_or(Decimal::ZERO);
 
     // Exact Decimal arithmetic — no CAST AS REAL (H-9/H-10)
@@ -207,8 +204,7 @@ pub async fn inventory_receive_stock(
     tx.commit().await?;
 
     // ── Audit log AFTER commit (H-29) ──
-    let after_json =
-        serde_json::json!({"quantity_on_hand": new_qty_str}).to_string();
+    let after_json = serde_json::json!({"quantity_on_hand": new_qty_str}).to_string();
     if let Err(e) = audit_hash::insert_audit_entry(
         &state.db,
         "STOCK_RECEIVED",
@@ -221,7 +217,9 @@ pub async fn inventory_receive_stock(
         Some(&before_json),
         Some(&after_json),
         input.notes.as_deref(),
-    ).await {
+    )
+    .await
+    {
         tracing::warn!("Failed to write audit entry: {}", e);
     }
 
@@ -274,8 +272,7 @@ pub async fn inventory_adjust_stock(
     .fetch_optional(&state.db)
     .await?;
     let old_qty_str = old_qty_read.as_deref().unwrap_or("0");
-    let before_json =
-        serde_json::json!({"quantity_on_hand": old_qty_str}).to_string();
+    let before_json = serde_json::json!({"quantity_on_hand": old_qty_str}).to_string();
 
     // ── Transaction ──
     let mut tx = state.db.begin().await?;
@@ -287,9 +284,7 @@ pub async fn inventory_adjust_stock(
     .bind(&branch_id)
     .fetch_optional(&mut *tx)
     .await?;
-    let old_qty = old_qty_in_tx
-        .as_deref()
-        .unwrap_or("0");
+    let old_qty = old_qty_in_tx.as_deref().unwrap_or("0");
     let old_qty_dec = Decimal::from_str(old_qty).unwrap_or(Decimal::ZERO);
 
     // Compute delta using Decimal arithmetic
@@ -343,8 +338,7 @@ pub async fn inventory_adjust_stock(
     tx.commit().await?;
 
     // ── Audit log AFTER commit (H-29) ──
-    let after_json =
-        serde_json::json!({"quantity_on_hand": new_qty_str}).to_string();
+    let after_json = serde_json::json!({"quantity_on_hand": new_qty_str}).to_string();
     if let Err(e) = audit_hash::insert_audit_entry(
         &state.db,
         "STOCK_ADJUSTED",
@@ -357,7 +351,9 @@ pub async fn inventory_adjust_stock(
         Some(&before_json),
         Some(&after_json),
         input.notes.as_deref(),
-    ).await {
+    )
+    .await
+    {
         tracing::warn!("Failed to write audit entry: {}", e);
     }
 
@@ -438,8 +434,7 @@ pub async fn inventory_bulk_stock_take(
         .await
         .unwrap_or(None);
         let old_qty_str = old_qty_read.as_deref().unwrap_or("0");
-        let before_json =
-            serde_json::json!({"quantity_on_hand": old_qty_str}).to_string();
+        let before_json = serde_json::json!({"quantity_on_hand": old_qty_str}).to_string();
 
         // ── Transaction per entry ──
         let mut tx = match state.db.begin().await {
@@ -459,9 +454,7 @@ pub async fn inventory_bulk_stock_take(
         .fetch_optional(&mut *tx)
         .await
         .unwrap_or(None);
-        let old_qty_dec = old_qty_in_tx
-            .as_deref()
-            .unwrap_or("0");
+        let old_qty_dec = old_qty_in_tx.as_deref().unwrap_or("0");
         let old_qty_dec = Decimal::from_str(old_qty_dec).unwrap_or(Decimal::ZERO);
 
         let delta_dec = new_qty - old_qty_dec;
@@ -526,8 +519,7 @@ pub async fn inventory_bulk_stock_take(
         }
 
         // ── Audit log AFTER commit (H-29) ──
-        let after_json =
-            serde_json::json!({"quantity_on_hand": new_qty_str}).to_string();
+        let after_json = serde_json::json!({"quantity_on_hand": new_qty_str}).to_string();
         if let Err(e) = audit_hash::insert_audit_entry(
             &state.db,
             "STOCK_TAKE",
@@ -540,7 +532,9 @@ pub async fn inventory_bulk_stock_take(
             Some(&before_json),
             Some(&after_json),
             entry.notes.as_deref(),
-        ).await {
+        )
+        .await
+        {
             tracing::warn!("Failed to write audit entry: {}", e);
         }
 

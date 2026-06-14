@@ -34,12 +34,16 @@ pub enum DeviceScope {
 
 impl DeviceScope {
     pub fn from_str(s: &str) -> Self {
-        if s.eq_ignore_ascii_case("all") { Self::All } else { Self::Origin }
+        if s.eq_ignore_ascii_case("all") {
+            Self::All
+        } else {
+            Self::Origin
+        }
     }
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Origin => "origin",
-            Self::All    => "all",
+            Self::All => "all",
         }
     }
 }
@@ -48,14 +52,13 @@ impl DeviceScope {
 /// device id (falls back to empty string if the local device is not yet
 /// registered, which makes the `? = 'all'` predicate the only true path).
 pub async fn report_scope(pool: &SqlitePool) -> (DeviceScope, String) {
-    let scope_str: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM app_config WHERE key = 'reports_device_scope'",
-    )
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
-    .flatten();
+    let scope_str: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'reports_device_scope'")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
     let scope = scope_str
         .as_deref()
         .map(DeviceScope::from_str)

@@ -41,12 +41,11 @@ pub async fn finalize_sale(
     allow_negative_stock: bool,
 ) -> AppResult<SaleResult> {
     // ── Guard: shift must be open ─────────────────────────────────────────────
-    let shift_status: Option<String> = sqlx::query_scalar(
-        "SELECT status FROM shifts WHERE shift_id = ?",
-    )
-    .bind(&cart.shift_id)
-    .fetch_optional(pool)
-    .await?;
+    let shift_status: Option<String> =
+        sqlx::query_scalar("SELECT status FROM shifts WHERE shift_id = ?")
+            .bind(&cart.shift_id)
+            .fetch_optional(pool)
+            .await?;
 
     match shift_status.as_deref() {
         Some("open") => {}
@@ -87,7 +86,11 @@ pub async fn finalize_sale(
     let db_prices: std::collections::HashMap<String, i64> = if price_product_ids.is_empty() {
         std::collections::HashMap::new()
     } else {
-        let placeholders = price_product_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let placeholders = price_product_ids
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
         // Subquery: for each product_id, pick the most recent effective price.
         let sql = format!(
             "SELECT pp.product_id, pp.price_minor
@@ -211,7 +214,8 @@ pub async fn finalize_sale(
     // UPDATE counter and the sale INSERT are atomic. SQLite serialises writers,
     // so no two concurrent transactions can use the same counter value.
     let mut tx = pool.begin().await?;
-    let receipt_number = next_receipt_number(&mut *tx, &branch_code, &device_code, &cart.device_id).await?;
+    let receipt_number =
+        next_receipt_number(&mut *tx, &branch_code, &device_code, &cart.device_id).await?;
 
     sqlx::query(
         "INSERT INTO sales
@@ -319,11 +323,21 @@ pub async fn finalize_sale(
              (payment_id, sale_id, origin_device_id, payment_method, amount_minor, currency, status,
               external_reference, tendered_minor, change_minor, recorded_by_user_id, recorded_at,
               created_at, updated_at)
-             VALUES (?,?,?,?,?,?,'approved',?,?,?,?,?,?,?)"
+             VALUES (?,?,?,?,?,?,'approved',?,?,?,?,?,?,?)",
         )
-        .bind(&payment_id).bind(&sale_id).bind(&cart.device_id).bind(&payment.method).bind(payment.amount_minor)
-        .bind(&currency).bind(&payment.external_reference).bind(payment.tendered_minor)
-        .bind(change).bind(&cart.cashier_user_id).bind(&now).bind(&now).bind(&now)
+        .bind(&payment_id)
+        .bind(&sale_id)
+        .bind(&cart.device_id)
+        .bind(&payment.method)
+        .bind(payment.amount_minor)
+        .bind(&currency)
+        .bind(&payment.external_reference)
+        .bind(payment.tendered_minor)
+        .bind(change)
+        .bind(&cart.cashier_user_id)
+        .bind(&now)
+        .bind(&now)
+        .bind(&now)
         .execute(&mut *tx)
         .await?;
 
@@ -352,7 +366,11 @@ pub async fn finalize_sale(
     let tracked_ids: std::collections::HashSet<String> = if line_product_ids.is_empty() {
         std::collections::HashSet::new()
     } else {
-        let placeholders = line_product_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let placeholders = line_product_ids
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(",");
         let sql = format!(
             "SELECT product_id FROM products WHERE track_inventory = 1 AND product_id IN ({placeholders})"
         );
@@ -625,10 +643,18 @@ mod tests {
         // 0018_remove_demo_data.sql deleted the sample products; re-seed the two
         // products this test module needs so FK constraints are satisfied.
         // Activate the seed device and branch (seeded inactive by 0011_seed.sql)
-        sqlx::query("UPDATE devices SET is_active = 1 WHERE device_id = '01JDEVICE0000000000000001'")
-            .execute(&pool).await.ok();
-        sqlx::query("UPDATE branches SET is_active = 1 WHERE branch_id = '01JBRANCH0000000000000001'")
-            .execute(&pool).await.ok();
+        sqlx::query(
+            "UPDATE devices SET is_active = 1 WHERE device_id = '01JDEVICE0000000000000001'",
+        )
+        .execute(&pool)
+        .await
+        .ok();
+        sqlx::query(
+            "UPDATE branches SET is_active = 1 WHERE branch_id = '01JBRANCH0000000000000001'",
+        )
+        .execute(&pool)
+        .await
+        .ok();
 
         // Seed tax rules needed by the test products
         sqlx::query(
@@ -776,9 +802,18 @@ mod tests {
             external_reference: None,
         }];
 
-        let err = finalize_sale(&pool, &cart, payments, "idem-underpay", None, false, None, false)
-            .await
-            .unwrap_err();
+        let err = finalize_sale(
+            &pool,
+            &cart,
+            payments,
+            "idem-underpay",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await
+        .unwrap_err();
 
         assert!(
             matches!(err, AppError::Validation(_)),
@@ -815,15 +850,33 @@ mod tests {
             CASHIER.into(),
         );
         cart1.lines.push(cola_line("1"));
-        finalize_sale(&pool, &cart1, payments(), "idem-dup", None, false, None, false)
-            .await
-            .expect("first sale");
+        finalize_sale(
+            &pool,
+            &cart1,
+            payments(),
+            "idem-dup",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("first sale");
 
         let mut cart2 = Cart::new(BRANCH.into(), DEVICE.into(), shift_id, CASHIER.into());
         cart2.lines.push(cola_line("1"));
-        let err = finalize_sale(&pool, &cart2, payments(), "idem-dup", None, false, None, false)
-            .await
-            .unwrap_err();
+        let err = finalize_sale(
+            &pool,
+            &cart2,
+            payments(),
+            "idem-dup",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await
+        .unwrap_err();
 
         // Expect a DB error (UNIQUE constraint on idempotency_key)
         assert!(
@@ -848,9 +901,18 @@ mod tests {
             external_reference: None,
         }];
 
-        let result = finalize_sale(&pool, &cart, payments, "idem-water", None, false, None, false)
-            .await
-            .expect("zero-tax sale");
+        let result = finalize_sale(
+            &pool,
+            &cart,
+            payments,
+            "idem-water",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("zero-tax sale");
 
         assert_eq!(result.net_total_minor, 1_000);
         assert_eq!(result.tax_total_minor, 0, "zero-rated items carry no tax");
@@ -879,9 +941,18 @@ mod tests {
             external_reference: None,
         }];
 
-        let result = finalize_sale(&pool, &cart, payments, "idem-discount", None, false, None, false)
-            .await
-            .expect("discounted sale");
+        let result = finalize_sale(
+            &pool,
+            &cart,
+            payments,
+            "idem-discount",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("discounted sale");
 
         assert_eq!(result.net_total_minor, 300);
         assert_eq!(result.discount_total_minor, 100);
@@ -913,9 +984,18 @@ mod tests {
             },
         ];
 
-        let result = finalize_sale(&pool, &cart, payments, "idem-split", None, false, None, false)
-            .await
-            .expect("split-payment sale");
+        let result = finalize_sale(
+            &pool,
+            &cart,
+            payments,
+            "idem-split",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("split-payment sale");
 
         assert_eq!(result.net_total_minor, 1_380);
         assert_eq!(result.payments.len(), 2);
@@ -968,7 +1048,17 @@ mod tests {
             CASHIER.into(),
         );
         cart1.lines.push(cola_line("1"));
-        let r1 = finalize_sale(&pool, &cart1, payment_for_cola(), "idem-t8-first", None, false, None, false).await;
+        let r1 = finalize_sale(
+            &pool,
+            &cart1,
+            payment_for_cola(),
+            "idem-t8-first",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await;
         assert!(r1.is_ok(), "first sale must succeed with stock=1: {r1:?}");
 
         // Second sale — must fail; stock is now 0
@@ -979,7 +1069,17 @@ mod tests {
             CASHIER.into(),
         );
         cart2.lines.push(cola_line("1"));
-        let r2 = finalize_sale(&pool, &cart2, payment_for_cola(), "idem-t8-second", None, false, None, false).await;
+        let r2 = finalize_sale(
+            &pool,
+            &cart2,
+            payment_for_cola(),
+            "idem-t8-second",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await;
         assert!(
             matches!(r2, Err(AppError::Validation(_))),
             "second sale must be rejected when stock=0: got {r2:?}"
@@ -1024,7 +1124,17 @@ mod tests {
         cart.lines.push(cola_line("1"));
 
         // With allow_negative_stock=true the sale must succeed even at stock=0
-        let result = finalize_sale(&pool, &cart, payment, "idem-neg-stock", None, false, None, true).await;
+        let result = finalize_sale(
+            &pool,
+            &cart,
+            payment,
+            "idem-neg-stock",
+            None,
+            false,
+            None,
+            true,
+        )
+        .await;
         assert!(
             result.is_ok(),
             "sale must succeed with allow_negative_stock=true even when stock=0: {result:?}"
@@ -1069,9 +1179,18 @@ mod tests {
             CASHIER.into(),
         );
         c1.lines.push(water_line("1"));
-        let r1 = finalize_sale(&pool, &c1, single_water_payment(), "idem-seq1", None, false, None, false)
-            .await
-            .unwrap();
+        let r1 = finalize_sale(
+            &pool,
+            &c1,
+            single_water_payment(),
+            "idem-seq1",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
 
         let mut c2 = Cart::new(
             BRANCH.into(),
@@ -1080,9 +1199,18 @@ mod tests {
             CASHIER.into(),
         );
         c2.lines.push(water_line("1"));
-        let r2 = finalize_sale(&pool, &c2, single_water_payment(), "idem-seq2", None, false, None, false)
-            .await
-            .unwrap();
+        let r2 = finalize_sale(
+            &pool,
+            &c2,
+            single_water_payment(),
+            "idem-seq2",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
 
         // Numbers should differ and second > first (lexicographic on zero-padded counter)
         assert_ne!(r1.receipt_number, r2.receipt_number);

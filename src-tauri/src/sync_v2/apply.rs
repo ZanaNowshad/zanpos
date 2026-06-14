@@ -5,10 +5,26 @@ use sqlx::{Row, SqlitePool};
 
 /// Every table the sync protocol may read or write. Hub rejects any other name.
 pub const SYNC_TABLES: &[&str] = &[
-    "branches", "categories", "tax_rules", "products", "devices", "users",
-    "customers", "shifts", "sales", "sale_items", "payments", "refunds",
-    "refund_items", "stock_movements", "stock_levels", "audit_logs",
-    "delivery_orders", "product_prices", "cash_events", "app_config",
+    "branches",
+    "categories",
+    "tax_rules",
+    "products",
+    "devices",
+    "users",
+    "customers",
+    "shifts",
+    "sales",
+    "sale_items",
+    "payments",
+    "refunds",
+    "refund_items",
+    "stock_movements",
+    "stock_levels",
+    "audit_logs",
+    "delivery_orders",
+    "product_prices",
+    "cash_events",
+    "app_config",
 ];
 
 /// app_config keys that are allowed to sync across devices.
@@ -25,20 +41,14 @@ pub(crate) const STOCK_DRIFT_TOLERANCE: f64 = 0.001;
 
 /// Apply a single row to the local database.
 pub async fn apply_row(pool: &SqlitePool, table: &str, row: &Value) -> AppResult<()> {
-    let obj = row.as_object().ok_or_else(|| {
-        AppError::Internal("apply_row: row is not a JSON object".into())
-    })?;
+    let obj = row
+        .as_object()
+        .ok_or_else(|| AppError::Internal("apply_row: row is not a JSON object".into()))?;
 
     match table {
-        "categories" => {
-            apply_lww(pool, "categories", "category_id", obj, &[]).await
-        }
-        "tax_rules" => {
-            apply_lww(pool, "tax_rules", "tax_rule_id", obj, &[]).await
-        }
-        "products" => {
-            apply_lww(pool, "products", "product_id", obj, &[]).await
-        }
+        "categories" => apply_lww(pool, "categories", "category_id", obj, &[]).await,
+        "tax_rules" => apply_lww(pool, "tax_rules", "tax_rule_id", obj, &[]).await,
+        "products" => apply_lww(pool, "products", "product_id", obj, &[]).await,
         "devices" => {
             if let (Some(device_id), Some(branch_id), Some(device_code)) = (
                 obj.get("device_id").and_then(|v| v.as_str()),
@@ -69,9 +79,7 @@ pub async fn apply_row(pool: &SqlitePool, table: &str, row: &Value) -> AppResult
             }
             apply_lww(pool, "devices", "device_id", &obj_norm, &[]).await
         }
-        "branches" => {
-            apply_lww(pool, "branches", "branch_id", obj, &[]).await
-        }
+        "branches" => apply_lww(pool, "branches", "branch_id", obj, &[]).await,
         "shifts" => {
             if obj.get("status").and_then(|v| v.as_str()) == Some("open") {
                 if let (Some(shift_id), Some(device_id)) = (
@@ -94,11 +102,14 @@ pub async fn apply_row(pool: &SqlitePool, table: &str, row: &Value) -> AppResult
             if !obj_norm.contains_key("created_at")
                 || obj_norm.get("created_at") == Some(&Value::Null)
             {
-                let fallback = obj_norm.get("opened_at")
+                let fallback = obj_norm
+                    .get("opened_at")
                     .cloned()
                     .filter(|v| !matches!(v, Value::Null))
                     .or_else(|| {
-                        obj_norm.get("updated_at").cloned()
+                        obj_norm
+                            .get("updated_at")
+                            .cloned()
                             .filter(|v| !matches!(v, Value::Null))
                     })
                     .unwrap_or_else(|| Value::String(chrono::Utc::now().to_rfc3339()));
@@ -106,12 +117,8 @@ pub async fn apply_row(pool: &SqlitePool, table: &str, row: &Value) -> AppResult
             }
             apply_lww(pool, "shifts", "shift_id", &obj_norm, &[]).await
         }
-        "delivery_orders" => {
-            apply_lww(pool, "delivery_orders", "delivery_id", obj, &[]).await
-        }
-        "stock_levels" => {
-            apply_lww(pool, "stock_levels", "stock_level_id", obj, &[]).await
-        }
+        "delivery_orders" => apply_lww(pool, "delivery_orders", "delivery_id", obj, &[]).await,
+        "stock_levels" => apply_lww(pool, "stock_levels", "stock_level_id", obj, &[]).await,
         "users" => {
             if let (Some(user_id), Some(username)) = (
                 obj.get("user_id").and_then(|v| v.as_str()),
@@ -131,20 +138,18 @@ pub async fn apply_row(pool: &SqlitePool, table: &str, row: &Value) -> AppResult
             let mut obj_norm = obj.clone();
 
             if !obj_norm.contains_key("branch_id") {
-                let fallback_branch: Option<String> = sqlx::query_scalar(
-                    "SELECT branch_id FROM branches WHERE is_active=1 LIMIT 1",
-                )
-                .fetch_optional(pool)
-                .await
-                .ok()
-                .flatten();
-                let branch = fallback_branch
-                    .unwrap_or_else(|| "01JBRANCH0000000000000001".to_string());
+                let fallback_branch: Option<String> =
+                    sqlx::query_scalar("SELECT branch_id FROM branches WHERE is_active=1 LIMIT 1")
+                        .fetch_optional(pool)
+                        .await
+                        .ok()
+                        .flatten();
+                let branch =
+                    fallback_branch.unwrap_or_else(|| "01JBRANCH0000000000000001".to_string());
                 obj_norm.insert("branch_id".to_string(), Value::String(branch));
             }
 
-            if !obj_norm.contains_key("pin_hash")
-                || obj_norm.get("pin_hash") == Some(&Value::Null)
+            if !obj_norm.contains_key("pin_hash") || obj_norm.get("pin_hash") == Some(&Value::Null)
             {
                 obj_norm.insert(
                     "pin_hash".to_string(),
@@ -152,17 +157,22 @@ pub async fn apply_row(pool: &SqlitePool, table: &str, row: &Value) -> AppResult
                 );
             }
 
-            if let Some(rid) = obj_norm.get("role_id").and_then(|v| v.as_str()).map(|s| s.to_string()) {
-                let role_exists: bool = sqlx::query_scalar::<_, i64>(
-                    "SELECT COUNT(*) FROM roles WHERE role_id = ?",
-                )
-                .bind(&rid)
-                .fetch_one(pool)
-                .await
-                .map(|n| n > 0)
-                .unwrap_or(false);
+            if let Some(rid) = obj_norm
+                .get("role_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+            {
+                let role_exists: bool =
+                    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM roles WHERE role_id = ?")
+                        .bind(&rid)
+                        .fetch_one(pool)
+                        .await
+                        .map(|n| n > 0)
+                        .unwrap_or(false);
                 if !role_exists {
-                    tracing::warn!("Sync v2: unknown role_id '{rid}' for remote user — remapping to 'owner'");
+                    tracing::warn!(
+                        "Sync v2: unknown role_id '{rid}' for remote user — remapping to 'owner'"
+                    );
                     obj_norm.insert(
                         "role_id".to_string(),
                         Value::String("01JROLES000000000000000001".to_string()),
@@ -172,12 +182,9 @@ pub async fn apply_row(pool: &SqlitePool, table: &str, row: &Value) -> AppResult
 
             apply_lww(pool, "users", "user_id", &obj_norm, &["pin_hash"]).await
         }
-        "customers" => {
-            apply_customer(pool, obj).await
-        }
-        "sales" | "sale_items" | "payments" | "refunds"
-        | "refund_items" | "stock_movements" | "audit_logs"
-        | "product_prices" | "cash_events" => {
+        "customers" => apply_customer(pool, obj).await,
+        "sales" | "sale_items" | "payments" | "refunds" | "refund_items" | "stock_movements"
+        | "audit_logs" | "product_prices" | "cash_events" => {
             apply_append_only(pool, table, obj).await
         }
         "app_config" => {
@@ -235,7 +242,8 @@ pub(crate) async fn apply_lww(
         .keys()
         .filter(|k| {
             is_safe_col(k)
-                && *k != "sync_status" && *k != "sync_attempts"
+                && *k != "sync_status"
+                && *k != "sync_attempts"
                 && !matches!(obj.get(*k), Some(Value::Null))
         })
         .collect();
@@ -244,12 +252,20 @@ pub(crate) async fn apply_lww(
         return Ok(());
     }
 
-    let col_list = format!("{}, sync_status", cols.iter().map(|c| c.as_str()).collect::<Vec<_>>().join(", "));
-    let val_list = format!("{}, 'synced'", cols
-        .iter()
-        .map(|c| json_to_sql_literal(&obj[*c]))
-        .collect::<Vec<_>>()
-        .join(", "));
+    let col_list = format!(
+        "{}, sync_status",
+        cols.iter()
+            .map(|c| c.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let val_list = format!(
+        "{}, 'synced'",
+        cols.iter()
+            .map(|c| json_to_sql_literal(&obj[*c]))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 
     let set_parts: Vec<String> = cols
         .iter()
@@ -285,15 +301,13 @@ pub(crate) async fn apply_lww(
     Ok(())
 }
 
-pub(crate) async fn apply_customer(
-    pool: &SqlitePool,
-    obj: &Map<String, Value>,
-) -> AppResult<()> {
+pub(crate) async fn apply_customer(pool: &SqlitePool, obj: &Map<String, Value>) -> AppResult<()> {
     let cols: Vec<&String> = obj
         .keys()
         .filter(|k| {
             is_safe_col(k)
-                && *k != "sync_status" && *k != "sync_attempts"
+                && *k != "sync_status"
+                && *k != "sync_attempts"
                 && !matches!(obj.get(*k), Some(Value::Null))
         })
         .collect();
@@ -304,7 +318,10 @@ pub(crate) async fn apply_customer(
 
     let col_list = format!(
         "{}, sync_status",
-        cols.iter().map(|c| c.as_str()).collect::<Vec<_>>().join(", ")
+        cols.iter()
+            .map(|c| c.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     );
     let val_list = format!(
         "{}, 'synced'",
@@ -360,7 +377,8 @@ pub(crate) async fn apply_append_only(
         .keys()
         .filter(|k| {
             is_safe_col(k)
-                && *k != "sync_status" && *k != "sync_attempts"
+                && *k != "sync_status"
+                && *k != "sync_attempts"
                 && !matches!(obj.get(*k), Some(Value::Null))
         })
         .collect();
@@ -369,7 +387,11 @@ pub(crate) async fn apply_append_only(
         return Ok(());
     }
 
-    let col_list = cols.iter().map(|c| c.as_str()).collect::<Vec<_>>().join(", ");
+    let col_list = cols
+        .iter()
+        .map(|c| c.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
     let val_list = cols
         .iter()
         .map(|c| json_to_sql_literal(&obj[*c]))
@@ -389,13 +411,7 @@ pub(crate) async fn apply_append_only(
             obj.get("branch_id").and_then(|v| v.as_str()),
             obj.get("created_at").and_then(|v| v.as_str()),
         ) {
-            let _ = recompute_stock_level(
-                pool,
-                product_id,
-                branch_id,
-                created_at,
-            )
-            .await;
+            let _ = recompute_stock_level(pool, product_id, branch_id, created_at).await;
         }
     }
 
@@ -462,7 +478,14 @@ pub fn should_skip_column(table: &str, col_name: &str) -> bool {
         ("users", "failed_pin_attempts" | "locked_until" | "last_login_at") => true,
         ("devices", "next_receipt_seq" | "last_seen_at" | "version") => true,
         ("customers", "origin_device_id" | "version") => true,
-        ("shifts", "expected_cash_minor" | "cash_difference_minor" | "business_date" | "created_at" | "version") => true,
+        (
+            "shifts",
+            "expected_cash_minor"
+            | "cash_difference_minor"
+            | "business_date"
+            | "created_at"
+            | "version",
+        ) => true,
         ("audit_logs", "override_used") => true,
         _ => false,
     }
@@ -600,7 +623,9 @@ mod tests {
 
     async fn test_pool() -> SqlitePool {
         let path = std::env::temp_dir().join(format!("zanpos_apply_{}.db", ulid::Ulid::new()));
-        let pool = SqlitePool::connect(&format!("sqlite:{}?mode=rwc", path.display())).await.unwrap();
+        let pool = SqlitePool::connect(&format!("sqlite:{}?mode=rwc", path.display()))
+            .await
+            .unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         pool
     }
@@ -612,18 +637,46 @@ mod tests {
         // because SQLite checks NOT NULL before ON CONFLICT evaluation.
         let base = json!({"category_id":"C1","name":"Old","sort_order":0,"is_active":1,
             "created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"});
-        apply_lww(&pool, "categories", "category_id", base.as_object().unwrap(), &[]).await.unwrap();
+        apply_lww(
+            &pool,
+            "categories",
+            "category_id",
+            base.as_object().unwrap(),
+            &[],
+        )
+        .await
+        .unwrap();
         let newer = json!({"category_id":"C1","name":"New","sort_order":0,"is_active":1,
             "created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-02T00:00:00Z"});
-        apply_lww(&pool, "categories", "category_id", newer.as_object().unwrap(), &[]).await.unwrap();
+        apply_lww(
+            &pool,
+            "categories",
+            "category_id",
+            newer.as_object().unwrap(),
+            &[],
+        )
+        .await
+        .unwrap();
         let n: String = sqlx::query_scalar("SELECT name FROM categories WHERE category_id='C1'")
-            .fetch_one(&pool).await.unwrap();
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(n, "New");
         let older = json!({"category_id":"C1","name":"Stale","sort_order":0,"is_active":1,
             "created_at":"2026-01-01T00:00:00Z","updated_at":"2025-12-31T00:00:00Z"});
-        apply_lww(&pool, "categories", "category_id", older.as_object().unwrap(), &[]).await.unwrap();
+        apply_lww(
+            &pool,
+            "categories",
+            "category_id",
+            older.as_object().unwrap(),
+            &[],
+        )
+        .await
+        .unwrap();
         let n: String = sqlx::query_scalar("SELECT name FROM categories WHERE category_id='C1'")
-            .fetch_one(&pool).await.unwrap();
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(n, "New", "older update must not overwrite");
     }
 
@@ -631,10 +684,15 @@ mod tests {
     async fn append_only_is_idempotent() {
         let pool = test_pool().await;
         let branch_id: String = sqlx::query_scalar("SELECT branch_id FROM branches LIMIT 1")
-            .fetch_one(&pool).await.unwrap();
-        let device_id: String = sqlx::query_scalar("SELECT device_id FROM devices WHERE is_active=1 LIMIT 1")
-            .fetch_optional(&pool).await.unwrap()
-            .unwrap_or_else(|| "01JDEVICE0000000000000001".to_string());
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let device_id: String =
+            sqlx::query_scalar("SELECT device_id FROM devices WHERE is_active=1 LIMIT 1")
+                .fetch_optional(&pool)
+                .await
+                .unwrap()
+                .unwrap_or_else(|| "01JDEVICE0000000000000001".to_string());
         let shift_id = ulid::Ulid::new().to_string();
         sqlx::query("INSERT INTO shifts (shift_id, branch_id, device_id, cashier_user_id, status, opened_at, created_at, updated_at) VALUES (?,?,?,?,'open',datetime('now'),datetime('now'),datetime('now'))")
             .bind(&shift_id).bind(&branch_id).bind(&device_id).bind("01JUSER000000000000ADMIN1")
@@ -649,7 +707,9 @@ mod tests {
         apply_row(&pool, "sales", &sale).await.unwrap();
         apply_row(&pool, "sales", &sale).await.unwrap();
         let c: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sales WHERE sale_id='S1'")
-            .fetch_one(&pool).await.unwrap();
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(c, 1);
     }
 
@@ -657,15 +717,23 @@ mod tests {
     async fn users_pin_hash_never_clobbered() {
         let pool = test_pool().await;
         let uid: String = sqlx::query_scalar("SELECT user_id FROM users LIMIT 1")
-            .fetch_one(&pool).await.unwrap();
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         let before: String = sqlx::query_scalar("SELECT pin_hash FROM users WHERE user_id=?")
-            .bind(&uid).fetch_one(&pool).await.unwrap();
+            .bind(&uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         let upd = json!({"user_id":uid,"display_name":"Renamed","username":"renamed-unique-x",
             "role_id":"01JROLES000000000000000001","is_active":1,"created_at":"2026-01-01T00:00:00Z",
             "updated_at":"2030-01-01T00:00:00Z"});
         apply_row(&pool, "users", &upd).await.unwrap();
         let after: String = sqlx::query_scalar("SELECT pin_hash FROM users WHERE user_id=?")
-            .bind(&uid).fetch_one(&pool).await.unwrap();
+            .bind(&uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(before, after, "pin_hash must survive remote user updates");
     }
 
@@ -674,15 +742,19 @@ mod tests {
         let pool = test_pool().await;
         let evil = json!({"key":"supabase_service_key","value":"stolen","updated_at":"2030-01-01T00:00:00Z"});
         apply_row(&pool, "app_config", &evil).await.unwrap();
-        let v: Option<String> = sqlx::query_scalar(
-            "SELECT value FROM app_config WHERE key='supabase_service_key'")
-            .fetch_optional(&pool).await.unwrap();
+        let v: Option<String> =
+            sqlx::query_scalar("SELECT value FROM app_config WHERE key='supabase_service_key'")
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
         assert!(v.is_none() || v.as_deref() == Some(""));
         let ok = json!({"key":"flag_auto_print_receipt","value":"1","updated_at":"2030-01-01T00:00:00Z"});
         apply_row(&pool, "app_config", &ok).await.unwrap();
-        let v: String = sqlx::query_scalar(
-            "SELECT value FROM app_config WHERE key='flag_auto_print_receipt'")
-            .fetch_one(&pool).await.unwrap();
+        let v: String =
+            sqlx::query_scalar("SELECT value FROM app_config WHERE key='flag_auto_print_receipt'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(v, "1");
     }
 }

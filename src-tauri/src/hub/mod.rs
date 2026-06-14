@@ -28,7 +28,9 @@ pub struct HubHandle {
 }
 
 impl HubHandle {
-    pub fn shutdown(self) { let _ = self.shutdown.send(()); }
+    pub fn shutdown(self) {
+        let _ = self.shutdown.send(());
+    }
 }
 
 pub fn token_digest(token: &str) -> [u8; 32] {
@@ -40,13 +42,17 @@ pub fn token_digest(token: &str) -> [u8; 32] {
 /// Bind 0.0.0.0:port (port 0 = ephemeral, used by tests) and serve.
 pub async fn start_hub(pool: SqlitePool, port: u16, token: &str) -> AppResult<HubHandle> {
     let seen: SeenMap = Arc::new(Mutex::new(HashMap::new()));
-    let state = HubState { pool, token_digest: token_digest(token), seen: seen.clone() };
+    let state = HubState {
+        pool,
+        token_digest: token_digest(token),
+        seen: seen.clone(),
+    };
     let app = rest::router(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
-        AppError::Internal(format!("Hub: cannot bind port {port}: {e}"))
-    })?;
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| AppError::Internal(format!("Hub: cannot bind port {port}: {e}")))?;
     let actual_port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
 
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
@@ -55,7 +61,9 @@ pub async fn start_hub(pool: SqlitePool, port: u16, token: &str) -> AppResult<Hu
             listener,
             app.into_make_service_with_connect_info::<SocketAddr>(),
         )
-        .with_graceful_shutdown(async { let _ = rx.await; });
+        .with_graceful_shutdown(async {
+            let _ = rx.await;
+        });
         if let Err(e) = serve.await {
             tracing::error!("Hub server exited with error: {e}");
         } else {
@@ -63,7 +71,11 @@ pub async fn start_hub(pool: SqlitePool, port: u16, token: &str) -> AppResult<Hu
         }
     });
     tracing::info!("Hub server listening on 0.0.0.0:{actual_port}");
-    Ok(HubHandle { port: actual_port, seen, shutdown: tx })
+    Ok(HubHandle {
+        port: actual_port,
+        seen,
+        shutdown: tx,
+    })
 }
 
 /// Best-effort LAN IPv4 discovery without extra crates: a connected UDP socket
@@ -75,7 +87,9 @@ pub fn lan_ips() -> Vec<String> {
             if s.connect(probe).is_ok() {
                 if let Ok(a) = s.local_addr() {
                     let ip = a.ip().to_string();
-                    if ip != "0.0.0.0" && !out.contains(&ip) { out.push(ip); }
+                    if ip != "0.0.0.0" && !out.contains(&ip) {
+                        out.push(ip);
+                    }
                 }
             }
         }

@@ -2,9 +2,9 @@ use crate::commands::rbac;
 use crate::errors::{AppError, AppResult};
 use crate::AppState;
 use serde::Serialize;
+use sqlx::FromRow;
 use tauri::State;
 use ulid::Ulid;
-use sqlx::FromRow;
 
 // ── Output types ──────────────────────────────────────────────────────────────
 
@@ -27,7 +27,7 @@ pub struct GhostSummary {
     pub pending: i64,
     pub found: i64,
     pub not_found: i64,
-    pub dismissed: i64,  // M-19: previously omitted from summary counts
+    pub dismissed: i64, // M-19: previously omitted from summary counts
 }
 
 #[derive(Debug, Serialize)]
@@ -99,17 +99,21 @@ pub async fn ghost_summary(
 ) -> AppResult<GhostSummary> {
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     // M-19: include dismissed in the GROUP BY so the count is complete
-    let rows: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT status, COUNT(*) as cnt FROM unknown_barcodes GROUP BY status",
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let rows: Vec<(String, i64)> =
+        sqlx::query_as("SELECT status, COUNT(*) as cnt FROM unknown_barcodes GROUP BY status")
+            .fetch_all(&state.db)
+            .await?;
 
-    let mut summary = GhostSummary { pending: 0, found: 0, not_found: 0, dismissed: 0 };
+    let mut summary = GhostSummary {
+        pending: 0,
+        found: 0,
+        not_found: 0,
+        dismissed: 0,
+    };
     for (status, cnt) in rows {
         match status.as_str() {
-            "pending"   => summary.pending   = cnt,
-            "found"     => summary.found     = cnt,
+            "pending" => summary.pending = cnt,
+            "found" => summary.found = cnt,
             "not_found" => summary.not_found = cnt,
             "dismissed" => summary.dismissed = cnt,
             _ => {}
@@ -167,20 +171,31 @@ pub async fn ghost_prefill(
     state: State<'_, AppState>,
 ) -> AppResult<ProductPrefill> {
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
-    let row: Option<(String, String, Option<String>, Option<String>, Option<String>)> =
-        sqlx::query_as(
-            "SELECT product_name, barcode, brand, category, image_url
+    let row: Option<(
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = sqlx::query_as(
+        "SELECT product_name, barcode, brand, category, image_url
              FROM unknown_barcodes
              WHERE id = ? AND status = 'found'",
-        )
-        .bind(&id)
-        .fetch_optional(&state.db)
-        .await?;
+    )
+    .bind(&id)
+    .fetch_optional(&state.db)
+    .await?;
 
     let (name, barcode, brand, category, image_url) =
         row.ok_or_else(|| AppError::NotFound("Ghost barcode not found or not resolved".into()))?;
 
-    Ok(ProductPrefill { name, barcode, brand, category, image_url })
+    Ok(ProductPrefill {
+        name,
+        barcode,
+        brand,
+        category,
+        image_url,
+    })
 }
 
 // ── HTTP lookup helpers ───────────────────────────────────────────────────────
@@ -190,7 +205,13 @@ pub async fn ghost_prefill(
 async fn lookup_upcitemdb(
     client: &reqwest::Client,
     barcode: &str,
-) -> Option<(String, Option<String>, Option<String>, Option<String>, String)> {
+) -> Option<(
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    String,
+)> {
     let url = format!(
         "https://api.upcitemdb.com/prod/trial/lookup?upc={}",
         barcode
@@ -214,8 +235,16 @@ async fn lookup_upcitemdb(
     if name.is_empty() {
         return None;
     }
-    let brand     = item.get("brand").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_string);
-    let category  = item.get("category").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_string);
+    let brand = item
+        .get("brand")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let category = item
+        .get("category")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
     let image_url = item
         .get("images")
         .and_then(|v| v.get(0))
@@ -230,7 +259,13 @@ async fn lookup_upcitemdb(
 async fn lookup_off(
     client: &reqwest::Client,
     barcode: &str,
-) -> Option<(String, Option<String>, Option<String>, Option<String>, String)> {
+) -> Option<(
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    String,
+)> {
     let url = format!(
         "https://world.openfoodfacts.org/api/v0/product/{}.json",
         barcode
@@ -262,9 +297,11 @@ async fn lookup_off(
     if name.is_empty() {
         return None;
     }
-    let brand = product.get("brands").and_then(|v| v.as_str()).map(|s| {
-        s.split(',').next().unwrap_or(s).trim().to_string()
-    }).filter(|s| !s.is_empty());
+    let brand = product
+        .get("brands")
+        .and_then(|v| v.as_str())
+        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
+        .filter(|s| !s.is_empty());
     let category = product
         .get("categories_tags")
         .and_then(|v| v.get(0))
@@ -311,12 +348,16 @@ async fn lookup_ai(
         Some("anthropic") | None => {
             // Prefer OS credential store; fall back to legacy plaintext SQLite key.
             let key = {
-                let from_os = crate::secure_store::get_secret("anthropic_api_key").unwrap_or_default();
+                let from_os =
+                    crate::secure_store::get_secret("anthropic_api_key").unwrap_or_default();
                 if !from_os.is_empty() {
                     from_os
                 } else {
                     crate::db::repositories::ai_admin_repo::get_config(pool, "anthropic_api_key")
-                        .await.ok().flatten().unwrap_or_default()
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default()
                 }
             };
             if key.is_empty() {
@@ -338,11 +379,7 @@ async fn lookup_ai(
                 .ok()?;
             let text = resp.text().await.ok()?;
             let json: serde_json::Value = serde_json::from_str(&text).ok()?;
-            let content = json
-                .get("content")?
-                .get(0)?
-                .get("text")?
-                .as_str()?;
+            let content = json.get("content")?.get(0)?.get("text")?.as_str()?;
             parse_ai_json(content)
         }
         Some("openai") => {
@@ -353,16 +390,26 @@ async fn lookup_ai(
                     from_os
                 } else {
                     crate::db::repositories::ai_admin_repo::get_config(pool, "openai_api_key")
-                        .await.ok().flatten().unwrap_or_default()
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default()
                 }
             };
             if key.is_empty() {
                 return None;
             }
-            let base_url = crate::db::repositories::ai_admin_repo::get_config(pool, "openai_base_url")
-                .await.ok().flatten().unwrap_or_else(|| "https://api.openai.com/v1".into());
+            let base_url =
+                crate::db::repositories::ai_admin_repo::get_config(pool, "openai_base_url")
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| "https://api.openai.com/v1".into());
             let model = crate::db::repositories::ai_admin_repo::get_config(pool, "openai_model")
-                .await.ok().flatten().unwrap_or_else(|| "gpt-4o-mini".into());
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "gpt-4o-mini".into());
 
             let body = serde_json::json!({
                 "model": model,
@@ -395,15 +442,23 @@ async fn lookup_ai(
 /// Returns None if product_name is null or missing.
 fn parse_ai_json(text: &str) -> Option<(String, Option<String>, Option<String>)> {
     let start = text.find('{')?;
-    let end   = text.rfind('}')?;
+    let end = text.rfind('}')?;
     let json: serde_json::Value = serde_json::from_str(&text[start..=end]).ok()?;
     let name = json.get("product_name")?.as_str()?.to_string();
     if name.is_empty() {
         return None;
     }
     // Filter out empty strings and literal "null" strings (some models reply with the word "null")
-    let brand    = json.get("brand").and_then(|v| v.as_str()).filter(|s| !s.is_empty() && *s != "null").map(str::to_string);
-    let category = json.get("category").and_then(|v| v.as_str()).filter(|s| !s.is_empty() && *s != "null").map(str::to_string);
+    let brand = json
+        .get("brand")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty() && *s != "null")
+        .map(str::to_string);
+    let category = json
+        .get("category")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty() && *s != "null")
+        .map(str::to_string);
     Some((name, brand, category))
 }
 
@@ -421,14 +476,16 @@ pub async fn ghost_resolve(
 ) -> AppResult<ResolveResult> {
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
 
-    let pending: Vec<(String, String)> = sqlx::query_as(
-        "SELECT id, barcode FROM unknown_barcodes WHERE status = 'pending'",
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let pending: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, barcode FROM unknown_barcodes WHERE status = 'pending'")
+            .fetch_all(&state.db)
+            .await?;
 
     if pending.is_empty() {
-        return Ok(ResolveResult { resolved: 0, not_found: 0 });
+        return Ok(ResolveResult {
+            resolved: 0,
+            not_found: 0,
+        });
     }
 
     let client = reqwest::Client::builder()
@@ -437,7 +494,7 @@ pub async fn ghost_resolve(
         .build()
         .map_err(|e| AppError::Internal(format!("HTTP client build failed: {e}")))?;
 
-    let mut resolved  = 0i64;
+    let mut resolved = 0i64;
     let mut not_found = 0i64;
 
     for (id, barcode) in &pending {
@@ -450,7 +507,12 @@ pub async fn ghost_resolve(
                  SET status='found', product_name=?, brand=?, category=?, image_url=?, raw_json=?
                  WHERE id=?",
             )
-            .bind(&name).bind(&brand).bind(&category).bind(&image_url).bind(&raw_json).bind(id)
+            .bind(&name)
+            .bind(&brand)
+            .bind(&category)
+            .bind(&image_url)
+            .bind(&raw_json)
+            .bind(id)
             .execute(&state.db)
             .await?;
             resolved += 1;
@@ -466,7 +528,12 @@ pub async fn ghost_resolve(
                  SET status='found', product_name=?, brand=?, category=?, image_url=?, raw_json=?
                  WHERE id=?",
             )
-            .bind(&name).bind(&brand).bind(&category).bind(&image_url).bind(&raw_json).bind(id)
+            .bind(&name)
+            .bind(&brand)
+            .bind(&category)
+            .bind(&image_url)
+            .bind(&raw_json)
+            .bind(id)
             .execute(&state.db)
             .await?;
             resolved += 1;
@@ -487,7 +554,11 @@ pub async fn ghost_resolve(
                  SET status='found', product_name=?, brand=?, category=?, raw_json=?
                  WHERE id=?",
             )
-            .bind(&name).bind(&brand).bind(&category).bind(&raw_json).bind(id)
+            .bind(&name)
+            .bind(&brand)
+            .bind(&category)
+            .bind(&raw_json)
+            .bind(id)
             .execute(&state.db)
             .await?;
             resolved += 1;
@@ -502,5 +573,8 @@ pub async fn ghost_resolve(
         not_found += 1;
     }
 
-    Ok(ResolveResult { resolved, not_found })
+    Ok(ResolveResult {
+        resolved,
+        not_found,
+    })
 }

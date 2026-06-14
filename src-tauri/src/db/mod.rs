@@ -65,10 +65,25 @@ pub async fn init_db(db_path: &str) -> AppResult<SqlitePool> {
     // COALESCE(NULLIF(updated_at,''), ...) only overwrites NULL/empty values so valid
     // timestamps are preserved.
     for table in &[
-        "branches", "categories", "products", "stock_levels", "users",
-        "tax_rules", "devices", "customers", "shifts", "sales", "sale_items",
-        "payments", "refunds", "refund_items", "stock_movements",
-        "audit_logs", "delivery_orders", "product_prices", "cash_events",
+        "branches",
+        "categories",
+        "products",
+        "stock_levels",
+        "users",
+        "tax_rules",
+        "devices",
+        "customers",
+        "shifts",
+        "sales",
+        "sale_items",
+        "payments",
+        "refunds",
+        "refund_items",
+        "stock_movements",
+        "audit_logs",
+        "delivery_orders",
+        "product_prices",
+        "cash_events",
     ] {
         let sql = format!(
             "UPDATE {table} SET sync_attempts = 0, \

@@ -156,7 +156,8 @@ pub async fn report_date_range(
         .fetch_one(pool),
     )?;
 
-    let (pending_count, pending_minor): (i64, i64) = (pending_row.get("cnt"), pending_row.get("total"));
+    let (pending_count, pending_minor): (i64, i64) =
+        (pending_row.get("cnt"), pending_row.get("total"));
 
     Ok(RangeSummary {
         from_date,
@@ -299,7 +300,12 @@ pub async fn report_sales_list(
         })
         .collect();
 
-    Ok(SaleListPage { items, total, offset, limit })
+    Ok(SaleListPage {
+        items,
+        total,
+        offset,
+        limit,
+    })
 }
 
 // ─── Sales by cashier ─────────────────────────────────────────────────────────
@@ -559,9 +565,9 @@ pub(crate) async fn report_eod_cashup_inner(
             let method: String = pr.get("payment_method");
             let total: i64 = pr.get("total");
             match method.as_str() {
-                "cash"  => cash_sales  += total,
-                "card"  => card_sales  += total,
-                _       => other_sales += total,
+                "cash" => cash_sales += total,
+                "card" => card_sales += total,
+                _ => other_sales += total,
             }
         }
 
@@ -654,13 +660,13 @@ pub(crate) async fn report_eod_cashup_inner(
         let expected = opening + cash_sales - cash_refunds + paid_in - paid_out - safe_drop;
         let variance = counted.map(|c| c - expected);
 
-        total_net     += net_sales;
-        total_cash    += cash_sales;
-        total_card    += card_sales;
-        total_other   += other_sales;
-        total_gross   += gross_sales;
+        total_net += net_sales;
+        total_cash += cash_sales;
+        total_card += card_sales;
+        total_other += other_sales;
+        total_gross += gross_sales;
         total_discount += discount_total;
-        total_refund  += refund_total;
+        total_refund += refund_total;
         if let Some(c) = counted {
             if let Some(ref mut tc) = total_counted {
                 *tc += c;
@@ -813,12 +819,10 @@ pub async fn reports_config_load(
 ) -> Result<ReportsConfig, AppError> {
     rbac::require_any_role(&state.db, &actor_user_id).await?;
     let (scope, local_device_id) = report_scope(&state.db).await;
-    let device_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM devices WHERE is_active = 1",
-    )
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(0);
+    let device_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE is_active = 1")
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0);
     Ok(ReportsConfig {
         device_scope: scope.as_str().to_string(),
         device_count,
@@ -844,7 +848,7 @@ pub async fn reports_config_save(
 
     let normalized = match input.device_scope.to_ascii_lowercase().as_str() {
         "all" => "all",
-        _     => "origin",
+        _ => "origin",
     };
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
@@ -888,10 +892,18 @@ mod tests {
             .await
             .expect("migrations");
         // Activate seed device and branch
-        sqlx::query("UPDATE devices SET is_active = 1 WHERE device_id = '01JDEVICE0000000000000001'")
-            .execute(&pool).await.ok();
-        sqlx::query("UPDATE branches SET is_active = 1 WHERE branch_id = '01JBRANCH0000000000000001'")
-            .execute(&pool).await.ok();
+        sqlx::query(
+            "UPDATE devices SET is_active = 1 WHERE device_id = '01JDEVICE0000000000000001'",
+        )
+        .execute(&pool)
+        .await
+        .ok();
+        sqlx::query(
+            "UPDATE branches SET is_active = 1 WHERE branch_id = '01JBRANCH0000000000000001'",
+        )
+        .execute(&pool)
+        .await
+        .ok();
 
         // Seed tax rules needed by the test product
         sqlx::query(
@@ -976,9 +988,18 @@ mod tests {
             tendered_minor: Some(250),
             external_reference: None,
         }];
-        sale_repo::finalize_sale(&pool, &cart, payments, "idem-t10-eod", None, false, None, false)
-            .await
-            .expect("finalize sale");
+        sale_repo::finalize_sale(
+            &pool,
+            &cart,
+            payments,
+            "idem-t10-eod",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("finalize sale");
 
         // Close the shift
         crate::db::repositories::shift_repo::close_shift(&pool, &shift_id, Some(250 + 0), None)

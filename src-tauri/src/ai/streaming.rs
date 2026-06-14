@@ -36,9 +36,18 @@ struct AnthropicMsg {
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum MsgContent {
-    Text { text: String },
-    ToolUse { id: String, name: String, input: Value },
-    ToolResult { tool_use_id: String, content: String },
+    Text {
+        text: String,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: Value,
+    },
+    ToolResult {
+        tool_use_id: String,
+        content: String,
+    },
 }
 
 // ── SSE event variants we care about ─────────────────────────────────────────
@@ -134,7 +143,9 @@ pub async fn run_streaming_chat(
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             let msg = format!("API error {status}: {body}");
-            let _ = on_event.send(StreamEvent::Error { message: msg.clone() });
+            let _ = on_event.send(StreamEvent::Error {
+                message: msg.clone(),
+            });
             return Err(AppError::Internal(msg));
         }
 
@@ -148,8 +159,7 @@ pub async fn run_streaming_chat(
         let mut is_tool_turn = false;
 
         'sse: while let Some(chunk) = byte_stream.next().await {
-            let chunk =
-                chunk.map_err(|e| AppError::Internal(format!("Stream read error: {e}")))?;
+            let chunk = chunk.map_err(|e| AppError::Internal(format!("Stream read error: {e}")))?;
             line_buf.push_str(&String::from_utf8_lossy(&chunk));
 
             // Process all complete lines in the buffer
@@ -185,8 +195,8 @@ pub async fn run_streaming_chat(
                                 is_tool_turn = true;
                                 tool_id = id;
                                 tool_name = name.clone();
-                                let _ = on_event
-                                    .send(StreamEvent::ToolStart { name: name.clone() });
+                                let _ =
+                                    on_event.send(StreamEvent::ToolStart { name: name.clone() });
                             }
                             SseEvent::ContentBlockStart {
                                 content_block: SseBlock::Text { .. },
@@ -225,18 +235,33 @@ pub async fn run_streaming_chat(
             Err(e) => {
                 tracing::error!(
                     "AI tool '{}' returned malformed input JSON: {} — raw: {}",
-                    tool_name, e, tool_json
+                    tool_name,
+                    e,
+                    tool_json
                 );
                 let msg = format!(
                     "The AI produced invalid parameters for '{}' and the action was stopped. Please retry.",
                     tool_name
                 );
-                let _ = on_event.send(StreamEvent::Error { message: msg.clone() });
+                let _ = on_event.send(StreamEvent::Error {
+                    message: msg.clone(),
+                });
                 return Err(AppError::Internal(msg));
             }
         };
 
-        let _ = on_event.send(StreamEvent::ToolDone { name: tool_name.clone() });
+        let _ = on_event.send(StreamEvent::ToolDone {
+            name: tool_name.clone(),
+        });
+
+        // ── Run Engine dispatch (stub) ──────────────────────────────────
+        // TODO: If tool_name matches an engine op_id (e.g. "bulk_refund",
+        // "bulk_discount", "price_update"), call the engine and emit:
+        //   RunPreview → RunProgress → RunDone / RunFailed
+        // Use StreamEvent::RunPreview { run_id, op_id, description, count, samples }
+        //     StreamEvent::RunProgress { run_id, done, total }
+        //     StreamEvent::RunDone { run_id }
+        //     StreamEvent::RunFailed { run_id, error }
 
         // ── Intent Engine dispatch (ZanAI v2) ──────────────────────────
         if crate::ai::intent_engine::INTENT_NAMES.contains(&tool_name.as_str()) {
@@ -244,41 +269,76 @@ pub async fn run_streaming_chat(
                 // Mutation intent — needs confirmation
                 let preview_text = format!("{} with params: {}", tool_name, tool_input);
                 let action = ai_admin_repo::create_action(
-                    pool, &input.user_id, &tool_name,
-                    &tool_input.to_string(), &hash_str(&tool_input.to_string()),
-                    &preview_text, &Ulid::new().to_string(),
-                ).await?;
+                    pool,
+                    &input.user_id,
+                    &tool_name,
+                    &tool_input.to_string(),
+                    &hash_str(&tool_input.to_string()),
+                    &preview_text,
+                    &Ulid::new().to_string(),
+                )
+                .await?;
                 let _ = on_event.send(StreamEvent::MutationPending {
-                    action_id: action.action_id, tool_name: tool_name.clone(), preview: crate::domain::ai_admin::ToolPreview {
-                        tool_name: tool_name.clone(), description: preview_text, fields: vec![],
-                    }, expires_at: action.expires_at, assistant_text: turn_text,
+                    action_id: action.action_id,
+                    tool_name: tool_name.clone(),
+                    preview: crate::domain::ai_admin::ToolPreview {
+                        tool_name: tool_name.clone(),
+                        description: preview_text,
+                        fields: vec![],
+                    },
+                    expires_at: action.expires_at,
+                    assistant_text: turn_text,
                 });
                 return Ok(accumulated_text);
             }
             // Read intent — execute directly
-            let result = crate::ai::intent_engine::execute_intent(pool, &tool_name, &tool_input, &input.branch_id).await;
+            let result = crate::ai::intent_engine::execute_intent(
+                pool,
+                &tool_name,
+                &tool_input,
+                &input.branch_id,
+            )
+            .await;
             match result {
                 Ok(r) => {
-                    let result_text = serde_json::to_string(&r.data).unwrap_or_else(|_| "{}".into());
+                    let result_text =
+                        serde_json::to_string(&r.data).unwrap_or_else(|_| "{}".into());
                     // Append result as tool response
-                    msgs.push(AnthropicMsg { role: "assistant".into(), content: vec![
-                        MsgContent::Text { text: turn_text.clone() },
-                        MsgContent::ToolUse { id: tool_id.clone(), name: tool_name.clone(), input: tool_input.clone() },
-                    ]});
-                    msgs.push(AnthropicMsg { role: "user".into(), content: vec![
-                        MsgContent::ToolResult { tool_use_id: tool_id.clone(), content: result_text },
-                    ]});
+                    msgs.push(AnthropicMsg {
+                        role: "assistant".into(),
+                        content: vec![
+                            MsgContent::Text {
+                                text: turn_text.clone(),
+                            },
+                            MsgContent::ToolUse {
+                                id: tool_id.clone(),
+                                name: tool_name.clone(),
+                                input: tool_input.clone(),
+                            },
+                        ],
+                    });
+                    msgs.push(AnthropicMsg {
+                        role: "user".into(),
+                        content: vec![MsgContent::ToolResult {
+                            tool_use_id: tool_id.clone(),
+                            content: result_text,
+                        }],
+                    });
                     // Emit Navigate for open_tab
                     if tool_name == "open_tab" {
                         if let Some(tab) = tool_input.get("tab").and_then(|v| v.as_str()) {
-                            let _ = on_event.send(StreamEvent::Navigate { tab: tab.to_string() });
+                            let _ = on_event.send(StreamEvent::Navigate {
+                                tab: tab.to_string(),
+                            });
                         }
                     }
                     continue;
                 }
                 Err(e) => {
                     let msg = format!("Intent '{}' failed: {e}", tool_name);
-                    let _ = on_event.send(StreamEvent::Error { message: msg.clone() });
+                    let _ = on_event.send(StreamEvent::Error {
+                        message: msg.clone(),
+                    });
                     return Err(AppError::Internal(msg));
                 }
             }
@@ -286,13 +346,9 @@ pub async fn run_streaming_chat(
 
         // Mutation → needs confirmation, emit pending event and exit
         if tools::is_mutation_tool(&tool_name) {
-            let preview = tools::dry_run_mutation(
-                pool,
-                &tool_name,
-                &tool_input,
-                input.currency_exponent,
-            )
-            .await?;
+            let preview =
+                tools::dry_run_mutation(pool, &tool_name, &tool_input, input.currency_exponent)
+                    .await?;
 
             let tool_input_json = tool_input.to_string();
             let preview_text = preview_to_text(&preview);
@@ -339,7 +395,9 @@ pub async fn run_streaming_chat(
         if tool_name == "open_tab" {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&tool_result) {
                 if let Some(tab) = parsed.get("tab").and_then(|v| v.as_str()) {
-                    let _ = on_event.send(StreamEvent::Navigate { tab: tab.to_string() });
+                    let _ = on_event.send(StreamEvent::Navigate {
+                        tab: tab.to_string(),
+                    });
                 }
             }
         }
@@ -348,7 +406,9 @@ pub async fn run_streaming_chat(
         msgs.push(AnthropicMsg {
             role: "assistant".into(),
             content: vec![
-                MsgContent::Text { text: turn_text.clone() },
+                MsgContent::Text {
+                    text: turn_text.clone(),
+                },
                 MsgContent::ToolUse {
                     id: tool_id.clone(),
                     name: tool_name.clone(),
@@ -393,12 +453,16 @@ fn build_messages(history: &[ChatMessage], user_message: &str) -> Vec<AnthropicM
         .iter()
         .map(|m| AnthropicMsg {
             role: m.role.clone(),
-            content: vec![MsgContent::Text { text: m.content.clone() }],
+            content: vec![MsgContent::Text {
+                text: m.content.clone(),
+            }],
         })
         .collect();
     msgs.push(AnthropicMsg {
         role: "user".into(),
-        content: vec![MsgContent::Text { text: user_message.into() }],
+        content: vec![MsgContent::Text {
+            text: user_message.into(),
+        }],
     });
     msgs
 }

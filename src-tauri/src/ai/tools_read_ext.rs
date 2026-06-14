@@ -20,15 +20,13 @@ async fn active_branch(pool: &SqlitePool) -> AppResult<String> {
 }
 
 async fn active_device(pool: &SqlitePool) -> String {
-    sqlx::query_scalar(
-        "SELECT value FROM app_config WHERE key = 'device_id'",
-    )
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
-    .flatten()
-    .unwrap_or_default()
+    sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'device_id'")
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .flatten()
+        .unwrap_or_default()
 }
 
 fn sidecar_token() -> String {
@@ -37,10 +35,16 @@ fn sidecar_token() -> String {
         .join("com.super.zanpos")
         .join("wa-session")
         .join(".sidecar_token");
-    std::fs::read_to_string(path).unwrap_or_default().trim().to_string()
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .trim()
+        .to_string()
 }
 
-fn cfg_val<'a>(pool: &'a SqlitePool, key: &'a str) -> impl std::future::Future<Output = Option<String>> + 'a {
+fn cfg_val<'a>(
+    pool: &'a SqlitePool,
+    key: &'a str,
+) -> impl std::future::Future<Output = Option<String>> + 'a {
     let key = key.to_string();
     async move {
         sqlx::query_scalar("SELECT value FROM app_config WHERE key = ?")
@@ -64,32 +68,48 @@ pub async fn execute(
 ) -> AppResult<String> {
     let fmt = |n: i64| money::format_minor(n, currency_exp);
     match tool_name {
-        "get_sales_list"        => sales_list(pool, input, &fmt).await,
-        "get_sale_detail"       => sale_detail(pool, input, &fmt).await,
-        "get_z_report"          => z_report(pool, input, &fmt).await,
-        "get_eod_cashup"        => eod_cashup(pool, input, &fmt).await,
-        "get_x_report"          => x_report(pool, input, &fmt).await,
-        "get_product_barcodes"  => product_barcodes(pool, input).await,
-        "get_whatsapp_status"   => whatsapp_status().await,
-        "get_branch_settings"   => branch_settings(pool).await,
-        "get_hub_status"        => hub_status(pool).await,
-        "get_held_carts"        => held_carts(pool, &fmt).await,
-        "get_db_integrity"      => db_integrity(pool).await,
-        "get_thermal_config"    => thermal_config(pool).await,
-        "get_delivery_detail"   => delivery_detail(pool, input, &fmt).await,
+        "get_sales_list" => sales_list(pool, input, &fmt).await,
+        "get_sale_detail" => sale_detail(pool, input, &fmt).await,
+        "get_z_report" => z_report(pool, input, &fmt).await,
+        "get_eod_cashup" => eod_cashup(pool, input, &fmt).await,
+        "get_x_report" => x_report(pool, input, &fmt).await,
+        "get_product_barcodes" => product_barcodes(pool, input).await,
+        "get_whatsapp_status" => whatsapp_status().await,
+        "get_branch_settings" => branch_settings(pool).await,
+        "get_hub_status" => hub_status(pool).await,
+        "get_held_carts" => held_carts(pool, &fmt).await,
+        "get_db_integrity" => db_integrity(pool).await,
+        "get_thermal_config" => thermal_config(pool).await,
+        "get_delivery_detail" => delivery_detail(pool, input, &fmt).await,
         "get_rider_suggestions" => rider_suggestions(pool).await,
-        "get_sync_queue_stats"  => sync_queue_stats(pool).await,
+        "get_sync_queue_stats" => sync_queue_stats(pool).await,
         other => Err(AppError::Validation(format!("Unknown read tool: {other}"))),
     }
 }
 
 // ── Implementations ────────────────────────────────────────────────────────────
 
-async fn sales_list(pool: &SqlitePool, input: &serde_json::Value, fmt: &impl Fn(i64) -> String) -> AppResult<String> {
+async fn sales_list(
+    pool: &SqlitePool,
+    input: &serde_json::Value,
+    fmt: &impl Fn(i64) -> String,
+) -> AppResult<String> {
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let from = input.get("date_from").and_then(|v| v.as_str()).unwrap_or(&today).to_string();
-    let to   = input.get("date_to").and_then(|v| v.as_str()).unwrap_or(&today).to_string();
-    let limit = input.get("limit").and_then(|v| v.as_i64()).unwrap_or(50).clamp(1, 200);
+    let from = input
+        .get("date_from")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&today)
+        .to_string();
+    let to = input
+        .get("date_to")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&today)
+        .to_string();
+    let limit = input
+        .get("limit")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(50)
+        .clamp(1, 200);
     let branch = active_branch(pool).await?;
 
     let rows = sqlx::query(
@@ -102,67 +122,128 @@ async fn sales_list(pool: &SqlitePool, input: &serde_json::Value, fmt: &impl Fn(
          WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
          GROUP BY s.sale_id ORDER BY s.sold_at DESC LIMIT ?",
     )
-    .bind(&branch).bind(&from).bind(&to).bind(limit)
-    .fetch_all(pool).await?;
+    .bind(&branch)
+    .bind(&from)
+    .bind(&to)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
 
     if rows.is_empty() {
         return Ok(format!("[DB] No sales found for {} → {}.", from, to));
     }
-    let lines: Vec<String> = rows.iter().map(|r| {
-        let rcpt: String = r.get("receipt_number");
-        let total: i64   = r.get("net_total_minor");
-        let cashier: String = r.get("cashier_name");
-        let status: String  = r.get("status");
-        let methods: Option<String> = r.get("payment_methods");
-        format!("  #{rcpt} | BHD {} | {} | {} | {}", fmt(total), cashier, methods.unwrap_or_default(), status)
-    }).collect();
-    Ok(format!("[DB] {} sale(s) {} → {}:\n{}", rows.len(), from, to, lines.join("\n")))
-}
-
-async fn sale_detail(pool: &SqlitePool, input: &serde_json::Value, fmt: &impl Fn(i64) -> String) -> AppResult<String> {
-    let receipt = input.get("receipt_number").and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::Validation("receipt_number required".into()))?;
-    let sale = refund_repo::get_sale_by_receipt(pool, receipt).await?;
-    let items: Vec<String> = sale.items.iter().map(|i| {
-        format!("    {} × {} @ BHD {} = BHD {}", i.quantity, i.product_name_snapshot,
-            fmt(i.unit_price_minor), fmt(i.line_total_minor))
-    }).collect();
+    let lines: Vec<String> = rows
+        .iter()
+        .map(|r| {
+            let rcpt: String = r.get("receipt_number");
+            let total: i64 = r.get("net_total_minor");
+            let cashier: String = r.get("cashier_name");
+            let status: String = r.get("status");
+            let methods: Option<String> = r.get("payment_methods");
+            format!(
+                "  #{rcpt} | BHD {} | {} | {} | {}",
+                fmt(total),
+                cashier,
+                methods.unwrap_or_default(),
+                status
+            )
+        })
+        .collect();
     Ok(format!(
-        "[DB] Sale #{} — BHD {} — {} — {}\nCashier: {}\nItems:\n{}",
-        sale.receipt_number, fmt(sale.net_total_minor), sale.sold_at, sale.status,
-        sale.cashier_name, items.join("\n")
+        "[DB] {} sale(s) {} → {}:\n{}",
+        rows.len(),
+        from,
+        to,
+        lines.join("\n")
     ))
 }
 
-async fn z_report(pool: &SqlitePool, input: &serde_json::Value, fmt: &impl Fn(i64) -> String) -> AppResult<String> {
+async fn sale_detail(
+    pool: &SqlitePool,
+    input: &serde_json::Value,
+    fmt: &impl Fn(i64) -> String,
+) -> AppResult<String> {
+    let receipt = input
+        .get("receipt_number")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::Validation("receipt_number required".into()))?;
+    let sale = refund_repo::get_sale_by_receipt(pool, receipt).await?;
+    let items: Vec<String> = sale
+        .items
+        .iter()
+        .map(|i| {
+            format!(
+                "    {} × {} @ BHD {} = BHD {}",
+                i.quantity,
+                i.product_name_snapshot,
+                fmt(i.unit_price_minor),
+                fmt(i.line_total_minor)
+            )
+        })
+        .collect();
+    Ok(format!(
+        "[DB] Sale #{} — BHD {} — {} — {}\nCashier: {}\nItems:\n{}",
+        sale.receipt_number,
+        fmt(sale.net_total_minor),
+        sale.sold_at,
+        sale.status,
+        sale.cashier_name,
+        items.join("\n")
+    ))
+}
+
+async fn z_report(
+    pool: &SqlitePool,
+    input: &serde_json::Value,
+    fmt: &impl Fn(i64) -> String,
+) -> AppResult<String> {
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let date = input.get("date").and_then(|v| v.as_str()).unwrap_or(&today).to_string();
+    let date = input
+        .get("date")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&today)
+        .to_string();
     let branch = active_branch(pool).await?;
 
     let (tx_count, net_total, discount_total, tax_total): (i64, i64, i64, i64) = sqlx::query_as(
         "SELECT COUNT(DISTINCT s.sale_id), COALESCE(SUM(s.net_total_minor),0),
                 COALESCE(SUM(s.discount_total_minor),0), COALESCE(SUM(s.tax_total_minor),0)
-         FROM sales s WHERE s.branch_id = ? AND s.business_date = ? AND s.status != 'voided'"
-    ).bind(&branch).bind(&date).fetch_one(pool).await?;
+         FROM sales s WHERE s.branch_id = ? AND s.business_date = ? AND s.status != 'voided'",
+    )
+    .bind(&branch)
+    .bind(&date)
+    .fetch_one(pool)
+    .await?;
 
     let pay_rows = sqlx::query(
         "SELECT p.payment_method, COALESCE(SUM(p.amount_minor),0) AS total
          FROM payments p JOIN sales s ON s.sale_id = p.sale_id
          WHERE s.branch_id = ? AND s.business_date = ? AND s.status != 'voided'
-         GROUP BY p.payment_method"
-    ).bind(&branch).bind(&date).fetch_all(pool).await?;
+         GROUP BY p.payment_method",
+    )
+    .bind(&branch)
+    .bind(&date)
+    .fetch_all(pool)
+    .await?;
 
     let (refund_count, refund_total): (i64, i64) = sqlx::query_as(
         "SELECT COUNT(r.refund_id), COALESCE(SUM(r.refund_total_minor),0)
          FROM refunds r JOIN sales s ON s.sale_id = r.original_sale_id
-         WHERE s.branch_id = ? AND s.business_date = ?"
-    ).bind(&branch).bind(&date).fetch_one(pool).await?;
+         WHERE s.branch_id = ? AND s.business_date = ?",
+    )
+    .bind(&branch)
+    .bind(&date)
+    .fetch_one(pool)
+    .await?;
 
-    let pay_lines: Vec<String> = pay_rows.iter().map(|r| {
-        let method: String = r.get("payment_method");
-        let total: i64 = r.get("total");
-        format!("  {}: BHD {}", method, fmt(total))
-    }).collect();
+    let pay_lines: Vec<String> = pay_rows
+        .iter()
+        .map(|r| {
+            let method: String = r.get("payment_method");
+            let total: i64 = r.get("total");
+            format!("  {}: BHD {}", method, fmt(total))
+        })
+        .collect();
 
     Ok(format!(
         "[DB] Z-Report — {date}\nTransactions: {tx_count}\nNet Revenue: BHD {}\nDiscounts: BHD {}\nTax: BHD {}\nRefunds: {refund_count} (BHD {})\nPayments:\n{}",
@@ -171,19 +252,33 @@ async fn z_report(pool: &SqlitePool, input: &serde_json::Value, fmt: &impl Fn(i6
     ))
 }
 
-async fn eod_cashup(pool: &SqlitePool, input: &serde_json::Value, fmt: &impl Fn(i64) -> String) -> AppResult<String> {
+async fn eod_cashup(
+    pool: &SqlitePool,
+    input: &serde_json::Value,
+    fmt: &impl Fn(i64) -> String,
+) -> AppResult<String> {
     // Alias to z_report — same data, different label
-    z_report(pool, input, fmt).await.map(|s| s.replacen("Z-Report", "EOD Cashup", 1))
+    z_report(pool, input, fmt)
+        .await
+        .map(|s| s.replacen("Z-Report", "EOD Cashup", 1))
 }
 
-async fn x_report(pool: &SqlitePool, input: &serde_json::Value, fmt: &impl Fn(i64) -> String) -> AppResult<String> {
-    let shift_id = input.get("shift_id").and_then(|v| v.as_str())
+async fn x_report(
+    pool: &SqlitePool,
+    input: &serde_json::Value,
+    fmt: &impl Fn(i64) -> String,
+) -> AppResult<String> {
+    let shift_id = input
+        .get("shift_id")
+        .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("shift_id required".into()))?;
 
-    let shift = sqlx::query(
-        "SELECT opening_cash_minor, counted_cash_minor FROM shifts WHERE shift_id = ?"
-    ).bind(shift_id).fetch_optional(pool).await?
-     .ok_or_else(|| AppError::NotFound("Shift not found".into()))?;
+    let shift =
+        sqlx::query("SELECT opening_cash_minor, counted_cash_minor FROM shifts WHERE shift_id = ?")
+            .bind(shift_id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Shift not found".into()))?;
     let opening: i64 = shift.get("opening_cash_minor");
     let counted: Option<i64> = shift.get("counted_cash_minor");
 
@@ -210,8 +305,11 @@ async fn x_report(pool: &SqlitePool, input: &serde_json::Value, fmt: &impl Fn(i6
         ), 0)
          FROM refunds r
          JOIN sales s ON s.sale_id = r.original_sale_id
-         WHERE s.shift_id = ?"
-    ).bind(shift_id).fetch_one(pool).await?;
+         WHERE s.shift_id = ?",
+    )
+    .bind(shift_id)
+    .fetch_one(pool)
+    .await?;
 
     let paid_in: i64 = sqlx::query_scalar(
         "SELECT COALESCE(SUM(amount_minor),0) FROM cash_events WHERE shift_id = ? AND event_type = 'paid_in'"
@@ -235,19 +333,31 @@ async fn x_report(pool: &SqlitePool, input: &serde_json::Value, fmt: &impl Fn(i6
 }
 
 async fn product_barcodes(pool: &SqlitePool, input: &serde_json::Value) -> AppResult<String> {
-    let pid = input.get("product_id").and_then(|v| v.as_str())
+    let pid = input
+        .get("product_id")
+        .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("product_id required".into()))?;
     let rows = sqlx::query(
         "SELECT barcode_id, barcode, created_at FROM product_barcodes WHERE product_id = ? ORDER BY created_at"
     ).bind(pid).fetch_all(pool).await?;
     if rows.is_empty() {
-        return Ok(format!("[DB] No extra barcodes registered for product {pid}."));
+        return Ok(format!(
+            "[DB] No extra barcodes registered for product {pid}."
+        ));
     }
-    let lines: Vec<String> = rows.iter().map(|r| {
-        let id: String = r.get("barcode_id"); let bc: String = r.get("barcode");
-        format!("  {bc} (id: {id})")
-    }).collect();
-    Ok(format!("[DB] {} barcode(s) for product {pid}:\n{}", rows.len(), lines.join("\n")))
+    let lines: Vec<String> = rows
+        .iter()
+        .map(|r| {
+            let id: String = r.get("barcode_id");
+            let bc: String = r.get("barcode");
+            format!("  {bc} (id: {id})")
+        })
+        .collect();
+    Ok(format!(
+        "[DB] {} barcode(s) for product {pid}:\n{}",
+        rows.len(),
+        lines.join("\n")
+    ))
 }
 
 async fn whatsapp_status() -> AppResult<String> {
@@ -255,25 +365,43 @@ async fn whatsapp_status() -> AppResult<String> {
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(10))
-        .build().unwrap_or_default();
-    match client.get("http://127.0.0.1:3131/status")
-        .header("X-Sidecar-Token", &token).send().await
+        .build()
+        .unwrap_or_default();
+    match client
+        .get("http://127.0.0.1:3131/status")
+        .header("X-Sidecar-Token", &token)
+        .send()
+        .await
     {
         Ok(resp) => {
             let json: serde_json::Value = resp.json().await.unwrap_or_default();
-            let connected = json.get("connected").and_then(|v| v.as_bool()).unwrap_or(false);
-            Ok(format!("[WA] Sidecar running. Connected: {}.", if connected { "yes ✓" } else { "no — scan QR code to pair" }))
+            let connected = json
+                .get("connected")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            Ok(format!(
+                "[WA] Sidecar running. Connected: {}.",
+                if connected {
+                    "yes ✓"
+                } else {
+                    "no — scan QR code to pair"
+                }
+            ))
         }
-        Err(_) => Ok("[WA] WhatsApp sidecar is not running. Start it from WhatsApp Settings.".into()),
+        Err(_) => {
+            Ok("[WA] WhatsApp sidecar is not running. Start it from WhatsApp Settings.".into())
+        }
     }
 }
 
 async fn branch_settings(pool: &SqlitePool) -> AppResult<String> {
     let row = sqlx::query(
         "SELECT name, branch_code, currency, timezone, address, phone, tax_number, cr_number,
-                receipt_header, receipt_footer FROM branches WHERE is_active = 1 LIMIT 1"
-    ).fetch_optional(pool).await?
-     .ok_or_else(|| AppError::NotFound("No active branch".into()))?;
+                receipt_header, receipt_footer FROM branches WHERE is_active = 1 LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("No active branch".into()))?;
 
     let name: String = row.get("name");
     let code: String = row.get("branch_code");
@@ -298,17 +426,25 @@ async fn hub_status(pool: &SqlitePool) -> AppResult<String> {
     let hub_mode: Option<String> = cfg_val(pool, "hub_mode").await;
     let hub_url: Option<String> = cfg_val(pool, "hub_url").await;
     let hub_port: Option<String> = cfg_val(pool, "hub_port").await;
-    let has_token = crate::secure_store::get_secret("hub_store_token")
-        .map_or(false, |k| !k.is_empty());
-    let pending: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM products WHERE sync_status = 'pending'"
-    ).fetch_one(pool).await.unwrap_or(0);
-    let last_sync: Option<String> = sqlx::query_scalar(
-        "SELECT last_pushed_at FROM sync_watermark WHERE table_name = 'sales'",
-    ).fetch_optional(pool).await.ok().flatten();
+    let has_token =
+        crate::secure_store::get_secret("hub_store_token").map_or(false, |k| !k.is_empty());
+    let pending: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM products WHERE sync_status = 'pending'")
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
+    let last_sync: Option<String> =
+        sqlx::query_scalar("SELECT last_pushed_at FROM sync_watermark WHERE table_name = 'sales'")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
 
     let role = if hub_mode.as_deref() == Some("1") {
-        format!("HUB — serving terminals on port {}", hub_port.as_deref().unwrap_or("8923"))
+        format!(
+            "HUB — serving terminals on port {}",
+            hub_port.as_deref().unwrap_or("8923")
+        )
     } else if let Some(url) = hub_url.as_deref().filter(|u| !u.is_empty()) {
         format!("TERMINAL — connected to {url}")
     } else {
@@ -330,33 +466,62 @@ async fn held_carts(pool: &SqlitePool, fmt: &impl Fn(i64) -> String) -> AppResul
     if carts.is_empty() {
         return Ok("[DB] No held/parked carts on this device.".into());
     }
-    let lines: Vec<String> = carts.iter().map(|c| format!(
-        "  {} | {} item(s) | BHD {} | {}{}",
-        c.held_cart_id, c.line_count, fmt(c.estimated_total_minor),
-        c.held_at, c.note.as_deref().map(|n| format!(" | Note: {n}")).unwrap_or_default()
-    )).collect();
-    Ok(format!("[DB] {} held cart(s):\n{}", carts.len(), lines.join("\n")))
+    let lines: Vec<String> = carts
+        .iter()
+        .map(|c| {
+            format!(
+                "  {} | {} item(s) | BHD {} | {}{}",
+                c.held_cart_id,
+                c.line_count,
+                fmt(c.estimated_total_minor),
+                c.held_at,
+                c.note
+                    .as_deref()
+                    .map(|n| format!(" | Note: {n}"))
+                    .unwrap_or_default()
+            )
+        })
+        .collect();
+    Ok(format!(
+        "[DB] {} held cart(s):\n{}",
+        carts.len(),
+        lines.join("\n")
+    ))
 }
 
 async fn db_integrity(pool: &SqlitePool) -> AppResult<String> {
     let result: String = sqlx::query_scalar("PRAGMA integrity_check")
-        .fetch_one(pool).await?;
+        .fetch_one(pool)
+        .await?;
     Ok(format!("[DB] SQLite integrity_check: {result}"))
 }
 
 async fn thermal_config(pool: &SqlitePool) -> AppResult<String> {
-    let enabled = cfg_val(pool, "thermal_printer_enabled").await.unwrap_or_default();
-    let port    = cfg_val(pool, "thermal_printer_port").await.unwrap_or_default();
-    let baud    = cfg_val(pool, "thermal_printer_baud").await.unwrap_or("9600".into());
+    let enabled = cfg_val(pool, "thermal_printer_enabled")
+        .await
+        .unwrap_or_default();
+    let port = cfg_val(pool, "thermal_printer_port")
+        .await
+        .unwrap_or_default();
+    let baud = cfg_val(pool, "thermal_printer_baud")
+        .await
+        .unwrap_or("9600".into());
     Ok(format!(
         "[DB] Thermal printer — enabled: {} | port: {} | baud: {}",
         if enabled == "1" { "yes" } else { "no" },
-        if port.is_empty() { "(not set)" } else { &port }, baud
+        if port.is_empty() { "(not set)" } else { &port },
+        baud
     ))
 }
 
-async fn delivery_detail(pool: &SqlitePool, input: &serde_json::Value, fmt: &impl Fn(i64) -> String) -> AppResult<String> {
-    let id = input.get("delivery_id").and_then(|v| v.as_str())
+async fn delivery_detail(
+    pool: &SqlitePool,
+    input: &serde_json::Value,
+    fmt: &impl Fn(i64) -> String,
+) -> AppResult<String> {
+    let id = input
+        .get("delivery_id")
+        .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("delivery_id required".into()))?;
     let d = delivery_repo::get_delivery(pool, id).await?;
     Ok(format!(
@@ -380,12 +545,18 @@ async fn sync_queue_stats(pool: &SqlitePool) -> AppResult<String> {
     let tables = crate::commands::sync_commands::SYNC_TABLES;
     let mut lines = Vec::new();
     for table in tables {
-        let pending: i64 = sqlx::query_scalar(
-            &format!("SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending'")
-        ).fetch_one(pool).await.unwrap_or(0);
-        let failed: i64 = sqlx::query_scalar(
-            &format!("SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending' AND sync_attempts >= 10")
-        ).fetch_one(pool).await.unwrap_or(0);
+        let pending: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending'"
+        ))
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+        let failed: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending' AND sync_attempts >= 10"
+        ))
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
         if pending > 0 || failed > 0 {
             lines.push(format!("  {table}: {pending} pending, {failed} stuck"));
         }

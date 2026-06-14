@@ -85,8 +85,14 @@ pub async fn app_config_load(state: State<'_, AppState>) -> Result<AppConfig, Ap
             .await?
             .flatten();
     let hub_url = hub_url_raw.filter(|s: &String| !s.is_empty());
-    let hub_mode = if hub_flag.as_deref() == Some("1") { "hub" }
-                   else if hub_url.is_some() { "terminal" } else { "standalone" }.to_string();
+    let hub_mode = if hub_flag.as_deref() == Some("1") {
+        "hub"
+    } else if hub_url.is_some() {
+        "terminal"
+    } else {
+        "standalone"
+    }
+    .to_string();
 
     let wa_benefit: Option<String> =
         sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'whatsapp_benefit_number'")
@@ -151,7 +157,10 @@ pub async fn setup_wizard_complete(
     input: SetupWizardInput,
     state: State<'_, AppState>,
 ) -> Result<AppConfig, AppError> {
-    tracing::info!("setup_wizard_complete: started for store '{}'", input.store_name.trim());
+    tracing::info!(
+        "setup_wizard_complete: started for store '{}'",
+        input.store_name.trim()
+    );
 
     // F-CRIT-01: Reject if setup has already been completed. Without this guard,
     // any code with Tauri IPC access can call this command post-setup to overwrite
@@ -195,12 +204,11 @@ pub async fn setup_wizard_complete(
     // --- PHASE 1: reads before any writes ---
 
     // F-MED-06: Look up role by name instead of hardcoding the seed ID.
-    let owner_role_id: String = sqlx::query_scalar(
-        "SELECT role_id FROM roles WHERE name = 'owner' LIMIT 1",
-    )
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::Internal("Owner role not found in database".into()))?;
+    let owner_role_id: String =
+        sqlx::query_scalar("SELECT role_id FROM roles WHERE name = 'owner' LIMIT 1")
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| AppError::Internal("Owner role not found in database".into()))?;
 
     // Check if a user with this username already exists (owner may be the seeded admin)
     let existing_id: Option<String> =
@@ -215,7 +223,8 @@ pub async fn setup_wizard_complete(
     } else {
         None
     };
-    let owner_user_id = existing_id.clone()
+    let owner_user_id = existing_id
+        .clone()
         .unwrap_or_else(|| new_owner_uid.clone().unwrap());
 
     let branch_id_for_new_user: Option<String> = if existing_id.is_none() {
@@ -473,7 +482,11 @@ pub async fn setup_save_benefit_number(
     // been created yet so we allow it; after setup, require manager/owner.
     let setup_done: Option<String> =
         sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'setup_complete'")
-            .fetch_optional(&state.db).await.ok().flatten().flatten();
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
     if setup_done.as_deref() == Some("1") {
         let uid = actor_user_id.as_deref().unwrap_or("");
         crate::commands::rbac::manager_or_owner(&state.db, uid).await?;
@@ -521,14 +534,12 @@ impl Default for BusinessFlags {
 
 /// Read a single boolean flag from app_config ("1" == true, anything else == false).
 async fn read_flag(pool: &sqlx::SqlitePool, key: &str, default: bool) -> bool {
-    let val: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM app_config WHERE key = ?",
-    )
-    .bind(key)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
+    let val: Option<String> = sqlx::query_scalar("SELECT value FROM app_config WHERE key = ?")
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten();
     match val.as_deref() {
         Some(v) => v == "1",
         None => default,
@@ -555,14 +566,12 @@ async fn write_flag(
 }
 
 #[tauri::command]
-pub async fn business_flags_load(
-    state: State<'_, AppState>,
-) -> Result<BusinessFlags, AppError> {
+pub async fn business_flags_load(state: State<'_, AppState>) -> Result<BusinessFlags, AppError> {
     let flags = BusinessFlags {
-        allow_negative_stock:    read_flag(&state.db, "flag_allow_negative_stock",    false).await,
+        allow_negative_stock: read_flag(&state.db, "flag_allow_negative_stock", false).await,
         require_discount_reason: read_flag(&state.db, "flag_require_discount_reason", true).await,
-        cashier_can_discount:    read_flag(&state.db, "flag_cashier_can_discount",    false).await,
-        auto_print_receipt:      read_flag(&state.db, "flag_auto_print_receipt",      false).await,
+        cashier_can_discount: read_flag(&state.db, "flag_cashier_can_discount", false).await,
+        auto_print_receipt: read_flag(&state.db, "flag_auto_print_receipt", false).await,
     };
     Ok(flags)
 }
@@ -581,10 +590,30 @@ pub async fn business_flags_save(
     // Only managers and owners may change business rules.
     rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
 
-    write_flag(&state.db, "flag_allow_negative_stock",    input.flags.allow_negative_stock).await?;
-    write_flag(&state.db, "flag_require_discount_reason", input.flags.require_discount_reason).await?;
-    write_flag(&state.db, "flag_cashier_can_discount",    input.flags.cashier_can_discount).await?;
-    write_flag(&state.db, "flag_auto_print_receipt",      input.flags.auto_print_receipt).await?;
+    write_flag(
+        &state.db,
+        "flag_allow_negative_stock",
+        input.flags.allow_negative_stock,
+    )
+    .await?;
+    write_flag(
+        &state.db,
+        "flag_require_discount_reason",
+        input.flags.require_discount_reason,
+    )
+    .await?;
+    write_flag(
+        &state.db,
+        "flag_cashier_can_discount",
+        input.flags.cashier_can_discount,
+    )
+    .await?;
+    write_flag(
+        &state.db,
+        "flag_auto_print_receipt",
+        input.flags.auto_print_receipt,
+    )
+    .await?;
 
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 

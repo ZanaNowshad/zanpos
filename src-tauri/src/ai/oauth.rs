@@ -45,7 +45,11 @@ impl OAuthConfig {
             redirect_uri: redirect_uri.to_string(),
             auth_url: "https://auth.openai.com/authorize".to_string(),
             token_url: "https://auth.openai.com/oauth/token".to_string(),
-            scopes: vec!["openid".into(), "model.read".into(), "offline_access".into()],
+            scopes: vec![
+                "openid".into(),
+                "model.read".into(),
+                "offline_access".into(),
+            ],
         }
     }
 
@@ -105,13 +109,15 @@ fn base64_url_no_pad(bytes: &[u8]) -> String {
 }
 
 fn urlencoding(s: &str) -> String {
-    s.chars().map(|c| {
-        if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '~' {
-            c.to_string()
-        } else {
-            format!("%{:02X}", c as u8)
-        }
-    }).collect()
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '~' {
+                c.to_string()
+            } else {
+                format!("%{:02X}", c as u8)
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

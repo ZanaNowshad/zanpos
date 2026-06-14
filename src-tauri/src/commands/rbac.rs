@@ -51,19 +51,27 @@ pub async fn manager_or_owner(pool: &SqlitePool, user_id: &str) -> Result<(), Ap
 /// Shorthand — any active role (cashier and above). Used to confirm the caller
 /// is a real, active user rather than an arbitrary string injection.
 pub async fn require_any_role(pool: &SqlitePool, user_id: &str) -> Result<(), AppError> {
-    require_role(pool, user_id, &["owner", "manager", "cashier", "accountant"]).await
+    require_role(
+        pool,
+        user_id,
+        &["owner", "manager", "cashier", "accountant"],
+    )
+    .await
 }
 
 /// Returns true if the user can override cross-device refund policy.
 /// Only manager and owner can authorise a cashier's cross-device refund.
 pub async fn can_override_refund(pool: &SqlitePool, user_id: &str) -> Result<bool, AppError> {
-    manager_or_owner(pool, user_id).await.map(|_| true).or_else(|e| {
-        if matches!(e, AppError::Permission(_)) {
-            Ok(false)
-        } else {
-            Err(e)
-        }
-    })
+    manager_or_owner(pool, user_id)
+        .await
+        .map(|_| true)
+        .or_else(|e| {
+            if matches!(e, AppError::Permission(_)) {
+                Ok(false)
+            } else {
+                Err(e)
+            }
+        })
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -126,7 +134,10 @@ mod tests {
             .connect("sqlite::memory:")
             .await
             .expect("pool");
-        sqlx::migrate!("./migrations").run(&pool).await.expect("migrations");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("migrations");
 
         // 1. After migrations, the seeded 'admin' owner is INACTIVE (the bug's setup).
         let active_before: i64 = sqlx::query_scalar(
@@ -135,12 +146,17 @@ mod tests {
         .fetch_one(&pool)
         .await
         .expect("seed admin exists");
-        assert_eq!(active_before, 0, "migration 0030 should deactivate the seeded admin");
+        assert_eq!(
+            active_before, 0,
+            "migration 0030 should deactivate the seeded admin"
+        );
 
         // RBAC must fail while inactive (reproduces "User not found or inactive").
         let before = manager_or_owner(&pool, "01JUSER000000000000ADMIN1").await;
-        assert!(matches!(before, Err(AppError::Permission(_))),
-            "inactive owner must be rejected before the fix runs");
+        assert!(
+            matches!(before, Err(AppError::Permission(_))),
+            "inactive owner must be rejected before the fix runs"
+        );
 
         // 2. Apply the wizard's fixed UPDATE (now includes is_active=1).
         sqlx::query(
@@ -155,7 +171,10 @@ mod tests {
 
         // 3. RBAC now passes — owner can run CSV import and all gated commands.
         let after = manager_or_owner(&pool, "01JUSER000000000000ADMIN1").await;
-        assert!(after.is_ok(), "re-activated wizard owner must pass RBAC: got {after:?}");
+        assert!(
+            after.is_ok(),
+            "re-activated wizard owner must pass RBAC: got {after:?}"
+        );
     }
 
     // ── cashier is blocked by manager_or_owner ────────────────────────────────

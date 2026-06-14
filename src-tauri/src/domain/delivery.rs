@@ -5,10 +5,10 @@ use serde::{Deserialize, Serialize};
 pub struct DeliveryInput {
     pub customer_id: Option<String>,
     pub customer_name: Option<String>,
-    pub contact_number: String,      // E.164: +97333050666, validated by frontend
+    pub contact_number: String, // E.164: +97333050666, validated by frontend
     pub house_number: Option<String>,
     pub area: Option<String>,
-    pub address_text: String,        // required
+    pub address_text: String, // required
     pub delivery_note: Option<String>,
     pub delivery_staff_name: Option<String>,
     pub expected_payment_method: String, // cash | card | wallet
@@ -72,7 +72,7 @@ pub struct ConfirmPaymentInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateDeliveryStatusInput {
     pub delivery_id: String,
-    pub delivery_status: String,  // pending | dispatched | out_for_delivery | delivered | cancelled
+    pub delivery_status: String, // pending | dispatched | out_for_delivery | delivered | cancelled
     pub actor_user_id: String,
 }
 

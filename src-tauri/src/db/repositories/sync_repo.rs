@@ -15,11 +15,25 @@ pub struct SyncStatus {
 
 /// Tables that participate in sync.
 const SYNC_TABLES: &[&str] = &[
-    "branches",          // was missing — branch edits not counted in sync status
-    "categories", "tax_rules", "products", "devices", "users", "customers",
-    "shifts", "sales", "sale_items", "payments", "refunds", "refund_items",
-    "stock_movements", "stock_levels", "audit_logs", "delivery_orders", "product_prices",
-    "cash_events",       // was missing — cash events never counted in sync status
+    "branches", // was missing — branch edits not counted in sync status
+    "categories",
+    "tax_rules",
+    "products",
+    "devices",
+    "users",
+    "customers",
+    "shifts",
+    "sales",
+    "sale_items",
+    "payments",
+    "refunds",
+    "refund_items",
+    "stock_movements",
+    "stock_levels",
+    "audit_logs",
+    "delivery_orders",
+    "product_prices",
+    "cash_events", // was missing — cash events never counted in sync status
 ];
 
 pub async fn get_sync_status(pool: &SqlitePool, device_id: &str) -> AppResult<SyncStatus> {
@@ -35,12 +49,11 @@ pub async fn get_sync_status(pool: &SqlitePool, device_id: &str) -> AppResult<Sy
     }
 
     // Read last successful sync from watermark
-    let last_sync: Option<String> = sqlx::query_scalar(
-        "SELECT last_pushed_at FROM sync_watermark WHERE table_name = 'sales'",
-    )
-    .fetch_optional(pool)
-    .await?
-    .flatten();
+    let last_sync: Option<String> =
+        sqlx::query_scalar("SELECT last_pushed_at FROM sync_watermark WHERE table_name = 'sales'")
+            .fetch_optional(pool)
+            .await?
+            .flatten();
 
     // Hub configuration check: this device IS the hub, or it has a hub_url
     // plus the store token in the OS credential store.

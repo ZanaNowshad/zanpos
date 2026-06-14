@@ -108,6 +108,13 @@ impl Provider {
                 }
                 Ok(Some(Provider::Anthropic(AnthropicClient::new(key))))
             }
+            // ── OpenAI (and any OpenAI-compatible) provider ─────────────────────────
+            // Preset base URLs for common providers:
+            //   https://api.openai.com/v1          – OpenAI
+            //   https://api.groq.com/openai/v1     – Groq
+            //   https://openrouter.ai/api/v1       – OpenRouter
+            //   https://api.deepseek.com/v1        – DeepSeek
+            //   http://localhost:11434/v1           – Ollama (local)
             "openai" => {
                 // Prefer OS credential store; fall back to legacy plaintext SQLite.
                 let key = {
@@ -330,7 +337,11 @@ impl Provider {
                 );
                 // Carry forward the reasoning_content from the previous turn (DeepSeek R1 requirement)
                 if let Some(ref reason) = prev_reasoning {
-                    if let OpenAIMessage::Assistant { ref mut reasoning_content, .. } = tc_msg {
+                    if let OpenAIMessage::Assistant {
+                        ref mut reasoning_content,
+                        ..
+                    } = tc_msg
+                    {
                         *reasoning_content = Some(reason.clone());
                     }
                 }

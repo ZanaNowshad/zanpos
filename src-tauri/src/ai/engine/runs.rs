@@ -52,14 +52,12 @@ pub async fn set_status(pool: &SqlitePool, run_id: &str, status: &str) -> AppRes
 
 pub async fn set_failed(pool: &SqlitePool, run_id: &str, error: &str) -> AppResult<()> {
     let now = chrono::Utc::now().to_rfc3339();
-    sqlx::query(
-        "UPDATE ai_runs SET status='failed', error=?, updated_at=? WHERE run_id=?",
-    )
-    .bind(error)
-    .bind(&now)
-    .bind(run_id)
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE ai_runs SET status='failed', error=?, updated_at=? WHERE run_id=?")
+        .bind(error)
+        .bind(&now)
+        .bind(run_id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

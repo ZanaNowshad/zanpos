@@ -59,9 +59,7 @@ pub async fn pos_add_item(
     let qty_str = input.quantity.as_deref().unwrap_or("1");
     // Validate quantity using integer-only arithmetic (no f64 round-trips).
     if !crate::domain::money::qty_in_range(qty_str, 1_000_000) {
-        return Err(AppError::Validation(format!(
-            "Invalid quantity: {qty_str}"
-        )));
+        return Err(AppError::Validation(format!("Invalid quantity: {qty_str}")));
     }
     // Decimal quantity check: if there is a non-zero fractional part and the
     // product does not allow decimal quantities, reject.
@@ -69,7 +67,7 @@ pub async fn pos_add_item(
         if let Some((_, frac)) = qty_str.split_once('.') {
             if frac.trim_end_matches('0').len() > 0 {
                 return Err(AppError::Validation(
-                    "This product does not allow decimal quantities".into()
+                    "This product does not allow decimal quantities".into(),
                 ));
             }
         }
@@ -77,7 +75,9 @@ pub async fn pos_add_item(
     let mut cart = input.cart;
 
     // Merge with an existing active line for the same product rather than duplicating.
-    if let Some(existing) = cart.lines.iter_mut()
+    if let Some(existing) = cart
+        .lines
+        .iter_mut()
         .find(|l| !l.voided && l.product_id.as_deref() == Some(product.product.product_id.as_str()))
     {
         existing.quantity = crate::domain::money::add_decimal_qty_str(&existing.quantity, qty_str);
@@ -131,7 +131,9 @@ pub async fn pos_add_item_by_barcode(
     let mut cart = input.cart;
 
     // Merge with an existing active line for the same product rather than duplicating.
-    if let Some(existing) = cart.lines.iter_mut()
+    if let Some(existing) = cart
+        .lines
+        .iter_mut()
         .find(|l| !l.voided && l.product_id.as_deref() == Some(product.product.product_id.as_str()))
     {
         existing.quantity = crate::domain::money::add_decimal_qty_str(&existing.quantity, "1");
@@ -171,7 +173,8 @@ pub async fn pos_update_quantity(
     // Validate quantity using integer-only arithmetic (no f64 round-trips).
     if !crate::domain::money::qty_in_range(&input.quantity, 1_000_000) {
         return Err(AppError::Validation(format!(
-            "Invalid quantity: {}", input.quantity
+            "Invalid quantity: {}",
+            input.quantity
         )));
     }
     // Guard: reject decimal quantities for products that don't allow them.
@@ -194,7 +197,7 @@ pub async fn pos_update_quantity(
                 .unwrap_or(false);
                 if !allow_decimal {
                     return Err(AppError::Validation(
-                        "This product does not allow decimal quantities".into()
+                        "This product does not allow decimal quantities".into(),
                     ));
                 }
             }
@@ -280,12 +283,11 @@ pub async fn pos_finalize_sale(
 
     // Guard: confirm the submitted shift_id is an OPEN shift that belongs to this device.
     // Prevents stale-cart attacks and cross-device shift forgery from the frontend.
-    let shift_device: Option<String> = sqlx::query_scalar(
-        "SELECT device_id FROM shifts WHERE shift_id = ? AND status = 'open'",
-    )
-    .bind(&input.cart.shift_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let shift_device: Option<String> =
+        sqlx::query_scalar("SELECT device_id FROM shifts WHERE shift_id = ? AND status = 'open'")
+            .bind(&input.cart.shift_id)
+            .fetch_optional(&state.db)
+            .await?;
     match shift_device {
         Some(ref dev) if dev == &input.cart.device_id => {} // OK
         Some(_) => {
@@ -305,14 +307,17 @@ pub async fn pos_finalize_sale(
     crate::commands::rbac::require_any_role(&state.db, &input.cart.cashier_user_id).await?;
 
     // Load the allow_negative_stock business flag.
-    let flag_val: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM app_config WHERE key = 'flag_allow_negative_stock'",
-    )
-    .fetch_optional(&state.db)
-    .await
-    .inspect_err(|e| tracing::warn!("Failed to read flag_allow_negative_stock: {e}; defaulting to false (stock guard ON)"))
-    .ok()
-    .flatten();
+    let flag_val: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'flag_allow_negative_stock'")
+            .fetch_optional(&state.db)
+            .await
+            .inspect_err(|e| {
+                tracing::warn!(
+            "Failed to read flag_allow_negative_stock: {e}; defaulting to false (stock guard ON)"
+        )
+            })
+            .ok()
+            .flatten();
     let allow_negative_stock = flag_val.as_deref() == Some("1");
 
     let result = sale_repo::finalize_sale(
@@ -344,12 +349,23 @@ pub async fn pos_finalize_sale(
         (k, v)
     })
     .collect();
-    let auto_print = printer_cfg.get("flag_auto_print_receipt").map(|s| s.as_str());
+    let auto_print = printer_cfg
+        .get("flag_auto_print_receipt")
+        .map(|s| s.as_str());
     if auto_print == Some("1") {
-        let enabled = printer_cfg.get("thermal_printer_enabled").map(|s| s.as_str()).unwrap_or("0");
+        let enabled = printer_cfg
+            .get("thermal_printer_enabled")
+            .map(|s| s.as_str())
+            .unwrap_or("0");
         // Clone into owned Strings so the borrow is released before spawn_blocking.
-        let port: String = printer_cfg.get("thermal_printer_port").cloned().unwrap_or_default();
-        let baud_str = printer_cfg.get("thermal_printer_baud").map(|s| s.as_str()).unwrap_or("9600");
+        let port: String = printer_cfg
+            .get("thermal_printer_port")
+            .cloned()
+            .unwrap_or_default();
+        let baud_str = printer_cfg
+            .get("thermal_printer_baud")
+            .map(|s| s.as_str())
+            .unwrap_or("9600");
         if enabled == "1" && !port.trim().is_empty() {
             let store_name: String = printer_cfg.get("store_name").cloned().unwrap_or_default();
             let mut lines: Vec<String> = Vec::new();
@@ -378,11 +394,9 @@ pub async fn pos_finalize_sale(
             let port_clone = port.clone();
             // Fire-and-forget: don't block the sale response on print completion
             tokio::task::spawn_blocking(move || {
-                if let Err(e) = crate::commands::thermal_commands::write_to_port(
-                    &port_clone,
-                    baud,
-                    payload,
-                ) {
+                if let Err(e) =
+                    crate::commands::thermal_commands::write_to_port(&port_clone, baud, payload)
+                {
                     tracing::warn!("Auto-print failed: {}", e);
                 }
             });
@@ -416,9 +430,7 @@ async fn load_discount_flags(db: &sqlx::SqlitePool) -> (bool, bool) {
     .await
     .unwrap_or_default()
     .into_iter()
-    .map(|r: sqlx::sqlite::SqliteRow| {
-        (r.get("key"), r.get("value"))
-    })
+    .map(|r: sqlx::sqlite::SqliteRow| (r.get("key"), r.get("value")))
     .collect();
 
     let find = |key: &str| -> Option<&str> {
@@ -436,8 +448,7 @@ pub async fn pos_apply_bill_discount(
     state: State<'_, AppState>,
 ) -> Result<Cart, AppError> {
     let discount = input.discount_minor.max(0);
-    let (require_discount_reason, cashier_can_discount) =
-        load_discount_flags(&state.db).await;
+    let (require_discount_reason, cashier_can_discount) = load_discount_flags(&state.db).await;
 
     // Upper-bound: discount cannot exceed the post-line-discount cart total
     if discount > 0 {
@@ -535,13 +546,18 @@ pub async fn pos_apply_line_discount(
     state: State<'_, AppState>,
 ) -> Result<Cart, AppError> {
     let discount = input.discount_minor.max(0);
-    let (require_discount_reason, cashier_can_discount) =
-        load_discount_flags(&state.db).await;
+    let (require_discount_reason, cashier_can_discount) = load_discount_flags(&state.db).await;
 
     // Upper-bound: discount cannot exceed the line's own subtotal (unit_price × qty)
     if discount > 0 {
-        if let Some(line) = input.cart.lines.iter().find(|l| l.cart_line_id == input.cart_line_id) {
-            let line_subtotal = crate::domain::money::mul_minor_by_qty(line.unit_price_minor, &line.quantity);
+        if let Some(line) = input
+            .cart
+            .lines
+            .iter()
+            .find(|l| l.cart_line_id == input.cart_line_id)
+        {
+            let line_subtotal =
+                crate::domain::money::mul_minor_by_qty(line.unit_price_minor, &line.quantity);
             if discount > line_subtotal {
                 return Err(AppError::Validation(format!(
                     "Discount ({discount}) exceeds line subtotal ({line_subtotal})"
@@ -675,9 +691,7 @@ pub async fn pos_add_custom_item(
     let qty = input.quantity.as_deref().unwrap_or("1");
     // Validate quantity using integer-only arithmetic (no f64 round-trips).
     if !crate::domain::money::qty_in_range(qty, 1_000_000) {
-        return Err(AppError::Validation(format!(
-            "Invalid quantity: {qty}"
-        )));
+        return Err(AppError::Validation(format!("Invalid quantity: {qty}")));
     }
     let mut cart = input.cart;
     let line = CartLine::new(
@@ -855,7 +869,10 @@ pub async fn pos_void_sale(
 
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
-    Ok(VoidSaleResult { voided: true, stock_warning })
+    Ok(VoidSaleResult {
+        voided: true,
+        stock_warning,
+    })
 }
 
 // ─── Cart summary ─────────────────────────────────────────────────────────────
@@ -1012,8 +1029,7 @@ pub async fn pos_load_sale_for_edit(
         let tax_json: String = row.get("tax_rule_snapshot");
         let line_discount: i64 = row.get("line_discount_minor");
 
-        let tax: serde_json::Value =
-            serde_json::from_str(&tax_json).unwrap_or_default();
+        let tax: serde_json::Value = serde_json::from_str(&tax_json).unwrap_or_default();
         let tax_rule_id = tax
             .get("rule_id")
             .and_then(|v| v.as_str())

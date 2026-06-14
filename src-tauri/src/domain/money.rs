@@ -25,14 +25,21 @@ pub fn mul_minor_by_qty(minor: i64, qty: &str) -> i64 {
     }
     // Fractional quantity — compute as rational
     let frac_len = frac_part.len().min(9); // up to 9 decimal places (fits i64 * 10^9)
-    let frac_str = if frac_part.len() > 9 { &frac_part[..9] } else { frac_part };
+    let frac_str = if frac_part.len() > 9 {
+        &frac_part[..9]
+    } else {
+        frac_part
+    };
     let denom = 10_i64.pow(frac_len as u32);
     let frac_val: i64 = match frac_str.parse() {
         Ok(v) => v,
         Err(_) => return 0,
     };
     // qty_numerator = whole_part * denom + fractional_part
-    let qty_num = int_val.max(0).saturating_mul(denom).saturating_add(frac_val);
+    let qty_num = int_val
+        .max(0)
+        .saturating_mul(denom)
+        .saturating_add(frac_val);
     if qty_num <= 0 {
         return 0;
     }
@@ -163,11 +170,17 @@ pub fn parse_major_to_minor(s: &str, exponent: u32) -> Option<i64> {
 pub fn format_minor(minor: i64, exponent: u32) -> String {
     let divisor = 10i64.pow(exponent);
     let sign = if minor < 0 { "-" } else { "" };
-    let abs = minor.unsigned_abs();           // u64 — avoids i64::MIN overflow
+    let abs = minor.unsigned_abs(); // u64 — avoids i64::MIN overflow
     let abs_divisor = divisor as u64;
     let whole = abs / abs_divisor;
-    let frac  = abs % abs_divisor;
-    format!("{}{}.{:0>width$}", sign, whole, frac, width = exponent as usize)
+    let frac = abs % abs_divisor;
+    format!(
+        "{}{}.{:0>width$}",
+        sign,
+        whole,
+        frac,
+        width = exponent as usize
+    )
 }
 
 /// Apply a percentage discount given in basis points (100 bp = 1%).

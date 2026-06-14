@@ -115,16 +115,25 @@ pub async fn customer_create(
         return Err(AppError::Validation("Customer name is required".into()));
     }
     if name.len() > 255 {
-        return Err(AppError::Validation("Customer name must not exceed 255 characters".into()));
+        return Err(AppError::Validation(
+            "Customer name must not exceed 255 characters".into(),
+        ));
     }
     if let Some(ref phone) = input.phone {
         let phone_trimmed = phone.trim();
         if !phone_trimmed.is_empty() {
             if phone_trimmed.len() > 30 {
-                return Err(AppError::Validation("Phone number must not exceed 30 characters".into()));
+                return Err(AppError::Validation(
+                    "Phone number must not exceed 30 characters".into(),
+                ));
             }
-            if !phone_trimmed.chars().all(|c| c.is_ascii_digit() || " +-()".contains(c)) {
-                return Err(AppError::Validation("Phone number contains invalid characters".into()));
+            if !phone_trimmed
+                .chars()
+                .all(|c| c.is_ascii_digit() || " +-()".contains(c))
+            {
+                return Err(AppError::Validation(
+                    "Phone number contains invalid characters".into(),
+                ));
             }
         }
     }
@@ -132,9 +141,13 @@ pub async fn customer_create(
     let branch_id = active_branch_id(&state).await?;
     let customer_id = Ulid::new().to_string();
     let now = chrono::Utc::now().to_rfc3339();
-    let device_id: String =
-        sqlx::query_scalar("SELECT device_id FROM devices WHERE is_active=1 ORDER BY device_code LIMIT 1")
-            .fetch_optional(&state.db).await?.flatten().unwrap_or_default();
+    let device_id: String = sqlx::query_scalar(
+        "SELECT device_id FROM devices WHERE is_active=1 ORDER BY device_code LIMIT 1",
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .flatten()
+    .unwrap_or_default();
 
     sqlx::query(
         "INSERT INTO customers
@@ -180,12 +193,25 @@ pub async fn customer_create(
     let after = serde_json::json!({
         "customer_id": customer_id, "name": input.name.trim(),
         "phone": input.phone, "email": input.email,
-    }).to_string();
+    })
+    .to_string();
     if let Err(e) = audit_hash::insert_audit_entry(
-        &state.db, "CUSTOMER_CREATED", "customer", &customer_id,
-        &input.actor_user_id, "user", &device_id, &branch_id,
-        None, Some(&after), None,
-    ).await { tracing::error!("AUDIT WRITE FAILED [CUSTOMER_CREATED]: {:?}", e); }
+        &state.db,
+        "CUSTOMER_CREATED",
+        "customer",
+        &customer_id,
+        &input.actor_user_id,
+        "user",
+        &device_id,
+        &branch_id,
+        None,
+        Some(&after),
+        None,
+    )
+    .await
+    {
+        tracing::error!("AUDIT WRITE FAILED [CUSTOMER_CREATED]: {:?}", e);
+    }
 
     Ok(map_row(&row))
 }
@@ -202,16 +228,25 @@ pub async fn customer_update(
         return Err(AppError::Validation("Customer name is required".into()));
     }
     if name.len() > 255 {
-        return Err(AppError::Validation("Customer name must not exceed 255 characters".into()));
+        return Err(AppError::Validation(
+            "Customer name must not exceed 255 characters".into(),
+        ));
     }
     if let Some(ref phone) = input.phone {
         let phone_trimmed = phone.trim();
         if !phone_trimmed.is_empty() {
             if phone_trimmed.len() > 30 {
-                return Err(AppError::Validation("Phone number must not exceed 30 characters".into()));
+                return Err(AppError::Validation(
+                    "Phone number must not exceed 30 characters".into(),
+                ));
             }
-            if !phone_trimmed.chars().all(|c| c.is_ascii_digit() || " +-()".contains(c)) {
-                return Err(AppError::Validation("Phone number contains invalid characters".into()));
+            if !phone_trimmed
+                .chars()
+                .all(|c| c.is_ascii_digit() || " +-()".contains(c))
+            {
+                return Err(AppError::Validation(
+                    "Phone number contains invalid characters".into(),
+                ));
             }
         }
     }
@@ -233,7 +268,8 @@ pub async fn customer_update(
         "phone": existing.get::<Option<String>, _>("phone"),
         "email": existing.get::<Option<String>, _>("email"),
         "notes": existing.get::<Option<String>, _>("notes"),
-    }).to_string();
+    })
+    .to_string();
 
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
@@ -242,7 +278,13 @@ pub async fn customer_update(
          WHERE customer_id=?",
     )
     .bind(&name)
-    .bind(input.phone.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()))
+    .bind(
+        input
+            .phone
+            .as_deref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty()),
+    )
     .bind(input.email.as_deref().filter(|s| !s.is_empty()))
     .bind(input.notes.as_deref().filter(|s| !s.is_empty()))
     .bind(&now)
@@ -281,12 +323,25 @@ pub async fn customer_update(
         "phone": input.phone.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()),
         "email": input.email.as_deref().filter(|s| !s.is_empty()),
         "notes": input.notes.as_deref().filter(|s| !s.is_empty()),
-    }).to_string();
+    })
+    .to_string();
     if let Err(e) = audit_hash::insert_audit_entry(
-        &state.db, "CUSTOMER_UPDATED", "customer", &input.customer_id,
-        &input.actor_user_id, "user", &existing_device, &existing_branch,
-        Some(&before), Some(&after), None,
-    ).await { tracing::error!("AUDIT WRITE FAILED [CUSTOMER_UPDATED]: {:?}", e); }
+        &state.db,
+        "CUSTOMER_UPDATED",
+        "customer",
+        &input.customer_id,
+        &input.actor_user_id,
+        "user",
+        &existing_device,
+        &existing_branch,
+        Some(&before),
+        Some(&after),
+        None,
+    )
+    .await
+    {
+        tracing::error!("AUDIT WRITE FAILED [CUSTOMER_UPDATED]: {:?}", e);
+    }
 
     Ok(customer)
 }
@@ -356,7 +411,10 @@ pub async fn customer_add_loyalty(
         .rows_affected();
 
     if affected == 0 {
-        return Err(AppError::NotFound(format!("Customer {} not found", customer_id)));
+        return Err(AppError::NotFound(format!(
+            "Customer {} not found",
+            customer_id
+        )));
     }
 
     let row = sqlx::query(
@@ -376,10 +434,22 @@ pub async fn customer_add_loyalty(
     let before = serde_json::json!({ "loyalty_points": before_pts }).to_string();
     let after = serde_json::json!({ "loyalty_points": new_total }).to_string();
     if let Err(e) = audit_hash::insert_audit_entry(
-        &state.db, "CUSTOMER_LOYALTY_ADJUSTED", "customer", &customer_id,
-        &actor_user_id, "user", &existing_device, &existing_branch,
-        Some(&before), Some(&after), None,
-    ).await { tracing::error!("AUDIT WRITE FAILED [CUSTOMER_LOYALTY_ADJUSTED]: {:?}", e); }
+        &state.db,
+        "CUSTOMER_LOYALTY_ADJUSTED",
+        "customer",
+        &customer_id,
+        &actor_user_id,
+        "user",
+        &existing_device,
+        &existing_branch,
+        Some(&before),
+        Some(&after),
+        None,
+    )
+    .await
+    {
+        tracing::error!("AUDIT WRITE FAILED [CUSTOMER_LOYALTY_ADJUSTED]: {:?}", e);
+    }
 
     Ok(new_total)
 }

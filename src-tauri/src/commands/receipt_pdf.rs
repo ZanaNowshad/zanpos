@@ -84,9 +84,9 @@ pub fn generate_receipt_pdf(inp: &WhatsAppReceiptPdfInput) -> Result<Vec<u8>, St
         .add_builtin_font(BuiltinFont::HelveticaBold)
         .map_err(|e| format!("Font error: {e}"))?;
 
-    let mx: f32 = 10.0;   // left margin
-    let rx: f32 = 108.0;  // right column start (amounts)
-    let qx: f32 = 82.0;   // qty column
+    let mx: f32 = 10.0; // left margin
+    let rx: f32 = 108.0; // right column start (amounts)
+    let qx: f32 = 82.0; // qty column
     let exp = inp.currency_exponent;
     let cur = &inp.currency;
     let mut y: f32 = 198.0;
@@ -102,7 +102,13 @@ pub fn generate_receipt_pdf(inp: &WhatsAppReceiptPdfInput) -> Result<Vec<u8>, St
         }
     }
 
-    layer.use_text("--------------------------------------------------", 6.0, Mm(mx), Mm(y), &font);
+    layer.use_text(
+        "--------------------------------------------------",
+        6.0,
+        Mm(mx),
+        Mm(y),
+        &font,
+    );
     y -= 4.5;
 
     // ── RECEIPT header ──────────────────────────────────────────────────────
@@ -111,7 +117,10 @@ pub fn generate_receipt_pdf(inp: &WhatsAppReceiptPdfInput) -> Result<Vec<u8>, St
 
     layer.use_text(
         format!("No:      {}", ascii(&inp.receipt_number)),
-        8.5, Mm(mx), Mm(y), &font,
+        8.5,
+        Mm(mx),
+        Mm(y),
+        &font,
     );
     y -= 5.0;
 
@@ -128,39 +137,39 @@ pub fn generate_receipt_pdf(inp: &WhatsAppReceiptPdfInput) -> Result<Vec<u8>, St
     } else {
         format!("{} {}", date_part, time_part)
     };
-    layer.use_text(
-        format!("Date:    {}", date_str),
-        8.5, Mm(mx), Mm(y), &font,
-    );
+    layer.use_text(format!("Date:    {}", date_str), 8.5, Mm(mx), Mm(y), &font);
     y -= 5.0;
 
     layer.use_text(
         format!("Cashier: {}", ascii(&inp.cashier_name)),
-        8.5, Mm(mx), Mm(y), &font,
+        8.5,
+        Mm(mx),
+        Mm(y),
+        &font,
     );
     y -= 5.0;
 
     // ── Tax / CR numbers (shown only when non-empty) ────────────────────────
     if let Some(tn) = &inp.tax_number {
         if !tn.is_empty() {
-            layer.use_text(
-                format!("Tax ID:  {}", ascii(tn)),
-                8.5, Mm(mx), Mm(y), &font,
-            );
+            layer.use_text(format!("Tax ID:  {}", ascii(tn)), 8.5, Mm(mx), Mm(y), &font);
             y -= 5.0;
         }
     }
     if let Some(cr) = &inp.cr_number {
         if !cr.is_empty() {
-            layer.use_text(
-                format!("CR No:   {}", ascii(cr)),
-                8.5, Mm(mx), Mm(y), &font,
-            );
+            layer.use_text(format!("CR No:   {}", ascii(cr)), 8.5, Mm(mx), Mm(y), &font);
             y -= 5.0;
         }
     }
 
-    layer.use_text("--------------------------------------------------", 6.0, Mm(mx), Mm(y), &font);
+    layer.use_text(
+        "--------------------------------------------------",
+        6.0,
+        Mm(mx),
+        Mm(y),
+        &font,
+    );
     y -= 5.0;
 
     // ── Items header ────────────────────────────────────────────────────────
@@ -168,7 +177,13 @@ pub fn generate_receipt_pdf(inp: &WhatsAppReceiptPdfInput) -> Result<Vec<u8>, St
     layer.use_text("Qty", 8.5, Mm(qx), Mm(y), &font_b);
     layer.use_text("Amount", 8.5, Mm(rx), Mm(y), &font_b);
     y -= 4.5;
-    layer.use_text("--------------------------------------------------", 6.0, Mm(mx), Mm(y), &font);
+    layer.use_text(
+        "--------------------------------------------------",
+        6.0,
+        Mm(mx),
+        Mm(y),
+        &font,
+    );
     y -= 4.5;
 
     // ── Items ───────────────────────────────────────────────────────────────
@@ -196,13 +211,22 @@ pub fn generate_receipt_pdf(inp: &WhatsAppReceiptPdfInput) -> Result<Vec<u8>, St
         layer.use_text(qty_s.to_string(), 8.5, Mm(qx), Mm(y), &font);
         layer.use_text(
             format!("{} {}", cur, fmt_money(item.line_total_minor, exp)),
-            8.5, Mm(rx), Mm(y), &font,
+            8.5,
+            Mm(rx),
+            Mm(y),
+            &font,
         );
         y -= 5.0;
     }
 
     // ── Totals ──────────────────────────────────────────────────────────────
-    layer.use_text("--------------------------------------------------", 6.0, Mm(mx), Mm(y), &font);
+    layer.use_text(
+        "--------------------------------------------------",
+        6.0,
+        Mm(mx),
+        Mm(y),
+        &font,
+    );
     y -= 5.0;
 
     if inp.discount_total_minor > 0 {
@@ -210,14 +234,20 @@ pub fn generate_receipt_pdf(inp: &WhatsAppReceiptPdfInput) -> Result<Vec<u8>, St
         layer.use_text("Subtotal:", 8.5, Mm(mx), Mm(y), &font);
         layer.use_text(
             format!("{} {}", cur, fmt_money(gross, exp)),
-            8.5, Mm(rx), Mm(y), &font,
+            8.5,
+            Mm(rx),
+            Mm(y),
+            &font,
         );
         y -= 5.0;
 
         layer.use_text("Discount:", 8.5, Mm(mx), Mm(y), &font);
         layer.use_text(
             format!("- {} {}", cur, fmt_money(inp.discount_total_minor, exp)),
-            8.5, Mm(rx), Mm(y), &font,
+            8.5,
+            Mm(rx),
+            Mm(y),
+            &font,
         );
         y -= 5.0;
     }
@@ -226,7 +256,10 @@ pub fn generate_receipt_pdf(inp: &WhatsAppReceiptPdfInput) -> Result<Vec<u8>, St
         layer.use_text("Tax:", 8.5, Mm(mx), Mm(y), &font);
         layer.use_text(
             format!("{} {}", cur, fmt_money(inp.tax_total_minor, exp)),
-            8.5, Mm(rx), Mm(y), &font,
+            8.5,
+            Mm(rx),
+            Mm(y),
+            &font,
         );
         y -= 5.0;
     }
@@ -234,25 +267,44 @@ pub fn generate_receipt_pdf(inp: &WhatsAppReceiptPdfInput) -> Result<Vec<u8>, St
     layer.use_text("TOTAL:", 11.0, Mm(mx), Mm(y), &font_b);
     layer.use_text(
         format!("{} {}", cur, fmt_money(inp.net_total_minor, exp)),
-        11.0, Mm(rx), Mm(y), &font_b,
+        11.0,
+        Mm(rx),
+        Mm(y),
+        &font_b,
     );
     y -= 7.0;
 
     // ── Payments ────────────────────────────────────────────────────────────
-    layer.use_text("--------------------------------------------------", 6.0, Mm(mx), Mm(y), &font);
+    layer.use_text(
+        "--------------------------------------------------",
+        6.0,
+        Mm(mx),
+        Mm(y),
+        &font,
+    );
     y -= 5.0;
 
     for payment in &inp.payments {
-        if y < 22.0 { break; }
+        if y < 22.0 {
+            break;
+        }
         let label = match payment.method.as_str() {
-            "cash"   => "Cash",
-            "card"   => "Card",
+            "cash" => "Cash",
+            "card" => "Card",
             "wallet" => "Wallet",
-            _        => "Payment",
+            _ => "Payment",
         };
         layer.use_text(
-            format!("{}: {} {}", label, cur, fmt_money(payment.amount_minor, exp)),
-            8.5, Mm(mx), Mm(y), &font,
+            format!(
+                "{}: {} {}",
+                label,
+                cur,
+                fmt_money(payment.amount_minor, exp)
+            ),
+            8.5,
+            Mm(mx),
+            Mm(y),
+            &font,
         );
         y -= 5.0;
 
@@ -261,7 +313,10 @@ pub fn generate_receipt_pdf(inp: &WhatsAppReceiptPdfInput) -> Result<Vec<u8>, St
             if change > 0 && y >= 22.0 {
                 layer.use_text(
                     format!("  Change: {} {}", cur, fmt_money(change, exp)),
-                    8.5, Mm(mx), Mm(y), &font,
+                    8.5,
+                    Mm(mx),
+                    Mm(y),
+                    &font,
                 );
                 y -= 5.0;
             }
@@ -271,7 +326,13 @@ pub fn generate_receipt_pdf(inp: &WhatsAppReceiptPdfInput) -> Result<Vec<u8>, St
     // ── Delivery address ────────────────────────────────────────────────────
     let addr = inp.address_text.as_deref().unwrap_or("");
     if !addr.is_empty() && y > 30.0 {
-        layer.use_text("--------------------------------------------------", 6.0, Mm(mx), Mm(y), &font);
+        layer.use_text(
+            "--------------------------------------------------",
+            6.0,
+            Mm(mx),
+            Mm(y),
+            &font,
+        );
         y -= 4.5;
         layer.use_text("Delivery Address:", 8.5, Mm(mx), Mm(y), &font_b);
         y -= 5.0;
@@ -282,7 +343,13 @@ pub fn generate_receipt_pdf(inp: &WhatsAppReceiptPdfInput) -> Result<Vec<u8>, St
         }
         if let Some(h) = &inp.house_number {
             if !h.is_empty() && y > 22.0 {
-                layer.use_text(format!("Bldg/House: {}", ascii(h)), 8.5, Mm(mx), Mm(y), &font);
+                layer.use_text(
+                    format!("Bldg/House: {}", ascii(h)),
+                    8.5,
+                    Mm(mx),
+                    Mm(y),
+                    &font,
+                );
                 y -= 5.0;
             }
         }
@@ -296,7 +363,13 @@ pub fn generate_receipt_pdf(inp: &WhatsAppReceiptPdfInput) -> Result<Vec<u8>, St
 
     // ── Footer ──────────────────────────────────────────────────────────────
     if y > 18.0 {
-        layer.use_text("--------------------------------------------------", 6.0, Mm(mx), Mm(y), &font);
+        layer.use_text(
+            "--------------------------------------------------",
+            6.0,
+            Mm(mx),
+            Mm(y),
+            &font,
+        );
         y -= 5.0;
     }
     if y > 14.0 {
@@ -311,5 +384,6 @@ pub fn generate_receipt_pdf(inp: &WhatsAppReceiptPdfInput) -> Result<Vec<u8>, St
     let mut buf = BufWriter::new(Vec::new());
     doc.save(&mut buf)
         .map_err(|e| format!("PDF save error: {e}"))?;
-    buf.into_inner().map_err(|e| format!("PDF buffer error: {e}"))
+    buf.into_inner()
+        .map_err(|e| format!("PDF buffer error: {e}"))
 }

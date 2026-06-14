@@ -350,6 +350,17 @@ export type StreamEvent =
       assistant_text: string;
     }
   | { type: "navigate"; tab: string }
+  | {
+      type: "run_preview";
+      run_id: string;
+      op_id: string;
+      description: string;
+      count: number;
+      samples: any[];
+    }
+  | { type: "run_progress"; run_id: string; done: number; total: number }
+  | { type: "run_done"; run_id: string }
+  | { type: "run_failed"; run_id: string; error: string }
   | { type: "done" }
   | { type: "error"; message: string };
 

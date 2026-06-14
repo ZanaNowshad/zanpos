@@ -240,11 +240,7 @@ fn write_to_windows_printer(printer_name: &str, payload: &[u8]) -> AppResult<()>
             pOutputFile: std::ptr::null_mut(),
             pDatatype: wide_raw.as_ptr() as *mut _,
         };
-        let job_id = StartDocPrinterW(
-            h_printer,
-            1,
-            &mut doc_info as *mut DOC_INFO_1W as *mut u8,
-        );
+        let job_id = StartDocPrinterW(h_printer, 1, &mut doc_info as *mut DOC_INFO_1W as *mut u8);
         if job_id == 0 {
             ClosePrinter(h_printer);
             return Err(AppError::Internal(format!(
@@ -270,7 +266,9 @@ fn write_to_windows_printer(printer_name: &str, payload: &[u8]) -> AppResult<()>
         if ret == 0 || written != payload.len() as DWORD {
             let err_msg = format!(
                 "WritePrinter: returned={} written={} expected={}",
-                ret, written, payload.len()
+                ret,
+                written,
+                payload.len()
             );
             tracing::error!("{}", err_msg);
             EndPagePrinter(h_printer);
@@ -345,7 +343,9 @@ pub fn thermal_list_ports() -> Vec<PortEntry> {
     #[cfg(windows)]
     {
         let cached = {
-            let guard = get_printer_cache().lock().unwrap_or_else(|p| p.into_inner());
+            let guard = get_printer_cache()
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
             guard.as_ref().and_then(|c| {
                 if c.refreshed_at.elapsed() < PRINTER_CACHE_TTL {
                     Some(c.entries.clone())

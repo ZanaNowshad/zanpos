@@ -195,11 +195,14 @@ pub async fn whatsapp_status(
     {
         Ok(resp) => {
             // M23: Sidecar is reachable — it's running; parse its response
-            let mut status = resp.json::<WhatsAppStatus>().await.unwrap_or(WhatsAppStatus {
-                connected: false,
-                qr: None,
-                sidecar_running: true,
-            });
+            let mut status = resp
+                .json::<WhatsAppStatus>()
+                .await
+                .unwrap_or(WhatsAppStatus {
+                    connected: false,
+                    qr: None,
+                    sidecar_running: true,
+                });
             status.sidecar_running = true;
             Ok(status)
         }
@@ -229,7 +232,9 @@ pub async fn whatsapp_send_delivery(
 
     let phone = normalize_phone(&input.to);
     if phone.is_empty() {
-        return Err(AppError::Validation("Recipient phone number is required".into()));
+        return Err(AppError::Validation(
+            "Recipient phone number is required".into(),
+        ));
     }
 
     whatsapp_send_delivery_impl(
@@ -283,7 +288,8 @@ pub async fn whatsapp_save_config(
     if !trimmed.is_empty() {
         if !trimmed.starts_with('+') {
             return Err(AppError::Validation(
-                "Phone number must start with '+' followed by the country code (e.g. +97333050666)".into(),
+                "Phone number must start with '+' followed by the country code (e.g. +97333050666)"
+                    .into(),
             ));
         }
         let after_plus = &trimmed[1..];
@@ -333,7 +339,9 @@ pub async fn whatsapp_notify_arrival(
 
     let phone = normalize_phone(&input.to);
     if phone.is_empty() {
-        return Err(AppError::Validation("Recipient phone number is required".into()));
+        return Err(AppError::Validation(
+            "Recipient phone number is required".into(),
+        ));
     }
 
     whatsapp_notify_arrival_impl(&state, &phone, &input.receipt_number).await?;
@@ -369,7 +377,9 @@ pub async fn whatsapp_payment_reminder(
 
     let phone = normalize_phone(&input.to);
     if phone.is_empty() {
-        return Err(AppError::Validation("Recipient phone number is required".into()));
+        return Err(AppError::Validation(
+            "Recipient phone number is required".into(),
+        ));
     }
 
     whatsapp_payment_reminder_impl(
@@ -668,7 +678,10 @@ async fn sidecar_health_check(token: &str) -> AppResult<()> {
         Ok(resp) => {
             let body: serde_json::Value = resp.json().await.unwrap_or_default();
             let status = body.get("status").and_then(|v| v.as_str()).unwrap_or("");
-            let connected = body.get("connected").and_then(|v| v.as_bool()).unwrap_or(false);
+            let connected = body
+                .get("connected")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             if !connected || status == "DISCONNECTED" || status == "QR_REQUIRED" {
                 return Err(AppError::Internal(
                     "WhatsApp session expired. Please re-scan the QR code in Settings.".into(),
@@ -714,7 +727,11 @@ async fn send_raw(to: &str, message: &str, token: &str) -> AppResult<bool> {
     let resp = match result {
         Ok(r) => r,
         Err(e) => {
-            tracing::warn!("WhatsApp send attempt 1 to '{}' failed: {} — retrying in 2s", to, e);
+            tracing::warn!(
+                "WhatsApp send attempt 1 to '{}' failed: {} — retrying in 2s",
+                to,
+                e
+            );
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             attempt(&client).await.map_err(|e2| {
                 tracing::warn!("WhatsApp send attempt 2 to '{}' failed: {}", to, e2);
@@ -729,7 +746,9 @@ async fn send_raw(to: &str, message: &str, token: &str) -> AppResult<bool> {
         tracing::warn!(
             "WhatsApp send to '{}' rejected by sidecar: {}",
             to,
-            body.get("error").and_then(|v| v.as_str()).unwrap_or("unknown reason")
+            body.get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown reason")
         );
     }
     Ok(ok)
@@ -772,7 +791,7 @@ pub async fn whatsapp_send_receipt_pdf(
 
     let pdf_b64 = base64::engine::general_purpose::STANDARD.encode(&pdf_bytes);
     let filename = format!("Receipt-{}.pdf", input.receipt_number);
-    let caption  = input.caption.as_deref().unwrap_or("").to_string();
+    let caption = input.caption.as_deref().unwrap_or("").to_string();
 
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
@@ -800,13 +819,19 @@ pub async fn whatsapp_send_receipt_pdf(
                 tracing::warn!(
                     "WhatsApp PDF send to '{}' rejected: {}",
                     phone,
-                    body.get("error").and_then(|v| v.as_str()).unwrap_or("unknown")
+                    body.get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
                 );
             }
             Ok(ok)
         }
         Err(e) => {
-            tracing::warn!("WhatsApp PDF send to '{}' failed after health check passed: {}", phone, e);
+            tracing::warn!(
+                "WhatsApp PDF send to '{}' failed after health check passed: {}",
+                phone,
+                e
+            );
             Ok(false)
         }
     }

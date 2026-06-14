@@ -1,5 +1,4 @@
 use crate::errors::AppResult;
-use ulid::Ulid;
 /// Audit hash-chain utilities.
 ///
 /// Every audit_log row carries two fields:
@@ -10,6 +9,7 @@ use ulid::Ulid;
 /// tampering or data loss.
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
+use ulid::Ulid;
 
 // ── Hash computation ───────────────────────────────────────────────────────────
 
@@ -20,11 +20,11 @@ pub struct AuditHashInput<'a> {
     pub entity_type: &'a str,
     pub entity_id: &'a str,
     pub actor_user_id: &'a str,
-    pub actor_type: &'a str,          // "user" or "ai"
+    pub actor_type: &'a str, // "user" or "ai"
     pub created_at: &'a str,
     pub before_json: Option<&'a str>, // pre-mutation snapshot
     pub after_json: Option<&'a str>,
-    pub reason: Option<&'a str>,      // human-readable reason
+    pub reason: Option<&'a str>, // human-readable reason
     pub previous_hash: &'a str,
 }
 
@@ -34,16 +34,26 @@ pub struct AuditHashInput<'a> {
 /// to produce the same canonical string.
 pub fn compute_audit_hash(i: &AuditHashInput<'_>) -> String {
     let mut h = Sha256::new();
-    h.update(i.audit_log_id.as_bytes());   h.update(b"\x00");
-    h.update(i.event_type.as_bytes());      h.update(b"\x00");
-    h.update(i.entity_type.as_bytes());     h.update(b"\x00");
-    h.update(i.entity_id.as_bytes());       h.update(b"\x00");
-    h.update(i.actor_user_id.as_bytes());   h.update(b"\x00");
-    h.update(i.actor_type.as_bytes());      h.update(b"\x00");
-    h.update(i.created_at.as_bytes());      h.update(b"\x00");
-    h.update(i.before_json.unwrap_or("").as_bytes()); h.update(b"\x00");
-    h.update(i.after_json.unwrap_or("").as_bytes());  h.update(b"\x00");
-    h.update(i.reason.unwrap_or("").as_bytes());      h.update(b"\x00");
+    h.update(i.audit_log_id.as_bytes());
+    h.update(b"\x00");
+    h.update(i.event_type.as_bytes());
+    h.update(b"\x00");
+    h.update(i.entity_type.as_bytes());
+    h.update(b"\x00");
+    h.update(i.entity_id.as_bytes());
+    h.update(b"\x00");
+    h.update(i.actor_user_id.as_bytes());
+    h.update(b"\x00");
+    h.update(i.actor_type.as_bytes());
+    h.update(b"\x00");
+    h.update(i.created_at.as_bytes());
+    h.update(b"\x00");
+    h.update(i.before_json.unwrap_or("").as_bytes());
+    h.update(b"\x00");
+    h.update(i.after_json.unwrap_or("").as_bytes());
+    h.update(b"\x00");
+    h.update(i.reason.unwrap_or("").as_bytes());
+    h.update(b"\x00");
     h.update(i.previous_hash.as_bytes());
     hex::encode(h.finalize())
 }
@@ -75,10 +85,20 @@ pub async fn insert_audit_entry(
     reason: Option<&str>,
 ) -> AppResult<()> {
     insert_audit_entry_full(
-        pool, event_type, entity_type, entity_id,
-        actor_user_id, actor_type, device_id, branch_id,
-        before_json, after_json, reason, false,
-    ).await
+        pool,
+        event_type,
+        entity_type,
+        entity_id,
+        actor_user_id,
+        actor_type,
+        device_id,
+        branch_id,
+        before_json,
+        after_json,
+        reason,
+        false,
+    )
+    .await
 }
 
 /// Reserved for manager-override audit events. Not yet wired into the call path.
@@ -99,10 +119,20 @@ pub async fn insert_audit_entry_override(
     override_used: bool,
 ) -> AppResult<()> {
     insert_audit_entry_full(
-        pool, event_type, entity_type, entity_id,
-        actor_user_id, actor_type, device_id, branch_id,
-        before_json, after_json, reason, override_used,
-    ).await
+        pool,
+        event_type,
+        entity_type,
+        entity_id,
+        actor_user_id,
+        actor_type,
+        device_id,
+        branch_id,
+        before_json,
+        after_json,
+        reason,
+        override_used,
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -160,7 +190,11 @@ async fn insert_audit_entry_full(
     .bind(reason)
     .bind(&now)
     .bind(&hash)
-    .bind(if prev_hash.is_empty() { None } else { Some(prev_hash.clone()) })
+    .bind(if prev_hash.is_empty() {
+        None
+    } else {
+        Some(prev_hash.clone())
+    })
     .bind(override_used as i64)
     .execute(pool)
     .await?;

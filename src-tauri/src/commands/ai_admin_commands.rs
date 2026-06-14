@@ -1,4 +1,8 @@
-use crate::ai::{client::ToolDef, provider::{ChatResult, Provider, ToolCallResult}, tools};
+use crate::ai::{
+    client::ToolDef,
+    provider::{ChatResult, Provider, ToolCallResult},
+    tools,
+};
 use crate::commands::rbac;
 use crate::db::repositories::{ai_admin_repo, ai_chat_history_repo};
 use crate::domain::ai_admin::*;
@@ -28,7 +32,9 @@ pub async fn admin_get_provider_config(
         let from_os = match secure_store::get_secret("anthropic_api_key") {
             Some(k) => k,
             None => {
-                tracing::warn!("OS credential store returned None for anthropic_api_key — falling back to DB");
+                tracing::warn!(
+                    "OS credential store returned None for anthropic_api_key — falling back to DB"
+                );
                 String::new()
             }
         };
@@ -45,7 +51,9 @@ pub async fn admin_get_provider_config(
         let from_os = match secure_store::get_secret("openai_api_key") {
             Some(k) => k,
             None => {
-                tracing::warn!("OS credential store returned None for openai_api_key — falling back to DB");
+                tracing::warn!(
+                    "OS credential store returned None for openai_api_key — falling back to DB"
+                );
                 String::new()
             }
         };
@@ -111,7 +119,8 @@ pub async fn admin_set_anthropic(
         return Err(AppError::Internal(
             "Windows Credential Manager is unavailable. \
              The API key cannot be stored securely. \
-             Please check your Windows user profile and try again.".into(),
+             Please check your Windows user profile and try again."
+                .into(),
         ));
     }
     // Remove any stale plaintext copy that may have been written before this fix.
@@ -201,13 +210,12 @@ pub async fn admin_set_openai(
     ai_admin_repo::set_config(&state.db, "openai_base_url", &base_url).await?;
     // Store key securely in the OS credential manager — refuse if unavailable (F-SEC-001).
     if !secure_store::set_secret("openai_api_key", &api_key) {
-        tracing::error!(
-            "OS credential store unavailable — OpenAI API key NOT saved."
-        );
+        tracing::error!("OS credential store unavailable — OpenAI API key NOT saved.");
         return Err(AppError::Internal(
             "Windows Credential Manager is unavailable. \
              The API key cannot be stored securely. \
-             Please check your Windows user profile and try again.".into(),
+             Please check your Windows user profile and try again."
+                .into(),
         ));
     }
     // Remove any stale plaintext copy.
@@ -236,7 +244,11 @@ pub async fn admin_validate_gemini(
                 .filter(|id| id.contains("gemini"))
                 .map(|id| ModelInfo { id })
                 .collect();
-            Ok(ValidateProviderResult { success: true, models, error: None })
+            Ok(ValidateProviderResult {
+                success: true,
+                models,
+                error: None,
+            })
         }
         Err(e) => Ok(ValidateProviderResult {
             success: false,
@@ -263,7 +275,8 @@ pub async fn admin_set_gemini(
         return Err(AppError::Internal(
             "Windows Credential Manager is unavailable. \
              The API key cannot be stored securely. \
-             Please check your Windows user profile and try again.".into(),
+             Please check your Windows user profile and try again."
+                .into(),
         ));
     }
     // Remove any stale plaintext copy.
@@ -315,8 +328,18 @@ pub async fn ai_chat(state: State<'_, AppState>, input: AiChatInput) -> AppResul
         .send_chat(&system, &input.history, &input.message, &tool_defs)
         .await?;
 
-    match run_tool_loop(&state.db, &provider, &system, &input, &tool_defs, initial, |_| {}, |_| {}, |_| {})
-        .await?
+    match run_tool_loop(
+        &state.db,
+        &provider,
+        &system,
+        &input,
+        &tool_defs,
+        initial,
+        |_| {},
+        |_| {},
+        |_| {},
+    )
+    .await?
     {
         ToolLoopOutcome::Done { text } => Ok(AiChatResponse::Message { content: text }),
         ToolLoopOutcome::PendingAction {
@@ -476,11 +499,15 @@ pub async fn ai_undo_action(
 
 async fn build_system_prompt(db: &sqlx::SqlitePool, ui_context: Option<&str>) -> String {
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let now  = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
     let biz_name = sqlx::query_scalar::<_, String>(
-        "SELECT name FROM branches WHERE is_active=1 ORDER BY created_at LIMIT 1")
-        .fetch_optional(db).await.ok().flatten()
-        .unwrap_or_else(|| "this store".to_string());
+        "SELECT name FROM branches WHERE is_active=1 ORDER BY created_at LIMIT 1",
+    )
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_else(|| "this store".to_string());
     let ui_block = ui_context.filter(|s| !s.is_empty())
         .map(|ctx| format!("\n## Current UI Context\n\nThe admin has the following tab open: **{ctx}**.\nUse this context to make your answers more specific.\n"))
         .unwrap_or_default();
@@ -584,7 +611,9 @@ list_users to see existing → create_user with the right role (confirm) → con
 // ── Shared tool loop ───────────────────────────────────────────────────────────
 
 enum ToolLoopOutcome {
-    Done { text: String },
+    Done {
+        text: String,
+    },
     PendingAction {
         action_id: String,
         tool_name: String,
@@ -713,7 +742,10 @@ pub async fn ai_chat_stream(
         .map_err(|e| e.to_string())?;
     ai_admin_repo::expire_old_actions(&state.db).await.ok();
 
-    let Some(provider) = Provider::from_db(&state.db).await.map_err(|e| e.to_string())? else {
+    let Some(provider) = Provider::from_db(&state.db)
+        .await
+        .map_err(|e| e.to_string())?
+    else {
         let _ = on_event.send(StreamEvent::Error {
             message: "No AI provider configured. Set an API key in Admin Settings.".into(),
         });
@@ -727,12 +759,7 @@ pub async fn ai_chat_stream(
     if provider.is_anthropic() {
         let api_key = provider.api_key().to_string();
         crate::ai::streaming::run_streaming_chat(
-            &state.db,
-            &api_key,
-            &system,
-            &input,
-            &tool_defs,
-            &on_event,
+            &state.db, &api_key, &system, &input, &tool_defs, &on_event,
         )
         .await
         .map(|_| ())
@@ -753,9 +780,21 @@ pub async fn ai_chat_stream(
             &input,
             &tool_defs,
             initial,
-            move |name| { let _ = ev_start.send(StreamEvent::ToolStart { name: name.to_string() }); },
-            move |name| { let _ = ev_done.send(StreamEvent::ToolDone { name: name.to_string() }); },
-            move |tab| { let _ = ev_nav.send(StreamEvent::Navigate { tab: tab.to_string() }); },
+            move |name| {
+                let _ = ev_start.send(StreamEvent::ToolStart {
+                    name: name.to_string(),
+                });
+            },
+            move |name| {
+                let _ = ev_done.send(StreamEvent::ToolDone {
+                    name: name.to_string(),
+                });
+            },
+            move |tab| {
+                let _ = ev_nav.send(StreamEvent::Navigate {
+                    tab: tab.to_string(),
+                });
+            },
         )
         .await
         .map_err(|e| e.to_string())?;

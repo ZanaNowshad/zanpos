@@ -1,7 +1,7 @@
 use crate::db::repositories::audit_hash;
 use crate::domain::delivery::{
-    CancelDeliveryInput, ConfirmPaymentInput, DeliveryInput, DeliveryListFilter,
-    DeliveryRow, RevertPaymentInput, UpdateDeliveryStatusInput,
+    CancelDeliveryInput, ConfirmPaymentInput, DeliveryInput, DeliveryListFilter, DeliveryRow,
+    RevertPaymentInput, UpdateDeliveryStatusInput,
 };
 use crate::errors::{AppError, AppResult};
 use sqlx::{Row, SqliteConnection, SqlitePool};
@@ -15,12 +15,12 @@ use ulid::Ulid;
 /// - cancelled  → (terminal — no further transitions)
 fn validate_delivery_transition(current: &str, next: &str) -> AppResult<()> {
     let allowed: &[&str] = match current {
-        "pending"          => &["dispatched", "cancelled"],
-        "dispatched"       => &["out_for_delivery", "cancelled"],
+        "pending" => &["dispatched", "cancelled"],
+        "dispatched" => &["out_for_delivery", "cancelled"],
         "out_for_delivery" => &["delivered", "cancelled"],
-        "delivered"        => &[],
-        "cancelled"        => &[],
-        _                  => &[],
+        "delivered" => &[],
+        "cancelled" => &[],
+        _ => &[],
     };
 
     if current == next {
@@ -249,7 +249,13 @@ pub async fn update_delivery_status(
     pool: &SqlitePool,
     input: &UpdateDeliveryStatusInput,
 ) -> AppResult<DeliveryRow> {
-    let valid = ["pending", "dispatched", "out_for_delivery", "delivered", "cancelled"];
+    let valid = [
+        "pending",
+        "dispatched",
+        "out_for_delivery",
+        "delivered",
+        "cancelled",
+    ];
     if !valid.contains(&input.delivery_status.as_str()) {
         return Err(AppError::Validation(format!(
             "Invalid delivery_status: {}",
@@ -272,8 +278,7 @@ pub async fn update_delivery_status(
     let now = chrono::Utc::now().to_rfc3339();
     let before_json =
         serde_json::json!({ "delivery_status": &existing.delivery_status }).to_string();
-    let after_json =
-        serde_json::json!({ "delivery_status": &input.delivery_status }).to_string();
+    let after_json = serde_json::json!({ "delivery_status": &input.delivery_status }).to_string();
 
     sqlx::query(
         "UPDATE delivery_orders
@@ -606,10 +611,7 @@ pub async fn revert_payment(
 }
 
 /// Distinct rider names for autocomplete, ordered by most recently used.
-pub async fn rider_suggestions(
-    pool: &SqlitePool,
-    branch_id: &str,
-) -> AppResult<Vec<String>> {
+pub async fn rider_suggestions(pool: &SqlitePool, branch_id: &str) -> AppResult<Vec<String>> {
     let rows = sqlx::query(
         "SELECT delivery_staff_name FROM delivery_orders
          WHERE branch_id = ? AND delivery_staff_name IS NOT NULL AND delivery_staff_name != ''

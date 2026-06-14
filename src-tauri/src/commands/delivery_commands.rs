@@ -1,8 +1,8 @@
 use crate::commands::rbac;
 use crate::db::repositories::delivery_repo;
 use crate::domain::delivery::{
-    CancelDeliveryInput, ConfirmPaymentInput, DeliveryListFilter, DeliveryRow,
-    RevertPaymentInput, UpdateDeliveryStatusInput,
+    CancelDeliveryInput, ConfirmPaymentInput, DeliveryListFilter, DeliveryRow, RevertPaymentInput,
+    UpdateDeliveryStatusInput,
 };
 use crate::errors::AppError;
 use crate::AppState;
@@ -78,7 +78,11 @@ pub async fn delivery_update_status(
             )
             .await
             {
-                tracing::warn!("T12: WA dispatch notification failed for delivery {}: {:?}", result.receipt_number, e);
+                tracing::warn!(
+                    "T12: WA dispatch notification failed for delivery {}: {:?}",
+                    result.receipt_number,
+                    e
+                );
             }
         }
         "delivered" => {
@@ -89,7 +93,11 @@ pub async fn delivery_update_status(
             )
             .await
             {
-                tracing::warn!("T12: WA arrival notification failed for delivery {}: {:?}", result.receipt_number, e);
+                tracing::warn!(
+                    "T12: WA arrival notification failed for delivery {}: {:?}",
+                    result.receipt_number,
+                    e
+                );
             }
         }
         _ => {}
@@ -116,7 +124,11 @@ pub async fn delivery_confirm_payment(
     )
     .await
     {
-        tracing::warn!("WA payment-confirmed notice failed for delivery {}: {:?}", result.receipt_number, e);
+        tracing::warn!(
+            "WA payment-confirmed notice failed for delivery {}: {:?}",
+            result.receipt_number,
+            e
+        );
     }
 
     Ok(result)

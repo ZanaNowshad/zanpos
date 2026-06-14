@@ -64,10 +64,14 @@ pub async fn auth_login_pin(
     state: State<'_, AppState>,
 ) -> Result<SessionUser, AppError> {
     if input.username.len() > 100 {
-        return Err(AppError::Validation("Username must not exceed 100 characters".into()));
+        return Err(AppError::Validation(
+            "Username must not exceed 100 characters".into(),
+        ));
     }
     if input.pin.len() > 64 {
-        return Err(AppError::Validation("PIN must not exceed 64 characters".into()));
+        return Err(AppError::Validation(
+            "PIN must not exceed 64 characters".into(),
+        ));
     }
     let result = auth_repo::login_pin(&state.db, &input.username, &input.pin).await;
     // Add a minimum 1-second delay on failure to rate-limit brute-force attempts
@@ -90,7 +94,9 @@ pub async fn auth_verify_owner_pin(
     state: State<'_, AppState>,
 ) -> Result<bool, AppError> {
     if pin.len() > 64 {
-        return Err(AppError::Validation("PIN must not exceed 64 characters".into()));
+        return Err(AppError::Validation(
+            "PIN must not exceed 64 characters".into(),
+        ));
     }
     // Check the entered PIN against every active owner account. The owner can
     // unlock regardless of which user opened Back Office.

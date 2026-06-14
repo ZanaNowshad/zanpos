@@ -168,10 +168,9 @@ impl HttpSyncClient {
 
             let status = resp.status();
             if status.is_success() {
-                let rows: Vec<Value> = resp
-                    .json()
-                    .await
-                    .map_err(|e| AppError::Internal(format!("Pull parse error for {table}: {e}")))?;
+                let rows: Vec<Value> = resp.json().await.map_err(|e| {
+                    AppError::Internal(format!("Pull parse error for {table}: {e}"))
+                })?;
                 return Ok(rows);
             } else if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
                 let body = resp.text().await.unwrap_or_default();
@@ -227,15 +226,21 @@ impl HttpSyncClient {
 
     /// GET {base}/zanpos/info — auth + identity probe for join/test.
     pub async fn hub_info(&self) -> AppResult<HubInfo> {
-        let resp = self.http.get(format!("{}/zanpos/info", self.base_url))
+        let resp = self
+            .http
+            .get(format!("{}/zanpos/info", self.base_url))
             .header("Authorization", format!("Bearer {}", self.key))
-            .send().await
+            .send()
+            .await
             .map_err(|e| AppError::Internal(format!("{TRANSIENT_TAG} Hub connect error: {e}")))?;
         match resp.status() {
-            s if s.is_success() => resp.json::<HubInfo>().await
+            s if s.is_success() => resp
+                .json::<HubInfo>()
+                .await
                 .map_err(|e| AppError::Internal(format!("Hub info parse error: {e}"))),
-            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN =>
-                Err(AppError::Validation("Wrong store token".into())),
+            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN => {
+                Err(AppError::Validation("Wrong store token".into()))
+            }
             s => Err(AppError::Internal(format!("Hub returned {s}"))),
         }
     }

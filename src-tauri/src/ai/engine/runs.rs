@@ -5,6 +5,8 @@ use sqlx::SqlitePool;
 pub struct Run {
     pub run_id: String,
     pub op_id: String,
+    pub selector_json: String,
+    pub params_json: String,
     pub status: String,
     pub total_count: i64,
     pub done_count: i64,
@@ -62,8 +64,8 @@ pub async fn set_failed(pool: &SqlitePool, run_id: &str, error: &str) -> AppResu
 }
 
 pub async fn get_run(pool: &SqlitePool, run_id: &str) -> AppResult<Run> {
-    let row = sqlx::query_as::<_, (String, String, String, i64, i64, Option<String>)>(
-        "SELECT run_id,op_id,status,total_count,done_count,checkpoint_cursor FROM ai_runs WHERE run_id=?",
+    let row = sqlx::query_as::<_, (String, String, String, String, String, i64, i64, Option<String>)>(
+        "SELECT run_id,op_id,selector_json,params_json,status,total_count,done_count,checkpoint_cursor FROM ai_runs WHERE run_id=?",
     )
     .bind(run_id)
     .fetch_one(pool)
@@ -71,10 +73,12 @@ pub async fn get_run(pool: &SqlitePool, run_id: &str) -> AppResult<Run> {
     Ok(Run {
         run_id: row.0,
         op_id: row.1,
-        status: row.2,
-        total_count: row.3,
-        done_count: row.4,
-        checkpoint_cursor: row.5,
+        selector_json: row.2,
+        params_json: row.3,
+        status: row.4,
+        total_count: row.5,
+        done_count: row.6,
+        checkpoint_cursor: row.7,
     })
 }
 

@@ -25,7 +25,7 @@ export interface DisplayMessage {
   undoId?: string;
 }
 
-export type ChatState = "idle" | "thinking" | "confirm";
+export type ChatState = "idle" | "thinking" | "confirm" | "run_confirm" | "run_executing";
 
 export interface ToolCallEntry {
   id: string;
@@ -46,6 +46,17 @@ export type SetupStep =
   | "loading" | "settings" | "pick_provider"
   | "anthropic_key" | "openai_url_key" | "openai_validating" | "openai_pick_model"
   | "gemini_key" | "gemini_validating" | "gemini_pick_model" | "done";
+
+// ─── Bulk Run state ─────────────────────────────────────────────────────────────
+export interface RunState {
+  runId: string;
+  opId: string;
+  description: string;
+  count: number;
+  done: number;
+  phase: "preview" | "executing" | "done" | "failed";
+  error?: string;
+}
 
 // ─── KPI ────────────────────────────────────────────────────────────────────────
 export interface KpiSnapshot {

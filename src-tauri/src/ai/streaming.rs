@@ -254,14 +254,56 @@ pub async fn run_streaming_chat(
             name: tool_name.clone(),
         });
 
-        // ── Run Engine dispatch (stub) ──────────────────────────────────
-        // TODO: If tool_name matches an engine op_id (e.g. "bulk_refund",
-        // "bulk_discount", "price_update"), call the engine and emit:
-        //   RunPreview → RunProgress → RunDone / RunFailed
-        // Use StreamEvent::RunPreview { run_id, op_id, description, count, samples }
-        //     StreamEvent::RunProgress { run_id, done, total }
-        //     StreamEvent::RunDone { run_id }
-        //     StreamEvent::RunFailed { run_id, error }
+        // ── Run Engine dispatch ─────────────────────────────────────────────────
+        // Engine ops bypass the normal mutation_pending/confirm flow: they create
+        // a run record in 'previewing' state, emit RunPreview so the UI can show
+        // a count + confirm button, then return. The user triggers execution via
+        // the separate ai_run_execute Tauri command.
+        const ENGINE_OPS: &[&str] = &["bulk_price_adjust"];
+        if ENGINE_OPS.contains(&tool_name.as_str()) {
+            use crate::ai::engine::{runs, selector::Selector, PriceOp};
+            let selector: Selector = serde_json::from_value(
+                tool_input.get("selector").cloned().unwrap_or_default(),
+            )
+            .unwrap_or_default();
+            let price_op: PriceOp = serde_json::from_value(
+                tool_input.get("adjustment").cloned().unwrap_or_default(),
+            )
+            .unwrap_or(PriceOp::Percent(0.0));
+            let count = selector.count(pool).await.unwrap_or(0);
+            let selector_json = serde_json::to_string(&selector).unwrap_or_default();
+            let params_json = serde_json::to_string(&price_op).unwrap_or_default();
+            let run_id = runs::create_run(
+                pool,
+                &tool_name,
+                &selector_json,
+                &params_json,
+                count,
+                &input.user_id,
+            )
+            .await?;
+            let description = match &price_op {
+                PriceOp::Percent(p) if *p >= 0.0 =>
+                    format!("Increase prices by {p}% for {count} products"),
+                PriceOp::Percent(p) =>
+                    format!("Decrease prices by {}% for {count} products", p.abs()),
+                PriceOp::Absolute(d) if *d >= 0 =>
+                    format!("Add {d} fils to {count} products"),
+                PriceOp::Absolute(d) =>
+                    format!("Subtract {} fils from {count} products", d.abs()),
+                PriceOp::Set(v) =>
+                    format!("Set price to {v} fils for {count} products"),
+            };
+            let _ = on_event.send(StreamEvent::RunPreview {
+                run_id,
+                op_id: tool_name,
+                description,
+                count,
+                samples: vec![],
+            });
+            let _ = on_event.send(StreamEvent::Done);
+            return Ok(accumulated_text);
+        }
 
         // ── Intent Engine dispatch (ZanAI v2) ──────────────────────────
         if crate::ai::intent_engine::INTENT_NAMES.contains(&tool_name.as_str()) {

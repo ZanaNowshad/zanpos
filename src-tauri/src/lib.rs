@@ -493,6 +493,9 @@ pub fn run() {
             commands::ai_admin_commands::ai_execute_action,
             commands::ai_admin_commands::ai_cancel_action,
             commands::ai_admin_commands::ai_undo_action,
+            // AI Admin — bulk run engine
+            commands::ai_admin_commands::ai_run_execute,
+            commands::ai_admin_commands::ai_run_undo,
             // AI Admin — streaming + history
             commands::ai_admin_commands::ai_chat_stream,
             commands::ai_admin_commands::ai_save_message,

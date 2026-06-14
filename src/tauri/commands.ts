@@ -439,6 +439,17 @@ export const aiChatStream = (
   onEvent: Channel<StreamEvent>
 ): Promise<void> => invoke("ai_chat_stream", { input, onEvent });
 
+export const aiRunExecute = (
+  runId: string,
+  userId: string,
+  onEvent: Channel<StreamEvent>
+): Promise<void> => invoke("ai_run_execute", { runId, userId, onEvent });
+
+export const aiRunUndo = (
+  runId: string,
+  userId: string,
+): Promise<{ followup: string }> => invoke("ai_run_undo", { runId, userId });
+
 export const aiSaveMessage = (
   sessionId: string,
   branchId: string,

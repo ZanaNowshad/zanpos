@@ -4,11 +4,12 @@ import type { ChatMessage, SessionUser, StreamEvent, StockLevel } from "../types
 import { DEVICE } from "../types";
 import {
   aiChatStream, aiExecuteAction, aiCancelAction, aiUndoAction,
+  aiRunExecute, aiRunUndo,
   aiSaveMessage, aiLoadHistory, aiClearHistory,
   reportToday, inventoryGetLevels, syncStatus,
 } from "../tauri/commands";
 import { clearAdminChat } from "../adminChatClear";
-import type { ChatState, DisplayMessage, KpiSnapshot, ToolCallEntry } from "./officeAiTypes";
+import type { ChatState, DisplayMessage, KpiSnapshot, RunState, ToolCallEntry } from "./officeAiTypes";
 
 export interface ChatControllerOpts {
   sessionUser: SessionUser;
@@ -31,12 +32,16 @@ export interface ChatController {
   tokenCount: number;
   streamStartTime: number | null;
   kpi: KpiSnapshot;
+  runState: RunState | null;
   fetchKpi: () => Promise<void>;
   handleSend: (overrideText?: string) => Promise<void>;
   handleConfirm: () => Promise<void>;
   handleCancel: () => Promise<void>;
   handleUndo: (undoId: string, msgId: string) => Promise<void>;
   handleClearChat: () => void;
+  handleRunExecute: () => Promise<void>;
+  handleRunCancel: () => void;
+  handleRunUndo: () => Promise<void>;
 }
 
 /**
@@ -58,6 +63,7 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
   const [messages, setMessages]             = useState<DisplayMessage[]>([]);
   const [input, setInput]                   = useState("");
   const [chatState, setChatState]           = useState<ChatState>("idle");
+  const [runState, setRunState]             = useState<RunState | null>(null);
   const [history, setHistory]               = useState<ChatMessage[]>([]);
   const [pendingAction, setPendingAction]   = useState<DisplayMessage["pendingAction"] | null>(null);
   const [liveToolCalls, setLiveToolCalls]   = useState<ToolCallEntry[]>([]);
@@ -195,6 +201,22 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
         } else if (event.type === "navigate") {
           // AI steered the workspace via the open_tab tool — caller validates RBAC.
           onNavigate(event.tab);
+        } else if (event.type === "run_preview") {
+          setRunState({
+            runId: event.run_id, opId: event.op_id,
+            description: event.description, count: event.count,
+            done: 0, phase: "preview",
+          });
+          setChatState("run_confirm");
+        } else if (event.type === "run_progress") {
+          setRunState(prev => prev ? { ...prev, done: event.done, phase: "executing" } : prev);
+        } else if (event.type === "run_done") {
+          setRunState(prev => prev ? { ...prev, phase: "done" } : prev);
+          setChatState("idle");
+          setTimeout(() => { fetchKpi(); onMutationApplied(); }, 500);
+        } else if (event.type === "run_failed") {
+          setRunState(prev => prev ? { ...prev, phase: "failed", error: event.error } : prev);
+          setChatState("idle");
         } else if (event.type === "mutation_pending") {
           const actionData = {
             action_id: event.action_id,
@@ -229,7 +251,7 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
           // Do NOT override "confirm" state — a mutation_pending event may have set it
           // just before the stream ended. Resetting to "idle" would hide the ConfirmActionModal
           // before the user can approve or deny the pending action.
-          setChatState(prev => prev === "confirm" ? "confirm" : "idle");
+          setChatState(prev => (prev === "confirm" || prev === "run_confirm") ? prev : "idle");
           if (finalText) {
             // Keep in-memory context bounded at 60 entries (30 exchanges)
             setHistory(prev => {
@@ -350,10 +372,54 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
     }
   }, [sessionUser.user_id, addMessage, fetchKpi, onMutationApplied]);
 
+  // ── Run handlers ────────────────────────────────────────────────────────────
+  const handleRunExecute = useCallback(async () => {
+    if (!runState || runState.phase !== "preview") return;
+    setRunState(prev => prev ? { ...prev, phase: "executing" } : prev);
+    setChatState("run_executing");
+    const onEvent = new Channel<StreamEvent>();
+    onEvent.onmessage = (event: StreamEvent) => {
+      if (event.type === "run_progress") {
+        setRunState(prev => prev ? { ...prev, done: event.done, phase: "executing" } : prev);
+      } else if (event.type === "run_done") {
+        setRunState(prev => prev ? { ...prev, phase: "done" } : prev);
+        setChatState("idle");
+        setTimeout(() => { fetchKpi(); onMutationApplied(); }, 500);
+      } else if (event.type === "run_failed") {
+        setRunState(prev => prev ? { ...prev, phase: "failed", error: event.error } : prev);
+        setChatState("idle");
+      }
+    };
+    try {
+      await aiRunExecute(runState.runId, sessionUser.user_id, onEvent);
+    } catch (e) {
+      setRunState(prev => prev ? { ...prev, phase: "failed", error: String(e) } : prev);
+      setChatState("idle");
+    }
+  }, [runState, sessionUser.user_id, fetchKpi, onMutationApplied]);
+
+  const handleRunCancel = useCallback(() => {
+    setRunState(null);
+    setChatState("idle");
+  }, []);
+
+  const handleRunUndo = useCallback(async () => {
+    if (!runState || runState.phase !== "done") return;
+    try {
+      const result = await aiRunUndo(runState.runId, sessionUser.user_id);
+      setRunState(null);
+      addMessage({ role: "system", text: result.followup });
+      setTimeout(() => { fetchKpi(); onMutationApplied(); }, 500);
+    } catch (e) {
+      addMessage({ role: "system", text: `Run undo failed: ${String(e)}` });
+    }
+  }, [runState, sessionUser.user_id, addMessage, fetchKpi, onMutationApplied]);
+
   return {
     messages, input, setInput, chatState, pendingAction, liveToolCalls,
     streamingMsgId, tokenCount, streamStartTime,
-    kpi, fetchKpi,
+    kpi, runState, fetchKpi,
     handleSend, handleConfirm, handleCancel, handleUndo, handleClearChat,
+    handleRunExecute, handleRunCancel, handleRunUndo,
   };
 }

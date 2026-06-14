@@ -879,6 +879,44 @@ pub fn all_tool_definitions() -> Vec<ToolDef> {
                 "required": ["updates"]
             }),
         },
+        // ── Bulk engine ops ───────────────────────────────────────────────────
+        ToolDef {
+            name: "bulk_price_adjust".into(),
+            description: "Increase, decrease, or set prices for ALL products matching a \
+                category tree, text filter, or active-status filter. The selector field uses \
+                category_subtree (category ID — includes all descendants), active (bool), or \
+                text (name/sku/barcode LIKE). The adjustment is one of: \
+                {\"mode\":\"Percent\",\"value\":20.0} for +20%, \
+                {\"mode\":\"Absolute\",\"value\":-500} for -500 fils, or \
+                {\"mode\":\"Set\",\"value\":5000} to set a fixed price in fils. \
+                Always previews the count before executing — safe to call with large sets. \
+                Example: increase all Toys > Girls prices 20% = \
+                selector:{category_subtree:\"girls\"}, adjustment:{mode:\"Percent\",value:20.0}".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "selector": {
+                        "type": "object",
+                        "description": "Product filter — at least one field recommended",
+                        "properties": {
+                            "category_subtree": { "type": "string", "description": "Category ID — matches this category and all subcategories recursively" },
+                            "active": { "type": "boolean", "description": "true = active products only, false = inactive only" },
+                            "text": { "type": "string", "description": "Case-insensitive filter on product name, SKU, or barcode" }
+                        }
+                    },
+                    "adjustment": {
+                        "type": "object",
+                        "description": "Price change to apply — one of Percent / Absolute / Set",
+                        "properties": {
+                            "mode": { "type": "string", "enum": ["Percent", "Absolute", "Set"] },
+                            "value": { "type": "number", "description": "Percent: e.g. 20.0 for +20%. Absolute: fils delta e.g. -500. Set: exact fils price e.g. 5000." }
+                        },
+                        "required": ["mode", "value"]
+                    }
+                },
+                "required": ["selector", "adjustment"]
+            }),
+        },
         // ── Extension read tools ──────────────────────────────────────────────
         ToolDef { name: "get_sales_list".into(), description: "List sales for a date range. date_from, date_to (YYYY-MM-DD), optional limit (max 200).".into(), input_schema: json!({"type":"object","properties":{"date_from":{"type":"string"},"date_to":{"type":"string"},"limit":{"type":"integer"}}}) },
         ToolDef { name: "get_sale_detail".into(), description: "Get full detail of a single sale by receipt number, including all items and payments.".into(), input_schema: json!({"type":"object","properties":{"receipt_number":{"type":"string"}},"required":["receipt_number"]}) },
@@ -974,6 +1012,7 @@ pub const MUTATION_TOOLS: &[&str] = &[
     "receive_stock",
     "add_loyalty_points",
     "bulk_update_prices",
+    "bulk_price_adjust",
     // ── Extension mutations ──────────────────────────────────────────────────
     "create_refund",
     "create_cash_event",

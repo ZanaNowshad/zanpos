@@ -495,6 +495,80 @@ pub async fn ai_undo_action(
     })
 }
 
+// ── Bulk Run Commands ──────────────────────────────────────────────────────────
+
+/// Execute a previewed bulk run by run_id. Emits RunProgress per batch, then
+/// RunDone or RunFailed. The run was created during the streaming preview phase.
+#[tauri::command]
+pub async fn ai_run_execute(
+    state: State<'_, AppState>,
+    run_id: String,
+    user_id: String,
+    on_event: tauri::ipc::Channel<crate::domain::ai_admin::StreamEvent>,
+) -> AppResult<()> {
+    use crate::ai::engine::{batch, runs, selector::Selector, PriceOp};
+    rbac::manager_or_owner(&state.db, &user_id).await?;
+    let pool = &state.db;
+    let run = runs::get_run(pool, &run_id).await?;
+    if run.status != "previewing" {
+        return Err(AppError::Conflict(format!(
+            "Run {} is in state '{}', expected 'previewing'",
+            run_id, run.status
+        )));
+    }
+    let selector: Selector = serde_json::from_str(&run.selector_json).unwrap_or_default();
+    let price_op: PriceOp =
+        serde_json::from_str(&run.params_json).unwrap_or(PriceOp::Percent(0.0));
+    let rid = run_id.clone();
+    let ev_progress = on_event.clone();
+    let result = batch::execute_price_adjust(
+        pool,
+        &run_id,
+        &selector,
+        &price_op,
+        100,
+        move |done, total| {
+            let _ = ev_progress.send(crate::domain::ai_admin::StreamEvent::RunProgress {
+                run_id: rid.clone(),
+                done,
+                total,
+            });
+        },
+    )
+    .await;
+    match result {
+        Ok(_) => {
+            let _ = on_event.send(crate::domain::ai_admin::StreamEvent::RunDone {
+                run_id: run_id.clone(),
+            });
+        }
+        Err(e) => {
+            let _ = runs::set_failed(pool, &run_id, &e.to_string()).await;
+            let _ = on_event.send(crate::domain::ai_admin::StreamEvent::RunFailed {
+                run_id: run_id.clone(),
+                error: e.to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Undo a completed bulk run by replaying undo log in reverse order.
+#[tauri::command]
+pub async fn ai_run_undo(
+    state: State<'_, AppState>,
+    run_id: String,
+    user_id: String,
+) -> AppResult<serde_json::Value> {
+    use crate::ai::engine::batch;
+    rbac::manager_or_owner(&state.db, &user_id).await?;
+    let pool = &state.db;
+    let restored = batch::undo_run(pool, &run_id).await?;
+    Ok(serde_json::json!({
+        "followup": format!("Done — restored prices for {} products.", restored)
+    }))
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 async fn build_system_prompt(db: &sqlx::SqlitePool, ui_context: Option<&str>) -> String {

@@ -13,14 +13,17 @@ struct Reverse {
 /// Execute a price adjustment across every product matching `selector`, in
 /// keyset batches. Each batch is one transaction: it rewrites prices and writes
 /// a reverse-snapshot, then advances the run checkpoint. Returns rows changed.
+/// `on_progress(done, total)` is called after each committed batch.
 pub async fn execute_price_adjust(
     pool: &SqlitePool,
     run_id: &str,
     selector: &Selector,
     op: &PriceOp,
     batch_size: i64,
+    on_progress: impl Fn(i64, i64) + Send,
 ) -> AppResult<i64> {
     runs::set_status(pool, run_id, "executing").await?;
+    let total_expected = selector.count(pool).await.unwrap_or(0);
     let c = selector.compile();
     let mut cursor = String::new();
     let mut batch_seq: i64 = 0;
@@ -105,6 +108,7 @@ pub async fn execute_price_adjust(
         .await?;
 
         tx.commit().await?;
+        on_progress(total_changed, total_expected);
         cursor = last_pid;
         batch_seq += 1;
     }
@@ -226,7 +230,7 @@ mod tests {
             .await
             .unwrap();
 
-        let changed = execute_price_adjust(&pool, &run_id, &sel, &PriceOp::Percent(20.0), 100)
+        let changed = execute_price_adjust(&pool, &run_id, &sel, &PriceOp::Percent(20.0), 100, |_, _| {})
             .await
             .unwrap();
 
@@ -249,7 +253,7 @@ mod tests {
         let run_id = runs::create_run(&pool, "bulk.price_adjust", "{}", "{}", total, "U1")
             .await
             .unwrap();
-        execute_price_adjust(&pool, &run_id, &sel, &PriceOp::Percent(20.0), 100)
+        execute_price_adjust(&pool, &run_id, &sel, &PriceOp::Percent(20.0), 100, |_, _| {})
             .await
             .unwrap();
         assert_eq!(current_price(&pool, "g0000").await, 15000);

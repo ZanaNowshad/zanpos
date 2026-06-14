@@ -2,6 +2,7 @@ import { useEffect, type RefObject, type KeyboardEvent } from "react";
 import type { ChatController } from "./useChatController";
 import { ChatMessageList, QuickChipsBar } from "./ChatMessages";
 import { LiveActivityBar } from "./toolCards";
+import RunPanel from "./RunPanel";
 
 interface Props {
   ctrl: ChatController;
@@ -51,6 +52,15 @@ export default function ChatPanel({ ctrl, variant, userName, businessName, compo
         streamStartTime={ctrl.streamStartTime}
       />
 
+      {ctrl.runState && (
+        <RunPanel
+          runState={ctrl.runState}
+          onExecute={ctrl.handleRunExecute}
+          onCancel={ctrl.handleRunCancel}
+          onUndo={ctrl.handleRunUndo}
+        />
+      )}
+
       <div className="chat-footer-area">
         {ctrl.messages.length === 0 && ctrl.chatState === "idle" && variant === "full" && (
           <QuickChipsBar onSelect={(text) => ctrl.handleSend(text)} />
@@ -60,7 +70,12 @@ export default function ChatPanel({ ctrl, variant, userName, businessName, compo
           <textarea
             ref={composerRef}
             className="chat-input-v2"
-            placeholder={ctrl.chatState === "confirm" ? "Confirm or cancel the action above…" : "Ask ZanAI anything about your business…"}
+            placeholder={
+              ctrl.chatState === "confirm" ? "Confirm or cancel the action above…" :
+              ctrl.chatState === "run_confirm" ? "Confirm the bulk run above, or cancel…" :
+              ctrl.chatState === "run_executing" ? "Run in progress…" :
+              "Ask ZanAI anything about your business…"
+            }
             value={ctrl.input}
             onChange={e => ctrl.setInput(e.target.value)}
             onKeyDown={handleKeyDown}

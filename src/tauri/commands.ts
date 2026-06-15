@@ -881,9 +881,9 @@ export function whatsappSendDelivery(actorUserId: string, input: SendDeliveryInp
   return invoke("whatsapp_send_delivery", { input, actorUserId });
 }
 
-export function whatsappNotifyArrival(actorUserId: string, to: string, receiptNumber: string): Promise<boolean> {
+export function whatsappNotifyArrival(actorUserId: string, to: string, receiptNumber: string, deliveryId: string): Promise<boolean> {
   return invoke("whatsapp_notify_arrival", {
-    input: { to, receipt_number: receiptNumber },
+    input: { to, receipt_number: receiptNumber, delivery_id: deliveryId },
     actorUserId,
   });
 }
@@ -895,6 +895,7 @@ export function whatsappPaymentReminder(
   amountMinor: number,
   currencyExponent: number,
   currency: string,
+  deliveryId: string,
 ): Promise<boolean> {
   return invoke("whatsapp_payment_reminder", {
     input: {
@@ -903,6 +904,7 @@ export function whatsappPaymentReminder(
       amount_minor: amountMinor,
       currency_exponent: currencyExponent,
       currency,
+      delivery_id: deliveryId,
     },
     actorUserId,
   });

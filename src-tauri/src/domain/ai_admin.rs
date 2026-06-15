@@ -70,6 +70,10 @@ pub struct AiChatInput {
     pub currency_exponent: u32,
     #[serde(default)]
     pub ui_context: Option<String>,
+    #[serde(default)]
+    pub image_base64: Option<String>,
+    #[serde(default)]
+    pub image_media_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

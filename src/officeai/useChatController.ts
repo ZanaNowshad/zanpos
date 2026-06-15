@@ -21,10 +21,18 @@ export interface ChatControllerOpts {
   onMutationApplied: () => void;
 }
 
+export interface ImageAttachment {
+  base64: string;
+  mediaType: string;
+  previewUrl: string;
+}
+
 export interface ChatController {
   messages: DisplayMessage[];
   input: string;
   setInput: (v: string) => void;
+  imageAttachment: ImageAttachment | null;
+  setImageAttachment: (a: ImageAttachment | null) => void;
   chatState: ChatState;
   pendingAction: DisplayMessage["pendingAction"] | null;
   liveToolCalls: ToolCallEntry[];
@@ -78,6 +86,13 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
     loading: false, error: null, today: null, lowStockCount: 0, outOfStockCount: 0, sync: null,
   });
 
+  const [imageAttachment, setImageAttachmentState] = useState<ImageAttachment | null>(null);
+  const imageAttachmentRef = useRef<ImageAttachment | null>(null);
+  const setImageAttachment = useCallback((a: ImageAttachment | null) => {
+    imageAttachmentRef.current = a;
+    setImageAttachmentState(a);
+  }, []);
+
   const addMessage = useCallback((msg: Omit<DisplayMessage, "id" | "timestamp">): DisplayMessage => {
     const full = { ...msg, id: crypto.randomUUID(), timestamp: new Date() };
     setMessages(prev => [...prev, full]);
@@ -111,6 +126,7 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
   // ── KPI snapshot ────────────────────────────────────────────────────────────
   // Sequential (not parallel) to avoid spiking Rust thread pool + SQLite
   // connections all at once on page open, which stresses WebView2 memory.
+  const hasShownStockAlertRef = useRef(false);
   const fetchKpi = useCallback(async () => {
     setKpi(prev => ({ ...prev, loading: true, error: null }));
     try {
@@ -121,10 +137,18 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
       const lowStockCount   = levels.filter(l => l.is_low_stock && !l.is_out_of_stock).length;
       const outOfStockCount = levels.filter(l => l.is_out_of_stock).length;
       setKpi({ loading: false, error: null, today: todaySummary, lowStockCount, outOfStockCount, sync: syncStat });
+      // Proactive alert — fires once per session on initial KPI load
+      if (!hasShownStockAlertRef.current && (outOfStockCount > 0 || lowStockCount >= 3)) {
+        hasShownStockAlertRef.current = true;
+        const parts: string[] = [];
+        if (outOfStockCount > 0) parts.push(`**${outOfStockCount}** product${outOfStockCount > 1 ? "s" : ""} out of stock`);
+        if (lowStockCount > 0)   parts.push(`**${lowStockCount}** running low`);
+        addMessage({ role: "system", text: `⚠️ Stock alert: ${parts.join(" · ")}. Ask me to review or create a purchase order.` });
+      }
     } catch (e) {
       setKpi(prev => ({ ...prev, loading: false, error: String(e) }));
     }
-  }, [sessionUser.user_id]);
+  }, [sessionUser.user_id, addMessage]);
 
   useEffect(() => {
     // Fetch KPI after a short delay to avoid spiking memory on page open.
@@ -147,9 +171,11 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
   // ── Send ────────────────────────────────────────────────────────────────────
   const handleSend = useCallback(async (overrideText?: string) => {
     const text = (overrideText ?? input).trim();
-    if (!text || chatState !== "idle") return;
+    const attachment = imageAttachmentRef.current;
+    if ((!text && !attachment) || chatState !== "idle") return;
     setInput("");
-    addMessage({ role: "user", text });
+    setImageAttachment(null);
+    addMessage({ role: "user", text, imagePreviewUrl: attachment?.previewUrl });
     aiSaveMessage(sessionId, DEVICE.branch_id, sessionUser.user_id, "user", text, "text").catch(() => {});
     const rawHistory: ChatMessage[] = [...history, { role: "user", content: text }];
     // Keep bounded — 60 entries max
@@ -289,6 +315,7 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
           branch_id: DEVICE.branch_id,
           currency_exponent: DEVICE.currency_exponent,
           ui_context: getUiContext(),
+          ...(attachment ? { image_base64: attachment.base64, image_media_type: attachment.mediaType } : {}),
         },
         onEvent
       );
@@ -307,7 +334,7 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
       setStreamStartTime(null);
       setChatState("idle");
     }
-  }, [input, chatState, history, sessionId, sessionUser.user_id, addMessage, getUiContext, onNavigate]);
+  }, [input, chatState, history, sessionId, sessionUser.user_id, addMessage, getUiContext, onNavigate, fetchKpi, onMutationApplied, setImageAttachment]);
 
   // ── Confirm / Cancel / Undo ─────────────────────────────────────────────────
   const handleConfirm = useCallback(async () => {
@@ -416,7 +443,8 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
   }, [runState, sessionUser.user_id, addMessage, fetchKpi, onMutationApplied]);
 
   return {
-    messages, input, setInput, chatState, pendingAction, liveToolCalls,
+    messages, input, setInput, imageAttachment, setImageAttachment,
+    chatState, pendingAction, liveToolCalls,
     streamingMsgId, tokenCount, streamStartTime,
     kpi, runState, fetchKpi,
     handleSend, handleConfirm, handleCancel, handleUndo, handleClearChat,

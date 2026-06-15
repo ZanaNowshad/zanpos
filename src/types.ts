@@ -291,6 +291,8 @@ export interface AiChatInput {
   branch_id: string;
   currency_exponent: number;
   ui_context?: string;
+  image_base64?: string;
+  image_media_type?: string;
 }
 
 export type AiChatResponse =
@@ -356,7 +358,7 @@ export type StreamEvent =
       op_id: string;
       description: string;
       count: number;
-      samples: any[];
+      samples: unknown[];
     }
   | { type: "run_progress"; run_id: string; done: number; total: number }
   | { type: "run_done"; run_id: string }

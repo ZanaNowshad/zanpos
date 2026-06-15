@@ -14,6 +14,7 @@ export interface DisplayMessage {
   role: "user" | "assistant" | "system";
   text: string;
   timestamp: Date;
+  imagePreviewUrl?: string;
   toolCalls?: ToolCallEntry[];
   pendingAction?: {
     action_id: string;

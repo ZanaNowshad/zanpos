@@ -34,10 +34,21 @@ struct AnthropicMsg {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+struct ImageSource {
+    #[serde(rename = "type")]
+    source_type: String,
+    media_type: String,
+    data: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum MsgContent {
     Text {
         text: String,
+    },
+    Image {
+        source: ImageSource,
     },
     ToolUse {
         id: String,
@@ -114,7 +125,7 @@ pub async fn run_streaming_chat(
         .timeout(std::time::Duration::from_secs(120))
         .build()
         .unwrap_or_default();
-    let mut msgs = build_messages(&input.history, &input.message);
+    let mut msgs = build_messages(input);
     let mut accumulated_text = String::new();
 
     for _turn in 0..MAX_TURNS {
@@ -488,9 +499,9 @@ pub async fn run_streaming_chat(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn build_messages(history: &[ChatMessage], user_message: &str) -> Vec<AnthropicMsg> {
+fn build_messages(input: &AiChatInput) -> Vec<AnthropicMsg> {
     // C-05: apply sliding-window guard — drop oldest pairs if history is too large
-    let history = truncate_history(history);
+    let history = truncate_history(&input.history);
     let mut msgs: Vec<AnthropicMsg> = history
         .iter()
         .map(|m| AnthropicMsg {
@@ -500,12 +511,17 @@ fn build_messages(history: &[ChatMessage], user_message: &str) -> Vec<AnthropicM
             }],
         })
         .collect();
-    msgs.push(AnthropicMsg {
-        role: "user".into(),
-        content: vec![MsgContent::Text {
-            text: user_message.into(),
-        }],
-    });
+    let mut user_content: Vec<MsgContent> = Vec::new();
+    // Image block before text so the model sees the visual before the question
+    if let (Some(data), Some(mt)) = (&input.image_base64, &input.image_media_type) {
+        if !data.is_empty() {
+            user_content.push(MsgContent::Image {
+                source: ImageSource { source_type: "base64".into(), media_type: mt.clone(), data: data.clone() },
+            });
+        }
+    }
+    user_content.push(MsgContent::Text { text: input.message.clone() });
+    msgs.push(AnthropicMsg { role: "user".into(), content: user_content });
     msgs
 }
 

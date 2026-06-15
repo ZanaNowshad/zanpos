@@ -30,7 +30,8 @@ impl SqlBind {
 // ── Tool catalogue ─────────────────────────────────────────────────────────────
 
 pub fn all_tool_definitions() -> Vec<ToolDef> {
-    vec![
+    let mut seen = std::collections::HashSet::new();
+    let mut tools = vec![
         ToolDef {
             name: "get_today_summary".into(),
             description: "Get today's sales summary including totals, transaction count, and payment breakdown.".into(),
@@ -955,24 +956,123 @@ pub fn all_tool_definitions() -> Vec<ToolDef> {
         ToolDef { name: "delete_held_cart".into(), description: "Permanently delete a held/parked cart by held_cart_id.".into(), input_schema: json!({"type":"object","properties":{"held_cart_id":{"type":"string"}},"required":["held_cart_id"]}) },
         ToolDef { name: "update_benefit_number".into(), description: "Update the Benefit/Sadad payment phone number stored in app config.".into(), input_schema: json!({"type":"object","properties":{"benefit_number":{"type":"string"}},"required":["benefit_number"]}) },
         ToolDef { name: "open_tab".into(), description: "Navigate the admin's workspace to a specific tab: products, categories, inventory, reports, cashier, eod, deliveries, customers, users, settings, audit, devices.".into(), input_schema: json!({"type":"object","properties":{"tab":{"type":"string","enum":["products","categories","inventory","reports","cashier","eod","deliveries","customers","users","settings","audit","devices"]}},"required":["tab"]}) },
-        // ── ZanAI Intent Engine v2 — high-level business actions ──────────
         ToolDef { name: "adjust_prices_batch".into(), description: "BULK price change: increase/decrease/set prices across many products. Filter by category, name_contains, is_active. Use dry_run first to preview. Automatically chunks large operations (50 records at a time) — never fails on big catalogs.".into(), input_schema: json!({"type":"object","properties":{"filter":{"type":"object","properties":{"category_id":{"type":"string"},"name_contains":{"type":"string"}}},"adjustment":{"type":"object","properties":{"type":{"type":"string","enum":["percentage","flat","set"]},"value":{"type":"integer"}},"required":["type","value"]},"dry_run":{"type":"boolean"}},"required":["adjustment"]}) },
-        ToolDef { name: "search_products".into(), description: "Search products by name, SKU, barcode, or category. Returns paginated results.".into(), input_schema: json!({"type":"object","properties":{"query":{"type":"string"}}}) },
         ToolDef { name: "get_product_detail".into(), description: "Get full details of a single product including prices and stock levels.".into(), input_schema: json!({"type":"object","properties":{"product_id":{"type":"string"}},"required":["product_id"]}) },
-        ToolDef { name: "create_product".into(), description: "Create a new product. Validates category and barcode uniqueness automatically.".into(), input_schema: json!({"type":"object","properties":{"name":{"type":"string"},"category_id":{"type":"string"},"sku":{"type":"string"},"barcode":{"type":"string"},"selling_price_minor":{"type":"integer"},"cost_minor":{"type":"integer"}},"required":["name","category_id"]}) },
-        ToolDef { name: "get_low_stock".into(), description: "List all products below their reorder point with stock quantities.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "receive_stock".into(), description: "Record stock received for a product. Updates inventory levels.".into(), input_schema: json!({"type":"object","properties":{"product_id":{"type":"string"},"quantity_delta":{"type":"string"}},"required":["product_id","quantity_delta"]}) },
         ToolDef { name: "get_sales_report".into(), description: "Get sales report for a date range with totals and breakdowns.".into(), input_schema: json!({"type":"object","properties":{"from_date":{"type":"string"},"to_date":{"type":"string"}},"required":["from_date","to_date"]}) },
-        ToolDef { name: "get_today_summary".into(), description: "Quick snapshot of today: transaction count, revenue, discounts, tax, refunds.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "list_customers".into(), description: "Search and list customers by name, phone, or email.".into(), input_schema: json!({"type":"object","properties":{"search":{"type":"string"}}}) },
-        ToolDef { name: "create_customer".into(), description: "Create a new customer record with name, phone, email.".into(), input_schema: json!({"type":"object","properties":{"name":{"type":"string"},"phone":{"type":"string"},"email":{"type":"string"},"notes":{"type":"string"}},"required":["name"]}) },
-        ToolDef { name: "list_users".into(), description: "List all system users with their roles.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "create_user".into(), description: "Create a new system user (cashier, manager).".into(), input_schema: json!({"type":"object","properties":{"display_name":{"type":"string"},"username":{"type":"string"},"pin":{"type":"string"},"role_id":{"type":"string"}},"required":["display_name","username","pin","role_id"]}) },
         ToolDef { name: "get_cash_status".into(), description: "Current cash drawer status: paid in/out, safe drops.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "list_deliveries".into(), description: "List delivery orders, filterable by status.".into(), input_schema: json!({"type":"object","properties":{"status":{"type":"string","enum":["pending","dispatched","delivered","cancelled","all"]}}}) },
-        ToolDef { name: "get_sync_status".into(), description: "Current hub sync status: online/offline, pending count.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "get_audit_log".into(), description: "View audit trail entries for a date range.".into(), input_schema: json!({"type":"object","properties":{"from_date":{"type":"string"},"to_date":{"type":"string"}}}) },
-    ]
+        // ── Missing CRUD ───────────────────────────────────────────────────────
+        ToolDef { name: "delete_product".into(), description: "Permanently delete a product. Blocked if the product has any sales history — in that case use set_product_active instead.".into(), input_schema: json!({"type":"object","properties":{"product_id":{"type":"string"}},"required":["product_id"]}) },
+        ToolDef { name: "delete_category".into(), description: "Delete a category. Blocked if any products still belong to it.".into(), input_schema: json!({"type":"object","properties":{"category_id":{"type":"string"}},"required":["category_id"]}) },
+        ToolDef { name: "delete_tax_rule".into(), description: "Delete a tax rule. Blocked if any products reference it.".into(), input_schema: json!({"type":"object","properties":{"tax_rule_id":{"type":"string"}},"required":["tax_rule_id"]}) },
+        ToolDef { name: "delete_user".into(), description: "Delete a staff account. Blocked if they have shifts or sales on record.".into(), input_schema: json!({"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"]}) },
+        ToolDef { name: "update_delivery_details".into(), description: "Update the rider name, contact number, address, or notes on an existing delivery.".into(), input_schema: json!({"type":"object","properties":{"delivery_id":{"type":"string"},"delivery_staff_name":{"type":"string"},"contact_number":{"type":"string"},"address_text":{"type":"string"},"house_number":{"type":"string"},"area":{"type":"string"},"delivery_note":{"type":"string"}},"required":["delivery_id"]}) },
+        ToolDef { name: "search_sales_by_customer".into(), description: "Find all sales linked to a specific customer_id. Returns receipt numbers, dates, and amounts.".into(), input_schema: json!({"type":"object","properties":{"customer_id":{"type":"string"},"limit":{"type":"integer"}},"required":["customer_id"]}) },
+        ToolDef { name: "send_whatsapp_to_customer".into(), description: "Send a free-form WhatsApp message to a customer by phone number or customer_id.".into(), input_schema: json!({"type":"object","properties":{"phone":{"type":"string"},"customer_id":{"type":"string"},"message":{"type":"string","description":"Message text to send"}},"required":["message"]}) },
+        ToolDef { name: "duplicate_product".into(), description: "Clone an existing product with a new name. Copies price, category, tax rule, and inventory settings. Useful for adding size/variant variants.".into(), input_schema: json!({"type":"object","properties":{"product_id":{"type":"string"},"new_name":{"type":"string"}},"required":["product_id","new_name"]}) },
+        ToolDef { name: "find_products_without_barcode".into(), description: "List active products that have no barcode registered. Useful to identify items that can't be scanned at POS.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "reset_user_pin".into(), description: "Admin reset: set a new PIN for a staff account. PIN must be 4–6 digits.".into(), input_schema: json!({"type":"object","properties":{"user_id":{"type":"string"},"new_pin":{"type":"string","description":"New 4–6 digit PIN"}},"required":["user_id","new_pin"]}) },
+        ToolDef { name: "lock_user".into(), description: "Temporarily disable a staff account (e.g. suspicious activity, failed PIN attempts). Account can be unlocked with unlock_user.".into(), input_schema: json!({"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"]}) },
+        ToolDef { name: "unlock_user".into(), description: "Re-enable a locked/inactive staff account.".into(), input_schema: json!({"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"]}) },
+        ToolDef { name: "get_user_permissions".into(), description: "List the effective permissions for a user based on their role.".into(), input_schema: json!({"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"]}) },
+        ToolDef { name: "create_customer_note".into(), description: "Attach or replace a free-text note on a customer record (allergies, preferences, account notes).".into(), input_schema: json!({"type":"object","properties":{"customer_id":{"type":"string"},"note":{"type":"string"}},"required":["customer_id","note"]}) },
+        ToolDef { name: "get_customer_notes".into(), description: "Read the notes attached to a customer record.".into(), input_schema: json!({"type":"object","properties":{"customer_id":{"type":"string"}},"required":["customer_id"]}) },
+        // ── Suppliers & Purchase Orders ────────────────────────────────────────
+        ToolDef { name: "list_suppliers".into(), description: "List all suppliers/vendors. Optional name search filter.".into(), input_schema: json!({"type":"object","properties":{"search":{"type":"string"}}}) },
+        ToolDef { name: "create_supplier".into(), description: "Add a new supplier/vendor with contact details.".into(), input_schema: json!({"type":"object","properties":{"name":{"type":"string"},"phone":{"type":"string"},"email":{"type":"string"},"contact_name":{"type":"string"},"address":{"type":"string"},"notes":{"type":"string"}},"required":["name"]}) },
+        ToolDef { name: "update_supplier".into(), description: "Update supplier details. All fields optional; only provided fields are changed.".into(), input_schema: json!({"type":"object","properties":{"supplier_id":{"type":"string"},"name":{"type":"string"},"phone":{"type":"string"},"email":{"type":"string"},"contact_name":{"type":"string"},"address":{"type":"string"},"notes":{"type":"string"},"is_active":{"type":"boolean"}},"required":["supplier_id"]}) },
+        ToolDef { name: "list_purchase_orders".into(), description: "List purchase orders. Filter by supplier_id, status (draft/ordered/partial/received/cancelled), or date range.".into(), input_schema: json!({"type":"object","properties":{"supplier_id":{"type":"string"},"status":{"type":"string"},"from":{"type":"string"},"to":{"type":"string"},"limit":{"type":"integer"}}}) },
+        ToolDef { name: "create_purchase_order".into(), description: "Create a purchase order with line items (products, quantities, costs). Status starts as 'draft'.".into(), input_schema: json!({"type":"object","properties":{"supplier_id":{"type":"string"},"expected_date":{"type":"string"},"notes":{"type":"string"},"lines":{"type":"array","items":{"type":"object","properties":{"product_id":{"type":"string"},"product_name":{"type":"string"},"ordered_qty":{"type":"number"},"unit_cost_minor":{"type":"integer"}},"required":["ordered_qty","unit_cost_minor"]}}},"required":["lines"]}) },
+        ToolDef { name: "update_purchase_order".into(), description: "Update a PO status (ordered/partial/received/cancelled) or received quantities.".into(), input_schema: json!({"type":"object","properties":{"po_id":{"type":"string"},"status":{"type":"string","enum":["draft","ordered","partial","received","cancelled"]},"notes":{"type":"string"},"received_date":{"type":"string"}},"required":["po_id"]}) },
+        // ── Analytics / Intelligence ───────────────────────────────────────────
+        ToolDef { name: "get_dead_stock".into(), description: "Active products with zero units sold in the last N days. Identifies dead inventory tying up cash.".into(), input_schema: json!({"type":"object","properties":{"days":{"type":"integer","description":"Lookback window (default 30)"},"limit":{"type":"integer"}}}) },
+        ToolDef { name: "get_discount_by_cashier".into(), description: "Total discounts given per cashier for a date range. Audit signal for excessive discounting.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}) },
+        ToolDef { name: "get_customer_purchase_history".into(), description: "All sales for a specific customer: receipt numbers, dates, amounts, and items.".into(), input_schema: json!({"type":"object","properties":{"customer_id":{"type":"string"},"limit":{"type":"integer"}},"required":["customer_id"]}) },
+        ToolDef { name: "get_revenue_by_payment_method".into(), description: "Revenue split by payment method (cash/card/wallet/other) for a date range.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}) },
+        ToolDef { name: "get_profit_margin_report".into(), description: "Revenue minus cost per product, sorted by margin %. Requires cost_minor to be set on products.".into(), input_schema: json!({"type":"object","properties":{"limit":{"type":"integer"},"period_days":{"type":"integer"}}}) },
+        ToolDef { name: "get_shelf_label_gap".into(), description: "Products where cost price is higher than selling price (negative margin). Critical alert for repricing.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "get_product_sales_rank".into(), description: "Rank all products by revenue or units sold for a period. Returns top N and bottom N.".into(), input_schema: json!({"type":"object","properties":{"period_days":{"type":"integer"},"limit":{"type":"integer"},"sort_by":{"type":"string","enum":["revenue","units"]}}}) },
+        ToolDef { name: "get_hourly_heatmap".into(), description: "Transaction count by hour of day × day of week for the last N days. Perfect for staffing decisions.".into(), input_schema: json!({"type":"object","properties":{"period_days":{"type":"integer","description":"Lookback (default 28)"}}}) },
+        ToolDef { name: "get_category_performance".into(), description: "Revenue per category as % of total sales, with comparison to the previous same-length period.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}) },
+        ToolDef { name: "get_cash_discrepancy_log".into(), description: "Shifts where the counted cash differs from expected by more than a threshold. Theft / error signal.".into(), input_schema: json!({"type":"object","properties":{"min_gap_minor":{"type":"integer","description":"Minimum gap in fils to flag (default 500 = BHD 0.500)"},"limit":{"type":"integer"}}}) },
+        ToolDef { name: "get_void_rate_by_cashier".into(), description: "Void count and void rate (%) per cashier for a date range. Fraud indicator.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}) },
+        ToolDef { name: "get_peak_hours".into(), description: "Top 5 busiest hours of the day ranked by average transaction volume for the last N days.".into(), input_schema: json!({"type":"object","properties":{"period_days":{"type":"integer"}}}) },
+        ToolDef { name: "get_customer_visit_frequency".into(), description: "Average days between visits per customer. Highlights lapsing-risk customers.".into(), input_schema: json!({"type":"object","properties":{"min_visits":{"type":"integer","description":"Only include customers with at least this many visits (default 2)"},"limit":{"type":"integer"}}}) },
+        ToolDef { name: "get_average_basket_by_time".into(), description: "Average basket size (spend per transaction) grouped by day of week. Shows spending patterns.".into(), input_schema: json!({"type":"object","properties":{"period_days":{"type":"integer"}}}) },
+        ToolDef { name: "get_tax_collected_report".into(), description: "Total VAT / tax collected per tax rule for a filing period. Bahrain NBR-ready format.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}) },
+        ToolDef { name: "get_unused_products".into(), description: "Active products with zero sales in N days AND zero stock. Candidates for deletion or deactivation.".into(), input_schema: json!({"type":"object","properties":{"days":{"type":"integer","description":"Lookback window (default 60)"}}}) },
+        ToolDef { name: "get_category_mix_analysis".into(), description: "What percentage of total sales came from each category this month vs last month.".into(), input_schema: json!({"type":"object","properties":{"months":{"type":"integer","description":"Number of months to show (default 2)"}}}) },
+        ToolDef { name: "get_sales_by_device".into(), description: "Revenue per POS terminal for a date range. Identifies underutilised hardware.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}) },
+        ToolDef { name: "get_revenue_forecast".into(), description: "Project next 7 and 30 days of revenue based on trailing 90-day daily average, adjusted for day-of-week patterns.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "get_customer_ltv".into(), description: "Lifetime value per customer: total revenue, visit count, first/last visit, and avg spend per visit.".into(), input_schema: json!({"type":"object","properties":{"limit":{"type":"integer"}}}) },
+        ToolDef { name: "get_churn_risk".into(), description: "Customers who haven't visited in longer than their usual interval — ranked by likelihood of churn.".into(), input_schema: json!({"type":"object","properties":{"days_since_last_visit":{"type":"integer","description":"Flag customers not seen in this many days (default 30)"},"limit":{"type":"integer"}}}) },
+        ToolDef { name: "get_day_of_week_comparison".into(), description: "Revenue and transaction count per day of week for a period. Shows which days are strongest.".into(), input_schema: json!({"type":"object","properties":{"period_days":{"type":"integer"}}}) },
+        ToolDef { name: "get_month_over_month_growth".into(), description: "Revenue growth % month over month for the last N months, with category breakdown.".into(), input_schema: json!({"type":"object","properties":{"months":{"type":"integer","description":"Number of months to compare (default 6)"}}}) },
+        ToolDef { name: "get_new_vs_returning".into(), description: "Percentage of revenue from first-time vs repeat customers for a period.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}) },
+        ToolDef { name: "get_void_report".into(), description: "All voided sales in a date range with cashier, reason, and amount.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}) },
+        ToolDef { name: "get_loyalty_summary".into(), description: "Overall loyalty programme summary: total points issued, top customers by points, points-to-BHD ratio.".into(), input_schema: json!({"type":"object","properties":{"limit":{"type":"integer"}}}) },
+        ToolDef { name: "get_customer_segments".into(), description: "Group customers by purchase frequency: one-time, regular (3–9 visits), loyal (10+).".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "get_top_spenders".into(), description: "Top N customers ranked by total lifetime spend. VIP list.".into(), input_schema: json!({"type":"object","properties":{"limit":{"type":"integer","description":"Number of customers to return (default 10)"}}}) },
+        ToolDef { name: "get_lapsed_customers".into(), description: "Customers who have made at least one purchase but haven't returned in N days.".into(), input_schema: json!({"type":"object","properties":{"days":{"type":"integer","description":"Days of inactivity (default 30)"},"limit":{"type":"integer"}}}) },
+        ToolDef { name: "get_customer_outstanding_balance".into(), description: "Customers with unpaid delivery orders — total outstanding amount.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "get_active_deliveries_map".into(), description: "All pending and in-transit deliveries with rider, address, contact, and amount.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "get_delivery_performance".into(), description: "Average delivery time and on-time rate per rider for a date range.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}}}) },
+        ToolDef { name: "get_delivery_payment_outstanding".into(), description: "All deliveries with status 'delivered' but payment_status 'unpaid'. Shows amount at risk.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "get_product_versions".into(), description: "Price history for a product — all price changes with dates and amounts.".into(), input_schema: json!({"type":"object","properties":{"product_id":{"type":"string"}},"required":["product_id"]}) },
+        ToolDef { name: "get_tax_filing_summary".into(), description: "Taxable vs exempt sales, total VAT collected, net revenue for a filing period. Bahrain NBR format.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}) },
+        ToolDef { name: "validate_tax_config".into(), description: "Check all active products have a tax_rule_id assigned. Returns list of products missing tax configuration.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "get_z_report_archive".into(), description: "List past Z-reports (end-of-day summaries) with dates and totals — audit trail.".into(), input_schema: json!({"type":"object","properties":{"limit":{"type":"integer"},"from":{"type":"string"},"to":{"type":"string"}}}) },
+        ToolDef { name: "get_low_stock_with_velocity".into(), description: "Low-stock items sorted by daily sales rate — most urgently needed items first.".into(), input_schema: json!({"type":"object","properties":{"period_days":{"type":"integer","description":"Days to calculate velocity (default 14)"}}}) },
+        // ── Bulk ops ───────────────────────────────────────────────────────────
+        ToolDef { name: "bulk_activate_products".into(), description: "Activate all inactive products in a category. Returns count activated.".into(), input_schema: json!({"type":"object","properties":{"category_id":{"type":"string"}},"required":["category_id"]}) },
+        ToolDef { name: "bulk_deactivate_products".into(), description: "Deactivate all active products in a category (e.g. retire a seasonal menu).".into(), input_schema: json!({"type":"object","properties":{"category_id":{"type":"string"}},"required":["category_id"]}) },
+        ToolDef { name: "bulk_set_category".into(), description: "Move all products from one category to another.".into(), input_schema: json!({"type":"object","properties":{"from_category_id":{"type":"string"},"to_category_id":{"type":"string"}},"required":["from_category_id","to_category_id"]}) },
+        ToolDef { name: "bulk_set_tax_rule".into(), description: "Apply a tax rule to all products in a category at once.".into(), input_schema: json!({"type":"object","properties":{"category_id":{"type":"string"},"tax_rule_id":{"type":"string"}},"required":["category_id","tax_rule_id"]}) },
+        ToolDef { name: "bulk_update_reorder_point".into(), description: "Set the reorder point for all products in a category.".into(), input_schema: json!({"type":"object","properties":{"category_id":{"type":"string"},"reorder_point":{"type":"number"}},"required":["category_id","reorder_point"]}) },
+        ToolDef { name: "bulk_update_cost".into(), description: "Set cost_minor for multiple products at once (e.g. after a supplier price hike). Provide list of {product_id, cost_minor} pairs.".into(), input_schema: json!({"type":"object","properties":{"updates":{"type":"array","items":{"type":"object","properties":{"product_id":{"type":"string"},"cost_minor":{"type":"integer"}},"required":["product_id","cost_minor"]}}},"required":["updates"]}) },
+        ToolDef { name: "reassign_delivery_rider".into(), description: "Change the rider assigned to an active delivery.".into(), input_schema: json!({"type":"object","properties":{"delivery_id":{"type":"string"},"rider_name":{"type":"string"}},"required":["delivery_id","rider_name"]}) },
+        ToolDef { name: "batch_dispatch_deliveries".into(), description: "Set multiple pending deliveries to dispatched status in one call. Provide a list of delivery_ids.".into(), input_schema: json!({"type":"object","properties":{"delivery_ids":{"type":"array","items":{"type":"string"}}},"required":["delivery_ids"]}) },
+        // ── System ─────────────────────────────────────────────────────────────
+        ToolDef { name: "vacuum_database".into(), description: "Run SQLite VACUUM to reclaim disk space and defragment the database. Safe to run at any time.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "export_product_catalog".into(), description: "Return the full product catalog as a formatted text table — useful for review, printing, or sharing.".into(), input_schema: json!({"type":"object","properties":{"include_inactive":{"type":"boolean"}}}) },
+        ToolDef { name: "get_database_size".into(), description: "SQLite DB file size, WAL size, and page count.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "get_table_row_counts".into(), description: "Row count per table — gives a quick data-volume snapshot.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        // ── Supplier CRUD (complete) ───────────────────────────────────────────
+        ToolDef { name: "get_supplier".into(), description: "Get a single supplier record with contact details and summary of linked products and purchase orders.".into(), input_schema: json!({"type":"object","properties":{"supplier_id":{"type":"string"}},"required":["supplier_id"]}) },
+        ToolDef { name: "delete_supplier".into(), description: "Delete a supplier. Blocked if they have purchase orders or products linked to them.".into(), input_schema: json!({"type":"object","properties":{"supplier_id":{"type":"string"}},"required":["supplier_id"]}) },
+        ToolDef { name: "get_purchase_order".into(), description: "Get a single purchase order with all line items, ordered vs received quantities, and total cost.".into(), input_schema: json!({"type":"object","properties":{"po_id":{"type":"string"}},"required":["po_id"]}) },
+        ToolDef { name: "receive_purchase_order".into(), description: "Mark purchase order lines as received. Automatically increments stock for each line. Updates PO status to received or partial.".into(), input_schema: json!({"type":"object","properties":{"po_id":{"type":"string"},"lines":{"type":"array","description":"Leave empty to receive all lines in full","items":{"type":"object","properties":{"po_line_id":{"type":"string"},"received_qty":{"type":"number"}},"required":["po_line_id","received_qty"]}}},"required":["po_id"]}) },
+        ToolDef { name: "delete_purchase_order".into(), description: "Cancel and delete a purchase order. Blocked if it has already been received (full or partial).".into(), input_schema: json!({"type":"object","properties":{"po_id":{"type":"string"}},"required":["po_id"]}) },
+        ToolDef { name: "get_supplier_products".into(), description: "List all products whose default_supplier_id matches this supplier.".into(), input_schema: json!({"type":"object","properties":{"supplier_id":{"type":"string"}},"required":["supplier_id"]}) },
+        ToolDef { name: "bulk_assign_supplier".into(), description: "Set the default supplier for all products in a category.".into(), input_schema: json!({"type":"object","properties":{"category_id":{"type":"string"},"supplier_id":{"type":"string"}},"required":["category_id","supplier_id"]}) },
+        // ── Inventory intelligence ────────────────────────────────────────────
+        ToolDef { name: "get_inventory_valuation".into(), description: "Total inventory value = stock_quantity × cost_minor per product. Products without cost are flagged.".into(), input_schema: json!({"type":"object","properties":{"include_zero_cost":{"type":"boolean","description":"Include products with no cost set (default false)"}}}) },
+        ToolDef { name: "get_overstock_alert".into(), description: "Products with current stock > N days supply at current sales rate. Ties up cash unnecessarily.".into(), input_schema: json!({"type":"object","properties":{"overstock_days":{"type":"integer","description":"Flag items with more than this many days of supply (default 60)"},"period_days":{"type":"integer","description":"Days to calculate velocity (default 14)"}}}) },
+        ToolDef { name: "get_sales_velocity".into(), description: "Average daily units sold per product, ranked fast → slow. Useful for ordering decisions.".into(), input_schema: json!({"type":"object","properties":{"period_days":{"type":"integer"},"limit":{"type":"integer"}}}) },
+        ToolDef { name: "get_stock_turnover_ratio".into(), description: "COGS ÷ average inventory value. Higher = faster-moving stock. Calculated per category and overall.".into(), input_schema: json!({"type":"object","properties":{"period_days":{"type":"integer","description":"Period to calculate COGS (default 30)"}}}) },
+        // ── Shift / cash ─────────────────────────────────────────────────────
+        ToolDef { name: "get_open_shifts".into(), description: "All currently open (unclosed) shifts across all terminals with cashier name, start time, and sales so far.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "get_expected_cash_position".into(), description: "Expected cash in drawer right now: opening cash + cash sales − paid_outs − safe_drops + paid_ins. For a specific shift or all open shifts.".into(), input_schema: json!({"type":"object","properties":{"shift_id":{"type":"string","description":"Leave empty for all open shifts"}}}) },
+        ToolDef { name: "get_petty_cash_log".into(), description: "All paid_in / paid_out / safe_drop events for a period with cashier, amount, and note.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}}}) },
+        ToolDef { name: "force_close_shift".into(), description: "Admin override: force-close a shift that is stuck open (cashier forgot). Logs the action in the audit trail.".into(), input_schema: json!({"type":"object","properties":{"shift_id":{"type":"string"}},"required":["shift_id"]}) },
+        // ── User analytics ────────────────────────────────────────────────────
+        ToolDef { name: "get_user_shift_summary".into(), description: "All shifts for a staff member: open time, close time, total sales, and variance for each.".into(), input_schema: json!({"type":"object","properties":{"user_id":{"type":"string"},"from":{"type":"string"},"to":{"type":"string"}},"required":["user_id"]}) },
+        ToolDef { name: "compare_cashiers".into(), description: "Side-by-side comparison of cashier performance: sales, voids, discounts, average basket, transaction count.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}}}) },
+        // ── Customer ops ──────────────────────────────────────────────────────
+        ToolDef { name: "export_customers".into(), description: "Full customer list as a formatted table: name, phone, visit count, last visit, lifetime spend, loyalty points.".into(), input_schema: json!({"type":"object","properties":{"limit":{"type":"integer"}}}) },
+        // ── System ────────────────────────────────────────────────────────────
+        ToolDef { name: "get_migration_status".into(), description: "List applied database migrations with name and timestamp. Useful for debugging version mismatches.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "get_app_version".into(), description: "Current app version, build info, Rust toolchain version, and migration count.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        // ── Analytics (round 2) ───────────────────────────────────────────────
+        ToolDef { name: "get_basket_size_trend".into(), description: "Average number of items per transaction per day over the last N days. Shows whether customers are buying more or less per visit.".into(), input_schema: json!({"type":"object","properties":{"period_days":{"type":"integer"}}}) },
+        ToolDef { name: "get_stockout_cost".into(), description: "Products that hit zero stock in last N days — estimate lost revenue as avg daily sales rate × days out of stock × price.".into(), input_schema: json!({"type":"object","properties":{"period_days":{"type":"integer"}}}) },
+        ToolDef { name: "get_refund_rate".into(), description: "Refund amount as a % of gross sales by cashier and by product for a date range.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}) },
+        ToolDef { name: "get_refund_by_product".into(), description: "Products ranked by refund count and refund amount — signal for quality issues.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"},"limit":{"type":"integer"}}}) },
+        // ── Compliance ────────────────────────────────────────────────────────
+        ToolDef { name: "verify_receipt_sequence".into(), description: "Check receipt numbers for gaps or duplicates. A sequential break could indicate a deleted or tampered sale.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}}}) },
+        ToolDef { name: "get_audit_trail_full".into(), description: "Every data mutation in the audit_logs table: who changed what, when, and what it looked like before and after.".into(), input_schema: json!({"type":"object","properties":{"entity_type":{"type":"string","description":"Filter by entity type e.g. product, sale, user"},"user_id":{"type":"string"},"from":{"type":"string"},"to":{"type":"string"},"limit":{"type":"integer"}}}) },
+    ];
+    tools.retain(|t| seen.insert(t.name.clone()));
+    tools
 }
 
 /// L16: Single source of truth for mutation tools.
@@ -1036,9 +1136,37 @@ pub const MUTATION_TOOLS: &[&str] = &[
     "update_benefit_number",
     // ── Intent v2 mutations ─────────────────────────────────────────────────
     "adjust_prices_batch",
-    "create_customer",
-    "create_user",
-    "receive_stock",
+    // ── New extended mutations (Phase 3) ────────────────────────────────────
+    "delete_product",
+    "delete_category",
+    "delete_tax_rule",
+    "delete_user",
+    "update_delivery_details",
+    "reassign_delivery_rider",
+    "batch_dispatch_deliveries",
+    "duplicate_product",
+    "send_whatsapp_to_customer",
+    "reset_user_pin",
+    "lock_user",
+    "unlock_user",
+    "bulk_deactivate_products",
+    "bulk_activate_products",
+    "bulk_set_category",
+    "bulk_set_tax_rule",
+    "bulk_update_reorder_point",
+    "bulk_update_cost",
+    "create_supplier",
+    "update_supplier",
+    "create_purchase_order",
+    "update_purchase_order",
+    "vacuum_database",
+    "create_customer_note",
+    // ── Round 2 mutations ────────────────────────────────────────────────────
+    "delete_supplier",
+    "receive_purchase_order",
+    "delete_purchase_order",
+    "bulk_assign_supplier",
+    "force_close_shift",
 ];
 
 pub fn is_mutation_tool(name: &str) -> bool {
@@ -3617,6 +3745,15 @@ pub async fn dry_run_mutation(
                     .fetch_optional(pool)
                     .await?;
 
+            // Reject invalid category_id early so the model gets a clear
+            // Validation error and knows to call list_categories first.
+            let cat_name = cat_name.ok_or_else(|| {
+                AppError::Validation(format!(
+                    "Category '{}' not found. Call list_categories first to get a valid category_id.",
+                    category_id
+                ))
+            })?;
+
             Ok(ToolPreview {
                 tool_name: tool_name.into(),
                 description: format!("Create new product '{}'", name),
@@ -3631,7 +3768,7 @@ pub async fn dry_run_mutation(
                     },
                     ToolPreviewField {
                         label: "Category".into(),
-                        value: cat_name.unwrap_or_else(|| category_id.into()),
+                        value: cat_name,
                     },
                     ToolPreviewField {
                         label: "SKU".into(),

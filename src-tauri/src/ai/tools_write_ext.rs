@@ -122,7 +122,7 @@ fn req(v: &serde_json::Value, key: &str) -> AppResult<String> {
 // ── Dry-run previews ──────────────────────────────────────────────────────────
 
 pub async fn dry_run(
-    _pool: &SqlitePool,
+    pool: &SqlitePool,
     tool_name: &str,
     input: &serde_json::Value,
     currency_exp: u32,
@@ -282,9 +282,9 @@ pub async fn dry_run(
             "Update the Benefit/Sadad payment phone number",
             vec![("Number", req(input, "benefit_number")?)],
         )),
-        other => Err(AppError::Validation(format!(
-            "Unknown mutation tool: {other}"
-        ))),
+        other => {
+            crate::ai::tools_write_ext2::dry_run(pool, other, input, currency_exp).await
+        }
     }
 }
 
@@ -763,8 +763,8 @@ pub async fn execute(
             )
         }
 
-        other => Err(AppError::Validation(format!(
-            "Unknown mutation tool: {other}"
-        ))),
+        other => {
+            crate::ai::tools_write_ext2::execute(pool, other, input, currency_exp).await
+        }
     }
 }

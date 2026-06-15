@@ -322,6 +322,7 @@ pub async fn whatsapp_save_config(
 pub struct NotifyArrivalInput {
     pub to: String,
     pub receipt_number: String,
+    pub delivery_id: String,
 }
 
 /// Sends a short bilingual WhatsApp message: "Delivery is outside, please come collect."
@@ -332,6 +333,28 @@ pub async fn whatsapp_notify_arrival(
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
     rbac::require_any_role(&state.db, &actor_user_id).await?;
+
+    // Hard rule: arrival message only within 1 hour of delivery bill creation.
+    if !input.delivery_id.is_empty() {
+        let created_at_str: Option<String> = sqlx::query_scalar(
+            "SELECT created_at FROM deliveries WHERE delivery_id = ?",
+        )
+        .bind(&input.delivery_id)
+        .fetch_optional(&state.db)
+        .await?
+        .flatten();
+        if let Some(s) = created_at_str {
+            if let Ok(created_at) = chrono::DateTime::parse_from_rfc3339(&s) {
+                let age = chrono::Utc::now()
+                    .signed_duration_since(created_at.with_timezone(&chrono::Utc));
+                if age > chrono::Duration::hours(1) {
+                    return Err(AppError::Validation(
+                        "The 'delivery outside' message can only be sent within 1 hour of the delivery bill being created.".into(),
+                    ));
+                }
+            }
+        }
+    }
 
     if !is_network_available().await {
         return Err(AppError::Internal("WhatsApp: device is offline".into()));
@@ -359,6 +382,7 @@ pub struct PaymentReminderInput {
     pub currency_exponent: i32,
     /// ISO currency code passed from frontend DEVICE constant, e.g. "BHD"
     pub currency: String,
+    pub delivery_id: String,
 }
 
 /// Sends a bilingual WhatsApp payment reminder that includes the store's
@@ -370,6 +394,29 @@ pub async fn whatsapp_payment_reminder(
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
     rbac::require_any_role(&state.db, &actor_user_id).await?;
+
+    // Hard rule: payment reminder only on the same calendar day as the delivery bill (Bahrain UTC+3).
+    if !input.delivery_id.is_empty() {
+        let created_at_str: Option<String> = sqlx::query_scalar(
+            "SELECT created_at FROM deliveries WHERE delivery_id = ?",
+        )
+        .bind(&input.delivery_id)
+        .fetch_optional(&state.db)
+        .await?
+        .flatten();
+        if let Some(s) = created_at_str {
+            if let Ok(created_at) = chrono::DateTime::parse_from_rfc3339(&s) {
+                let bahrain = chrono::FixedOffset::east_opt(3 * 3600).unwrap();
+                let created_date = created_at.with_timezone(&bahrain).date_naive();
+                let today = chrono::Utc::now().with_timezone(&bahrain).date_naive();
+                if created_date != today {
+                    return Err(AppError::Validation(
+                        "Payment reminders can only be sent on the same day as the delivery bill.".into(),
+                    ));
+                }
+            }
+        }
+    }
 
     if !is_network_available().await {
         return Err(AppError::Internal("WhatsApp: device is offline".into()));

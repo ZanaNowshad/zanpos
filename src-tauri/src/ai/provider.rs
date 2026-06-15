@@ -64,6 +64,14 @@ pub struct ToolCallResult {
     pub input: Value,
 }
 
+/// One completed tool round-trip stored so subsequent calls build the full
+/// accumulated context instead of reconstructing it from scratch each turn.
+pub struct ToolTurn {
+    pub tool_call: ToolCallResult,
+    pub tool_result: String,
+    pub reasoning_content: Option<String>,
+}
+
 // ── Provider enum ──────────────────────────────────────────────────────────────
 
 /// Google Gemini exposes an OpenAI-compatible REST surface, so the Gemini
@@ -257,9 +265,8 @@ impl Provider {
         }
     }
 
-    /// Continue after executing a read-only tool — append tool result and ask again (with tools).
-    /// Returns a full ChatResult so the caller can chain further tool calls.
-    /// `prev_reasoning` is the reasoning_content from the previous assistant turn (DeepSeek R1, etc.).
+    /// Continue after executing a read-only tool — thin wrapper around
+    /// `continue_with_tool_turns` for single-turn callers (e.g. migration_commands.rs).
     pub async fn continue_with_tool_result(
         &self,
         system: &str,
@@ -270,36 +277,60 @@ impl Provider {
         tools: &[ToolDef],
         prev_reasoning: Option<String>,
     ) -> AppResult<ChatResult> {
-        // C-05: apply sliding-window guard before building messages
+        let turn = ToolTurn {
+            tool_call: ToolCallResult {
+                id: tool_call.id.clone(),
+                name: tool_call.name.clone(),
+                input: tool_call.input.clone(),
+            },
+            tool_result,
+            reasoning_content: prev_reasoning,
+        };
+        self.continue_with_tool_turns(system, history, user_message, &[turn], tools)
+            .await
+    }
+
+    /// Continue after N tool calls, building the FULL accumulated context so the
+    /// model sees every previous attempt and doesn't repeat the same call blindly.
+    /// Uses `content: null` (not `""`) for tool-call assistant messages per the
+    /// OpenAI spec — empty string confuses some models (e.g. DeepSeek flash).
+    pub async fn continue_with_tool_turns(
+        &self,
+        system: &str,
+        history: &[ChatMessage],
+        user_message: &str,
+        turns: &[ToolTurn],
+        tools: &[ToolDef],
+    ) -> AppResult<ChatResult> {
         let history = truncate_history(history);
         match self {
             Provider::Anthropic(c) => {
                 let mut msgs: Vec<AnthropicMessage> = history
                     .iter()
-                    .map(|m| {
-                        if m.role == "user" {
-                            AnthropicMessage::user_text(&m.content)
-                        } else {
-                            AnthropicMessage::assistant_text(&m.content)
-                        }
+                    .map(|m| if m.role == "user" {
+                        AnthropicMessage::user_text(&m.content)
+                    } else {
+                        AnthropicMessage::assistant_text(&m.content)
                     })
                     .collect();
                 msgs.push(AnthropicMessage::user_text(user_message));
-                msgs.push(AnthropicMessage {
-                    role: "assistant".into(),
-                    content: vec![ContentBlock::ToolUse {
-                        id: tool_call.id.clone(),
-                        name: tool_call.name.clone(),
-                        input: tool_call.input.clone(),
-                    }],
-                });
-                msgs.push(AnthropicMessage {
-                    role: "user".into(),
-                    content: vec![ContentBlock::ToolResult {
-                        tool_use_id: tool_call.id.clone(),
-                        content: tool_result,
-                    }],
-                });
+                for turn in turns {
+                    msgs.push(AnthropicMessage {
+                        role: "assistant".into(),
+                        content: vec![ContentBlock::ToolUse {
+                            id: turn.tool_call.id.clone(),
+                            name: turn.tool_call.name.clone(),
+                            input: turn.tool_call.input.clone(),
+                        }],
+                    });
+                    msgs.push(AnthropicMessage {
+                        role: "user".into(),
+                        content: vec![ContentBlock::ToolResult {
+                            tool_use_id: turn.tool_call.id.clone(),
+                            content: turn.tool_result.clone(),
+                        }],
+                    });
+                }
                 let resp = c.send(system, msgs, tools.to_vec()).await?;
                 if let Some((id, name, input)) = extract_tool_use(&resp.content) {
                     return Ok(ChatResult {
@@ -314,57 +345,43 @@ impl Provider {
                     reasoning_content: None,
                 })
             }
-
             Provider::OpenAI(c) | Provider::Gemini(c) => {
                 let mut msgs: Vec<OpenAIMessage> = history
                     .iter()
-                    .map(|m| {
-                        if m.role == "user" {
-                            user_msg(&m.content)
-                        } else {
-                            assistant_msg(&m.content)
-                        }
+                    .map(|m| if m.role == "user" {
+                        user_msg(&m.content)
+                    } else {
+                        assistant_msg(&m.content)
                     })
                     .collect();
                 msgs.push(user_msg(user_message));
-                let mut tc_msg = assistant_tool_call_msg(
-                    Some(String::new()),
-                    &crate::ai::openai_client::OpenAIToolCallResult {
-                        id: tool_call.id.clone(),
-                        name: tool_call.name.clone(),
-                        input: tool_call.input.clone(),
-                    },
-                );
-                // Carry forward the reasoning_content from the previous turn (DeepSeek R1 requirement)
-                if let Some(ref reason) = prev_reasoning {
-                    if let OpenAIMessage::Assistant {
-                        ref mut reasoning_content,
-                        ..
-                    } = tc_msg
-                    {
-                        *reasoning_content = Some(reason.clone());
+                for turn in turns {
+                    let mut tc_msg = assistant_tool_call_msg(
+                        None, // null content, not "" — correct per OpenAI spec
+                        &crate::ai::openai_client::OpenAIToolCallResult {
+                            id: turn.tool_call.id.clone(),
+                            name: turn.tool_call.name.clone(),
+                            input: turn.tool_call.input.clone(),
+                        },
+                    );
+                    if let Some(ref reason) = turn.reasoning_content {
+                        if let OpenAIMessage::Assistant { ref mut reasoning_content, .. } = tc_msg {
+                            *reasoning_content = Some(reason.clone());
+                        }
                     }
+                    msgs.push(tc_msg);
+                    msgs.push(tool_result_msg(&turn.tool_call.id, turn.tool_result.clone()));
                 }
-                msgs.push(tc_msg);
-                msgs.push(tool_result_msg(&tool_call.id, tool_result));
                 let resp = c.send(system, msgs, tools).await?;
                 let reasoning = resp.reasoning_content.clone();
                 if let Some(tc) = resp.tool_call {
                     return Ok(ChatResult {
                         text: resp.text,
-                        tool_call: Some(ToolCallResult {
-                            id: tc.id,
-                            name: tc.name,
-                            input: tc.input,
-                        }),
+                        tool_call: Some(ToolCallResult { id: tc.id, name: tc.name, input: tc.input }),
                         reasoning_content: reasoning,
                     });
                 }
-                Ok(ChatResult {
-                    text: resp.text,
-                    tool_call: None,
-                    reasoning_content: reasoning,
-                })
+                Ok(ChatResult { text: resp.text, tool_call: None, reasoning_content: reasoning })
             }
         }
     }

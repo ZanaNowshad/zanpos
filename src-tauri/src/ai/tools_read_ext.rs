@@ -83,7 +83,10 @@ pub async fn execute(
         "get_delivery_detail" => delivery_detail(pool, input, &fmt).await,
         "get_rider_suggestions" => rider_suggestions(pool).await,
         "get_sync_queue_stats" => sync_queue_stats(pool).await,
-        other => Err(AppError::Validation(format!("Unknown read tool: {other}"))),
+        other => {
+            crate::ai::tools_read_ext2::execute(pool, other, input, _branch_id, currency_exp)
+                .await
+        }
     }
 }
 

@@ -6555,10 +6555,10 @@ textarea.field-input { resize: vertical; }
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 16px 8px;
+  padding: 20px 20px 8px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 24px;
   scroll-behavior: smooth;
 }
 
@@ -6569,25 +6569,27 @@ textarea.field-input { resize: vertical; }
   max-width: 78%;
 }
 .chat-bubble-wrap-user      { align-self: flex-end; align-items: flex-end; }
-.chat-bubble-wrap-assistant { align-self: flex-start; align-items: flex-start; }
+.chat-bubble-wrap-assistant { align-self: stretch; max-width: 100%; }
 .chat-bubble-wrap-system    { align-self: center; max-width: 92%; }
 
 .chat-bubble-v2 {
-  border-radius: 14px;
-  padding: 10px 14px;
   font-size: 0.9rem;
-  line-height: 1.55;
+  line-height: 1.6;
   word-break: break-word;
 }
 .chat-bubble-v2.user {
   background: var(--accent);
   color: #fff;
-  border-bottom-right-radius: 4px;
+  border-radius: 18px 18px 4px 18px;
+  padding: 10px 16px;
+  max-width: 78%;
+  align-self: flex-end;
 }
 .chat-bubble-v2.assistant {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-bottom-left-radius: 4px;
+  background: transparent;
+  border: none;
+  padding: 2px 0;
+  width: 100%;
 }
 .chat-bubble-v2.system {
   background: transparent;
@@ -6730,6 +6732,188 @@ textarea.field-input { resize: vertical; }
   transition: color 0.12s;
 }
 .chat-clear-link:hover { color: var(--error); }
+
+/* ── Chat image attachment ───────────────────────────────────────────────────── */
+.chat-file-input-hidden { display: none; }
+.chat-img-btn {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  transition: background 0.15s;
+}
+.chat-img-btn:hover:not(:disabled) { background: var(--surface3, var(--border)); }
+.chat-img-btn:disabled { opacity: 0.4; cursor: default; }
+.chat-img-preview-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 0 0 2px;
+}
+.chat-img-preview-thumb {
+  height: 52px;
+  width: auto;
+  max-width: 90px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+}
+.chat-img-preview-close {
+  position: absolute;
+  top: 0;
+  right: -8px;
+  background: var(--error, #e53e3e);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+}
+.bubble-img-preview {
+  display: block;
+  max-width: 220px;
+  max-height: 160px;
+  border-radius: 8px;
+  margin-bottom: 6px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+}
+.chat-img-chips-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 2px 4px;
+}
+.chat-img-chip {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  white-space: nowrap;
+}
+.chat-img-chip:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* ── ChatGPT-style streaming UI ─────────────────────────────────────────────── */
+
+/* ZanAI label above each assistant response */
+.bubble-ai-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.bubble-ai-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+/* Thinking state: dots + label side by side */
+.bubble-thinking {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 0;
+}
+.bubble-thinking-text {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  font-style: italic;
+  animation: thinking-fade 1.4s ease-in-out infinite;
+}
+@keyframes thinking-fade {
+  0%, 100% { opacity: 0.5; }
+  50%       { opacity: 1; }
+}
+
+/* Compact collapsible tool pills (above response text) */
+.bubble-tool-pills {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.tool-pill {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface2);
+  max-width: 360px;
+  animation: fadeIn 0.18s ease;
+}
+.tool-pill-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  padding: 6px 10px;
+  cursor: pointer;
+  color: var(--text-dim);
+  text-align: left;
+  font-size: 0.78rem;
+  transition: background 0.12s;
+}
+.tool-pill-header:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.tool-pill-name {
+  flex: 1;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tool-pill-time {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-family: 'IBM Plex Mono', monospace;
+}
+.tool-pill-chevron { font-size: 0.62rem; color: var(--text-muted); flex-shrink: 0; }
+.tool-pill-details {
+  padding: 5px 10px 7px;
+  border-top: 1px solid var(--border);
+}
+.tool-pill-raw {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+/* Live tool calls during streaming — compact row, no header */
+.live-tool-calls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 2px;
+  max-width: 420px;
+  animation: fadeIn 0.15s ease;
+}
 
 /* ── Markdown content ────────────────────────────────────────────────────────── */
 .md-body {
@@ -13023,13 +13207,13 @@ label {
 
 .stream-cursor {
   display: inline-block;
-  width: 8px;
-  height: 1.1em;
-  background: var(--accent);
+  width: 2px;
+  height: 1em;
+  background: var(--text);
   border-radius: 1px;
   vertical-align: text-bottom;
   margin-left: 2px;
-  animation: cursor-blink 0.8s step-start infinite;
+  animation: cursor-blink 0.6s step-start infinite;
 }
 
 /* ── Streaming Bubble Glow ── */
@@ -13038,10 +13222,7 @@ label {
   50%       { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent); }
 }
 
-.chat-bubble--streaming {
-  animation: bubble-streaming-glow 1.8s ease-in-out infinite;
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent) !important;
-}
+.chat-bubble--streaming { /* no glow — assistant bubble is borderless */ }
 
 /* ── Skeleton Dots (empty assistant bubble waiting for first token) ── */
 @keyframes skeleton-pulse {

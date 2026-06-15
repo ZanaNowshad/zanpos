@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 // ── Request types ──────────────────────────────────────────────────────────────
 
+const MAX_OUTPUT_TOKENS: u32 = 4096;
+
 #[derive(Serialize)]
 struct OpenAIChatRequest<'a> {
     model: &'a str,
@@ -12,6 +14,7 @@ struct OpenAIChatRequest<'a> {
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<OpenAITool<'a>>,
+    max_tokens: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -194,6 +197,7 @@ impl OpenAIClient {
             messages: all_messages,
             temperature: Some(0.0),
             tools: oai_tools,
+            max_tokens: MAX_OUTPUT_TOKENS,
         };
 
         let resp = self

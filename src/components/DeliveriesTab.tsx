@@ -69,6 +69,19 @@ function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+// ── Time-window guards for WhatsApp buttons ───────────────────────────────────
+
+function isArrivalExpired(row: DeliveryRow): boolean {
+  return Date.now() - new Date(row.created_at).getTime() > 60 * 60 * 1000;
+}
+
+function isReminderExpired(row: DeliveryRow): boolean {
+  const offset = 3 * 60 * 60 * 1000; // Bahrain UTC+3
+  const createdDay = new Date(new Date(row.created_at).getTime() + offset).toISOString().slice(0, 10);
+  const todayDay = new Date(Date.now() + offset).toISOString().slice(0, 10);
+  return createdDay !== todayDay;
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function DeliveriesTab({ sessionUser }: Props) {
@@ -253,7 +266,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
       // Open OS phone dialer (fire-and-forget — Tauri opener, non-blocking)
       openUrl(`tel:${row.contact_number}`).catch(() => {});
       // Send WhatsApp "delivery is here" message
-      await cmd.whatsappNotifyArrival(sessionUser.user_id, row.contact_number, row.receipt_number);
+      await cmd.whatsappNotifyArrival(sessionUser.user_id, row.contact_number, row.receipt_number, row.delivery_id);
       setWaSent(p => ({ ...p, [row.delivery_id]: "arrival" }));
       setTimeout(() => setWaSent(p => { const n = { ...p }; delete n[row.delivery_id]; return n; }), 4000);
     } catch {
@@ -275,6 +288,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
         row.amount_minor,
         DEVICE.currency_exponent,
         DEVICE.currency,
+        row.delivery_id,
       );
       setWaSent(p => ({ ...p, [row.delivery_id]: "reminder" }));
       setTimeout(() => setWaSent(p => { const n = { ...p }; delete n[row.delivery_id]; return n; }), 4000);
@@ -505,9 +519,9 @@ export default function DeliveriesTab({ sessionUser }: Props) {
                           {row.contact_number && (
                             <button
                               className={`dlv-quick-btn dlv-quick-call${waSent[row.delivery_id] === "arrival" ? " dlv-quick-sent" : ""}`}
-                              disabled={!!waLoading[row.delivery_id]}
+                              disabled={!!waLoading[row.delivery_id] || isArrivalExpired(row)}
                               onClick={() => handleNotifyArrival(row)}
-                              title={`Call ${row.contact_number}`}
+                              title={isArrivalExpired(row) ? "Only available within 1 hour of delivery bill creation" : `Call ${row.contact_number}`}
                             >
                               📞
                             </button>
@@ -516,9 +530,9 @@ export default function DeliveriesTab({ sessionUser }: Props) {
                           {row.contact_number && row.payment_status === "unpaid" && (
                             <button
                               className={`dlv-quick-btn dlv-quick-remind${waSent[row.delivery_id] === "reminder" ? " dlv-quick-sent" : ""}`}
-                              disabled={!!waLoading[row.delivery_id]}
+                              disabled={!!waLoading[row.delivery_id] || isReminderExpired(row)}
                               onClick={() => handlePaymentReminder(row)}
-                              title="Send payment reminder"
+                              title={isReminderExpired(row) ? "Payment reminders can only be sent on the same day as the delivery bill" : "Send payment reminder"}
                             >
                               💳
                             </button>
@@ -617,28 +631,32 @@ export default function DeliveriesTab({ sessionUser }: Props) {
                                 <div className="dlv-contact-actions">
                                   <button
                                     className={`dlv-action-btn dlv-action-call${waSent[row.delivery_id] === "arrival" ? " dlv-action-sent" : ""}`}
-                                    disabled={!!waLoading[row.delivery_id]}
+                                    disabled={!!waLoading[row.delivery_id] || isArrivalExpired(row)}
                                     onClick={() => handleNotifyArrival(row)}
-                                    title={`Call ${row.contact_number} and send WhatsApp arrival notification`}
+                                    title={isArrivalExpired(row) ? "Only available within 1 hour of delivery bill creation" : `Call ${row.contact_number} and send WhatsApp arrival notification`}
                                   >
                                     {waLoading[row.delivery_id] === "arrival"
                                       ? "Calling…"
                                       : waSent[row.delivery_id] === "arrival"
                                         ? "✓ Called & Notified"
-                                        : "📞 Call & Notify"}
+                                        : isArrivalExpired(row)
+                                          ? "📞 Window Closed"
+                                          : "📞 Call & Notify"}
                                   </button>
                                   {row.payment_status === "unpaid" && (
                                     <button
                                       className={`dlv-action-btn dlv-action-remind${waSent[row.delivery_id] === "reminder" ? " dlv-action-sent" : ""}`}
-                                      disabled={!!waLoading[row.delivery_id]}
+                                      disabled={!!waLoading[row.delivery_id] || isReminderExpired(row)}
                                       onClick={() => handlePaymentReminder(row)}
-                                      title="Send WhatsApp payment reminder with BenefitPay number"
+                                      title={isReminderExpired(row) ? "Payment reminders can only be sent on the same day as the delivery bill" : "Send WhatsApp payment reminder with BenefitPay number"}
                                     >
                                       {waLoading[row.delivery_id] === "reminder"
                                         ? "Sending…"
                                         : waSent[row.delivery_id] === "reminder"
                                           ? "✓ Reminder Sent"
-                                          : "💳 Payment Reminder"}
+                                          : isReminderExpired(row)
+                                            ? "💳 Window Closed"
+                                            : "💳 Payment Reminder"}
                                     </button>
                                   )}
                                 </div>

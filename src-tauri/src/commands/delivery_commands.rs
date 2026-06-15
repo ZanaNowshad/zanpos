@@ -60,49 +60,10 @@ pub async fn delivery_update_status(
         .await?;
     }
     let result = delivery_repo::update_delivery_status(&state.db, &input).await?;
-
-    // Trigger WhatsApp notification on status transitions
-    let exp = super::setup_commands::currency_exponent(&result.currency);
-    match input.delivery_status.as_str() {
-        "dispatched" => {
-            if let Err(e) = super::whatsapp_commands::whatsapp_send_delivery_impl(
-                &state,
-                &result.contact_number,
-                &result.receipt_number,
-                result.amount_minor,
-                exp,
-                &result.address_text,
-                result.house_number.as_deref(),
-                result.area.as_deref(),
-                None,
-            )
-            .await
-            {
-                tracing::warn!(
-                    "T12: WA dispatch notification failed for delivery {}: {:?}",
-                    result.receipt_number,
-                    e
-                );
-            }
-        }
-        "delivered" => {
-            if let Err(e) = super::whatsapp_commands::whatsapp_notify_arrival_impl(
-                &state,
-                &result.contact_number,
-                &result.receipt_number,
-            )
-            .await
-            {
-                tracing::warn!(
-                    "T12: WA arrival notification failed for delivery {}: {:?}",
-                    result.receipt_number,
-                    e
-                );
-            }
-        }
-        _ => {}
-    }
-
+    // WhatsApp messages are NEVER sent automatically on status change.
+    // They are only sent when the cashier explicitly presses the dedicated
+    // "Call & Notify" or "Payment Reminder" buttons in the UI.
+    // (Previous auto-send caused bulk messages on POS restart — removed.)
     Ok(result)
 }
 
@@ -113,24 +74,6 @@ pub async fn delivery_confirm_payment(
 ) -> Result<DeliveryRow, AppError> {
     rbac::manager_or_owner(&state.db, &input.confirmed_by_user_id).await?;
     let result = delivery_repo::confirm_payment(&state.db, &input).await?;
-
-    // FIX: send arrival/confirmation notice, NOT a payment reminder.
-    // A payment reminder fires BEFORE payment; after payment is confirmed we
-    // should notify the customer that their order is confirmed/paid.
-    if let Err(e) = super::whatsapp_commands::whatsapp_notify_arrival_impl(
-        &state,
-        &result.contact_number,
-        &result.receipt_number,
-    )
-    .await
-    {
-        tracing::warn!(
-            "WA payment-confirmed notice failed for delivery {}: {:?}",
-            result.receipt_number,
-            e
-        );
-    }
-
     Ok(result)
 }
 

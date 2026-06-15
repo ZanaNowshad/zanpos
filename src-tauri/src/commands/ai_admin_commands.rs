@@ -1,6 +1,6 @@
 use crate::ai::{
     client::ToolDef,
-    provider::{ChatResult, Provider, ToolCallResult},
+    provider::{ChatResult, Provider, ToolCallResult, ToolTurn},
     tools,
 };
 use crate::commands::rbac;
@@ -717,6 +717,11 @@ where
     H: Fn(&str) + Send,
 {
     const MAX_TURNS: usize = 8;
+    // Accumulated tool turns so each API call receives the full context rather
+    // than only the most recent (tool, result) pair. Without this, the model sees
+    // the same single-turn context on every iteration and repeats the same call.
+    let mut accumulated: Vec<ToolTurn> = Vec::new();
+
     for _turn in 0..MAX_TURNS {
         let Some(tool_call) = current.tool_call else {
             return Ok(ToolLoopOutcome::Done { text: current.text });
@@ -759,6 +764,20 @@ where
                 assistant_text,
             });
         }
+
+        // Hard loop guard: same tool called ≥ 3 times → model is truly stuck.
+        let same_count = accumulated.iter().filter(|t| t.tool_call.name == tool_call.name).count();
+        if same_count >= 3 {
+            let text = if assistant_text.is_empty() {
+                "I searched multiple times but couldn't find a clear result. \
+                 Try rephrasing your question or check the relevant section directly."
+                    .to_string()
+            } else {
+                assistant_text
+            };
+            return Ok(ToolLoopOutcome::Done { text });
+        }
+
         on_tool_start(&tool_call.name);
         // Mirror of streaming.rs: open_tab steers the OfficeAI workspace UI.
         if tool_call.name == "open_tab" {
@@ -766,7 +785,7 @@ where
                 on_navigate(tab);
             }
         }
-        let tool_result = match tools::execute_read_tool(
+        let mut tool_result = match tools::execute_read_tool(
             db,
             &tool_call.name,
             &tool_call.input,
@@ -783,21 +802,30 @@ where
             }
         };
         on_tool_done(&tool_call.name);
+
+        // Soft synthesis hint: after the 2nd call of the same tool, append an
+        // instruction so the model knows to synthesize instead of searching again.
+        if same_count >= 1 {
+            tool_result.push_str(
+                "\n\n[You have already searched with this tool. \
+                 Please provide your final answer to the user based on what you've found. \
+                 Do not call any more search tools.]",
+            );
+        }
+
         let prev_reasoning = current.reasoning_content.clone();
+        accumulated.push(ToolTurn {
+            tool_call: ToolCallResult {
+                id: tool_call.id,
+                name: tool_call.name,
+                input: tool_call.input,
+            },
+            tool_result,
+            reasoning_content: prev_reasoning,
+        });
+
         current = provider
-            .continue_with_tool_result(
-                system,
-                &input.history,
-                &input.message,
-                &ToolCallResult {
-                    id: tool_call.id,
-                    name: tool_call.name,
-                    input: tool_call.input,
-                },
-                tool_result,
-                tool_defs,
-                prev_reasoning,
-            )
+            .continue_with_tool_turns(system, &input.history, &input.message, &accumulated, tool_defs)
             .await?;
     }
     Ok(ToolLoopOutcome::Done { text: current.text })

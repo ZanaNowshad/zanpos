@@ -1,0 +1,558 @@
+rules:
+  - id: zanpos-discarded-audit-security-result
+    languages: [rust]
+    severity: ERROR
+    message: Audit and security writes must propagate their Result instead of discarding it.
+    metadata:
+      category: security
+      technology: [rust, sqlx]
+      baseline:
+        structural_constraint: Only audit_ext, audit2, audit3, and create_refund are exempted by exact function name.
+        rationale: The AI helpers await Workstream O's transaction-capable executor; create_refund aborts its already-open transaction on audit failure.
+        owner: ZANPOS Maintainers
+        review_by: '2027-01-31'
+    paths:
+      include:
+        - /src-tauri/src/**/*.rs
+        - /tests/security/semgrep/**/*.rs
+        - '**/semgrep/**/*.rs'
+    patterns:
+      - pattern-regex: >-
+          (?s)(?:let\s+_\s*=\s*|if\s+let\s+Err\s*\([^)]*\)\s*=\s*)?sqlx::query\(\s*"\s*INSERT\s+INTO\s+(?:audit_logs|security)[^"]*"\s*,?\s*\)(?:(?!;).)*?\.execute\([^)]*\)\s*\.await(?:\s*\.ok\(\)\s*;|\s*;|\s*\{)
+      - pattern-not-inside: |
+          async fn audit_ext(...) {
+            ...
+          }
+      - pattern-not-inside: |
+          async fn audit2(...) {
+            ...
+          }
+      - pattern-not-inside: |
+          async fn audit3(...) {
+            ...
+          }
+      - pattern-not-inside: |
+          pub async fn create_refund(...) {
+            ...
+          }
+
+  - id: zanpos-tauri-mutation-requires-rbac
+    languages: [rust]
+    severity: ERROR
+    message: Tauri mutation commands must validate the caller with an RBAC helper before each mutation sink.
+    metadata:
+      category: security
+      technology: [rust, tauri, sqlx]
+      baseline:
+        structural_constraint: setup_pull_catalog_allowed guards the pre-session JoinStore bootstrap command; a sink is suppressed when the enclosing command function performs an RBAC authorization, regardless of control-flow nesting.
+        rationale: Statement-sequence patterns cannot cross block boundaries (if/else, async blocks), so per-sink ordering caused false positives on commands whose RBAC guard is nested. Function-scope suppression guarantees the command authorizes the caller; it cannot distinguish guard position, which is a CE limitation.
+        owner: ZANPOS Maintainers
+        review_by: '2027-01-31'
+    paths:
+      include:
+        - /src-tauri/src/commands/**/*.rs
+        - /tests/security/semgrep/**/*.rs
+        - '**/semgrep/**/*.rs'
+    patterns:
+      - pattern-inside: |
+          #[tauri::command]
+          pub async fn $FUNC(...) {
+            ...
+          }
+      - pattern: sqlx::query($QUERY).execute(...).await?
+      - metavariable-regex:
+          metavariable: $FUNC
+          regex: '.*(?:create|update|delete|void|dismiss|resolve|adjust|close|open|apply|add|rollback|checkout|approve|execute|sync|receive|import|save|set|record).*'
+      - pattern-not-inside: |
+          #[tauri::command]
+          pub async fn $FUNC(...) {
+            ...
+            rbac::$CHECK(...).await?;
+            ...
+          }
+      - pattern-not-inside: |
+          #[tauri::command]
+          pub async fn $FUNC(...) {
+            ...
+            crate::commands::rbac::$CHECK(...).await?;
+            ...
+          }
+      - pattern-not-inside: |
+          #[tauri::command]
+          pub async fn setup_pull_catalog(...) {
+            ...
+            if !setup_pull_catalog_allowed(...) {
+              ...
+            }
+            ...
+          }
+
+  - id: zanpos-tauri-repository-mutation-requires-rbac
+    languages: [rust]
+    severity: ERROR
+    message: Tauri commands invoking mutation repository helpers must validate RBAC first.
+    metadata:
+      baseline:
+        structural_constraint: A repository sink is suppressed when the enclosing command function performs an RBAC authorization (rbac::*, crate::commands::rbac::*, or authorize_office), regardless of control-flow nesting. Imported-path calls (use crate::db::repositories::x_repo) are a documented CE limitation — see tests/security/semgrep/test-validators/rbac_coverage.rs.
+        rationale: Statement-sequence patterns cannot cross block boundaries (if/else, async blocks), so per-sink ordering caused false positives on commands whose RBAC guard is nested. Function-scope suppression guarantees the command authorizes the caller; it cannot distinguish guard position, which is a CE limitation. Alias/import resolution is outside Community Edition matching, so imported-path calls are validated structurally by the Rust validator.
+        owner: ZANPOS Maintainers
+        review_by: '2027-01-31'
+    paths:
+      include:
+        - /src-tauri/src/commands/**/*.rs
+        - /tests/security/semgrep/**/*.rs
+        - '**/semgrep/**/*.rs'
+    patterns:
+      - pattern-inside: |
+          #[tauri::command]
+          pub async fn $FUNC(...) {
+            ...
+          }
+      - pattern: crate::db::repositories::$REPO::$METHOD(...)
+      - metavariable-regex:
+          metavariable: $REPO
+          regex: '.*_repo$'
+      - metavariable-regex:
+          metavariable: $METHOD
+          regex: '.*(?:insert|update|delete|create|close|open|rollback|void|approve|execute|apply|add|checkout|receive|sync|dismiss|resolve).*'
+      - pattern-not-inside: |
+          #[tauri::command]
+          pub async fn $FUNC(...) {
+            ...
+            rbac::$CHECK(...).await?;
+            ...
+          }
+      - pattern-not-inside: |
+          #[tauri::command]
+          pub async fn $FUNC(...) {
+            ...
+            let $X = rbac::$CHECK(...).await?;
+            ...
+          }
+      - pattern-not-inside: |
+          #[tauri::command]
+          pub async fn $FUNC(...) {
+            ...
+            crate::commands::rbac::$CHECK(...).await?;
+            ...
+          }
+      - pattern-not-inside: |
+          #[tauri::command]
+          pub async fn $FUNC(...) {
+            ...
+            let $X = crate::commands::rbac::$CHECK(...).await?;
+            ...
+          }
+      - pattern-not-inside: |
+          #[tauri::command]
+          pub async fn $FUNC(...) {
+            ...
+            authorize_office(...).await?;
+            ...
+          }
+      - pattern-not-inside: |
+          #[tauri::command]
+          pub async fn $FUNC(...) {
+            ...
+            let $X = authorize_office(...).await?;
+            ...
+          }
+      - pattern-not-inside: |
+          #[tauri::command]
+          pub async fn $FUNC(...) {
+            ...
+            authorize_office(...).await.map_err(...)?;
+            ...
+          }
+      - pattern-not-inside: |
+          #[tauri::command]
+          pub async fn $FUNC(...) {
+            ...
+            let $X = authorize_office(...).await.map_err(...)?;
+            ...
+          }
+      - pattern-not-inside: |
+          #[tauri::command]
+          pub async fn setup_pull_catalog(...) {
+            ...
+            if !setup_pull_catalog_allowed(...) {
+              ...
+            }
+            ...
+          }
+
+  - id: zanpos-no-dynamic-sql-format
+    languages: [rust]
+    mode: taint
+    severity: ERROR
+    message: Do not interpolate values into SQL; use a static query and bound parameters.
+    metadata:
+      category: security
+      technology: [rust, sqlx]
+      baseline:
+        structural_constraint: Sanitized values are sync_v2 worker table/id parameters, identifiers validated by migration_commands::is_safe_sql_identifier, and ai::engine::selector Compiled cte/where_sql fragments; migration_query_remote is exempted as a read-only (mode=ro) managed query with RBAC and a read-intent/destructive-keyword allowlist.
+        rationale: Those private methods receive table identifiers solely from the internal sync table allowlist; the migration table names come from the inspected DB's own schema and are rejected unless they pass the identifier safety check; selector fragments are fixed SQL text with all values bound; migration_query_remote is exempted via a function-scoped sanitizer because the CE taint engine ignores rule-level pattern-not-inside. Destructured (Path/String) or derived (split_once, DB row) bindings are CE propagation gaps.
+        owner: ZANPOS Maintainers
+        review_by: '2027-01-31'
+    paths:
+      include:
+        - /src-tauri/src/**/*.rs
+        - /tests/security/semgrep/**/*.rs
+        - '**/semgrep/**/*.rs'
+    pattern-sources:
+      - patterns:
+          - pattern-inside: |
+              fn $F(..., $INPUT: &$TYPE, ...) {
+                ...
+              }
+          - pattern: $INPUT
+      - patterns:
+          - pattern-inside: |
+              fn $F(..., $INPUT: String, ...) {
+                ...
+              }
+          - pattern: $INPUT
+      - patterns:
+          - pattern-inside: |
+              fn $F(..., $INPUT: $TYPE, ...) {
+                ...
+              }
+          - pattern-either:
+              - pattern: $INPUT.$FIELD
+              - pattern: $INPUT[$IDX]
+    pattern-sinks:
+      - pattern-either:
+          - pattern: sqlx::query($SQL)
+          - pattern: sqlx::query_as($SQL)
+          - pattern: sqlx::query_scalar($SQL)
+          - pattern: sqlx::query_as::<$T>($SQL)
+          - pattern: sqlx::query_scalar::<$T>($SQL)
+          - pattern: sqlx::query_as::<$A, $B>($SQL)
+          - pattern: sqlx::query_scalar::<$A, $B>($SQL)
+    pattern-sanitizers:
+      - patterns:
+          - pattern-inside: |
+              async fn mark_rows_synced(&self, $TABLE: &str, $ID: &str, ...) {
+                ...
+              }
+          - pattern: $TABLE
+      - patterns:
+          - pattern-inside: |
+              async fn increment_attempts(&self, $TABLE: &str, $ID: &str, ...) {
+                ...
+              }
+          - pattern: $TABLE
+      - patterns:
+          - pattern-inside: |
+              async fn mark_rows_synced(&self, $TABLE: &str, $ID: &str, ...) {
+                ...
+              }
+          - pattern: $ID
+      - patterns:
+          - pattern-inside: |
+              async fn increment_attempts(&self, $TABLE: &str, $ID: &str, ...) {
+                ...
+              }
+          - pattern: $ID
+      - patterns:
+          - pattern-inside: |
+              async fn mark_rows_synced(&self, $TABLE: &str, $ID: &str, ...) {
+                ...
+              }
+          - pattern: $SQL
+      - patterns:
+          - pattern-inside: |
+              fn $F(...) {
+                ...
+                is_safe_sql_identifier($IDENT);
+                ...
+              }
+          - pattern: $IDENT
+      - patterns:
+          - pattern-inside: |
+              fn $F(...) {
+                ...
+                let $COMPILED = $SELF.compile();
+                ...
+              }
+          - pattern-either:
+              - pattern: $COMPILED.cte
+              - pattern: $COMPILED.where_sql
+      - patterns:
+          - pattern-inside: |
+              pub async fn migration_query_remote(...) {
+                ...
+              }
+          - pattern: limited_query
+
+  - id: zanpos-no-secret-in-log-fields
+    languages: [rust]
+    severity: ERROR
+    message: Do not send secret-like values to tracing fields.
+    metadata:
+      category: security
+      technology: [rust, tracing]
+    paths:
+      include:
+        - /src-tauri/src/**/*.rs
+        - /tests/security/semgrep/**/*.rs
+        - '**/semgrep/**/*.rs'
+    patterns:
+      - pattern-either:
+          - pattern: tracing::trace!($FIELD = $VALUE, ...)
+          - pattern: tracing::debug!($FIELD = $VALUE, ...)
+          - pattern: tracing::info!($FIELD = $VALUE, ...)
+          - pattern: tracing::warn!($FIELD = $VALUE, ...)
+          - pattern: tracing::error!($FIELD = $VALUE, ...)
+      - metavariable-regex:
+          metavariable: $FIELD
+          regex: '(?i).*(?:api[_-]?key|token|secret|password|passphrase|pin).*'
+
+  - id: zanpos-no-owned-inline-format-sql
+    languages: [rust]
+    severity: ERROR
+    message: Do not interpolate an owned request String into SQL via format! directly inside a SQLx sink.
+    metadata:
+      category: security
+      technology: [rust, sqlx]
+      baseline:
+        structural_constraint: An owned String function parameter appears as a positional format! argument directly inside a SQLx query sink.
+        rationale: The format! argument is correlated with the owned String parameter by metavariable, so unrelated format! calls or static queries do not match.
+        owner: ZANPOS Maintainers
+        review_by: '2027-01-31'
+    paths:
+      include:
+        - /src-tauri/src/**/*.rs
+        - /tests/security/semgrep/**/*.rs
+        - '**/semgrep/**/*.rs'
+    patterns:
+      - pattern-inside: |
+          async fn $FUNC(..., $OWNED: String, ...) {
+            ...
+          }
+      - pattern-either:
+          - pattern: sqlx::query(&format!($FMT, $OWNED, ...))
+          - pattern: sqlx::query_as(&format!($FMT, $OWNED, ...))
+          - pattern: sqlx::query_scalar(&format!($FMT, $OWNED, ...))
+          - pattern: sqlx::query_as::<$A, $B>(&format!($FMT, $OWNED, ...))
+          - pattern: sqlx::query_scalar::<$A, $B>(&format!($FMT, $OWNED, ...))
+
+  - id: zanpos-no-owned-let-format-sql
+    languages: [rust]
+    severity: ERROR
+    message: Do not build SQL from an owned request String with format! and pass it to a SQLx sink.
+    metadata:
+      category: security
+      technology: [rust, sqlx]
+      baseline:
+        structural_constraint: An async function accepts an owned String, formats SQL into a let-bound variable, then passes that exact variable to a SQLx query sink.
+        rationale: The sink variable is bound to the format! result by metavariable, so a later unrelated query does not match. sync_v2 worker table/id parameters remain sanitized via the shared allowlist.
+        owner: ZANPOS Maintainers
+        review_by: '2027-01-31'
+    paths:
+      include:
+        - /src-tauri/src/**/*.rs
+        - /tests/security/semgrep/**/*.rs
+        - '**/semgrep/**/*.rs'
+    patterns:
+      - pattern-inside: |
+          async fn $FUNC(..., $OWNED: String, ...) {
+            ...
+          }
+      - pattern-either:
+          - pattern: |
+              let $SQL = format!($FMT, $OWNED, ...);
+              ...
+              sqlx::query(&$SQL)
+          - pattern: |
+              let $SQL = format!($FMT, $OWNED, ...);
+              ...
+              sqlx::query_as(&$SQL)
+          - pattern: |
+              let $SQL = format!($FMT, $OWNED, ...);
+              ...
+              sqlx::query_scalar(&$SQL)
+          - pattern: |
+              let $SQL = format!($FMT, $OWNED, ...);
+              ...
+              sqlx::query_as::<$A, $B>(&$SQL)
+          - pattern: |
+              let $SQL = format!($FMT, $OWNED, ...);
+              ...
+              sqlx::query_scalar::<$A, $B>(&$SQL)
+      - pattern-not-inside: |
+          async fn mark_rows_synced(&self, $TABLE: &str, $ID: &str, ...) {
+            ...
+          }
+      - pattern-not-inside: |
+          async fn increment_attempts(&self, $TABLE: &str, $ID: &str, ...) {
+            ...
+          }
+
+  - id: zanpos-no-secret-in-log-message
+    languages: [rust]
+    severity: ERROR
+    message: Do not interpolate secret-like values into tracing messages.
+    paths:
+      include:
+        - /src-tauri/src/**/*.rs
+        - /tests/security/semgrep/**/*.rs
+        - '**/semgrep/**/*.rs'
+    pattern-regex: >-
+      (?i)(?:tracing::)?(?:trace|debug|info|warn|error)!\([^\n]*\{[^}]*?(?:api[_-]?key|token|secret|password|passphrase|pin)[^}]*\}[^\n]*\)
+
+  - id: zanpos-no-permissive-csp
+    languages: [json]
+    severity: ERROR
+    message: Do not add wildcard CSP sources; use an explicit allowlist.
+    metadata:
+      category: security
+      technology: [tauri, csp]
+    paths:
+      include:
+        - /src-tauri/tauri.conf.json
+        - /tests/security/semgrep/**/*.json
+        - '**/semgrep/**/*.json'
+    pattern-regex: '"csp"\s*:\s*"[^"]*(?:default-src|connect-src|script-src|img-src|media-src|style-src|font-src)[^"]*\s\*(?:\s|;|")'
+
+  - id: zanpos-no-unsafe-csp-directive
+    languages: [json]
+    severity: ERROR
+    message: Do not weaken CSP with unsafe script execution.
+    paths:
+      include:
+        - /src-tauri/tauri.conf.json
+        - /tests/security/semgrep/**/*.json
+        - '**/semgrep/**/*.json'
+    pattern-regex: '"csp"\s*:\s*"[^"]*script-src[^;]*unsafe-(?:inline|eval)'
+
+  - id: zanpos-no-wildcard-network-endpoint
+    languages: [rust]
+    severity: ERROR
+    message: Do not use wildcard network bind or endpoint literals in application code.
+    metadata:
+      baseline:
+        structural_constraint: Only hub::lan_ips UDP probe binds are exempted.
+        rationale: The UDP bind is local interface discovery; it does not expose a listener or accept traffic. String-literal wildcard binds are intentionally double-reported here and by zanpos-no-wildcard-listener-bind; both rules flag the same violation.
+        owner: ZANPOS Maintainers
+        review_by: '2027-01-31'
+    paths:
+      include:
+        - /src-tauri/src/**/*.rs
+        - /tests/security/semgrep/**/*.rs
+        - '**/semgrep/**/*.rs'
+    patterns:
+      - pattern-regex: '"(?:https?://(?:\*|0\.0\.0\.0(?::\d+)?)|0\.0\.0\.0(?::\d+)?)'
+      - pattern-not-inside: |
+          pub fn lan_ips() -> Vec<String> {
+            ...
+          }
+
+  - id: zanpos-no-wildcard-listener-bind
+    languages: [rust]
+    severity: ERROR
+    message: Do not bind a network listener to all interfaces without an explicit reviewed boundary.
+    metadata:
+      baseline:
+        structural_constraint: Only the hub::lan_ips UDP probe and the hub::start_hub variable-assigned bind are exempted; all other wildcard binds are flagged.
+        rationale: lan_ips is local interface discovery (no listener, no accept); start_hub binds 0.0.0.0 via a let-bound SocketAddr, which is a reviewed hub boundary. Variable-assigned binds are a documented structural baseline.
+        owner: ZANPOS Maintainers
+        review_by: '2027-01-31'
+    paths:
+      include:
+        - /src-tauri/src/**/*.rs
+        - /tests/security/semgrep/**/*.rs
+        - '**/semgrep/**/*.rs'
+    patterns:
+      - pattern-either:
+          - pattern-regex: '(?:std::net::|tokio::net::)?(?:TcpListener|UdpSocket)::bind\(\s*"0\.0\.0\.0:'
+          - pattern: $LISTENER::bind(std::net::SocketAddr::from(([0, 0, 0, 0], $PORT)))
+          - pattern: $LISTENER::bind(std::net::Ipv4Addr::UNSPECIFIED)
+          - pattern: $LISTENER::bind(std::net::SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, $PORT))
+          - pattern: $LISTENER::bind(std::net::Ipv4Addr::from([0, 0, 0, 0]))
+      - pattern-not-inside: |
+          pub fn lan_ips() -> Vec<String> {
+            ...
+          }
+
+  - id: zanpos-no-permissive-workflow-network
+    languages: [yaml]
+    severity: ERROR
+    message: CI workflows must not disable TLS verification or use wildcard network endpoints.
+    metadata:
+      category: security
+      baseline:
+        structural_constraint: curl -k/--insecure is matched at any flag position in the command line; NODE_TLS_REJECT_UNAUTHORIZED=0 is matched for shell, YAML env, set, and PowerShell env assignments.
+        rationale: TLS verification bypasses and wildcard endpoints are always prohibited in CI regardless of surrounding flags or assignment syntax.
+        owner: ZANPOS Maintainers
+        review_by: '2027-01-31'
+    paths:
+      include:
+        - /.github/workflows/**/*.yml
+        - /.github/workflows/**/*.yaml
+        - /tests/security/semgrep/**/*.yml
+        - '**/semgrep/**/*.yml'
+    pattern-regex: '(?i)(?:curl\b[^\r\n]*?\s(?:-k|--insecure)\b|(?:set\s+|(?:\$\w+:|$env:))?NODE_TLS_REJECT_UNAUTHORIZED\s*[:=]\s*["'']?0["'']?|https?://\*)'
+
+  - id: zanpos-no-secret-log-shorthand
+    languages: [rust]
+    severity: ERROR
+    message: Do not log secret-like shorthand or debug tracing fields.
+    paths:
+      include:
+        - /src-tauri/src/**/*.rs
+        - /tests/security/semgrep/**/*.rs
+        - '**/semgrep/**/*.rs'
+    pattern-regex: '(?i)(?:tracing::)?(?:trace|debug|info|warn|error)!\([^\n]*[?%](?:api[_-]?(?:key|token)|token|secret|password|passphrase|pin)\b[^\n]*\)'
+
+  - id: zanpos-ai-mutation-needs-confirmation
+    languages: [rust]
+    severity: ERROR
+    message: Tauri commands must dispatch AI mutations through execute_confirmed_mutation.
+    metadata:
+      category: security
+      technology: [rust, tauri, ai]
+      enforcement: execute_mutation_raw is pub(super); only the reviewed automatic-policy, confirmed-policy, and rollback dispatchers may call it.
+    paths:
+      include:
+        - /src-tauri/src/ai/**/*.rs
+        - /src-tauri/src/commands/**/*.rs
+        - /tests/security/semgrep/**/*.rs
+        - '**/semgrep/**/*.rs'
+    patterns:
+      - pattern-either:
+          - pattern: crate::ai::tools::execute_mutation_raw(...)
+          - pattern: execute_mutation_raw(...)
+      - pattern-not-inside: |
+          pub async fn execute_automatic_mutation(...) {
+            ...
+          }
+      - pattern-not-inside: |
+          pub async fn execute_confirmed_mutation(...) {
+            ...
+          }
+      - pattern-not-inside: |
+          pub(super) async fn execute_undo_raw(...) {
+            ...
+          }
+      - pattern-not-inside: |
+          #[cfg(test)]
+          mod tests {
+            ...
+          }
+
+  - id: zanpos-no-raw-mutation-import-alias
+    languages: [rust]
+    severity: ERROR
+    message: Do not import or alias the raw AI mutation executor outside tool_policy.
+    paths:
+      include:
+        - /src-tauri/src/**/*.rs
+        - /tests/security/semgrep/**/*.rs
+        - '**/semgrep/**/*.rs'
+    patterns:
+      - pattern: use crate::ai::tools::execute_mutation_raw as $ALIAS;
+      - pattern-not-inside: |
+          mod tool_policy {
+            ...
+          }

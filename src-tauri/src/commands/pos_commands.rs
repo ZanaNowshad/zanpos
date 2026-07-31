@@ -464,7 +464,7 @@ pub async fn pos_apply_bill_discount(
             reason: None,
             previous_hash: &prev_hash,
         });
-        let _ = sqlx::query(
+        sqlx::query(
             "INSERT INTO audit_logs
                (audit_log_id, event_type, entity_type, entity_id,
                 actor_user_id, actor_type, device_id, origin_device_id, branch_id, after_json, created_at, hash, previous_hash)
@@ -485,7 +485,7 @@ pub async fn pos_apply_bill_discount(
             Some(prev_hash.clone())
         })
         .execute(&state.db)
-        .await;
+        .await?;
     }
 
     Ok(cart)
@@ -577,7 +577,7 @@ pub async fn pos_apply_line_discount(
                 reason: None,
                 previous_hash: &prev_hash,
             });
-            let _ = sqlx::query(
+            sqlx::query(
                 "INSERT INTO audit_logs
                    (audit_log_id, event_type, entity_type, entity_id,
                     actor_user_id, actor_type, device_id, origin_device_id, branch_id, after_json, created_at, hash, previous_hash)
@@ -598,7 +598,7 @@ pub async fn pos_apply_line_discount(
                 Some(prev_hash.clone())
             })
             .execute(&state.db)
-            .await;
+            .await?;
         }
     }
     Ok(cart)
@@ -696,7 +696,7 @@ pub async fn pos_add_custom_item(
         reason: None,
         previous_hash: &prev_hash,
     });
-    let _ = sqlx::query(
+    sqlx::query(
         "INSERT INTO audit_logs
            (audit_log_id, event_type, entity_type, entity_id,
             actor_user_id, actor_type, device_id, origin_device_id, branch_id, after_json, created_at, hash, previous_hash)
@@ -713,7 +713,7 @@ pub async fn pos_add_custom_item(
     .bind(&hash)
     .bind(if prev_hash.is_empty() { None } else { Some(prev_hash) })
     .execute(&state.db)
-    .await;
+    .await?;
 
     Ok(cart)
 }
@@ -724,8 +724,8 @@ pub async fn pos_add_custom_item(
 pub struct VoidSaleResult {
     /// Always true when the command succeeds (sale status changed to voided).
     pub voided: bool,
-    /// Non-null when stock restoration failed. The void was committed but inventory
-    /// may be inaccurate — the manager should reconcile manually.
+    /// Reserved for backward-compatible response decoding. Atomic voids return
+    /// an error rather than committing with an inventory warning.
     pub stock_warning: Option<String>,
 }
 
@@ -739,6 +739,7 @@ pub async fn pos_void_sale(
     rbac::manager_or_owner(&state.db, &voided_by_user_id).await?;
 
     let now = chrono::Utc::now().to_rfc3339();
+    let mut tx = state.db.begin().await?;
 
     // Merge UPDATE + SELECT into a single RETURNING query (saves one round-trip).
     let row = sqlx::query(
@@ -748,7 +749,7 @@ pub async fn pos_void_sale(
     )
     .bind(&now)
     .bind(&sale_id)
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await?;
 
     let (branch_id, device_id) = match row {
@@ -763,32 +764,20 @@ pub async fn pos_void_sale(
         }
     };
 
-    // Restore stock for all tracked items sold in the voided sale.
-    // The void is already committed — if stock restore fails we surface a warning
-    // to the caller instead of silently discarding the error, so the manager knows
-    // to reconcile inventory manually.
-    let stock_warning = match movements::return_void_sale(
-        &state.db,
+    // Sale status, stock restoration, and the required audit event are one
+    // transaction. No partially voided sale can survive an audit failure.
+    movements::return_void_sale(
+        &mut tx,
         &sale_id,
         &voided_by_user_id,
         &branch_id,
         &device_id,
     )
-    .await
-    {
-        Ok(_) => None,
-        Err(e) => {
-            tracing::error!("Stock restoration failed after void of sale {sale_id}: {e}");
-            Some(format!(
-                "Sale voided but inventory could not be updated: {e}. \
-                 Please reconcile stock levels manually."
-            ))
-        }
-    };
+    .await?;
 
-    // Record in audit log — best-effort, non-fatal
+    // The audit row is authoritative and commits with the sale/stock changes.
     let audit_id = ulid::Ulid::new().to_string();
-    let prev_hash = audit_hash::fetch_last_hash(&state.db, &device_id)
+    let prev_hash = audit_hash::fetch_last_hash_tx(&mut tx, &device_id)
         .await
         .unwrap_or_default();
     let hash = audit_hash::compute_audit_hash(&audit_hash::AuditHashInput {
@@ -804,7 +793,7 @@ pub async fn pos_void_sale(
         reason: None,
         previous_hash: &prev_hash,
     });
-    let _ = sqlx::query(
+    sqlx::query(
         "INSERT INTO audit_logs
            (audit_log_id, event_type, entity_type, entity_id,
             actor_user_id, actor_type, device_id, origin_device_id, branch_id, created_at, hash, previous_hash)
@@ -826,14 +815,16 @@ pub async fn pos_void_sale(
     } else {
         Some(prev_hash.clone())
     })
-    .execute(&state.db)
-    .await;
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
 
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     Ok(VoidSaleResult {
         voided: true,
-        stock_warning,
+        stock_warning: None,
     })
 }
 

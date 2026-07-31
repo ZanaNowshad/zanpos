@@ -40,7 +40,7 @@ async fn audit_ext(pool: &SqlitePool, event: &str, entity_id: &str, after: &str)
     let id = ulid::Ulid::new().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     let hash = format!("{:x}", hash8(&format!("{}{}{}", id, event, now)));
-    let _ = sqlx::query(
+    if let Err(error) = sqlx::query(
         "INSERT INTO audit_logs (audit_log_id, event_type, entity_type, entity_id,
          actor_user_id, actor_type, after_json, created_at, hash)
          VALUES (?, ?, 'ai_mutation', ?, ?, 'ai_agent', ?, ?, ?)",
@@ -53,7 +53,10 @@ async fn audit_ext(pool: &SqlitePool, event: &str, entity_id: &str, after: &str)
     .bind(&now)
     .bind(&hash)
     .execute(pool)
-    .await;
+    .await
+    {
+        tracing::error!("AI audit write failed: {error}");
+    }
 }
 
 fn hash8(s: &str) -> u64 {

@@ -1,0 +1,14 @@
+{
+  "app": {
+    "security": {
+      // ruleid: zanpos-no-permissive-csp
+      "csp": "default-src 'self'; connect-src *",
+      // ruleid: zanpos-no-unsafe-csp-directive
+      "csp": "default-src 'self'; script-src 'unsafe-inline'",
+      // ok: zanpos-no-unsafe-csp-directive
+      "safe_csp": "default-src 'self'; script-src 'self'",
+      // ok: zanpos-no-permissive-csp
+      "strict_csp": "default-src 'self'; connect-src 'self' https://example.invalid"
+    }
+  }
+}

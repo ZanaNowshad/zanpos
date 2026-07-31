@@ -374,7 +374,8 @@ async fn inspect_sqlite(path: String) -> AppResult<FileSchema> {
             continue;
         }
 
-        // Get columns via pragma
+        // Get columns via pragma — table validated by is_safe_sql_identifier above
+        // nosemgrep: zanpos-no-dynamic-sql-format
         let cols: Vec<(String, String)> = sqlx::query_as::<_, (String, String)>(&format!(
             "SELECT name, type FROM pragma_table_info('{}')",
             table
@@ -387,13 +388,15 @@ async fn inspect_sqlite(path: String) -> AppResult<FileSchema> {
             continue;
         }
 
-        // Row count
+        // Row count — table validated by is_safe_sql_identifier above
+        // nosemgrep: zanpos-no-dynamic-sql-format
         let row_count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM \"{}\"", table))
             .fetch_one(&pool)
             .await
             .unwrap_or(0);
 
-        // Sample rows
+        // Sample rows — table validated by is_safe_sql_identifier above
+        // nosemgrep: zanpos-no-dynamic-sql-format
         let sample_rows = sqlx::query(&format!("SELECT * FROM \"{}\" LIMIT 3", table))
             .fetch_all(&pool)
             .await
@@ -1176,11 +1179,13 @@ async fn load_sqlite_data(path: String) -> AppResult<SourceData> {
         }
 
         let col_names: Vec<String> =
+            // nosemgrep: zanpos-no-dynamic-sql-format — table validated by is_safe_sql_identifier
             sqlx::query_scalar(&format!("SELECT name FROM pragma_table_info('{}')", table))
                 .fetch_all(&pool)
                 .await
                 .unwrap_or_default();
 
+        // nosemgrep: zanpos-no-dynamic-sql-format — table validated by is_safe_sql_identifier
         let db_rows = sqlx::query(&format!("SELECT * FROM \"{}\"", table))
             .fetch_all(&pool)
             .await
@@ -1825,11 +1830,13 @@ pub async fn migration_list_tables(
                     });
                     continue;
                 }
+                // nosemgrep: zanpos-no-dynamic-sql-format — table validated by is_safe_sql_identifier
                 let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM \"{}\"", table))
                     .fetch_one(&pool)
                     .await
                     .unwrap_or(0);
                 let cols: Vec<String> =
+                    // nosemgrep: zanpos-no-dynamic-sql-format — table validated by is_safe_sql_identifier
                     sqlx::query_scalar(&format!("SELECT name FROM pragma_table_info('{}')", table))
                         .fetch_all(&pool)
                         .await
@@ -2543,11 +2550,10 @@ pub async fn migration_rollback(
         }
     }
 
-    tx.commit().await?;
-
-    // Audit log — best-effort, don't fail the rollback if write fails
+    // The destructive rollback and its audit event share one transaction: an
+    // audit failure leaves the source data untouched.
     let audit_id = Ulid::new().to_string();
-    let _ = sqlx::query(
+    sqlx::query(
         "INSERT INTO audit_logs \
            (audit_log_id, event_type, entity_type, entity_id, \
             actor_user_id, actor_type, created_at, hash, previous_hash) \
@@ -2555,8 +2561,10 @@ pub async fn migration_rollback(
     )
     .bind(&audit_id)
     .bind(&user_id)
-    .execute(pool)
-    .await;
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
 
     Ok(RollbackResult {
         deleted_counts,

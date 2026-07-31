@@ -180,6 +180,30 @@ mod tests {
             "second open shift must be blocked: got {err:?}"
         );
     }
+
+    #[tokio::test]
+    async fn open_shift_rolls_back_when_audit_write_fails() {
+        let pool = make_pool().await;
+        sqlx::query(
+            "CREATE TRIGGER fail_shift_open_audit
+             BEFORE INSERT ON audit_logs
+             WHEN NEW.event_type = 'shift.opened'
+             BEGIN SELECT RAISE(ABORT, 'forced audit failure'); END",
+        )
+        .execute(&pool)
+        .await
+        .expect("install failing audit trigger");
+
+        let _err = open_shift(&pool, BRANCH, DEVICE, CASHIER, 0)
+            .await
+            .expect_err("audit failure must reject the shift open");
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM shifts")
+            .fetch_one(&pool)
+            .await
+            .expect("count shifts");
+        assert_eq!(count, 0, "shift write must roll back with its audit event");
+    }
 }
 
 pub async fn get_active_shift(pool: &SqlitePool, device_id: &str) -> AppResult<Option<Shift>> {
@@ -217,6 +241,7 @@ pub async fn open_shift(
     // business_date uses local time so EOD reports show the correct calendar day
     // for Bahrain (UTC+3) even when a shift is opened after midnight local time.
     let business_date = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let mut tx = pool.begin().await?;
 
     // T11: map UNIQUE constraint violation to a friendly Conflict error.
     // With T01's partial index, a concurrent open_shift that slipped past the
@@ -229,7 +254,7 @@ pub async fn open_shift(
     .bind(&shift_id).bind(branch_id).bind(device_id).bind(device_id)
     .bind(cashier_user_id).bind(&now).bind(opening_cash_minor)
     .bind(&business_date).bind(&now).bind(&now)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| {
         if e.to_string().to_lowercase().contains("unique") {
@@ -247,12 +272,10 @@ pub async fn open_shift(
          WHERE s.shift_id = ?",
     )
     .bind(&shift_id)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await?;
 
     let shift = row_to_shift(&row);
-    tracing::info!("Shift opened: {}", shift_id);
-
     // Audit trail for shift open with hash chain
     let audit_id = Ulid::new().to_string();
     let after_json = serde_json::json!({
@@ -260,7 +283,7 @@ pub async fn open_shift(
         "opening_cash_minor": opening_cash_minor,
     })
     .to_string();
-    let prev_hash = audit_hash::fetch_last_hash(pool, device_id)
+    let prev_hash = audit_hash::fetch_last_hash_tx(&mut tx, device_id)
         .await
         .unwrap_or_default();
     let hash = audit_hash::compute_audit_hash(&audit_hash::AuditHashInput {
@@ -276,11 +299,11 @@ pub async fn open_shift(
         reason: None,
         previous_hash: &prev_hash,
     });
-    let _ = sqlx::query(
+    sqlx::query(
         "INSERT INTO audit_logs
            (audit_log_id, event_type, entity_type, entity_id,
             actor_user_id, actor_type, device_id, origin_device_id, branch_id, after_json, created_at, hash, previous_hash)
-         VALUES (?, 'shift.opened', 'shift', ?, ?, 'user', ?, ?, ?, ?, ?, ?)",
+         VALUES (?, 'shift.opened', 'shift', ?, ?, 'user', ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&audit_id)
     .bind(&shift_id)
@@ -296,9 +319,11 @@ pub async fn open_shift(
     } else {
         Some(prev_hash.clone())
     })
-    .execute(pool)
-    .await;
+    .execute(&mut *tx)
+    .await?;
 
+    tx.commit().await?;
+    tracing::info!("Shift opened: {}", shift_id);
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
     Ok(shift)
 }
@@ -310,6 +335,7 @@ pub async fn close_shift(
     notes: Option<String>,
 ) -> AppResult<Shift> {
     let now = chrono::Utc::now().to_rfc3339();
+    let mut tx = pool.begin().await?;
 
     // Expected cash = opening + cash_sales - cash_refunds + paid_in - paid_out - safe_drop.
     // This is the authoritative formula used everywhere (drawer_summary, EOD report).
@@ -370,7 +396,7 @@ pub async fn close_shift(
     .bind(shift_id) // paid_out
     .bind(shift_id) // safe_drop
     .bind(shift_id) // FROM shifts WHERE shift_id
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?
     .flatten();
 
@@ -392,7 +418,7 @@ pub async fn close_shift(
     .bind(&notes)
     .bind(&now)
     .bind(shift_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
 
@@ -410,13 +436,11 @@ pub async fn close_shift(
          WHERE s.shift_id = ?",
     )
     .bind(shift_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::NotFound("Shift not found".into()))?;
 
     let shift = row_to_shift(&row);
-    tracing::info!("Shift closed: {}", shift_id);
-
     // Audit trail for shift close with hash chain
     let audit_id = Ulid::new().to_string();
     let after_json = serde_json::json!({
@@ -426,7 +450,7 @@ pub async fn close_shift(
         "cash_difference_minor": diff,
     })
     .to_string();
-    let prev_hash = audit_hash::fetch_last_hash(pool, &shift.device_id)
+    let prev_hash = audit_hash::fetch_last_hash_tx(&mut tx, &shift.device_id)
         .await
         .unwrap_or_default();
     let hash = audit_hash::compute_audit_hash(&audit_hash::AuditHashInput {
@@ -442,11 +466,11 @@ pub async fn close_shift(
         reason: None,
         previous_hash: &prev_hash,
     });
-    let _ = sqlx::query(
+    sqlx::query(
         "INSERT INTO audit_logs
            (audit_log_id, event_type, entity_type, entity_id,
             actor_user_id, actor_type, device_id, origin_device_id, branch_id, after_json, created_at, hash, previous_hash)
-         VALUES (?, 'shift.closed', 'shift', ?, ?, 'user', ?, ?, ?, ?, ?, ?)",
+         VALUES (?, 'shift.closed', 'shift', ?, ?, 'user', ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&audit_id)
     .bind(shift_id)
@@ -462,9 +486,11 @@ pub async fn close_shift(
     } else {
         Some(prev_hash.clone())
     })
-    .execute(pool)
-    .await;
+    .execute(&mut *tx)
+    .await?;
 
+    tx.commit().await?;
+    tracing::info!("Shift closed: {}", shift_id);
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
     Ok(shift)
 }

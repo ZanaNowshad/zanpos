@@ -11,7 +11,7 @@ use crate::errors::AppResult;
 /// stock_take) now hold a write transaction for the entire get_qty → compute →
 /// upsert_level cycle so two concurrent operations cannot interleave and silently
 /// lose stock.
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::collections::HashMap;
 use std::str::FromStr;
 use ulid::Ulid;
@@ -386,13 +386,13 @@ pub async fn return_refund(
 
 // ── return_void_sale ──────────────────────────────────────────────────────────
 
-/// Called after pos_void_sale succeeds. Restores stock for all tracked items
+/// Called inside pos_void_sale's transaction before it commits. Restores stock for all tracked items
 /// that were deducted when the sale was originally finalized.
 ///
 /// Uses the `sale_items` table directly (no refund record required).
 /// Movement type is `"void"` to distinguish from normal refund returns.
 pub async fn return_void_sale(
-    pool: &SqlitePool,
+    tx: &mut Transaction<'_, Sqlite>,
     sale_id: &str,
     voided_by_user_id: &str,
     branch_id: &str,
@@ -410,7 +410,7 @@ pub async fn return_void_sale(
            AND p.track_inventory = 1",
     )
     .bind(sale_id)
-    .fetch_all(pool)
+    .fetch_all(&mut **tx)
     .await?;
 
     for row in &rows {
@@ -421,14 +421,11 @@ pub async fn return_void_sale(
             continue;
         }
 
-        // H3: Exclusive transaction prevents concurrent void/refund race
-        let mut tx = pool.begin().await?;
-
-        let current = get_qty_tx(&mut tx, &product_id, branch_id).await;
+        let current = get_qty_tx(tx, &product_id, branch_id).await;
         let new_qty = current + returned_qty;
         let movement_id = Ulid::new().to_string();
 
-        upsert_level_tx(&mut tx, &product_id, branch_id, new_qty, &now).await?;
+        upsert_level_tx(tx, &product_id, branch_id, new_qty, &now).await?;
 
         sqlx::query(
             "INSERT INTO stock_movements
@@ -447,11 +444,8 @@ pub async fn return_void_sale(
         .bind(sale_id)
         .bind(voided_by_user_id)
         .bind(&now)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
-
-        tx.commit().await?;
-        // sync_status='pending' is set by column DEFAULT — sync worker picks it up
     }
 
     Ok(())

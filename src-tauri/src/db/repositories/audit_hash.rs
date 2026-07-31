@@ -224,6 +224,26 @@ pub async fn fetch_last_hash(pool: &SqlitePool, device_id: &str) -> AppResult<St
     Ok(h.unwrap_or_default())
 }
 
+/// Transaction-aware variant used when the business mutation and its audit row
+/// must commit or roll back together.
+pub async fn fetch_last_hash_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    device_id: &str,
+) -> AppResult<String> {
+    let h: Option<String> = sqlx::query_scalar(
+        "SELECT hash FROM audit_logs
+         WHERE device_id = ? AND length(hash) = 64
+         ORDER BY created_at DESC, audit_log_id DESC
+         LIMIT 1",
+    )
+    .bind(device_id)
+    .fetch_optional(&mut **tx)
+    .await?
+    .flatten();
+
+    Ok(h.unwrap_or_default())
+}
+
 // ── Chain verification ────────────────────────────────────────────────────────
 //
 // F-MED-09 — Known limitation (intentional, security-correct):

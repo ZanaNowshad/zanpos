@@ -52,7 +52,7 @@ fn rv(v: &serde_json::Value, key: &str) -> AppResult<String> {
 async fn audit3(pool: &SqlitePool, event: &str, entity_id: &str, after: &str) {
     let id = ulid::Ulid::new().to_string();
     let now = chrono::Utc::now().to_rfc3339();
-    let _ = sqlx::query(
+    if let Err(error) = sqlx::query(
         "INSERT INTO audit_logs (audit_log_id, event_type, entity_type, entity_id,
          actor_user_id, actor_type, after_json, created_at, hash)
          VALUES (?, ?, 'ai_mutation', ?, ?, 'ai_agent', ?, ?, 'ai')",
@@ -64,7 +64,10 @@ async fn audit3(pool: &SqlitePool, event: &str, entity_id: &str, after: &str) {
     .bind(after)
     .bind(&now)
     .execute(pool)
-    .await;
+    .await
+    {
+        tracing::error!("AI audit write failed: {error}");
+    }
 }
 
 // ── Dry-run previews ──────────────────────────────────────────────────────────

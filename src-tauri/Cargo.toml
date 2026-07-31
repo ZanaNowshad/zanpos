@@ -3,6 +3,7 @@ name = "zanpos"
 version = "2.0.0"
 description = "ZANPOS — Local-first offline-capable retail POS for Windows"
 authors = ["ZANPOS Contributors"]
+publish = false
 edition = "2021"
 # Minimum Rust version enforced in CI (dtolnay/rust-toolchain@stable tracks this)
 rust-version = "1.77"

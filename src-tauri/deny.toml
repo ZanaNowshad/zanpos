@@ -1,0 +1,103 @@
+# Dependency governance for the resolved ZANPOS Rust graph.
+# Schema: cargo-deny 0.20.2.
+
+[advisories]
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+ignore = [
+    # Rationale: rsa is pulled in through sqlx-macros-core's MySQL support, but
+    # ZANPOS uses SQLite only and performs no RSA operations. Owner: ZANPOS
+    # Maintainers. Review/expiry: 2027-01-31.
+    { id = "RUSTSEC-2023-0071", reason = "rsa@0.9.10 is resolved through sqlx-macros-core's MySQL-only code but is not used by ZANPOS's SQLite runtime; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+
+    # Rationale: these crates are in Tauri/Wry's non-Windows GTK3 dependency
+    # path and are not compiled into the Windows ZANPOS application. Owner:
+    # ZANPOS Maintainers. Review/expiry: 2027-01-31.
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error@1.0.4 is present through Tauri/Wry's non-Windows GTK3 bindings and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+    { id = "RUSTSEC-2024-0411", reason = "gdkwayland-sys@0.18.2 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+    { id = "RUSTSEC-2024-0412", reason = "gdk@0.18.2 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+    { id = "RUSTSEC-2024-0413", reason = "atk@0.18.2 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+    { id = "RUSTSEC-2024-0414", reason = "gdkx11-sys@0.18.2 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+    { id = "RUSTSEC-2024-0415", reason = "gtk@0.18.2 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+    { id = "RUSTSEC-2024-0416", reason = "atk-sys@0.18.2 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+    { id = "RUSTSEC-2024-0417", reason = "gdkx11@0.18.2 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+    { id = "RUSTSEC-2024-0418", reason = "gdk-sys@0.18.2 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+    { id = "RUSTSEC-2024-0419", reason = "gtk3-macros@0.18.2 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+    { id = "RUSTSEC-2024-0420", reason = "gtk-sys@0.18.2 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+
+    # Rationale: these unmaintained crates are pinned transitively by current
+    # upstream libraries; none of the advisories reports a vulnerability.
+    # Owner: ZANPOS Maintainers. Review/expiry: 2027-01-31.
+    { id = "RUSTSEC-2024-0384", reason = "instant@0.1.13 is transitive through keyring's non-Windows Secret Service backend; the advisory is maintenance-only; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+    { id = "RUSTSEC-2024-0388", reason = "derivative@2.2.0 is transitive through keyring's non-Windows Secret Service backend; the advisory is maintenance-only; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+    { id = "RUSTSEC-2025-0075", reason = "unic-char-range@0.9.0 is pinned through Tauri's urlpattern dependency and the advisory is maintenance-only; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+    { id = "RUSTSEC-2025-0080", reason = "unic-common@0.9.0 is pinned through Tauri's urlpattern dependency and the advisory is maintenance-only; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+    { id = "RUSTSEC-2025-0081", reason = "unic-char-property@0.9.0 is pinned through Tauri's urlpattern dependency and the advisory is maintenance-only; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+    { id = "RUSTSEC-2025-0098", reason = "unic-ucd-version@0.9.0 is pinned through Tauri's urlpattern dependency and the advisory is maintenance-only; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+    { id = "RUSTSEC-2025-0100", reason = "unic-ucd-ident@0.9.0 is pinned through Tauri's urlpattern dependency and the advisory is maintenance-only; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+
+    # Rationale: event-listener@5.4.1 is active through sqlx-core@0.8.6, but
+    # ZANPOS does not directly use the affected listener!/with_tag API. Keep
+    # exact until a lockfile update can take >=5.4.2. Owner: ZANPOS Maintainers.
+    # Review/expiry: 2027-01-31.
+    { id = "RUSTSEC-2026-0221", reason = "event-listener@5.4.1 is transitive through sqlx-core@0.8.6 and ZANPOS does not directly use the affected listener!/with_tag API; update to >=5.4.2 in the dependency-update workstream; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+
+    # Rationale: glib@0.18.5 is in Tauri/Wry's non-Windows GTK3 dependency
+    # path and is not compiled into the Windows ZANPOS application. Owner:
+    # ZANPOS Maintainers. Review/expiry: 2027-01-31.
+    { id = "RUSTSEC-2024-0429", reason = "glib@0.18.5 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+
+    # Rationale: spin@0.9.8 is yanked and transitively pinned through
+    # flume@0.11.1 -> sqlx-sqlite@0.8.6; replacement requires an upstream
+    # dependency update. Owner: ZANPOS Maintainers. Review/expiry: 2027-01-31.
+    { crate = "spin@0.9.8", reason = "spin@0.9.8 is transitively pinned through flume@0.11.1 -> sqlx-sqlite@0.8.6 and replacement requires an upstream dependency update; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+]
+
+[licenses]
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.8
+
+[licenses.private]
+# The only unpublished workspace package is exactly zanpos@2.0.0. It is checked
+# as application code rather than a redistributed dependency. Owner: ZANPOS
+# Maintainers. Review/expiry: 2027-01-31.
+ignore = true
+registries = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+allow = []
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+
+[sources.allow-org]
+github = []
+gitlab = []
+bitbucket = []

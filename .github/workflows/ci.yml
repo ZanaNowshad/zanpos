@@ -42,10 +42,47 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
+      - name: Install checksum-verified cargo-deny 0.20.2
+        shell: pwsh
+        run: |
+          $version = "0.20.2"
+          $target = "x86_64-pc-windows-msvc"
+          $archiveName = "cargo-deny-$version-$target.tar.gz"
+          $archive = Join-Path $env:RUNNER_TEMP $archiveName
+          $extractDir = Join-Path $env:RUNNER_TEMP "cargo-deny-$version"
+          $expectedSha256 = "975A22143262FD27476D19EE00C7AF67978426E40E1DEE94EED6BBADE1CF87DC"
+          $url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/$version/$archiveName"
+
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          $actualSha256 = (Get-FileHash $archive -Algorithm SHA256).Hash.ToUpperInvariant()
+          if ($actualSha256 -ne $expectedSha256) {
+            throw "cargo-deny archive checksum mismatch: expected $expectedSha256, got $actualSha256"
+          }
+
+          New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
+          tar -xzf $archive -C $extractDir
+          $cargoDeny = Join-Path $extractDir "cargo-deny-$version-$target/cargo-deny.exe"
+          & $cargoDeny --version
+          "CARGO_DENY=$cargoDeny" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Cargo dependency policy
+        working-directory: src-tauri
+        shell: pwsh
+        run: '& $env:CARGO_DENY check'
+
+      - name: Install cargo-audit 0.22.1
+        run: cargo install cargo-audit --version 0.22.1 --locked --quiet
+
+      - name: Cargo audit (whole lockfile)
+        # Reads the single exact exemption from src-tauri/.cargo/audit.toml.
+        # Whole-lock scanning complements cargo-deny's active feature graph.
+        working-directory: src-tauri
+        run: cargo audit --file Cargo.lock
+
       - name: Cargo check
         # Mirrors scripts/ship.mjs's Rust gate exactly (plain `cargo check`, no
         # extra flags) so CI fails on the same thing the local ship gate fails
-        # on, before the slower fmt/clippy/test/audit steps below run.
+        # on, before the slower fmt/clippy/test steps below run.
         working-directory: src-tauri
         run: cargo check
 
@@ -60,53 +97,6 @@ jobs:
       - name: Cargo test (unit + integration)
         working-directory: src-tauri
         run: cargo test --all-targets
-
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked --quiet
-        # Use locked to pin the audit tool version for reproducibility
-
-      - name: Cargo audit (known-unfixable advisories exempted)
-        # All exemptions are Tauri v2 / WebView2 / wry transitive dependencies
-        # that cannot be updated without a breaking upstream Tauri release.
-        # Acceptance criteria: desktop-only app (not a server), no internet-facing
-        # service, no untrusted user input through the affected code paths.
-        #
-        # Review schedule: re-evaluate each advisory on every Tauri minor/patch
-        # release. Remove an exemption as soon as a patched version is available.
-        #
-        # RUSTSEC-2023-0071 — rsa: Marvin timing attack (RSA decryption)
-        #   Not exploitable: we do not perform RSA decryption operations.
-        # RUSTSEC-2024-0370 — webpki: CPU DoS on crafted TLS cert
-        #   Accepted: internal TLS only; no untrusted TLS cert parsing.
-        # RUSTSEC-2024-0384 — instant: unsound on some platforms (Tauri dep)
-        #   Accepted: desktop app, no safety guarantees violated in practice.
-        # RUSTSEC-2024-0388..0420, 0429 — wry/webkit2gtk/tao advisories
-        #   Blocked on Tauri v2 upstream; tracked in tauri-apps/tauri issues.
-        # RUSTSEC-2025-0075..0100 — newer advisories in transitive deps
-        #   Accepted: same rationale — desktop-only, no server-side attack surface.
-        working-directory: src-tauri
-        run: |
-          cargo audit --file Cargo.lock \
-            --ignore RUSTSEC-2023-0071 \
-            --ignore RUSTSEC-2024-0370 \
-            --ignore RUSTSEC-2024-0384 \
-            --ignore RUSTSEC-2024-0388 \
-            --ignore RUSTSEC-2024-0411 \
-            --ignore RUSTSEC-2024-0412 \
-            --ignore RUSTSEC-2024-0413 \
-            --ignore RUSTSEC-2024-0414 \
-            --ignore RUSTSEC-2024-0415 \
-            --ignore RUSTSEC-2024-0416 \
-            --ignore RUSTSEC-2024-0417 \
-            --ignore RUSTSEC-2024-0418 \
-            --ignore RUSTSEC-2024-0419 \
-            --ignore RUSTSEC-2024-0420 \
-            --ignore RUSTSEC-2024-0429 \
-            --ignore RUSTSEC-2025-0075 \
-            --ignore RUSTSEC-2025-0080 \
-            --ignore RUSTSEC-2025-0081 \
-            --ignore RUSTSEC-2025-0098 \
-            --ignore RUSTSEC-2025-0100
 
   # ────────────────────────────────────────────────────────────────────────────
   # 2. Frontend – type-check / lint / unit tests / npm audit

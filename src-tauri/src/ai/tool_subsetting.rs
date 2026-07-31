@@ -33,7 +33,10 @@ pub fn subset_for_message(
             AppError::Validation(format!("Missing policy descriptor for {}", definition.name))
         })?;
         let keep = descriptor.kind == ToolKind::Read
-            || mutation_domain(&definition.name).is_none_or(|domain| domains.contains(&domain));
+            || match mutation_domain(&definition.name) {
+                None => true,
+                Some(domain) => domains.contains(&domain),
+            };
         if keep {
             selected.push(definition.clone());
         } else {

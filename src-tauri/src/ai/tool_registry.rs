@@ -314,16 +314,15 @@ mod tests {
     #[test]
     fn routine_reversible_mutations_use_risk_based_confirmation() {
         let registry = ToolRegistry::build().unwrap();
-        for name in ["update_product_price"] {
-            let descriptor = registry.get(name).unwrap();
-            assert_eq!(
-                descriptor.confirmation,
-                Confirmation::AutomaticIfActionUndo,
-                "{name}"
-            );
-            assert_eq!(descriptor.undo, UndoPolicy::Action, "{name}");
-            assert_eq!(descriptor.scope, DataScope::BranchMutation);
-        }
+        let name = "update_product_price";
+        let descriptor = registry.get(name).unwrap();
+        assert_eq!(
+            descriptor.confirmation,
+            Confirmation::AutomaticIfActionUndo,
+            "{name}"
+        );
+        assert_eq!(descriptor.undo, UndoPolicy::Action, "{name}");
+        assert_eq!(descriptor.scope, DataScope::BranchMutation);
     }
 
     #[test]

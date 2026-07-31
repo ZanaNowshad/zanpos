@@ -145,8 +145,7 @@ pub(crate) async fn verify_stored_connection(pool: &SqlitePool) -> AppResult<()>
     }
     if !accounts.iter().any(|account| account.id == account_id) {
         return Err(AppError::Validation(
-            "The selected Cloudflare account is no longer available to this connection key."
-                .into(),
+            "The selected Cloudflare account is no longer available to this connection key.".into(),
         ));
     }
     Ok(())

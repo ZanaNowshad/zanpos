@@ -312,7 +312,7 @@ async fn upload_assets(token: &str, account_id: &str, dist: &PathBuf) -> AppResu
         let key = format!("site/{rel}");
         let encoded: String = key
             .split('/')
-            .map(|seg| urlencoding_lite(seg))
+            .map(urlencoding_lite)
             .collect::<Vec<_>>()
             .join("/");
         let resp = client()

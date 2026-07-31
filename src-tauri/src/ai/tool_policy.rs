@@ -526,18 +526,9 @@ mod tests {
 
     #[test]
     fn feature_toggle_values_preserve_fail_closed_defaults() {
-        assert_eq!(
-            feature_toggle_enabled("feature_web_search", None).unwrap(),
-            true
-        );
-        assert_eq!(
-            feature_toggle_enabled("feature_proactive", None).unwrap(),
-            false
-        );
-        assert_eq!(
-            feature_toggle_enabled("feature_insights_engine", None).unwrap(),
-            false
-        );
+        assert!(feature_toggle_enabled("feature_web_search", None).unwrap());
+        assert!(!feature_toggle_enabled("feature_proactive", None).unwrap());
+        assert!(!feature_toggle_enabled("feature_insights_engine", None).unwrap());
         for value in ["1", "true"] {
             assert!(feature_toggle_enabled("feature_web_search", Some(value)).unwrap());
         }

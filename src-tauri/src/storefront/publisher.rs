@@ -200,8 +200,8 @@ impl HttpPublisher {
             .send()
             .await
             .map_err(|e| AppError::Validation(format!("Storefront connection failed: {e}")))?;
-        if !response.status().is_success()
-            && !(accept_not_found && response.status() == reqwest::StatusCode::NOT_FOUND)
+        if !(response.status().is_success()
+            || accept_not_found && response.status() == reqwest::StatusCode::NOT_FOUND)
         {
             return Err(AppError::Validation(format!(
                 "Storefront returned HTTP {}",

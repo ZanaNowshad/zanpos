@@ -128,7 +128,7 @@ mod tests {
             b"",
             &hex64(RFC8032_SIGNATURE_HEX),
         );
-        assert_eq!(verified.expect("verification ran"), true);
+        assert!(verified.expect("verification ran"));
     }
 
     #[test]
@@ -138,7 +138,7 @@ mod tests {
             b"tampered",
             &hex64(RFC8032_SIGNATURE_HEX),
         );
-        assert_eq!(verified.expect("verification ran"), false);
+        assert!(!verified.expect("verification ran"));
     }
 
     /// A build that forgot to replace the placeholder key must verify nothing.

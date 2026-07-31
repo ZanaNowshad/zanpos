@@ -1,7 +1,5 @@
-/// PDF receipt generator — uses printpdf with built-in Helvetica Type1 fonts.
+/// PDF receipt generator — writes a minimal text-only PDF with built-in Helvetica fonts.
 /// No external font files are required.  A5 portrait (148 × 210 mm).
-use printpdf::*;
-use std::io::BufWriter;
 
 // ─── Input types (deserialized from Tauri command) ────────────────────────────
 
@@ -65,24 +63,136 @@ fn ascii(s: &str) -> String {
         .collect()
 }
 
+#[derive(Default)]
+struct ReceiptLayer {
+    stream: String,
+}
+
+#[derive(Clone, Copy)]
+struct Mm(f32);
+
+#[derive(Clone, Copy)]
+enum ReceiptFont {
+    Regular,
+    Bold,
+}
+
+impl ReceiptLayer {
+    fn use_text<T: Into<String>>(&mut self, text: T, size: f32, x: Mm, y: Mm, font: &ReceiptFont) {
+        let font_name = match font {
+            ReceiptFont::Regular => "F1",
+            ReceiptFont::Bold => "F2",
+        };
+        self.stream.push_str(&format!(
+            "BT /{} {:.2} Tf 1 0 0 1 {:.2} {:.2} Tm ({}) Tj ET\n",
+            font_name,
+            size,
+            mm_to_pt(x.0),
+            mm_to_pt(y.0),
+            escape_pdf_text(&text.into())
+        ));
+    }
+
+    fn into_stream(self) -> String {
+        self.stream
+    }
+}
+
+fn mm_to_pt(mm: f32) -> f32 {
+    mm * 72.0 / 25.4
+}
+
+fn escape_pdf_text(s: &str) -> String {
+    s.chars()
+        .flat_map(|c| match c {
+            '\\' => "\\\\".chars().collect::<Vec<_>>(),
+            '(' => "\\(".chars().collect::<Vec<_>>(),
+            ')' => "\\)".chars().collect::<Vec<_>>(),
+            '\r' | '\n' => " ".chars().collect::<Vec<_>>(),
+            c if c.is_ascii() => vec![c],
+            _ => vec!['?'],
+        })
+        .collect()
+}
+
+fn write_pdf_object(out: &mut Vec<u8>, offsets: &mut [usize], id: usize, body: &str) {
+    offsets[id] = out.len();
+    out.extend_from_slice(format!("{id} 0 obj\n{body}\nendobj\n").as_bytes());
+}
+
+fn build_text_pdf(title: &str, width_mm: f32, height_mm: f32, content: &str) -> Vec<u8> {
+    let mut out = b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n".to_vec();
+    let mut offsets = vec![0usize; 8];
+    let escaped_title = escape_pdf_text(title);
+    let content_bytes = content.as_bytes();
+
+    write_pdf_object(
+        &mut out,
+        &mut offsets,
+        1,
+        "<< /Type /Catalog /Pages 2 0 R >>",
+    );
+    write_pdf_object(
+        &mut out,
+        &mut offsets,
+        2,
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    );
+    write_pdf_object(
+        &mut out,
+        &mut offsets,
+        3,
+        &format!(
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {:.2} {:.2}] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>",
+            mm_to_pt(width_mm),
+            mm_to_pt(height_mm)
+        ),
+    );
+    write_pdf_object(
+        &mut out,
+        &mut offsets,
+        4,
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    );
+    write_pdf_object(
+        &mut out,
+        &mut offsets,
+        5,
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>",
+    );
+    offsets[6] = out.len();
+    out.extend_from_slice(
+        format!("6 0 obj\n<< /Length {} >>\nstream\n", content_bytes.len()).as_bytes(),
+    );
+    out.extend_from_slice(content_bytes);
+    out.extend_from_slice(b"endstream\nendobj\n");
+    write_pdf_object(
+        &mut out,
+        &mut offsets,
+        7,
+        &format!("<< /Title ({escaped_title}) /Producer (ZANPOS) >>"),
+    );
+
+    let xref_start = out.len();
+    out.extend_from_slice(b"xref\n0 8\n0000000000 65535 f \n");
+    for offset in offsets.iter().skip(1) {
+        out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(
+        format!("trailer\n<< /Size 8 /Root 1 0 R /Info 7 0 R >>\nstartxref\n{xref_start}\n%%EOF\n")
+            .as_bytes(),
+    );
+    out
+}
+
 // ─── PDF generator ────────────────────────────────────────────────────────────
 
 /// Build an A5 portrait PDF receipt and return the raw bytes.
 pub fn generate_receipt_pdf(inp: &WhatsAppReceiptPdfInput) -> Result<Vec<u8>, String> {
-    let (doc, page1, layer1) = PdfDocument::new(
-        format!("Receipt {}", inp.receipt_number),
-        Mm(148.0_f32),
-        Mm(210.0_f32),
-        "Layer 1",
-    );
-    let layer = doc.get_page(page1).get_layer(layer1);
-
-    let font = doc
-        .add_builtin_font(BuiltinFont::Helvetica)
-        .map_err(|e| format!("Font error: {e}"))?;
-    let font_b = doc
-        .add_builtin_font(BuiltinFont::HelveticaBold)
-        .map_err(|e| format!("Font error: {e}"))?;
+    let title = format!("Receipt {}", inp.receipt_number);
+    let mut layer = ReceiptLayer::default();
+    let font = ReceiptFont::Regular;
+    let font_b = ReceiptFont::Bold;
 
     let mx: f32 = 10.0; // left margin
     let rx: f32 = 108.0; // right column start (amounts)
@@ -377,13 +487,5 @@ pub fn generate_receipt_pdf(inp: &WhatsAppReceiptPdfInput) -> Result<Vec<u8>, St
     }
 
     // ── Serialize ───────────────────────────────────────────────────────────
-    drop(layer);
-    drop(font);
-    drop(font_b);
-
-    let mut buf = BufWriter::new(Vec::new());
-    doc.save(&mut buf)
-        .map_err(|e| format!("PDF save error: {e}"))?;
-    buf.into_inner()
-        .map_err(|e| format!("PDF buffer error: {e}"))
+    Ok(build_text_pdf(&title, 148.0, 210.0, &layer.into_stream()))
 }

@@ -116,7 +116,11 @@ pub async fn finalize_sale(
             .collect()
     };
 
-    for line in &active_lines {
+    // Map from active_lines index → corrected price when the cart line is stale.
+    // The cashier scanned before a price change landed; we silently use the current DB price.
+    let mut price_corrections: Vec<(usize, i64)> = Vec::new();
+
+    for (i, line) in active_lines.iter().enumerate() {
         if line.unit_price_minor <= 0 {
             return Err(AppError::Validation(format!(
                 "Item '{}' has an invalid price ({}). Please re-add it to the cart.",
@@ -126,11 +130,7 @@ pub async fn finalize_sale(
         if let Some(ref product_id) = line.product_id {
             if let Some(&db_p) = db_prices.get(product_id.as_str()) {
                 if line.unit_price_minor != db_p {
-                    return Err(AppError::Validation(format!(
-                        "Price for '{}' has changed (expected {} fils, got {} fils). \
-                         Please re-add the item to the cart.",
-                        line.product_name, db_p, line.unit_price_minor
-                    )));
+                    price_corrections.push((i, db_p));
                 }
             }
         }
@@ -146,9 +146,15 @@ pub async fn finalize_sale(
     let mut server_line_taxes: Vec<i64> = Vec::with_capacity(active_lines.len());
     let mut server_line_totals: Vec<i64> = Vec::with_capacity(active_lines.len());
 
-    for line in &active_lines {
-        let subtotal =
-            crate::domain::money::mul_minor_by_qty(line.unit_price_minor, &line.quantity);
+    let corrected_price: std::collections::HashMap<usize, i64> =
+        price_corrections.into_iter().collect();
+
+    for (i, line) in active_lines.iter().enumerate() {
+        let effective_price = corrected_price
+            .get(&i)
+            .copied()
+            .unwrap_or(line.unit_price_minor);
+        let subtotal = crate::domain::money::mul_minor_by_qty(effective_price, &line.quantity);
         server_gross += subtotal;
         let discounted = (subtotal - line.line_discount_minor).max(0);
         let tax_amount = if line.tax_inclusive {
@@ -253,20 +259,33 @@ pub async fn finalize_sale(
         let item_id = Ulid::new().to_string();
         let line_tax = server_line_taxes[i];
         let line_total = server_line_totals[i];
+        let effective_price = corrected_price
+            .get(&i)
+            .copied()
+            .unwrap_or(line.unit_price_minor);
         let tax_snapshot = serde_json::json!({
             "rule_id": line.tax_rule_id,
             "rate_basis_points": line.tax_rate_basis_points,
             "inclusive": line.tax_inclusive,
         })
         .to_string();
+        let cost_minor_snapshot: Option<i64> = match &line.product_id {
+            Some(product_id) => {
+                sqlx::query_scalar("SELECT cost_minor FROM products WHERE product_id = ?")
+                    .bind(product_id)
+                    .fetch_optional(&mut *tx)
+                    .await?
+            }
+            None => None,
+        };
 
         sqlx::query(
             "INSERT INTO sale_items
              (sale_item_id, sale_id, origin_device_id, product_id, product_name_snapshot, sku_snapshot,
               barcode_snapshot, quantity, unit_price_minor, line_discount_minor,
-              tax_rule_snapshot, tax_amount_minor, line_total_minor, note, voided,
+              tax_rule_snapshot, tax_amount_minor, line_total_minor, cost_minor_snapshot, note, voided,
               created_at, updated_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)",
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)",
         )
         .bind(&item_id)
         .bind(&sale_id)
@@ -276,11 +295,12 @@ pub async fn finalize_sale(
         .bind(&line.sku)
         .bind(&line.barcode)
         .bind(&line.quantity)
-        .bind(line.unit_price_minor)
+        .bind(effective_price)
         .bind(line.line_discount_minor)
         .bind(&tax_snapshot)
         .bind(line_tax)
         .bind(line_total)
+        .bind(cost_minor_snapshot)
         .bind(&line.note)
         .bind(&now)
         .bind(&now)
@@ -290,7 +310,7 @@ pub async fn finalize_sale(
         item_summaries.push(SaleItemSummary {
             product_name: line.product_name.clone(),
             quantity: line.quantity.clone(),
-            unit_price_minor: line.unit_price_minor,
+            unit_price_minor: effective_price,
             line_total_minor: line_total,
             tax_amount_minor: line_tax,
         });
@@ -535,7 +555,7 @@ pub async fn finalize_sale(
     // ── Optional: create delivery order in same transaction ──────────────────
     let delivery_row = if let Some(ref d_input) = delivery {
         let row = delivery_repo::create_delivery_in_tx(
-            &mut *tx,
+            &mut tx,
             &sale_id,
             &receipt_number,
             net,
@@ -552,26 +572,29 @@ pub async fn finalize_sale(
         None
     };
 
-    tx.commit().await?;
-    tracing::info!("Sale finalized: {} ({})", sale_id, receipt_number);
-
-    // Add loyalty points: floor(net_total / 1000) — best-effort, non-fatal
+    // Add loyalty points inside the sale transaction. If this write fails, the
+    // sale must roll back too; otherwise customers can permanently lose points
+    // after a crash or DB error between sale commit and post-commit update.
     if let Some(cid) = customer_id {
         let points = net / 1000;
         if points > 0 {
-            if let Err(e) = sqlx::query(
-                "UPDATE customers SET loyalty_points = loyalty_points + ?, updated_at = ?, sync_status = 'pending' WHERE customer_id = ?",
+            sqlx::query(
+                "UPDATE customers
+                 SET loyalty_points = loyalty_points + ?,
+                     updated_at = ?,
+                     sync_status = 'pending'
+                 WHERE customer_id = ?",
             )
             .bind(points)
             .bind(&now)
             .bind(cid)
-            .execute(pool)
-            .await
-            {
-                tracing::warn!("T06: loyalty update failed for customer {}: {:?}", cid, e);
-            }
+            .execute(&mut *tx)
+            .await?;
         }
     }
+
+    tx.commit().await?;
+    tracing::info!("Sale finalized: {} ({})", sale_id, receipt_number);
 
     // Deduct inventory (after commit; failures don't roll back sale).
     // branch_id and device_id come from the cart — always the real active values.
@@ -786,6 +809,54 @@ mod tests {
         assert_eq!(result.items.len(), 1);
     }
 
+    #[tokio::test]
+    async fn test_finalize_sale_snapshots_product_cost() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+
+        let mut cart = Cart::new(BRANCH.into(), DEVICE.into(), shift_id, CASHIER.into());
+        cart.lines.push(cola_line("2"));
+
+        let payments = vec![PaymentInput {
+            method: "cash".into(),
+            amount_minor: 880,
+            tendered_minor: Some(880),
+            external_reference: None,
+        }];
+
+        let result = finalize_sale(
+            &pool,
+            &cart,
+            payments,
+            "idem-cost-snapshot",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("finalize sale");
+
+        sqlx::query("UPDATE products SET cost_minor = 999 WHERE product_id = ?")
+            .bind("01JPROD00000000000COLA001")
+            .execute(&pool)
+            .await
+            .expect("update current product cost");
+
+        let snapshot: Option<i64> =
+            sqlx::query_scalar("SELECT cost_minor_snapshot FROM sale_items WHERE sale_id = ?")
+                .bind(&result.sale_id)
+                .fetch_one(&pool)
+                .await
+                .expect("sale item cost snapshot");
+
+        assert_eq!(
+            snapshot,
+            Some(100),
+            "sale item must preserve COGS from the moment of sale"
+        );
+    }
+
     // ── 2. Under-payment is rejected before any DB write ─────────────────────
     #[tokio::test]
     async fn test_finalize_sale_underpay_rejected() {
@@ -883,6 +954,72 @@ mod tests {
             matches!(err, AppError::Database(_)),
             "expected Database unique-constraint error, got {err:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_finalize_sale_rolls_back_when_loyalty_update_fails() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+        let customer_id = "01JCUST000000000000000001";
+
+        sqlx::query(
+            "INSERT INTO customers
+             (customer_id, branch_id, origin_device_id, name, loyalty_points, created_at, updated_at, sync_status, sync_attempts)
+             VALUES (?, ?, ?, 'Loyalty Customer', 0, datetime('now'), datetime('now'), 'synced', 0)",
+        )
+        .bind(customer_id)
+        .bind(BRANCH)
+        .bind(DEVICE)
+        .execute(&pool)
+        .await
+        .expect("seed customer");
+
+        sqlx::query(
+            "CREATE TRIGGER fail_loyalty_update
+             BEFORE UPDATE OF loyalty_points ON customers
+             BEGIN
+               SELECT RAISE(FAIL, 'loyalty update blocked');
+             END",
+        )
+        .execute(&pool)
+        .await
+        .expect("create loyalty failure trigger");
+
+        let mut cart = Cart::new(BRANCH.into(), DEVICE.into(), shift_id, CASHIER.into());
+        cart.lines.push(water_line("4")); // 1.000 BHD = 1 loyalty point
+
+        let payments = vec![PaymentInput {
+            method: "cash".into(),
+            amount_minor: 1_000,
+            tendered_minor: Some(1_000),
+            external_reference: None,
+        }];
+
+        let err = finalize_sale(
+            &pool,
+            &cart,
+            payments,
+            "idem-loyalty-rollback",
+            Some(customer_id),
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect_err("loyalty failure must fail the sale transaction");
+
+        assert!(
+            matches!(err, AppError::Database(_)),
+            "expected database error from loyalty trigger, got {err:?}"
+        );
+
+        let sale_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sales WHERE idempotency_key = 'idem-loyalty-rollback'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("sale count");
+        assert_eq!(sale_count, 0, "sale must roll back with loyalty update");
     }
 
     // ── 4. Zero-tax (zero-rated) item: no tax charged ─────────────────────────

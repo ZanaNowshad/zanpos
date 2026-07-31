@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { CashierSummaryRow } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney } from "../money";
 import { reportByCashier } from "../tauri/commands";
+import { useLanguage } from "../hooks/useLanguage";
+import { backOfficeTranslator } from "../i18n/backOfficeStrings";
 
 const EXP = DEVICE.currency_exponent;
 const CUR = DEVICE.currency;
@@ -11,6 +13,8 @@ function fmt(n: number) { return `${CUR} ${formatMoney(n, EXP)}`; }
 function isoDate(d: Date) { return d.toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" }); }
 
 export default function CashierReportTab({ sessionUserId }: { sessionUserId: string }) {
+  const { language } = useLanguage();
+  const t = useMemo(() => backOfficeTranslator(language), [language]);
   const today = isoDate(new Date());
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(today);
@@ -27,7 +31,7 @@ export default function CashierReportTab({ sessionUserId }: { sessionUserId: str
       setRows(data);
       setLoaded(true);
     } catch (e: unknown) {
-      setError(typeof e === "string" ? e : "Failed to load cashier report");
+      setError(typeof e === "string" ? e : t("failedLoadReport"));
     } finally {
       setLoading(false);
     }
@@ -38,41 +42,41 @@ export default function CashierReportTab({ sessionUserId }: { sessionUserId: str
 
   return (
     <div className="tab-content cashier-report-tab">
-      <h3 className="tab-title">Sales by Cashier</h3>
+      <h3 className="tab-title">{t("cashierReport")}</h3>
 
       <div className="report-filters">
-        <label className="field-label">From</label>
+        <label className="field-label">{t("from")}</label>
         <input className="field-input date-input" type="date" value={from} onChange={e => setFrom(e.target.value)} />
-        <label className="field-label">To</label>
+        <label className="field-label">{t("to")}</label>
         <input className="field-input date-input" type="date" value={to} onChange={e => setTo(e.target.value)} />
         <button className="btn-primary" onClick={load} disabled={loading}>
-          {loading ? "Loading…" : "Run Report"}
+          {loading ? t("loading") : t("runReport")}
         </button>
       </div>
 
       {error && <div className="modal-error">{error}</div>}
 
       {loaded && rows.length === 0 && (
-        <div className="report-empty">No sales found for this period.</div>
+        <div className="report-empty">{t("noSalesPeriod")}</div>
       )}
 
       {rows.length > 0 && (
         <>
           <div className="cashier-totals-bar">
-            <span>{totalTx} transactions</span>
-            <span>Total net: {fmt(totalNet)}</span>
+            <span>{t("transactions")}: {totalTx}</span>
+            <span>{t("totalNet")}: {fmt(totalNet)}</span>
           </div>
           <div className="cashier-table-wrapper">
             <table className="report-table">
               <thead>
                 <tr>
-                  <th>Cashier</th>
-                  <th>Tx</th>
-                  <th>Net Sales</th>
-                  <th>Cash</th>
-                  <th>Card</th>
-                  <th>Discounts</th>
-                  <th>Refunds</th>
+                  <th>{t("cashier")}</th>
+                  <th>{t("transactions")}</th>
+                  <th>{t("netSales")}</th>
+                  <th>{t("cash")}</th>
+                  <th>{t("card")}</th>
+                  <th>{t("discounts")}</th>
+                  <th>{t("refunds")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -92,7 +96,7 @@ export default function CashierReportTab({ sessionUserId }: { sessionUserId: str
               </tbody>
               <tfoot>
                 <tr className="report-total-row">
-                  <td>Total</td>
+                  <td>{t("total")}</td>
                   <td className="num-cell">{totalTx}</td>
                   <td className="num-cell">{fmt(totalNet)}</td>
                   <td className="num-cell">{fmt(rows.reduce((s, r) => s + r.cash_total_minor, 0))}</td>

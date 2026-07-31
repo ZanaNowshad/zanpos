@@ -43,11 +43,12 @@ async fn audit_ext(pool: &SqlitePool, event: &str, entity_id: &str, after: &str)
     let _ = sqlx::query(
         "INSERT INTO audit_logs (audit_log_id, event_type, entity_type, entity_id,
          actor_user_id, actor_type, after_json, created_at, hash)
-         VALUES (?, ?, 'ai_mutation', ?, 'AI_ADMIN', 'ai_agent', ?, ?, ?)",
+         VALUES (?, ?, 'ai_mutation', ?, ?, 'ai_agent', ?, ?, ?)",
     )
     .bind(&id)
     .bind(event)
     .bind(entity_id)
+    .bind(crate::ai::tool_policy::current_actor_id().unwrap_or_else(|| "unknown".into()))
     .bind(after)
     .bind(&now)
     .bind(&hash)
@@ -282,9 +283,7 @@ pub async fn dry_run(
             "Update the Benefit/Sadad payment phone number",
             vec![("Number", req(input, "benefit_number")?)],
         )),
-        other => {
-            crate::ai::tools_write_ext2::dry_run(pool, other, input, currency_exp).await
-        }
+        other => crate::ai::tools_write_ext2::dry_run(pool, other, input, currency_exp).await,
     }
 }
 
@@ -296,6 +295,8 @@ pub async fn execute(
     input: &serde_json::Value,
     currency_exp: u32,
 ) -> AppResult<MutationResult> {
+    let actor_id = crate::ai::tool_policy::current_actor_id()
+        .ok_or_else(|| AppError::Permission("Mutation actor context is missing".into()))?;
     match tool_name {
         "create_refund" => {
             let receipt = req(input, "receipt_number")?;
@@ -317,8 +318,8 @@ pub async fn execute(
                 &sale.sale_id,
                 items,
                 &reason,
-                "AI_ADMIN",
-                "AI_ADMIN",
+                &actor_id,
+                &actor_id,
                 true,
             )
             .await?;
@@ -348,19 +349,11 @@ pub async fn execute(
             let note = str(input, "note");
             let amount_minor = money::parse_major_to_minor(&amount_bhd, 3)
                 .ok_or_else(|| AppError::Validation(format!("Invalid BHD amount: {amount_bhd}")))?;
-            let branch: String =
-                sqlx::query_scalar("SELECT branch_id FROM branches WHERE is_active=1 LIMIT 1")
-                    .fetch_one(pool)
-                    .await?;
-            let device: String =
-                sqlx::query_scalar("SELECT device_id FROM devices WHERE is_active=1 LIMIT 1")
-                    .fetch_optional(pool)
-                    .await?
-                    .unwrap_or_default();
+            let (device, branch) = crate::ai::tools::active_device_branch(pool).await?;
             let id = ulid::Ulid::new().to_string();
             let now = chrono::Utc::now().to_rfc3339();
-            sqlx::query("INSERT INTO cash_events (cash_event_id, shift_id, branch_id, device_id, origin_device_id, event_type, amount_minor, note, created_by_user_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,'AI_ADMIN',?,?)")
-                .bind(&id).bind(&shift_id).bind(&branch).bind(&device).bind(&device).bind(&event_type).bind(amount_minor).bind(&note).bind(&now).bind(&now)
+            sqlx::query("INSERT INTO cash_events (cash_event_id, shift_id, branch_id, device_id, origin_device_id, event_type, amount_minor, note, created_by_user_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+                .bind(&id).bind(&shift_id).bind(&branch).bind(&device).bind(&device).bind(&event_type).bind(amount_minor).bind(&note).bind(&actor_id).bind(&now).bind(&now)
                 .execute(pool).await?;
             audit_ext(
                 pool,
@@ -380,15 +373,7 @@ pub async fn execute(
             let cashier_id = req(input, "cashier_user_id")?;
             let opening_bhd = str(input, "opening_cash_bhd");
             let opening_minor = money::parse_major_to_minor(&opening_bhd, 3).unwrap_or(0);
-            let branch: String =
-                sqlx::query_scalar("SELECT branch_id FROM branches WHERE is_active=1 LIMIT 1")
-                    .fetch_one(pool)
-                    .await?;
-            let device: String =
-                sqlx::query_scalar("SELECT device_id FROM devices WHERE is_active=1 LIMIT 1")
-                    .fetch_optional(pool)
-                    .await?
-                    .unwrap_or_default();
+            let (device, branch) = crate::ai::tools::active_device_branch(pool).await?;
             let existing: Option<String> = sqlx::query_scalar(
                 "SELECT shift_id FROM shifts WHERE device_id=? AND status='open'",
             )
@@ -509,7 +494,7 @@ pub async fn execute(
                 pool,
                 &RevertPaymentInput {
                     delivery_id: delivery_id.clone(),
-                    actor_user_id: "AI_ADMIN".into(),
+                    actor_user_id: actor_id.clone(),
                     reason: if reason.is_empty() {
                         None
                     } else {
@@ -534,19 +519,17 @@ pub async fn execute(
 
         "update_branch_settings" => {
             let now = chrono::Utc::now().to_rfc3339();
-            sqlx::query("UPDATE branches SET name=COALESCE(NULLIF(?,  ''), name), timezone=COALESCE(NULLIF(?,  ''), timezone), address=COALESCE(NULLIF(?,''),address), phone=COALESCE(NULLIF(?,''),phone), receipt_header=COALESCE(NULLIF(?,''),receipt_header), receipt_footer=COALESCE(NULLIF(?,''),receipt_footer), tax_number=COALESCE(NULLIF(?,''),tax_number), cr_number=COALESCE(NULLIF(?,''),cr_number), updated_at=? WHERE is_active=1")
+            let branch_id = crate::ai::tools::active_branch_id(pool).await?;
+            sqlx::query("UPDATE branches SET name=COALESCE(NULLIF(?,  ''), name), timezone=COALESCE(NULLIF(?,  ''), timezone), address=COALESCE(NULLIF(?,''),address), phone=COALESCE(NULLIF(?,''),phone), receipt_header=COALESCE(NULLIF(?,''),receipt_header), receipt_footer=COALESCE(NULLIF(?,''),receipt_footer), tax_number=COALESCE(NULLIF(?,''),tax_number), cr_number=COALESCE(NULLIF(?,''),cr_number), updated_at=? WHERE branch_id=?")
                 .bind(str(input,"name")).bind(str(input,"timezone")).bind(str(input,"address")).bind(str(input,"phone"))
                 .bind(str(input,"receipt_header")).bind(str(input,"receipt_footer")).bind(str(input,"tax_number")).bind(str(input,"cr_number"))
-                .bind(&now).execute(pool).await?;
+                .bind(&now).bind(&branch_id).execute(pool).await?;
             audit_ext(pool, "branch_updated", "branch", &input.to_string()).await;
             ok_mut("Branch settings updated.", "branch", "active")
         }
 
         "register_device" => {
-            let branch: String =
-                sqlx::query_scalar("SELECT branch_id FROM branches WHERE is_active=1 LIMIT 1")
-                    .fetch_one(pool)
-                    .await?;
+            let branch = crate::ai::tools::active_branch_id(pool).await?;
             let code = req(input, "device_code")?;
             let name = req(input, "name")?;
             let id = ulid::Ulid::new().to_string();
@@ -690,8 +673,10 @@ pub async fn execute(
 
         "reprint_receipt" => {
             let receipt = req(input, "receipt_number")?;
+            let branch_id = crate::ai::tools::active_branch_id(pool).await?;
             let store_name: String =
-                sqlx::query_scalar("SELECT name FROM branches WHERE is_active=1 LIMIT 1")
+                sqlx::query_scalar("SELECT name FROM branches WHERE branch_id=? AND is_active=1")
+                    .bind(&branch_id)
                     .fetch_optional(pool)
                     .await?
                     .flatten()
@@ -763,8 +748,6 @@ pub async fn execute(
             )
         }
 
-        other => {
-            crate::ai::tools_write_ext2::execute(pool, other, input, currency_exp).await
-        }
+        other => crate::ai::tools_write_ext2::execute(pool, other, input, currency_exp).await,
     }
 }

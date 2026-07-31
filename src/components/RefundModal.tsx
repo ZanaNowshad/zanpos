@@ -1,21 +1,26 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { CheckCircle2, FileSearch, ListChecks, RefreshCcw, X } from "lucide-react";
 import type { SaleForRefund, SaleItemForRefund, SaleListRow, RefundResult } from "../types";
 import { DEVICE } from "../types";
 import { refundGetSale, refundCreate, reportSalesList, authValidateManagerPin } from "../tauri/commands";
 import { formatMoney } from "../money";
+import { useLanguage } from "../hooks/useLanguage";
+import { modalTranslator, ownedModalLabel } from "../i18n/modalStrings";
+import { detailTranslator } from "../i18n/detailStrings";
+
+const REASON_CODE_LABELS: Record<string, string> = {
+  customer_return: "Customer return / changed mind",
+  defective: "Defective / damaged",
+  wrong_item: "Wrong item delivered",
+  exchange: "Exchange",
+  other: "Other",
+};
 
 interface Props {
   cashierUserId: string;
   onClose: () => void;
+  onExchangeStarted?: (exchange: { refund: RefundResult; creditMinor: number; originalReceipt: string }) => void;
 }
-
-const REASON_CODE_LABELS: Record<string, string> = {
-  customer_return: "Customer return / changed mind",
-  defective:       "Defective / damaged",
-  wrong_item:      "Wrong item delivered",
-  exchange:        "Exchange",
-  other:           "Other",
-};
 
 /** Quantity map: sale_item_id → how many units to refund (0 = skip). */
 type QtyMap = Map<string, number>;
@@ -29,12 +34,17 @@ function initQtyMap(items: SaleItemForRefund[]): QtyMap {
 }
 
 type RefundMode = "receipt" | "browse";
+type ReturnAction = "refund" | "exchange";
 
 function todayStr() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" });
 }
 
-export default function RefundModal({ cashierUserId, onClose }: Props) {
+export default function RefundModal({ cashierUserId, onClose, onExchangeStarted }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => modalTranslator(language), [language]);
+  const dt = useMemo(() => detailTranslator(language), [language]);
+  const [returnAction, setReturnAction] = useState<ReturnAction>("refund");
   const [mode, setMode]               = useState<RefundMode>("receipt");
   const [receiptInput, setReceiptInput] = useState("");
   const [sale, setSale]               = useState<SaleForRefund | null>(null);
@@ -69,9 +79,9 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
       setSale(found);
       setRefundQtys(initQtyMap(found.items));
     } catch (e: unknown) {
-      const msg = typeof e === "string" ? e : "Receipt not found";
+      const msg = typeof e === "string" ? e : dt("receiptNotFound");
       setError(msg.toLowerCase().includes("not permitted") || msg.toLowerCase().includes("permission")
-        ? "Only managers and owners can look up receipts."
+        ? dt("receiptLookupPermission")
         : msg);
     } finally {
       setSearching(false);
@@ -88,7 +98,7 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
       const page = await reportSalesList(cashierUserId, DEVICE.branch_id, d, d);
       setSalesList(page.items.filter(r => r.status !== "voided"));
     } catch (e: unknown) {
-      setError(typeof e === "string" ? e : "Failed to load sales");
+      setError(typeof e === "string" ? e : dt("failedLoadSales"));
     } finally {
       setListLoading(false);
     }
@@ -109,9 +119,9 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
       setSale(found);
       setRefundQtys(initQtyMap(found.items));
     } catch (e: unknown) {
-      const msg = typeof e === "string" ? e : "Failed to load sale";
+      const msg = typeof e === "string" ? e : dt("failedLoadSale");
       setError(msg.toLowerCase().includes("not permitted") || msg.toLowerCase().includes("permission")
-        ? "Only managers and owners can look up receipts."
+        ? dt("receiptLookupPermission")
         : msg);
     } finally {
       setSearching(false);
@@ -159,7 +169,7 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
     return sum + lineRefundAmount(item, qty);
   }, 0);
 
-  const handleConfirm = async (immediateToken?: string) => {
+  const handleConfirm = async (immediateToken?: string, asExchange = false) => {
     if (!sale || selectedItems.length === 0) return;
     setSubmitting(true);
     setError(null);
@@ -177,23 +187,27 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
       const refund = await refundCreate(
         sale.sale_id,
         items,
-        reason || REASON_CODE_LABELS[reasonCode] || "Customer return",
+        reason || REASON_CODE_LABELS[asExchange ? "exchange" : reasonCode] || "Customer return",
         cashierUserId,
-        reasonCode,
+        asExchange ? "exchange" : reasonCode,
         // FIX: use immediateToken directly — React state (overrideToken) is not yet
         // updated when handleConfirm is called from handlePinSubmit in the same tick
         (immediateToken ?? overrideToken) ?? undefined,
       );
+      if (asExchange && onExchangeStarted) {
+        onExchangeStarted({ refund, creditMinor: refundTotal, originalReceipt: sale.receipt_number });
+        return;
+      }
       setResult(refund);
       setOverrideToken(null);
     } catch (e: unknown) {
-      const msg = typeof e === "string" ? e : "Refund failed";
+      const msg = typeof e === "string" ? e : dt("refundFailed");
       if (msg.toLowerCase().includes("manager override") || msg.toLowerCase().includes("manager pin")) {
         setShowPinEntry(true);
         setManagerPin("");
         setPinError(null);
       } else if (msg.toLowerCase().includes("not permitted") || msg.toLowerCase().includes("permission")) {
-        setError("Only managers and owners can process refunds.");
+        setError(dt("refundPermission"));
       } else {
         setError(msg);
       }
@@ -215,10 +229,10 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
       // overrideToken is still null in the closure until next render.
       // Also: await ensures pinLoading stays true until refund completes (prevents
       // double-submit by re-enabling the Authorise button prematurely).
-      await handleConfirm(token);
+      await handleConfirm(token, returnAction === "exchange");
     } catch (e: unknown) {
-      const msg = typeof e === "string" ? e : "Invalid PIN";
-      setPinError(msg.includes("Invalid") || msg.includes("Permission") ? "Invalid manager PIN" : msg);
+      const msg = typeof e === "string" ? e : dt("invalidPin");
+      setPinError(msg.includes("Invalid") || msg.includes("Permission") ? dt("invalidManagerPin") : msg);
     } finally {
       setPinLoading(false);
     }
@@ -230,12 +244,12 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
         <div className="modal refund-modal">
           <div className="refund-success">
             <div className="refund-success-icon">✓</div>
-            <h2>Refund Complete</h2>
+            <h2>{t("refundComplete")}</h2>
             <div className="refund-receipt-num">{result.refund_receipt_number}</div>
             <div className="refund-amount">
               {DEVICE.currency} {formatMoney(result.refund_total_minor, DEVICE.currency_exponent)}
             </div>
-            <button className="modal-btn-primary" onClick={onClose}>Done</button>
+            <button className="modal-btn-primary" onClick={onClose}>{t("done")}</button>
           </div>
         </div>
       </div>
@@ -246,8 +260,23 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal refund-modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <h2 className="modal-title">Refund</h2>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <h2 className="modal-title">{t("refund")}</h2>
+          <button className="modal-close" onClick={onClose} aria-label={t("close")}><X size={18} /></button>
+        </div>
+
+        <div className="refund-action-tabs" aria-label={t("returnAction")}>
+          <button
+            className={`refund-action-tab ${returnAction === "refund" ? "refund-action-tab-active" : ""}`}
+            onClick={() => setReturnAction("refund")}
+          >
+            <RefreshCcw size={15} /> {t("refund")}
+          </button>
+          <button
+            className={`refund-action-tab ${returnAction === "exchange" ? "refund-action-tab-active" : ""}`}
+            onClick={() => { setReturnAction("exchange"); setReasonCode("exchange"); }}
+          >
+            <CheckCircle2 size={15} /> {t("exchange")}
+          </button>
         </div>
 
         {/* Mode selector */}
@@ -255,25 +284,25 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
           <button
             className={`refund-mode-tab ${mode === "receipt" ? "refund-mode-tab-active" : ""}`}
             onClick={() => switchMode("receipt")}
-          >🧾 By Receipt</button>
+          ><FileSearch size={15} /> {t("byReceipt")}</button>
           <button
             className={`refund-mode-tab ${mode === "browse" ? "refund-mode-tab-active" : ""}`}
             onClick={() => switchMode("browse")}
-          >📋 Browse Sales</button>
+          ><ListChecks size={15} /> {t("browseSales")}</button>
         </div>
 
         {mode === "receipt" && (
           <div className="refund-search">
             <input
               className="field-input"
-              placeholder="Receipt number (e.g. MAIN-POS01-00000001)"
+              placeholder={t("receiptNumberExample")}
               value={receiptInput}
               onChange={e => setReceiptInput(e.target.value)}
               onKeyDown={e => e.key === "Enter" && handleSearch()}
               autoFocus
             />
             <button className="modal-btn-secondary" onClick={handleSearch} disabled={searching}>
-              {searching ? "…" : "Search"}
+              {searching ? "…" : t("search")}
             </button>
           </div>
         )}
@@ -281,7 +310,7 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
         {mode === "browse" && !sale && (
           <div className="refund-browse-section">
             <div className="refund-browse-header">
-              <label>Date:</label>
+              <label>{t("date")}:</label>
               <input
                 className="field-input refund-browse-date"
                 type="date"
@@ -289,7 +318,7 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
                 onChange={e => handleBrowseDateChange(e.target.value)}
               />
             </div>
-            {listLoading && <div className="refund-browse-loading">Loading…</div>}
+            {listLoading && <div className="refund-browse-loading">{t("loading")}</div>}
             <div className="refund-browse-list">
               {salesList.map(row => (
                 <button
@@ -312,14 +341,14 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
                 <div className="refund-browse-empty">No refundable sales for {browseDate}</div>
               )}
             </div>
-            {searching && <div className="refund-browse-loading">Loading sale…</div>}
+            {searching && <div className="refund-browse-loading">{t("loading")}</div>}
           </div>
         )}
 
         {mode === "browse" && sale && (
           <div className="refund-browse-back">
             <button className="modal-btn-secondary" onClick={() => { setSale(null); setRefundQtys(new Map()); }}>
-              ← Back to list
+              <span className="icon-directional" aria-hidden="true">←</span> Back to list
             </button>
             <span className="refund-receipt">{sale.receipt_number}</span>
           </div>
@@ -332,7 +361,7 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
             <div className="refund-sale-info">
               <span className="refund-receipt">{sale.receipt_number}</span>
               <span className="refund-cashier">{sale.cashier_name}</span>
-              <span className={`refund-status refund-status-${sale.status}`}>{sale.status}</span>
+              <span className={`refund-status refund-status-${sale.status}`}>{ownedModalLabel(language, sale.status)}</span>
             </div>
 
             {isCrossDevice && (
@@ -393,33 +422,38 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
               className="field-input refund-reason-select"
               value={reasonCode}
               onChange={e => setReasonCode(e.target.value)}
+              disabled={returnAction === "exchange"}
             >
-              {Object.entries(REASON_CODE_LABELS).map(([code, label]) => (
-                <option key={code} value={code}>{label}</option>
+              {["customer_return", "defective", "wrong_item", "exchange", "other"].map(code => (
+                <option key={code} value={code}>{ownedModalLabel(language, code)}</option>
               ))}
             </select>
 
             <input
               className="field-input"
-              placeholder="Additional notes (optional)"
+              placeholder={t("additionalNotes")}
               value={reason}
               onChange={e => setReason(e.target.value)}
             />
 
             <div className="refund-footer">
               <div className="refund-total-line">
-                Refund total: <strong>
-                  {DEVICE.currency} {formatMoney(refundTotal, DEVICE.currency_exponent)}
-                </strong>
+                {returnAction === "exchange" ? dt("exchangeCredit") : dt("refundTotal")}:{" "}
+                <strong>{DEVICE.currency} {formatMoney(refundTotal, DEVICE.currency_exponent)}</strong>
+                {returnAction === "exchange" && (
+                  <span className="refund-exchange-hint">{t("scanReplacementItems")}</span>
+                )}
               </div>
               <button
-                className="modal-btn-danger"
-                onClick={() => handleConfirm()}
+                className={returnAction === "exchange" ? "modal-btn-primary" : "modal-btn-danger"}
+                onClick={() => handleConfirm(undefined, returnAction === "exchange")}
                 disabled={submitting || selectedItems.length === 0}
               >
                 {submitting
-                  ? "Processing…"
-                  : `Refund ${selectedItems.length} line${selectedItems.length !== 1 ? "s" : ""}`}
+                  ? t("processing")
+                  : returnAction === "exchange"
+                    ? `Start exchange (${selectedItems.length})`
+                    : `Refund ${selectedItems.length} line${selectedItems.length !== 1 ? "s" : ""}`}
               </button>
             </div>
           </>
@@ -428,8 +462,8 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
           <div className="modal-overlay pin-overlay" onClick={() => setShowPinEntry(false)}>
             <div className="modal pin-modal" onClick={e => e.stopPropagation()}>
               <div className="modal-header">
-                <h3>Manager Override Required</h3>
-                <button className="modal-close" onClick={() => setShowPinEntry(false)}>✕</button>
+                <h3>{t("managerOverrideRequired")}</h3>
+                <button className="modal-close" onClick={() => setShowPinEntry(false)} aria-label={t("close")}><X size={18} /></button>
               </div>
               <p className="pin-explain">
                 Cross-device refunds require a manager or owner to authorise.
@@ -440,7 +474,7 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
                 type="password"
                 inputMode="numeric"
                 maxLength={6}
-                placeholder="Manager PIN"
+                placeholder={t("managerPin")}
                 value={managerPin}
                 onChange={e => setManagerPin(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && handlePinSubmit()}
@@ -448,9 +482,9 @@ export default function RefundModal({ cashierUserId, onClose }: Props) {
               />
               {pinError && <div className="modal-error">{pinError}</div>}
               <div className="pin-actions">
-                <button className="modal-btn-secondary" onClick={() => setShowPinEntry(false)}>Cancel</button>
+                <button className="modal-btn-secondary" onClick={() => setShowPinEntry(false)}>{t("cancel")}</button>
                 <button className="modal-btn-primary" onClick={handlePinSubmit} disabled={pinLoading || !managerPin.trim()}>
-                  {pinLoading ? "Verifying…" : "Authorise"}
+                  {pinLoading ? t("verifying") : t("authorise")}
                 </button>
               </div>
             </div>

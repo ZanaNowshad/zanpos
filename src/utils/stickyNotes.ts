@@ -50,11 +50,20 @@ export function formatReminderTime(ts: number): string {
   });
 }
 
+/** Format a Date for datetime-local without converting it to UTC. */
+export function toLocalDateTimeInput(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+export function tomorrowMorningInput(from: Date): string {
+  const next = new Date(from);
+  next.setDate(next.getDate() + 1);
+  next.setHours(9, 0, 0, 0);
+  return toLocalDateTimeInput(next);
+}
+
 /** Default datetime-local string: tomorrow at 09:00. */
 export function defaultReminderInput(): string {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  d.setHours(9, 0, 0, 0);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T09:00`;
+  return tomorrowMorningInput(new Date());
 }

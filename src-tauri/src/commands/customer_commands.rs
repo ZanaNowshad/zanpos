@@ -1,4 +1,4 @@
-use crate::commands::rbac;
+use crate::commands::{rbac, sync_commands};
 use crate::db::repositories::audit_hash;
 use crate::errors::{AppError, AppResult};
 use crate::AppState;
@@ -66,6 +66,13 @@ fn map_row(r: &sqlx::sqlite::SqliteRow) -> CustomerRow {
         created_at: r.get("created_at"),
         notes: r.get("notes"),
     }
+}
+
+fn clean_optional_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 // ─── Commands ─────────────────────────────────────────────────────────────────
@@ -137,6 +144,9 @@ pub async fn customer_create(
             }
         }
     }
+    let phone = clean_optional_text(input.phone.as_deref());
+    let email = clean_optional_text(input.email.as_deref());
+    let notes = clean_optional_text(input.notes.as_deref());
 
     let branch_id = active_branch_id(&state).await?;
     let customer_id = Ulid::new().to_string();
@@ -159,11 +169,11 @@ pub async fn customer_create(
     .bind(&branch_id)
     .bind(&device_id)
     .bind(input.name.trim())
-    .bind(input.phone.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()))
-    .bind(input.email.as_deref().filter(|s| !s.is_empty()))
+    .bind(phone.as_deref())
+    .bind(email.as_deref())
     .bind(&now)
     .bind(&now)
-    .bind(input.notes.as_deref().filter(|s| !s.is_empty()))
+    .bind(notes.as_deref())
     .execute(&state.db)
     .await
     .map_err(|e| {
@@ -192,7 +202,7 @@ pub async fn customer_create(
     // F-LOW-04: audit trail records who created the customer
     let after = serde_json::json!({
         "customer_id": customer_id, "name": input.name.trim(),
-        "phone": input.phone, "email": input.email,
+        "phone": phone, "email": email,
     })
     .to_string();
     if let Err(e) = audit_hash::insert_audit_entry(
@@ -213,6 +223,7 @@ pub async fn customer_create(
         tracing::error!("AUDIT WRITE FAILED [CUSTOMER_CREATED]: {:?}", e);
     }
 
+    sync_commands::schedule_immediate_sync(&state);
     Ok(map_row(&row))
 }
 
@@ -250,6 +261,9 @@ pub async fn customer_update(
             }
         }
     }
+    let phone = clean_optional_text(input.phone.as_deref());
+    let email = clean_optional_text(input.email.as_deref());
+    let notes = clean_optional_text(input.notes.as_deref());
 
     // Fetch existing customer for audit before-state and branch/device info
     let existing = sqlx::query(
@@ -278,15 +292,9 @@ pub async fn customer_update(
          WHERE customer_id=?",
     )
     .bind(&name)
-    .bind(
-        input
-            .phone
-            .as_deref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty()),
-    )
-    .bind(input.email.as_deref().filter(|s| !s.is_empty()))
-    .bind(input.notes.as_deref().filter(|s| !s.is_empty()))
+    .bind(phone.as_deref())
+    .bind(email.as_deref())
+    .bind(notes.as_deref())
     .bind(&now)
     .bind(&input.customer_id)
     .execute(&state.db)
@@ -320,9 +328,9 @@ pub async fn customer_update(
     let after = serde_json::json!({
         "customer_id": input.customer_id,
         "name": input.name.trim(),
-        "phone": input.phone.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()),
-        "email": input.email.as_deref().filter(|s| !s.is_empty()),
-        "notes": input.notes.as_deref().filter(|s| !s.is_empty()),
+        "phone": phone,
+        "email": email,
+        "notes": notes,
     })
     .to_string();
     if let Err(e) = audit_hash::insert_audit_entry(
@@ -343,6 +351,7 @@ pub async fn customer_update(
         tracing::error!("AUDIT WRITE FAILED [CUSTOMER_UPDATED]: {:?}", e);
     }
 
+    sync_commands::schedule_immediate_sync(&state);
     Ok(customer)
 }
 
@@ -451,5 +460,21 @@ pub async fn customer_add_loyalty(
         tracing::error!("AUDIT WRITE FAILED [CUSTOMER_LOYALTY_ADJUSTED]: {:?}", e);
     }
 
+    sync_commands::schedule_immediate_sync(&state);
     Ok(new_total)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clean_optional_text;
+
+    #[test]
+    fn clean_optional_text_trims_and_nulls_blanks() {
+        assert_eq!(
+            clean_optional_text(Some("  +97333112233  ")).as_deref(),
+            Some("+97333112233")
+        );
+        assert_eq!(clean_optional_text(Some("   ")), None);
+        assert_eq!(clean_optional_text(None), None);
+    }
 }

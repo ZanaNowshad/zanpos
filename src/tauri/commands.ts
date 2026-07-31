@@ -3,7 +3,6 @@ import type {
   AdminProduct,
   AdminUserRow,
   AiChatInput,
-  AiChatResponse,
   AppConfig,
   BranchSettings,
   BusinessFlags,
@@ -19,9 +18,17 @@ import type {
   ExecuteActionInput,
   ExecuteActionResult,
   HeldCartSummary,
+  HubTruthCompareResult,
+  MarginSummary,
   PaymentInput,
+  ProductMarginRow,
   ProductBarcodeRow,
   ProductWithPrice,
+  PurchaseOrderCreateInput,
+  PurchaseOrderDetail,
+  PurchaseOrderRow,
+  ReceivePurchaseOrderInput,
+  ReceivePurchaseOrderResult,
   ProviderConfig,
   RangeSummary,
   RefundItemInput,
@@ -34,6 +41,10 @@ import type {
   Shift,
   StockLevel,
   StockMovementRow,
+  SupplierRow,
+  SupplierUpsertInput,
+  SyncConflictRow,
+  StockDriftRow,
   SyncQueueItem,
   SyncDiagnostics,
   SyncTableStats,
@@ -41,6 +52,7 @@ import type {
   TaxRuleRow,
   ThermalConfig,
   TodaySummary,
+  ReprintQueueEntry,
   TopProduct,
   UndoActionResult,
   AiChatMessage,
@@ -73,8 +85,24 @@ import type {
   ChatMessage,
   ProductPrefill,
   ResolveResult,
+  DuplicateGroup,
+  DiagnosticReport,
+  HealthFixResult,
+  SystemHealthReport,
+  WaContact,
+  WaGroup,
+  WaTargets,
+  WaMessage,
+  WaMedia,
+  WaOrder,
+  WaOrderMatch,
+  PaymentConfirmation,
+  CatalogImportProposal,
+  CatalogApplyInput,
+  CatalogApplyResult,
   HubStatus,
   HubTestResult,
+  StartupComponentStatus,
 } from "../types";
 
 // ─── Setup & Settings commands ────────────────────────────────────────────────
@@ -102,9 +130,23 @@ export interface PullSummary {
   ok: boolean;
   rows_pulled: number;
   error: string | null;
+  products: number;
+  categories: number;
+  product_barcodes: number;
+  product_prices: number;
+  users: number;
+  devices: number;
+  stock_levels: number;
+  suppliers: number;
+  settings: number;
+  pending_sync: number;
+  consistency_score: number;
+  schema_match: boolean;
+  hub_truth_ok: boolean;
+  mismatched_tables: string[];
 }
 
-/** Blocking initial catalog pull called after joinStore succeeds. */
+/** Blocking initial store-data pull called after joining a hub store. */
 export const setupPullCatalog = (): Promise<PullSummary> =>
   invoke("setup_pull_catalog");
 
@@ -135,13 +177,40 @@ export const businessFlagsSave = (
 ): Promise<void> =>
   invoke("business_flags_save", { input: { flags, actor_user_id } });
 
+// ─── Operational settings ──────────────────────────────────────────────────────
+
+export const operationalSettingsLoad = (): Promise<import("../types").OperationalSettings> =>
+  invoke("operational_settings_load");
+
+export const operationalSettingsSave = (
+  settings: import("../types").OperationalSettings,
+  actor_user_id: string,
+): Promise<void> =>
+  invoke("operational_settings_save", { input: { settings, actor_user_id } });
+
+// ─── Onboarding wizard progress (resumable) ──────────────────────────────────
+
+export interface OnboardingStepRow {
+  step: string;
+  completed_at: string;
+}
+
+export const onboardingGetState = (): Promise<OnboardingStepRow[]> =>
+  invoke("onboarding_get_state");
+
+export const onboardingMarkStep = (step: string, actorUserId: string): Promise<void> =>
+  invoke("onboarding_mark_step", { step, actorUserId });
+
 // ─── Auth commands ────────────────────────────────────────────────────────────
 
-export const authListUsers = (actorUserId?: string): Promise<UserSummary[]> =>
-  invoke("auth_list_users", { actorUserId });
+export const authListUsers = (): Promise<UserSummary[]> =>
+  invoke("auth_list_users");
 
 export const authLoginPin = (username: string, pin: string): Promise<SessionUser> =>
   invoke("auth_login_pin", { input: { username, pin } });
+
+export const authLogout = (sessionToken: string): Promise<void> =>
+  invoke("auth_logout", { sessionToken });
 
 // ─── Shift commands ───────────────────────────────────────────────────────────
 
@@ -211,11 +280,12 @@ export const posRemoveLine = (cart: Cart, cart_line_id: string): Promise<Cart> =
 export const posFinalizeSale = (
   cart: Cart,
   payments: PaymentInput[],
-  idempotency_key?: string,
+  idempotency_key: string = crypto.randomUUID(),
   customer_id?: string,
   delivery?: import("../types").DeliveryInput,
-): Promise<SaleResult> =>
-  invoke("pos_finalize_sale", { input: { cart, payments, idempotency_key, customer_id, delivery } });
+): Promise<SaleResult> => {
+  return invoke("pos_finalize_sale", { input: { cart, payments, idempotency_key, customer_id, delivery } });
+};
 
 export const posApplyBillDiscount = (cart: Cart, discount_minor: number, reason: string, authorized_by_user_id: string): Promise<Cart> =>
   invoke("pos_apply_bill_discount", { input: { cart, discount_minor, reason, authorized_by_user_id } });
@@ -326,6 +396,44 @@ export const reportDateRange = (actor_user_id: string, branch_id: string, from_d
 export const reportTopProducts = (actor_user_id: string, branch_id: string, from_date: string, to_date: string): Promise<TopProduct[]> =>
   invoke("report_top_products", { actorUserId: actor_user_id, branchId: branch_id, fromDate: from_date, toDate: to_date });
 
+export const reportMargin = (actor_user_id: string, branch_id: string, from_date: string, to_date: string): Promise<MarginSummary> =>
+  invoke("report_margin", { actorUserId: actor_user_id, branchId: branch_id, fromDate: from_date, toDate: to_date });
+
+export const reportProductMargin = (
+  actor_user_id: string,
+  branch_id: string,
+  from_date: string,
+  to_date: string,
+  limit = 50,
+): Promise<ProductMarginRow[]> =>
+  invoke("report_product_margin", { actorUserId: actor_user_id, branchId: branch_id, fromDate: from_date, toDate: to_date, limit });
+
+// ─── Purchasing commands ─────────────────────────────────────────────────────
+
+export const supplierList = (actorUserId: string): Promise<SupplierRow[]> =>
+  invoke("supplier_list", { actorUserId });
+
+export const supplierUpsert = (actorUserId: string, input: SupplierUpsertInput): Promise<SupplierRow> =>
+  invoke("supplier_upsert", { actorUserId, input });
+
+export const supplierDelete = (actorUserId: string, supplierId: string): Promise<void> =>
+  invoke("supplier_delete", { actorUserId, supplierId });
+
+export const poList = (actorUserId: string, status?: string): Promise<PurchaseOrderRow[]> =>
+  invoke("po_list", { actorUserId, status: status ?? null });
+
+export const poGet = (actorUserId: string, poId: string): Promise<PurchaseOrderDetail> =>
+  invoke("po_get", { actorUserId, poId });
+
+export const poCreate = (actorUserId: string, input: PurchaseOrderCreateInput): Promise<PurchaseOrderDetail> =>
+  invoke("po_create", { actorUserId, input });
+
+export const poReceive = (input: ReceivePurchaseOrderInput): Promise<ReceivePurchaseOrderResult> =>
+  invoke("po_receive", { input });
+
+export const poCancel = (actorUserId: string, poId: string): Promise<void> =>
+  invoke("po_cancel", { actorUserId, poId });
+
 /** Fetch paginated sales list. Returns total count alongside items so callers
  *  can detect truncation and implement paging (F-BIZ-002 / F-INT-001).
  *  Defaults: limit=200, offset=0 (backwards-compatible). */
@@ -378,98 +486,163 @@ export const hubSetUrl = (actorUserId: string, hubUrl: string): Promise<HubStatu
 
 // ─── AI Admin — provider management ──────────────────────────────────────────
 
-export const adminGetProviderConfig = (actorUserId: string): Promise<ProviderConfig> =>
-  invoke("admin_get_provider_config", { actorUserId });
+export const adminGetProviderConfig = (sessionToken: string): Promise<ProviderConfig> =>
+  invoke("admin_get_provider_config", { sessionToken });
 
-export const adminSetAnthropic = (actorUserId: string, apiKey: string): Promise<void> =>
-  invoke("admin_set_anthropic", { actorUserId, apiKey });
+export const adminSetAnthropic = (sessionToken: string, apiKey: string): Promise<void> =>
+  invoke("admin_set_anthropic", { sessionToken, apiKey });
 
 export const adminValidateOpenai = (
-  actorUserId: string,
+  sessionToken: string,
   baseUrl: string,
   apiKey: string
 ): Promise<ValidateProviderResult> =>
-  invoke("admin_validate_openai", { actorUserId, baseUrl, apiKey });
+  invoke("admin_validate_openai", { sessionToken, baseUrl, apiKey });
 
 export const adminSetOpenai = (
-  actorUserId: string,
+  sessionToken: string,
   baseUrl: string,
   apiKey: string,
   model: string
 ): Promise<void> =>
-  invoke("admin_set_openai", { actorUserId, baseUrl, apiKey, model });
+  invoke("admin_set_openai", { sessionToken, baseUrl, apiKey, model });
 
 // Google Gemini (OpenAI-compatible endpoint; base URL is fixed server-side)
-export const adminValidateGemini = (actorUserId: string, apiKey: string): Promise<ValidateProviderResult> =>
-  invoke("admin_validate_gemini", { actorUserId, apiKey });
+export const adminValidateGemini = (sessionToken: string, apiKey: string): Promise<ValidateProviderResult> =>
+  invoke("admin_validate_gemini", { sessionToken, apiKey });
 
 export const adminSetGemini = (
-  actorUserId: string,
+  sessionToken: string,
   apiKey: string,
   model: string
 ): Promise<void> =>
-  invoke("admin_set_gemini", { actorUserId, apiKey, model });
+  invoke("admin_set_gemini", { sessionToken, apiKey, model });
 
-// Legacy — kept for compat
-export const adminGetApiKeySet = (actorUserId: string): Promise<boolean> =>
-  invoke("admin_get_api_key_set", { actorUserId });
+export const adminDeleteProvider = (sessionToken: string): Promise<void> =>
+  invoke("admin_delete_provider", { sessionToken });
 
-export const adminSetApiKey = (actorUserId: string, key: string): Promise<void> =>
-  invoke("admin_set_api_key", { actorUserId, key });
+export const adminGetAiConfig = (sessionToken: string): Promise<import("../types").AiConfigPayload> =>
+  invoke("admin_get_ai_config", { sessionToken });
 
-export const aiChat = (input: AiChatInput): Promise<AiChatResponse> =>
-  invoke("ai_chat", { input });
+export const adminSaveAiConfig = (sessionToken: string, config: import("../types").AiConfigPayload): Promise<void> =>
+  invoke("admin_save_ai_config", { sessionToken, config });
 
-export const aiExecuteAction = (input: ExecuteActionInput): Promise<ExecuteActionResult> =>
-  invoke("ai_execute_action", { input });
+export const adminGetAiEnabled = (sessionToken: string): Promise<boolean> =>
+  invoke("admin_get_ai_enabled", { sessionToken });
 
-export const aiCancelAction = (actionId: string, actorUserId: string): Promise<void> =>
-  invoke("ai_cancel_action", { actionId, actorUserId });
+export const adminSetAiEnabled = (sessionToken: string, enabled: boolean): Promise<void> =>
+  invoke("admin_set_ai_enabled", { sessionToken, enabled });
+
+export const adminGetFeatureToggles = (sessionToken: string): Promise<import("../types").FeatureToggles> =>
+  invoke("admin_get_feature_toggles", { sessionToken });
+
+export const adminSaveFeatureToggles = (sessionToken: string, toggles: import("../types").FeatureToggles): Promise<void> =>
+  invoke("admin_save_feature_toggles", { sessionToken, toggles });
+
+export const adminSetAnthropicModel = (sessionToken: string, model: string): Promise<void> =>
+  invoke("admin_set_anthropic_model", { sessionToken, model });
+
+// Validate Anthropic API key by calling the models endpoint.
+export const adminValidateAnthropic = (sessionToken: string, apiKey: string): Promise<ValidateProviderResult> =>
+  invoke("admin_validate_anthropic", { sessionToken, apiKey });
+
+export const aiExecuteAction = (sessionToken: string, input: ExecuteActionInput): Promise<ExecuteActionResult> =>
+  invoke("ai_execute_action", { sessionToken, input });
+
+export const aiExecuteBatchActions = (sessionToken: string, input: {
+  action_ids: string[];
+  history: ChatMessage[];
+  assistant_text: string;
+  currency_exponent: number;
+}): Promise<{ followup: string; undo_ids: string[] }> =>
+  invoke("ai_execute_batch_actions", { sessionToken, input });
+
+export const aiCancelAction = (sessionToken: string, actionId: string): Promise<void> =>
+  invoke("ai_cancel_action", { sessionToken, actionId });
 
 export const aiUndoAction = (
+  sessionToken: string,
   undoId: string,
-  userId: string,
-  currencyExponent: number,
-  actorUserId: string
+  currencyExponent: number
 ): Promise<UndoActionResult> =>
-  invoke("ai_undo_action", { undoId, userId, currencyExponent, actorUserId });
+  invoke("ai_undo_action", { sessionToken, undoId, currencyExponent });
 
 export const aiChatStream = (
+  sessionToken: string,
   input: AiChatInput,
   onEvent: Channel<StreamEvent>
-): Promise<void> => invoke("ai_chat_stream", { input, onEvent });
+): Promise<void> => invoke("ai_chat_stream", { sessionToken, input, onEvent });
+
+export const aiCancelChat = (sessionToken: string, requestId: string): Promise<void> =>
+  invoke("ai_cancel_chat", { sessionToken, requestId });
 
 export const aiRunExecute = (
+  sessionToken: string,
   runId: string,
-  userId: string,
   onEvent: Channel<StreamEvent>
-): Promise<void> => invoke("ai_run_execute", { runId, userId, onEvent });
+): Promise<void> => invoke("ai_run_execute", { sessionToken, runId, onEvent });
 
 export const aiRunUndo = (
+  sessionToken: string,
   runId: string,
-  userId: string,
-): Promise<{ followup: string }> => invoke("ai_run_undo", { runId, userId });
+): Promise<{ followup: string }> => invoke("ai_run_undo", { sessionToken, runId });
+
+export const aiRunCancel = (
+  sessionToken: string,
+  runId: string,
+): Promise<void> => invoke("ai_run_cancel", { sessionToken, runId });
 
 export const aiSaveMessage = (
+  sessionToken: string,
   sessionId: string,
   branchId: string,
-  userId: string,
   role: string,
   content: string,
   messageType: string
-): Promise<number> =>
-  invoke("ai_save_message", { sessionId, branchId, userId, role, content, messageType });
+): Promise<string> =>
+  invoke("ai_save_message", { sessionToken, sessionId, branchId, role, content, messageType });
 
 export const aiLoadHistory = (
+  sessionToken: string,
   branchId: string,
-  userId: string
 ): Promise<AiChatMessage[]> =>
-  invoke("ai_load_history", { branchId, userId });
+  invoke("ai_load_history", { sessionToken, branchId });
+
+export const aiGetTaskLedgerResume = (
+  sessionToken: string,
+  branchId: string,
+): Promise<import("../types").TaskLedgerResume | null> =>
+  invoke("ai_get_task_ledger_resume", { sessionToken, branchId });
 
 export const aiClearHistory = (
+  sessionToken: string,
   branchId: string,
-  userId: string
-): Promise<void> => invoke("ai_clear_history", { branchId, userId });
+): Promise<void> => invoke("ai_clear_history", { sessionToken, branchId });
+
+export const aiSubmitFeedback = (
+  sessionToken: string,
+  sessionId: string,
+  messageId: string,
+  rating: string,
+  comment?: string,
+): Promise<void> => invoke("ai_submit_feedback", { sessionToken, sessionId, messageId, rating, comment });
+
+// ─── Proactive alerts ──────────────────────────────────────────────────────
+
+export const adminGetAlerts = (
+  sessionToken: string,
+  branchId: string
+): Promise<import("../types").ProactiveAlert[]> =>
+  invoke("admin_get_alerts", { sessionToken, branchId });
+
+export const adminDismissAlert = (
+  sessionToken: string,
+  alertId: string
+): Promise<void> =>
+  invoke("admin_dismiss_alert", { sessionToken, alertId });
+
+export const aiGetUsageSummary = (sessionToken: string, days?: number): Promise<unknown> =>
+  invoke("ai_get_usage_summary", { sessionToken, days: days ?? null });
 
 // ─── Back-office admin commands ───────────────────────────────────────────────
 
@@ -509,6 +682,31 @@ export const adminUpdateProduct = (input: {
   image_path?: string;
 }): Promise<AdminProduct> =>
   invoke("admin_update_product", { input });
+
+/** Scan the whole catalog for duplicate products (by name, barcode, SKU). Manager+ only. */
+export const adminFindDuplicateProducts = (
+  actor_user_id: string,
+  includeInactive = false,
+): Promise<DuplicateGroup[]> =>
+  invoke("admin_find_duplicate_products", { actorUserId: actor_user_id, includeInactive });
+
+/** Merge a duplicate product into another — combines stock, archives the source. Manager+ only. */
+export const adminMergeProducts = (
+  actor_user_id: string,
+  sourceProductId: string,
+  targetProductId: string,
+  transferHistory = false,
+): Promise<void> =>
+  invoke("admin_merge_products", {
+    actorUserId: actor_user_id,
+    sourceProductId,
+    targetProductId,
+    transferHistory,
+  });
+
+/** Soft-delete (archive) a single product. Manager+ only. */
+export const adminDeleteProduct = (actor_user_id: string, productId: string): Promise<void> =>
+  invoke("admin_delete_product", { actorUserId: actor_user_id, productId });
 
 export const adminListCategories = (actor_user_id: string): Promise<CategoryRow[]> =>
   invoke("admin_list_categories", { actorUserId: actor_user_id });
@@ -597,11 +795,12 @@ export const inventoryGetMovements = (actor_user_id: string, productId: string):
 export const inventoryReceiveStock = (
   product_id: string,
   quantity: string,
+  expiry_date: string | undefined,
   notes: string | undefined,
   received_by_user_id: string,
 ): Promise<StockLevel> =>
   invoke("inventory_receive_stock", {
-    input: { product_id, quantity, notes, received_by_user_id },
+    input: { product_id, quantity, expiry_date, notes, received_by_user_id },
   });
 
 // ─── Phase 10a commands ───────────────────────────────────────────────────────
@@ -743,6 +942,12 @@ export const thermalPrintTest = (actorUserId: string): Promise<string> =>
 export const printReceiptRaw = (actorUserId: string, storeName: string, lines: string[]): Promise<string> =>
   invoke("print_receipt_raw", { actorUserId, storeName, lines });
 
+export const reprintQueuePending = (actorUserId: string): Promise<ReprintQueueEntry[]> =>
+  invoke("reprint_queue_pending", { actorUserId });
+
+export const reprintQueueMarkPrinted = (actorUserId: string, id: string): Promise<void> =>
+  invoke("reprint_queue_mark_printed", { actorUserId, id });
+
 /** Open the cash drawer connected to the ESC/POS printer's RJ-11 port.
  *  Returns "opened" on success, "no_printer" if thermal printing is disabled. */
 export const openCashDrawer = (actorUserId: string): Promise<string> =>
@@ -824,6 +1029,27 @@ export const syncQueueStats = (actorUserId: string): Promise<SyncTableStats[]> =
 
 export const syncDiagnostics = (actorUserId: string): Promise<SyncDiagnostics> =>
   invoke("sync_diagnostics", { actorUserId });
+
+export const hubTruthCompare = (actorUserId: string): Promise<HubTruthCompareResult> =>
+  invoke("hub_truth_compare", { actorUserId });
+
+export const hubTruthPull = (actorUserId: string): Promise<HubTruthCompareResult> =>
+  invoke("hub_truth_pull", { actorUserId });
+
+export const syncConflictsList = (actorUserId: string): Promise<SyncConflictRow[]> =>
+  invoke("sync_conflicts_list", { actorUserId });
+
+export const syncConflictResolve = (
+  actorUserId: string,
+  conflictId: string,
+  resolution: "retry" | "pull_hub_truth" | "reconcile_stock" | "dismiss",
+): Promise<string> => invoke("sync_conflict_resolve", { actorUserId, conflictId, resolution });
+
+export const syncStockDriftReport = (actorUserId: string): Promise<StockDriftRow[]> =>
+  invoke("sync_stock_drift_report", { actorUserId });
+
+export const syncStockDriftReconcile = (actorUserId: string): Promise<number> =>
+  invoke("sync_stock_drift_reconcile", { actorUserId });
 
 export const syncResetStuck = (actorUserId: string): Promise<string> =>
   invoke("sync_reset_stuck", { actorUserId });
@@ -921,6 +1147,129 @@ export function whatsappSaveConfig(benefitNumber: string, actorUserId: string): 
 export function whatsappImportContacts(actorUserId: string): Promise<ImportContactsResult> {
   return invoke("whatsapp_import_contacts", { actorUserId });
 }
+
+// ── WhatsApp → POS notification inbox (admin) ──────────────────────────────────
+export const whatsappListContacts = (actorUserId: string): Promise<WaContact[]> =>
+  invoke("whatsapp_list_contacts", { actorUserId });
+
+export const whatsappListGroups = (actorUserId: string): Promise<WaGroup[]> =>
+  invoke("whatsapp_list_groups", { actorUserId });
+
+export const whatsappGetTargets = (actorUserId: string): Promise<WaTargets> =>
+  invoke("whatsapp_get_targets", { actorUserId });
+
+export const whatsappSetTargets = (
+  actorUserId: string,
+  t: WaTargets,
+): Promise<void> =>
+  invoke("whatsapp_set_targets", {
+    actorUserId,
+    ownerJid: t.owner_jid,
+    ownerName: t.owner_name,
+    groupJid: t.group_jid,
+    groupName: t.group_name,
+  });
+
+/** Pull new owner/group messages from the sidecar; returns current unread count. */
+export const whatsappPollMessages = (actorUserId: string): Promise<number> =>
+  invoke("whatsapp_poll_messages", { actorUserId });
+
+export const whatsappListMessages = (actorUserId: string): Promise<WaMessage[]> =>
+  invoke("whatsapp_list_messages", { actorUserId });
+
+/** Download the decrypted image for a message (View action). */
+export const whatsappGetMedia = (messageId: string, actorUserId: string): Promise<WaMedia> =>
+  invoke("whatsapp_get_media", { messageId, actorUserId });
+
+export const whatsappMarkRead = (id: string, actorUserId: string): Promise<void> =>
+  invoke("whatsapp_mark_read", { id, actorUserId });
+
+export const whatsappMarkAllRead = (actorUserId: string): Promise<void> =>
+  invoke("whatsapp_mark_all_read", { actorUserId });
+
+/** Delete all stored WhatsApp notifications ("Clear all"). */
+export const whatsappClearMessages = (actorUserId: string): Promise<void> =>
+  invoke("whatsapp_clear_messages", { actorUserId });
+
+// ── WhatsApp Business Catalog + Commerce ──────────────────────────────────────
+export const whatsappCommerceGetEnabled = (actorUserId: string): Promise<boolean> =>
+  invoke("whatsapp_commerce_get_enabled", { actorUserId });
+
+export const whatsappCommerceSetEnabled = (actorUserId: string, enabled: boolean): Promise<void> =>
+  invoke("whatsapp_commerce_set_enabled", { actorUserId, enabled });
+
+/** True when WhatsApp Commerce OR the public Storefront is enabled — gates the POS Orders button. */
+export const whatsappOrdersGetEnabled = (actorUserId: string): Promise<boolean> =>
+  invoke("whatsapp_orders_get_enabled", { actorUserId });
+
+export const whatsappOrderList = (
+  actorUserId: string,
+  status?: string,
+): Promise<WaOrder[]> =>
+  invoke("whatsapp_order_list", { actorUserId, status });
+
+export const whatsappOrderUpdateStatus = (
+  actorUserId: string,
+  orderId: string,
+  status: string,
+  linkedSaleId?: string,
+): Promise<void> =>
+  invoke("whatsapp_order_update_status", { actorUserId, orderId, status, linkedSaleId });
+
+export const whatsappOrderMatch = (
+  actorUserId: string,
+  orderId: string,
+): Promise<WaOrderMatch> =>
+  invoke("whatsapp_order_match", { actorUserId, orderId });
+
+export const whatsappSendProduct = (
+  actorUserId: string,
+  to: string,
+  waProductId: string,
+): Promise<boolean> =>
+  invoke("whatsapp_send_product", { actorUserId, to, waProductId });
+
+export const whatsappOrderMessage = (
+  actorUserId: string,
+  orderId: string,
+  message: string,
+): Promise<boolean> =>
+  invoke("whatsapp_order_message", { actorUserId, orderId, message });
+
+// ── AI payment verification (WhatsApp screenshot → OCR → AI confirm) ──────────
+/** Resolved payment confirmations (confirmed/failed) for the Notification panel. */
+export const paymentConfirmationsList = (actorUserId: string): Promise<PaymentConfirmation[]> =>
+  invoke("payment_confirmations_list", { actorUserId });
+
+/** Count of unseen confirmations — folded into the POS bell badge. */
+export const paymentConfirmationsUnseenCount = (actorUserId: string): Promise<number> =>
+  invoke("payment_confirmations_unseen_count", { actorUserId });
+
+/** Mark all confirmations as seen (clears the badge contribution). */
+export const paymentConfirmationsMarkAllSeen = (actorUserId: string): Promise<void> =>
+  invoke("payment_confirmations_mark_all_seen", { actorUserId });
+
+/** Manager/owner manual override for a confirmation the AI couldn't auto-verify. */
+export const paymentConfirmationOverride = (
+  id: string,
+  confirm: boolean,
+  actorUserId: string,
+): Promise<void> => invoke("payment_confirmation_override", { id, confirm, actorUserId });
+
+// ── Invoice / price-list photo → catalog update (review-first) ─────────────────
+/** Extract + match an invoice/price-list image. Read-only — returns proposals. */
+export const catalogImportExtract = (
+  mediaId: string,
+  currencyExponent: number,
+  sessionToken: string,
+): Promise<CatalogImportProposal> =>
+  invoke("catalog_import_extract", { mediaId, currencyExponent, sessionToken });
+
+/** Apply the owner-approved catalog changes (price/cost/stock/create/supplier). */
+export const catalogImportApply = (
+  input: CatalogApplyInput,
+  sessionToken: string,
+): Promise<CatalogApplyResult> => invoke("catalog_import_apply", { input, sessionToken });
 
 export interface ReceiptItemForPdf {
   product_name: string;
@@ -1073,3 +1422,28 @@ export const ghostDismiss = (id: string, actorUserId: string): Promise<void> =>
 /** Get product form pre-fill data from a 'found' ghost barcode. Manager+ only. */
 export const ghostPrefill = (id: string, actorUserId: string): Promise<ProductPrefill> =>
   invoke("ghost_prefill", { id, actorUserId });
+
+// ── Diagnostics ──────────────────────────────────────────────────────────────────
+
+/** Run system diagnostics and auto-fix common issues (stuck runs, DB integrity). */
+export const adminRunDiagnostics = (): Promise<DiagnosticReport> =>
+  invoke("admin_run_diagnostics");
+
+export const systemHealthCheck = (actorUserId: string): Promise<SystemHealthReport> =>
+  invoke("system_health_check", { actorUserId });
+
+export const systemHealthApplyFix = (
+  actorUserId: string,
+  fixAction: string,
+): Promise<HealthFixResult> =>
+  invoke("system_health_apply_fix", {
+    input: { actor_user_id: actorUserId, fix_action: fixAction },
+  });
+
+// ── Startup health ────────────────────────────────────────────────────────────────
+
+export const startupHealthCheck = (): Promise<StartupComponentStatus[]> =>
+  invoke("startup_health_check");
+
+export const startupRestartSidecar = (): Promise<boolean> =>
+  invoke("startup_restart_sidecar");

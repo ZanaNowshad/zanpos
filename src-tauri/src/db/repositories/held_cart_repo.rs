@@ -92,6 +92,26 @@ pub async fn resume_held_cart(
     cart.shift_id = shift_id.to_string();
     cart.cart_id = Ulid::new().to_string();
 
+    // P2-06: validate that all products in the held cart still exist
+    for line in &cart.lines {
+        if let Some(pid) = &line.product_id {
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM products WHERE product_id=? AND deleted_at IS NULL)",
+            )
+            .bind(pid)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(false);
+            if !exists {
+                return Err(AppError::Validation(format!(
+                    "A product in this held order no longer exists (id: {}). \
+                     Please remove it before resuming.",
+                    pid
+                )));
+            }
+        }
+    }
+
     sqlx::query("DELETE FROM held_carts WHERE held_cart_id = ?")
         .bind(held_cart_id)
         .execute(pool)

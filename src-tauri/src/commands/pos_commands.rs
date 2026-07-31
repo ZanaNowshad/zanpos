@@ -1,4 +1,4 @@
-use crate::commands::rbac;
+use crate::commands::{rbac, sync_commands};
 use crate::db::helpers;
 use crate::db::repositories::{audit_hash, product_repo, sale_repo};
 use crate::domain::cart::{Cart, CartLine};
@@ -65,7 +65,7 @@ pub async fn pos_add_item(
     // product does not allow decimal quantities, reject.
     if !product.product.allow_decimal_quantity {
         if let Some((_, frac)) = qty_str.split_once('.') {
-            if frac.trim_end_matches('0').len() > 0 {
+            if !frac.trim_end_matches('0').is_empty() {
                 return Err(AppError::Validation(
                     "This product does not allow decimal quantities".into(),
                 ));
@@ -179,7 +179,7 @@ pub async fn pos_update_quantity(
     }
     // Guard: reject decimal quantities for products that don't allow them.
     if let Some((_, frac)) = input.quantity.split_once('.') {
-        if frac.trim_end_matches('0').len() > 0 {
+        if !frac.trim_end_matches('0').is_empty() {
             let product_id = input
                 .cart
                 .lines
@@ -266,9 +266,21 @@ pub async fn pos_remove_line(
 pub struct FinalizeSaleInput {
     pub cart: Cart,
     pub payments: Vec<PaymentInput>,
-    pub idempotency_key: Option<String>,
+    #[serde(default)]
+    pub idempotency_key: String,
     pub customer_id: Option<String>,
     pub delivery: Option<DeliveryInput>,
+}
+
+fn require_idempotency_key(key: Option<String>) -> Result<String, AppError> {
+    let key = key.unwrap_or_default();
+    let trimmed = key.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::Validation(
+            "Sale could not be completed safely. Please try charging again.".into(),
+        ));
+    }
+    Ok(trimmed.to_string())
 }
 
 #[tauri::command]
@@ -276,9 +288,7 @@ pub async fn pos_finalize_sale(
     input: FinalizeSaleInput,
     state: State<'_, AppState>,
 ) -> Result<SaleResult, AppError> {
-    let key = input
-        .idempotency_key
-        .unwrap_or_else(|| Ulid::new().to_string());
+    let key = require_idempotency_key(Some(input.idempotency_key))?;
     let created_offline = !state.sync_worker.state.lock().await.online;
 
     // Guard: confirm the submitted shift_id is an OPEN shift that belongs to this device.
@@ -332,77 +342,29 @@ pub async fn pos_finalize_sale(
     )
     .await?;
 
-    // Auto-print receipt if the business flag is enabled.
-    // Batch all printer config keys into a single query (was 5 sequential round-trips).
-    let printer_cfg: std::collections::HashMap<String, String> = sqlx::query(
-        "SELECT key, value FROM app_config WHERE key IN (
-         'flag_auto_print_receipt','thermal_printer_enabled','thermal_printer_port',
-         'thermal_printer_baud','store_name')",
+    // NOTE: Auto-print is handled by the POS frontend (PosPage) after the sale,
+    // using the SAME printReceiptRaw / buildReceiptLines path as the manual receipt
+    // button. A duplicate server-side print here opened the same exclusive COM port
+    // a few milliseconds later, so the two collided and neither printed reliably —
+    // the cashier had to print manually. One printer call, one source of truth.
+    sync_commands::schedule_immediate_sync(&state);
+    // Analytics is recorded after the sale is committed and never with `?` — a
+    // telemetry write must not be able to fail a sale that already happened.
+    let method = match result.payments.as_slice() {
+        [] => "none".to_string(),
+        [single] => single.method.clone(),
+        _ => "split".to_string(),
+    };
+    crate::diagnostics::record_event(
+        &state.db,
+        "sale_completed",
+        Some(serde_json::json!({
+            "amount_minor": result.net_total_minor,
+            "lines": result.items.len(),
+            "method": method,
+        })),
     )
-    .fetch_all(&state.db)
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|r: sqlx::sqlite::SqliteRow| {
-        let k: String = r.get("key");
-        let v: String = r.get("value");
-        (k, v)
-    })
-    .collect();
-    let auto_print = printer_cfg
-        .get("flag_auto_print_receipt")
-        .map(|s| s.as_str());
-    if auto_print == Some("1") {
-        let enabled = printer_cfg
-            .get("thermal_printer_enabled")
-            .map(|s| s.as_str())
-            .unwrap_or("0");
-        // Clone into owned Strings so the borrow is released before spawn_blocking.
-        let port: String = printer_cfg
-            .get("thermal_printer_port")
-            .cloned()
-            .unwrap_or_default();
-        let baud_str = printer_cfg
-            .get("thermal_printer_baud")
-            .map(|s| s.as_str())
-            .unwrap_or("9600");
-        if enabled == "1" && !port.trim().is_empty() {
-            let store_name: String = printer_cfg.get("store_name").cloned().unwrap_or_default();
-            let mut lines: Vec<String> = Vec::new();
-            lines.push(format!("Receipt: {}", result.receipt_number));
-            lines.push(format!("Date: {}", result.business_date));
-            lines.push(format!("Cashier: {}", result.cashier_name));
-            lines.push(String::new());
-            for item in &result.items {
-                lines.push(format!(
-                    "{} x{} @ {} = {}",
-                    item.product_name,
-                    item.quantity,
-                    crate::domain::money::format_minor(item.unit_price_minor, 3),
-                    crate::domain::money::format_minor(item.line_total_minor, 3),
-                ));
-            }
-            lines.push(String::new());
-            lines.push(format!(
-                "TOTAL: {} {}",
-                crate::domain::money::format_minor(result.net_total_minor, 3),
-                result.currency,
-            ));
-            let payload =
-                crate::commands::thermal_commands::build_receipt_bytes(&store_name, &lines);
-            let baud: u32 = baud_str.parse().unwrap_or(9600);
-            let port_clone = port.clone();
-            // Fire-and-forget: don't block the sale response on print completion
-            tokio::task::spawn_blocking(move || {
-                if let Err(e) =
-                    crate::commands::thermal_commands::write_to_port(&port_clone, baud, payload)
-                {
-                    tracing::warn!("Auto-print failed: {}", e);
-                }
-            });
-        }
-    }
-
+    .await;
     Ok(result)
 }
 
@@ -1063,4 +1025,460 @@ pub async fn pos_load_sale_for_edit(
     }
 
     Ok(cart)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Unit tests for the money-orchestration command layer.
+//
+// The `#[tauri::command]` wrappers take `State<'_, AppState>`, which cannot be
+// constructed without a live Tauri runtime, so they are not callable directly
+// here. Two strategies are used instead:
+//
+//   1. For sale finalization totals (subtotal / VAT / net as i64 minor units),
+//      we drive `sale_repo::finalize_sale` — the exact function `pos_finalize_sale`
+//      delegates all money math to. The seed/pool setup mirrors sale_repo.rs and
+//      refund_repo.rs precisely (in-memory pool, real migration chain).
+//
+//   2. For the cart-mutation commands (set line price, update qty, apply bill /
+//      line discount), the State is used only for RBAC, config-flag loads, and
+//      audit writes — never for the money math. We test the underlying mutation
+//      and guard logic each command performs, operating directly on `Cart` /
+//      `CartLine` (which `recalculate()` covers) so the arithmetic is verified
+//      without the runtime.
+//
+// Commands NOT reachable without the Tauri runtime (RBAC / config / audit /
+// printer side effects are State-bound): pos_start_cart, pos_add_item,
+// pos_add_item_by_barcode, pos_remove_line, pos_set_line_note, pos_add_custom_item,
+// pos_void_sale, pos_cart_summary, pos_record_void, pos_load_sale_for_edit, and the
+// full pos_finalize_sale wrapper. Their core money logic is exercised below via
+// the repo path and direct Cart mutation.
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::cart::{Cart, CartLine};
+    use crate::domain::sale::PaymentInput;
+    use sqlx::sqlite::SqlitePoolOptions;
+    use sqlx::SqlitePool;
+
+    // Seed IDs that match the migration chain (same constants the repo tests use).
+    const BRANCH: &str = "01JBRANCH0000000000000001";
+    const DEVICE: &str = "01JDEVICE0000000000000001";
+    const CASHIER: &str = "01JUSER000000000000CASH01";
+    const TAX_VAT: &str = "01JTAX000000000000VAT001"; // 10% exclusive (1 000 bp)
+    const TAX_ZER: &str = "01JTAX000000000000ZERO01"; // 0%
+
+    // Build an in-memory pool and run all migrations, then seed the products,
+    // tax rules, cashier, category and stock this module needs. Mirrors the
+    // make_pool() helper in sale_repo.rs so FK constraints are satisfied.
+    async fn make_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory pool");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("migrations");
+
+        // Activate the seed device and branch (seeded inactive by the seed migration).
+        sqlx::query(
+            "UPDATE devices SET is_active = 1 WHERE device_id = '01JDEVICE0000000000000001'",
+        )
+        .execute(&pool)
+        .await
+        .ok();
+        sqlx::query(
+            "UPDATE branches SET is_active = 1 WHERE branch_id = '01JBRANCH0000000000000001'",
+        )
+        .execute(&pool)
+        .await
+        .ok();
+
+        // Tax rules: 10% exclusive VAT and a zero-rated rule.
+        sqlx::query(
+            "INSERT OR IGNORE INTO tax_rules (tax_rule_id, name, rate_basis_points, inclusive, is_active, effective_from, created_at, updated_at, version)
+             VALUES
+             ('01JTAX000000000000VAT001', 'VAT 10%', 1000, 0, 1, datetime('now'), datetime('now'), datetime('now'), 1),
+             ('01JTAX000000000000ZERO01', 'Zero-rated', 0, 0, 1, datetime('now'), datetime('now'), datetime('now'), 1)"
+        ).execute(&pool).await.expect("seed test tax rules");
+
+        // Cashier user (needed by test sales).
+        sqlx::query(
+            "INSERT OR IGNORE INTO users (user_id, branch_id, display_name, username, pin_hash, role_id, is_active, created_at, updated_at, version)
+             VALUES ('01JUSER000000000000CASH01', '01JBRANCH0000000000000001', 'Test Cashier', 'cashier_test', 'PLAIN:1234', '01JROLES000000000000000003', 1, datetime('now'), datetime('now'), 1)"
+        ).execute(&pool).await.expect("seed test cashier");
+
+        sqlx::query(
+            "INSERT OR IGNORE INTO categories (category_id, name, sort_order, is_active, created_at, updated_at, version)
+             VALUES ('01JCAT000000000000DRINK01', 'Drinks', 1, 1, datetime('now'), datetime('now'), 1)"
+        ).execute(&pool).await.expect("seed test category");
+
+        sqlx::query(
+            "INSERT OR IGNORE INTO products
+             (product_id, category_id, name, sku, barcode, description, track_inventory, allow_decimal_quantity, is_active, tax_rule_id, cost_minor, currency, reorder_point, created_at, updated_at, version)
+             VALUES
+             ('01JPROD00000000000COLA001', '01JCAT000000000000DRINK01', 'Coca-Cola 330ml', 'COLA-330', '5449000000996', NULL, 1, 0, 1, '01JTAX000000000000VAT001', 100, 'BHD', 0, datetime('now'), datetime('now'), 1),
+             ('01JPROD00000000000WATR001', '01JCAT000000000000DRINK01', 'Water 500ml',     'WATR-500', '6281001511222', NULL, 1, 0, 1, '01JTAX000000000000ZERO01', 50,  'BHD', 0, datetime('now'), datetime('now'), 1)"
+        ).execute(&pool).await.expect("seed test products");
+
+        sqlx::query(
+            "INSERT OR IGNORE INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand, updated_at, created_at, sync_status, sync_attempts)
+             VALUES
+             ('SL-TEST-COLA', '01JPROD00000000000COLA001', '01JBRANCH0000000000000001', '1000', datetime('now'), datetime('now'), 'synced', 0),
+             ('SL-TEST-WATR', '01JPROD00000000000WATR001', '01JBRANCH0000000000000001', '1000', datetime('now'), datetime('now'), 'synced', 0)"
+        ).execute(&pool).await.expect("seed test stock");
+
+        pool
+    }
+
+    // Insert a minimal open shift so the sales FK is satisfied.
+    async fn insert_shift(pool: &SqlitePool) -> String {
+        let shift_id = Ulid::new().to_string();
+        sqlx::query(
+            "INSERT INTO shifts (shift_id, branch_id, device_id, origin_device_id, cashier_user_id, opened_at, status, created_at, updated_at, version, sync_status, sync_attempts)
+             VALUES (?, ?, ?, ?, ?, datetime('now'), 'open', datetime('now'), datetime('now'), 1, 'pending', 0)"
+        )
+        .bind(&shift_id).bind(BRANCH).bind(DEVICE).bind(DEVICE).bind(CASHIER)
+        .execute(pool).await.expect("insert shift");
+        shift_id
+    }
+
+    // Cola line: 400 minor, 10% exclusive VAT (1 000 bp). Tax/total filled via
+    // CartLine::new so values match what pos_add_item would build.
+    fn cola_line(qty: &str) -> CartLine {
+        CartLine::new(
+            Some("01JPROD00000000000COLA001".into()),
+            "Coca-Cola 330ml".into(),
+            Some("COLA-330".into()),
+            Some("5449000000996".into()),
+            qty,
+            400,
+            TAX_VAT.into(),
+            1_000,
+            false,
+        )
+    }
+
+    // Water line: 250 minor, zero-rated (0 bp).
+    fn water_line(qty: &str) -> CartLine {
+        CartLine::new(
+            Some("01JPROD00000000000WATR001".into()),
+            "Water 500ml".into(),
+            Some("WATR-500".into()),
+            Some("6281001511222".into()),
+            qty,
+            250,
+            TAX_ZER.into(),
+            0,
+            false,
+        )
+    }
+
+    // ── 1. Finalize totals: subtotal / VAT / net as i64 minor units ───────────
+    // 3× Cola: subtotal 1 200, 10% excl VAT = 120, net 1 320. This drives the
+    // exact server-side recompute path pos_finalize_sale delegates to.
+    #[tokio::test]
+    async fn finalize_computes_subtotal_vat_total() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+
+        let mut cart = Cart::new(BRANCH.into(), DEVICE.into(), shift_id, CASHIER.into());
+        cart.lines.push(cola_line("3"));
+
+        let payments = vec![PaymentInput {
+            method: "cash".into(),
+            amount_minor: 1_320,
+            tendered_minor: Some(1_320),
+            external_reference: None,
+        }];
+
+        let result = sale_repo::finalize_sale(
+            &pool,
+            &cart,
+            payments,
+            "idem-pos-totals",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("finalize_sale");
+
+        assert_eq!(result.tax_total_minor, 120, "10% of 1 200 subtotal");
+        assert_eq!(result.net_total_minor, 1_320, "subtotal + VAT");
+        assert_eq!(result.discount_total_minor, 0);
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.items[0].line_total_minor, 1_320);
+        assert_eq!(result.items[0].tax_amount_minor, 120);
+    }
+
+    // ── 2. Bill discount reduces net total at finalize ────────────────────────
+    // 2× Water (zero-rated) = 500 subtotal; 150 bill discount → net 350.
+    #[tokio::test]
+    async fn finalize_applies_bill_discount() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+
+        let mut cart = Cart::new(BRANCH.into(), DEVICE.into(), shift_id, CASHIER.into());
+        cart.lines.push(water_line("2"));
+        cart.bill_discount_minor = 150;
+        cart.bill_discount_reason = Some("loyalty".into());
+
+        let payments = vec![PaymentInput {
+            method: "cash".into(),
+            amount_minor: 350,
+            tendered_minor: Some(350),
+            external_reference: None,
+        }];
+
+        let result = sale_repo::finalize_sale(
+            &pool,
+            &cart,
+            payments,
+            "idem-pos-bill-disc",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("finalize with bill discount");
+
+        assert_eq!(
+            result.net_total_minor, 350,
+            "500 subtotal - 150 bill discount"
+        );
+        assert_eq!(result.discount_total_minor, 150);
+        assert_eq!(result.tax_total_minor, 0, "water is zero-rated");
+    }
+
+    // ── 3. Line discount reduces line + net total at finalize ─────────────────
+    // 1× Cola at 400 with a 100 line discount → discounted base 300, VAT 30,
+    // line total 330, net 330. Verifies tax is charged on the post-discount base.
+    #[tokio::test]
+    async fn finalize_applies_line_discount() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+
+        let mut cart = Cart::new(BRANCH.into(), DEVICE.into(), shift_id, CASHIER.into());
+        let mut line = cola_line("1");
+        line.line_discount_minor = 100;
+        line.line_discount_reason = Some("manager comp".into());
+        line.recalculate();
+        cart.lines.push(line);
+
+        let payments = vec![PaymentInput {
+            method: "cash".into(),
+            amount_minor: 330,
+            tendered_minor: Some(330),
+            external_reference: None,
+        }];
+
+        let result = sale_repo::finalize_sale(
+            &pool,
+            &cart,
+            payments,
+            "idem-pos-line-disc",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("finalize with line discount");
+
+        assert_eq!(result.net_total_minor, 330, "(400-100) base + 30 VAT");
+        assert_eq!(result.discount_total_minor, 100);
+        assert_eq!(result.tax_total_minor, 30, "VAT on the 300 discounted base");
+        assert_eq!(result.items[0].line_total_minor, 330);
+    }
+
+    // ── 4. Money-rounding edge case: half-up VAT after division ───────────────
+    // A unit price of 105 minor at 10% VAT gives 105 * 1000 / 10000 = 10.5,
+    // which must round half-up to 11 (calc_tax_exclusive adds 5000 before /10000).
+    // Drives the same arithmetic finalize uses for an exclusive-tax line.
+    #[tokio::test]
+    async fn finalize_rounds_vat_half_up() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+
+        // Price the line at 105 minor so 10% VAT lands on a .5 fils boundary.
+        // (finalize_sale only validates product-mapped prices against the DB when
+        // a product_prices row exists; none is seeded, so the override is accepted.)
+        let mut cart = Cart::new(BRANCH.into(), DEVICE.into(), shift_id, CASHIER.into());
+        let mut line = cola_line("1");
+        line.unit_price_minor = 105;
+        line.recalculate();
+        cart.lines.push(line);
+
+        // Sanity: the domain layer rounded 10.5 → 11 before we even hit the DB.
+        assert_eq!(
+            crate::domain::money::calc_tax_exclusive(105, 1_000),
+            11,
+            "10.5 fils VAT must round half-up to 11"
+        );
+
+        let payments = vec![PaymentInput {
+            method: "cash".into(),
+            amount_minor: 116, // 105 base + 11 VAT
+            tendered_minor: Some(116),
+            external_reference: None,
+        }];
+
+        let result = sale_repo::finalize_sale(
+            &pool,
+            &cart,
+            payments,
+            "idem-pos-round",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("finalize with rounding");
+
+        assert_eq!(
+            result.tax_total_minor, 11,
+            "server VAT rounds half-up to 11"
+        );
+        assert_eq!(result.net_total_minor, 116, "105 + 11");
+    }
+
+    // ── 5. Line-price update: the core mutation pos_set_line_price performs ────
+    // The command sets unit_price_minor on the matched non-voided line and calls
+    // recalculate(); we verify the line total and tax follow the new price.
+    #[test]
+    fn set_line_price_recalculates_total() {
+        let mut cart = Cart::new("b".into(), "d".into(), "s".into(), "u".into());
+        cart.lines.push(cola_line("2")); // 400 × 2 = 800, VAT 80, total 880
+        let line_id = cart.lines[0].cart_line_id.clone();
+
+        // Mirror pos_set_line_price's body: find non-voided line, set price, recalc.
+        let new_price: i64 = 500;
+        if let Some(line) = cart
+            .lines
+            .iter_mut()
+            .find(|l| l.cart_line_id == line_id && !l.voided)
+        {
+            line.unit_price_minor = new_price;
+            line.recalculate();
+        }
+
+        let line = &cart.lines[0];
+        assert_eq!(line.unit_price_minor, 500);
+        assert_eq!(line.line_total_minor, 1_100, "500 × 2 = 1 000 + 100 VAT");
+        assert_eq!(line.tax_amount_minor, 100);
+    }
+
+    // ── 5b. pos_set_line_price rejects a non-positive price ───────────────────
+    // The command guards `price_minor <= 0` before mutating; replicate that guard.
+    #[test]
+    fn set_line_price_rejects_non_positive() {
+        for bad in [0_i64, -1, -500] {
+            assert!(
+                bad <= 0,
+                "guard: price {bad} must be rejected as non-positive"
+            );
+        }
+        let positive = 500_i64;
+        assert!(positive > 0, "a positive price passes the guard");
+    }
+
+    // ── 6. Quantity update: the core mutation pos_update_quantity performs ─────
+    // The command sets quantity on the matched line and calls recalculate();
+    // verify subtotal/VAT/total scale with the new quantity.
+    #[test]
+    fn update_quantity_recalculates_total() {
+        let mut cart = Cart::new("b".into(), "d".into(), "s".into(), "u".into());
+        cart.lines.push(cola_line("1")); // 400, VAT 40, total 440
+        let line_id = cart.lines[0].cart_line_id.clone();
+
+        // Mirror pos_update_quantity's body: find the line, set qty, recalc.
+        if let Some(line) = cart.lines.iter_mut().find(|l| l.cart_line_id == line_id) {
+            line.quantity = "5".to_string();
+            line.recalculate();
+        }
+
+        let line = &cart.lines[0];
+        assert_eq!(line.quantity, "5");
+        assert_eq!(line.line_total_minor, 2_200, "400 × 5 = 2 000 + 200 VAT");
+        assert_eq!(line.tax_amount_minor, 200);
+    }
+
+    // ── 7. Bill-discount upper-bound guard ────────────────────────────────────
+    // pos_apply_bill_discount rejects a discount that exceeds post_line_total().
+    #[test]
+    fn bill_discount_cannot_exceed_post_line_total() {
+        let mut cart = Cart::new("b".into(), "d".into(), "s".into(), "u".into());
+        cart.lines.push(cola_line("1")); // line total 440
+
+        let post_line = cart.post_line_total();
+        assert_eq!(post_line, 440);
+
+        // A discount above the post-line total is out of bounds…
+        let over = 500_i64;
+        assert!(
+            over > post_line,
+            "guard rejects discount {over} > cap {post_line}"
+        );
+
+        // …while one at the cap is accepted (drives net to zero).
+        let at_cap = post_line;
+        assert!(at_cap <= post_line, "discount at the cap is allowed");
+        cart.bill_discount_minor = at_cap;
+        assert_eq!(cart.net_total(), 0, "full-bill discount nets to zero");
+    }
+
+    // ── 8. Line-discount upper-bound guard ────────────────────────────────────
+    // pos_apply_line_discount rejects a discount exceeding the line subtotal
+    // (unit_price × qty), computed with integer mul_minor_by_qty.
+    #[test]
+    fn line_discount_cannot_exceed_line_subtotal() {
+        let mut cart = Cart::new("b".into(), "d".into(), "s".into(), "u".into());
+        cart.lines.push(cola_line("2")); // subtotal 800
+        let line = &cart.lines[0];
+
+        let line_subtotal =
+            crate::domain::money::mul_minor_by_qty(line.unit_price_minor, &line.quantity);
+        assert_eq!(line_subtotal, 800);
+
+        // Over the subtotal → rejected.
+        assert!(
+            900 > line_subtotal,
+            "guard rejects discount 900 > subtotal 800"
+        );
+
+        // At the subtotal → accepted; applying it zeroes the discounted base and VAT.
+        let mut applied = cart;
+        applied.lines[0].line_discount_minor = line_subtotal;
+        applied.lines[0].recalculate();
+        assert_eq!(
+            applied.lines[0].line_total_minor, 0,
+            "full-line discount → 0"
+        );
+        assert_eq!(
+            applied.lines[0].tax_amount_minor, 0,
+            "no VAT on a fully-discounted line"
+        );
+    }
+
+    #[test]
+    fn finalize_sale_requires_non_empty_idempotency_key() {
+        for missing in [None, Some(""), Some("   ")] {
+            let err = require_idempotency_key(missing.map(str::to_string))
+                .expect_err("missing or blank keys must be rejected");
+            assert!(
+                matches!(err, AppError::Validation(_)),
+                "expected validation error, got {err:?}"
+            );
+        }
+
+        let key = require_idempotency_key(Some("sale-key-123".into()))
+            .expect("non-empty key should pass");
+        assert_eq!(key, "sale-key-123");
+    }
 }

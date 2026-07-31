@@ -1,77 +1,221 @@
 import type React from "react";
-import type { OfficeTab } from "./officeAiTypes";
+import {
+  Activity,
+  Archive,
+  BarChart3,
+  Bot,
+  Boxes,
+  ClipboardCheck,
+  ClipboardList,
+  GitCompareArrows,
+  HeartPulse,
+  History,
+  Inbox,
+  LineChart,
+  LayoutDashboard,
+  Medal,
+  Package,
+  PackagePlus,
+  PanelLeftClose,
+  PanelLeftOpen,
+  RefreshCw,
+  Settings,
+  ShieldCheck,
+  ShoppingBag,
+  Truck,
+  UserCog,
+  Users,
+} from "lucide-react";
+import type { OfficePrimarySpace, OfficeTab } from "./officeAiTypes";
 
-export const BASE_SECTIONS: { label: string; items: { id: OfficeTab; label: string }[] }[] = [
+export interface OfficeNavItem {
+  id: OfficeTab;
+  label: string;
+  description?: string;
+  managerOnly?: boolean;
+  ownerOnly?: boolean;
+}
+
+export interface OfficeNavSection {
+  id: "command" | "operations" | "growth" | "system";
+  label: string;
+  items: OfficeNavItem[];
+}
+
+// ─── Operation sub-tabs (consolidated single source of truth) ─────────────────
+export interface OfficeSubTab {
+  id: OfficeTab;
+  label: string;
+  description: string;
+  manager?: boolean;
+  owner?: boolean;
+}
+
+export interface OfficeSubNavGroup {
+  id: string;
+  label: string;
+  tabs: OfficeTab[];
+}
+
+export const OPERATION_TABS: OfficeSubTab[] = [
+  { id: "products", label: "Products", description: "Catalog and pricing" },
+  { id: "categories", label: "Categories", description: "Product groups" },
+  { id: "inventory", label: "Inventory", description: "Stock levels" },
+  { id: "purchasing", label: "Purchasing", description: "Suppliers and POs", manager: true },
+  { id: "reports", label: "Reports", description: "Sales and refunds" },
+  { id: "cashier", label: "Cashiers", description: "Cashier reports" },
+  { id: "eod", label: "End of Day", description: "Cashup workflow" },
+  { id: "deliveries", label: "Deliveries", description: "Delivery queue" },
+  { id: "customers", label: "Customers", description: "Customer records" },
+  { id: "users", label: "Users", description: "Staff access", manager: true },
+];
+
+export const CONTROL_TABS: OfficeSubTab[] = [
+  { id: "actions", label: "Action Review", description: "Approve AI changes", manager: true },
+  { id: "workflows", label: "Inbox", description: "WhatsApp, bills, and payments", manager: true },
+  { id: "health", label: "Health", description: "Database, hub, sync, AI", manager: true },
+  { id: "conflicts", label: "Conflict Inbox", description: "Resolve cross-device differences", manager: true },
+  { id: "insights", label: "Insights", description: "Sales and product signals", manager: true },
+  { id: "loyalty", label: "Loyalty", description: "Customer retention base", manager: true },
+  { id: "settings", label: "Settings", description: "App configuration" },
+  { id: "audit", label: "Audit", description: "Audit log", owner: true },
+  { id: "devices", label: "Devices", description: "Device management", owner: true },
+];
+
+export const OPERATION_GROUPS: OfficeSubNavGroup[] = [
+  { id: "catalog", label: "Catalog", tabs: ["products", "categories", "inventory", "purchasing"] },
+  { id: "sales", label: "Sales", tabs: ["reports", "cashier", "eod", "deliveries"] },
+  { id: "people", label: "People", tabs: ["customers", "users"] },
+];
+
+export const CONTROL_GROUPS: OfficeSubNavGroup[] = [
+  { id: "review", label: "Review", tabs: ["actions", "audit"] },
+  { id: "inbox", label: "Inbox", tabs: ["workflows"] },
+  { id: "system", label: "System", tabs: ["health", "conflicts", "devices"] },
+  { id: "growth", label: "Growth", tabs: ["insights", "loyalty"] },
+  { id: "settings", label: "Settings", tabs: ["settings"] },
+];
+
+export const OPERATION_TAB_IDS: OfficeTab[] = OPERATION_TABS.map(t => t.id);
+export const CONTROL_TAB_IDS: OfficeTab[] = CONTROL_TABS.map(t => t.id);
+
+// ─── Primary space mapping ────────────────────────────────────────────────────
+export function primarySpaceForTab(tab: OfficeTab): OfficePrimarySpace {
+  if (tab === "overview") return "home";
+  if (tab === "assistant") return "ask-ai";
+  if (tab === "operations" || OPERATION_TAB_IDS.includes(tab)) return "operations";
+  return "control";
+}
+
+export function isOperationTab(tab: OfficeTab): boolean {
+  return tab === "operations" || OPERATION_TAB_IDS.includes(tab);
+}
+
+export function isControlTab(tab: OfficeTab): boolean {
+  return CONTROL_TAB_IDS.includes(tab);
+}
+
+export const OFFICE_SECTIONS: OfficeNavSection[] = [
   {
-    label: "",
-    items: [{ id: "assistant", label: "Assistant" }],
-  },
-  {
-    label: "Catalog",
+    id: "command",
+    label: "Command",
     items: [
-      { id: "products", label: "Products" },
-      { id: "categories", label: "Categories" },
-      { id: "inventory", label: "Inventory" },
+      { id: "overview", label: "Overview", description: "Live store command view" },
+      { id: "assistant", label: "Assistant", description: "Ask, inspect, and act with AI" },
+      { id: "actions", label: "Action Review", description: "Approve AI changes", managerOnly: true },
+      { id: "workflows", label: "Inbox", description: "WhatsApp, bills, and payments", managerOnly: true },
     ],
   },
   {
-    label: "Sales",
+    id: "operations",
+    label: "Run",
     items: [
-      { id: "reports", label: "Reports" },
-      { id: "cashier", label: "Cashiers" },
-      { id: "eod", label: "End of Day" },
-      { id: "deliveries", label: "Deliveries" },
+      { id: "operations", label: "Store Operations", description: "Catalog, stock, orders, sales" },
     ],
   },
   {
-    label: "People",
+    id: "growth",
+    label: "Growth",
     items: [
-      { id: "customers", label: "Customers" },
-      { id: "users", label: "Users" },
+      { id: "insights", label: "Insights", description: "Sales and product signals", managerOnly: true },
+      { id: "loyalty", label: "Loyalty", description: "Customer retention base", managerOnly: true },
     ],
   },
   {
+    id: "system",
     label: "System",
     items: [
+      { id: "health", label: "Health", description: "Database, hub, sync, AI", managerOnly: true },
+      { id: "conflicts", label: "Conflict Inbox", description: "Resolve cross-device differences", managerOnly: true },
       { id: "settings", label: "Settings" },
+      { id: "devices", label: "Devices", ownerOnly: true },
+      { id: "audit", label: "Audit", ownerOnly: true },
     ],
   },
 ];
 
 export function visibleTabsFor(role: string): OfficeTab[] {
-  const all = BASE_SECTIONS.flatMap(s => s.items.map(i => i.id));
-  if (role === "owner") return [...all, "audit", "devices"];
-  return all;
+  const manager = role === "owner" || role === "manager";
+  const operations: OfficeTab[] = ["operations"];
+  const catalog: OfficeTab[] = ["products", "categories", "inventory"];
+  const purchasing: OfficeTab[] = manager ? ["purchasing"] : [];
+  const sales: OfficeTab[] = ["reports", "cashier", "eod", "deliveries"];
+  const people: OfficeTab[] = ["customers", "users"];
+  const growth: OfficeTab[] = manager ? ["insights", "loyalty"] : [];
+  const command: OfficeTab[] = manager
+    ? ["overview", "assistant", "actions", "workflows", "health", "conflicts"]
+    : ["overview", "assistant"];
+
+  switch (role) {
+    case "owner":
+      return [...command, ...operations, ...catalog, ...purchasing, ...sales, ...people, ...growth, "settings", "audit", "devices"];
+    case "manager":
+      return [...command, ...operations, ...catalog, ...purchasing, ...sales, ...people, ...growth, "settings"];
+    case "accountant":
+      return ["overview", "assistant", "operations", "reports", "eod", "cashier", "customers", "insights", "audit"];
+    case "cashier":
+      return ["overview", "assistant", "operations", "products", "categories", "inventory", "reports", "cashier", "eod", "deliveries", "customers"];
+    default:
+      return [...command, ...operations, ...catalog, ...sales, ...people, "settings"];
+  }
 }
 
-// SVG icon set (ported from BackOfficeModal)
-function Svg({ children, size = 16 }: { children: React.ReactNode; size?: number }) {
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{children}</svg>;
+export function sectionsForRole(role: string): OfficeNavSection[] {
+  const visible = new Set(visibleTabsFor(role));
+  return OFFICE_SECTIONS
+    .map(section => ({
+      ...section,
+      items: section.items.filter(item => visible.has(item.id)),
+    }))
+    .filter(section => section.items.length > 0);
 }
-type IcoProps = { size?: number };
-export const IcoAssistant = (p: IcoProps) => <Svg {...p}><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></Svg>;
-export const IcoProducts = (p: IcoProps) => <Svg {...p}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></Svg>;
-export const IcoCategories = (p: IcoProps) => <Svg {...p}><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7" strokeWidth={2.5}/></Svg>;
-export const IcoInventory = (p: IcoProps) => <Svg {...p}><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></Svg>;
-export const IcoReports = (p: IcoProps) => <Svg {...p}><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></Svg>;
-export const IcoCashier = (p: IcoProps) => <Svg {...p}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></Svg>;
-export const IcoEod = (p: IcoProps) => <Svg {...p}><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></Svg>;
-export const IcoDeliveries = (p: IcoProps) => <Svg {...p}><rect x="1" y="3" width="15" height="13" rx="1"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></Svg>;
-export const IcoCustomers = (p: IcoProps) => <Svg {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></Svg>;
-export const IcoUsers = (p: IcoProps) => <Svg {...p}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/></Svg>;
-export const IcoSettings = (p: IcoProps) => <Svg {...p}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></Svg>;
 
-// Utility-action icons (ported from BackOfficeModal)
-export const IcoStocktake = (p: IcoProps) => <Svg {...p}><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><polyline points="9 12 11 14 15 10"/></Svg>;
-export const IcoSync      = (p: IcoProps) => <Svg {...p}><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></Svg>;
-export const IcoClose     = (p: IcoProps) => <Svg {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></Svg>;
-export const IcoAudit     = (p: IcoProps) => <Svg {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></Svg>;
-export const IcoDevices   = (p: IcoProps) => <Svg {...p}><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></Svg>;
-
-export const TAB_ICON: Record<string, React.ReactNode> = {
-  assistant: <IcoAssistant />, products: <IcoProducts />, categories: <IcoCategories />,
-  inventory: <IcoInventory />, reports: <IcoReports />, cashier: <IcoCashier />,
-  eod: <IcoEod />, deliveries: <IcoDeliveries />, customers: <IcoCustomers />,
-  users: <IcoUsers />, settings: <IcoSettings />, audit: <IcoAudit />,
-  devices: <IcoDevices />,
+export const TAB_ICON: Record<OfficeTab, React.ReactNode> = {
+  overview: <LayoutDashboard size={17} strokeWidth={1.85} />,
+  assistant: <Bot size={17} strokeWidth={1.85} />,
+  actions: <ClipboardCheck size={17} strokeWidth={1.85} />,
+  workflows: <Inbox size={17} strokeWidth={1.85} />,
+  health: <HeartPulse size={17} strokeWidth={1.85} />,
+  conflicts: <GitCompareArrows size={17} strokeWidth={1.85} />,
+  insights: <LineChart size={17} strokeWidth={1.85} />,
+  loyalty: <Medal size={17} strokeWidth={1.85} />,
+  operations: <Boxes size={17} strokeWidth={1.85} />,
+  products: <Package size={17} strokeWidth={1.85} />,
+  categories: <Archive size={17} strokeWidth={1.85} />,
+  inventory: <Boxes size={17} strokeWidth={1.85} />,
+  purchasing: <PackagePlus size={17} strokeWidth={1.85} />,
+  reports: <BarChart3 size={17} strokeWidth={1.85} />,
+  cashier: <UserCog size={17} strokeWidth={1.85} />,
+  eod: <ShoppingBag size={17} strokeWidth={1.85} />,
+  deliveries: <Truck size={17} strokeWidth={1.85} />,
+  customers: <Users size={17} strokeWidth={1.85} />,
+  users: <ShieldCheck size={17} strokeWidth={1.85} />,
+  settings: <Settings size={17} strokeWidth={1.85} />,
+  audit: <History size={17} strokeWidth={1.85} />,
+  devices: <Activity size={17} strokeWidth={1.85} />,
 };
+
+export const IcoStocktake = ClipboardList;
+export const IcoSync = RefreshCw;
+export const IcoClose = PanelLeftClose;
+export const IcoOpen = PanelLeftOpen;

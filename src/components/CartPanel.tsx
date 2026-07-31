@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState } from "react";
+import { ShoppingCart } from "lucide-react";
 import type { Cart, CartLine } from "../types";
 import { formatMoney } from "../money";
 import { DEVICE } from "../types";
@@ -67,9 +68,15 @@ export default memo(function CartPanel({
         )}
         {activeLines.length === 0 && (
           <div className="cart-empty">
-            <div className="cart-empty-icon">🛒</div>
-            <div className="cart-empty-label">Cart is empty</div>
-            <div className="cart-empty-hint">Scan an item, tap a product, or press <kbd>F2</kbd>.</div>
+            <div className="cart-empty-icon"><ShoppingCart size={34} strokeWidth={1.6} /></div>
+            <div className="cart-empty-kicker">New transaction</div>
+            <div className="cart-empty-label">Ready for the next sale</div>
+            <div className="cart-empty-hint">Keep the cursor in search and start with any route.</div>
+            <div className="cart-empty-actions" aria-label="Ways to add an item">
+              <span><b>1</b> Scan barcode</span>
+              <span><b>2</b> Search <kbd>F2</kbd></span>
+              <span><b>3</b> Add custom item</span>
+            </div>
           </div>
         )}
         {/* Most-recently-scanned item always at top — reverse chronological order */}

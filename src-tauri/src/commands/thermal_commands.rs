@@ -595,10 +595,43 @@ pub async fn print_receipt_raw(
     let baud: u32 = config.baud.parse().unwrap_or(9600);
     let payload = build_receipt_bytes(&store_name, &lines);
 
-    tokio::task::spawn_blocking(move || write_to_port(&port_name, baud, payload))
+    let printed = tokio::task::spawn_blocking(move || write_to_port(&port_name, baud, payload))
         .await
-        .map_err(|e| AppError::Internal(format!("Thread error: {e}")))?
-        .map(|_| "Printed".into())
+        .map_err(|e| AppError::Internal(format!("Thread error: {e}")))?;
+
+    // A silent no-print is the failure this instrumentation exists to surface,
+    // so record the outcome before propagating it.
+    match &printed {
+        Ok(_) => crate::diagnostics::record_event(&state.db, "print_ok", None).await,
+        Err(e) => {
+            crate::diagnostics::record_event(
+                &state.db,
+                "print_fail",
+                Some(serde_json::json!({ "error": e.to_string() })),
+            )
+            .await;
+            let _ = crate::diagnostics::record(
+                &state.db,
+                "error",
+                "print_fail",
+                &e.to_string(),
+                None,
+                None,
+            )
+            .await;
+            // Queue the rendered lines so the receipt can be reproduced once
+            // the printer is back — exactly what should have printed, not a
+            // re-render that might pick up changed prices or settings.
+            let _ = crate::commands::reprint_queue::enqueue(
+                &state.db,
+                &store_name,
+                &lines,
+                &e.to_string(),
+            )
+            .await;
+        }
+    }
+    printed.map(|_| "Printed".into())
 }
 
 /// ESC/POS cash drawer kick pulse.

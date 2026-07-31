@@ -4,21 +4,77 @@ use crate::sync_v2::apply::{
 };
 use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
+use futures::stream;
 use serde_json::{json, Value};
 use sqlx::{Column, Row};
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::time::Duration;
 
 pub fn router(state: HubState) -> Router {
     Router::new()
         .route("/rest/v1/", get(probe_ok))
         .route("/rest/v1/{table}", get(pull_table).post(push_table))
         .route("/zanpos/info", get(info))
+        .route("/zanpos/health", get(health))
+        .route("/zanpos/consistency", get(consistency))
+        .route("/zanpos/events", get(events))
         .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024))
         .with_state(state)
+}
+
+async fn events(
+    State(state): State<HubState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(r) = check_auth(&state, &headers, &addr) {
+        return r;
+    }
+    let receiver = state.events.subscribe();
+    let event_stream = stream::unfold(receiver, |mut receiver| async move {
+        loop {
+            match receiver.recv().await {
+                Ok(change) => {
+                    let event = Event::default()
+                        .event("table_changed")
+                        .json_data(change)
+                        .unwrap_or_else(|_| Event::default().event("table_changed"));
+                    return Some((Ok::<Event, Infallible>(event), receiver));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    });
+    Sse::new(event_stream)
+        .keep_alive(
+            KeepAlive::new()
+                .interval(Duration::from_secs(15))
+                .text("keepalive"),
+        )
+        .into_response()
+}
+
+/// Constant-time equality for the SHA-256 store-token digests. A plain `!=`
+/// short-circuits on the first differing byte, leaking digest bytes via response
+/// timing to anyone on the LAN; this compares lengths separately and then
+/// XOR-accumulates over every byte so the work is independent of where (or
+/// whether) the inputs diverge. `subtle` is not a dependency, so this stays local.
+fn digests_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 fn check_auth(state: &HubState, headers: &HeaderMap, addr: &SocketAddr) -> Result<(), Response> {
@@ -27,7 +83,55 @@ fn check_auth(state: &HubState, headers: &HeaderMap, addr: &SocketAddr) -> Resul
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .unwrap_or("");
-    if super::token_digest(presented) != state.token_digest {
+    let presented_digest = super::token_digest(presented);
+    let claimed_device = headers
+        .get("x-zanpos-device")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    // Per-device pairing first. The device id is only trusted once its token
+    // matches THAT device's digest, which is what stops one terminal claiming
+    // another's identity — previously the header was recorded, never verified.
+    // Read from an in-memory snapshot because this function is synchronous and
+    // runs on every request; a DB round-trip per call is not acceptable here.
+    let paired_ok = !claimed_device.is_empty()
+        && state
+            .paired
+            .lock()
+            .map(|devices| {
+                devices
+                    .get(claimed_device)
+                    .is_some_and(|digest| digests_eq(&presented_digest, digest))
+            })
+            .unwrap_or(false);
+
+    // Legacy shared store token. Kept so a shop upgrading mid-shift does not
+    // lose its second till; logged so it can be retired once every device is
+    // paired.
+    let shared_ok = digests_eq(&presented_digest, &state.token_digest);
+    if shared_ok && !paired_ok {
+        tracing::info!(
+            "hub: device '{claimed_device}' authenticated with the legacy shared token — pair it to retire that path"
+        );
+    }
+
+    if !paired_ok && !shared_ok {
+        // Fire-and-forget: check_auth is sync and called on every route, so
+        // the diagnostics insert is spawned rather than awaited — a DB
+        // failure (or the flood-case rate limiter) must never delay or
+        // block the 401 response itself.
+        let pool = state.pool.clone();
+        tauri::async_runtime::spawn(async move {
+            let _ = crate::diagnostics::record(
+                &pool,
+                "warn",
+                "hub_unauthorized",
+                "invalid store token",
+                None,
+                None,
+            )
+            .await;
+        });
         return Err((StatusCode::UNAUTHORIZED, "invalid store token").into_response());
     }
     if let Some(dev) = headers.get("x-zanpos-device").and_then(|v| v.to_str().ok()) {
@@ -77,6 +181,54 @@ async fn info(
         "hub_time": chrono::Utc::now().to_rfc3339(),
     }))
     .into_response()
+}
+
+async fn health(
+    State(state): State<HubState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(r) = check_auth(&state, &headers, &addr) {
+        return r;
+    }
+
+    let mut report = match crate::commands::system_health_commands::run_local_health_check(
+        &state.pool,
+        crate::commands::sync_commands::SYNC_TABLES,
+    )
+    .await
+    {
+        Ok(report) => report,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("health check failed: {e}"),
+            )
+                .into_response();
+        }
+    };
+
+    let seen = state.seen.lock().map(|m| m.clone()).unwrap_or_default();
+    crate::commands::system_health_commands::merge_seen_devices(&mut report, &seen);
+    Json(report).into_response()
+}
+
+async fn consistency(
+    State(state): State<HubState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(r) = check_auth(&state, &headers, &addr) {
+        return r;
+    }
+    match crate::sync_v2::consistency::snapshot(&state.pool).await {
+        Ok(snapshot) => Json(snapshot).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("consistency failed: {e}"),
+        )
+            .into_response(),
+    }
 }
 
 async fn pull_table(
@@ -185,6 +337,11 @@ async fn push_table(
     if !SYNC_TABLES.contains(&table.as_str()) {
         return (StatusCode::NOT_FOUND, "unknown table").into_response();
     }
+    let origin_device_id = headers
+        .get("x-zanpos-device")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("unknown")
+        .to_string();
     for row in &rows {
         if let Err(e) = apply::apply_row(&state.pool, &table, row).await {
             tracing::warn!("Hub apply {table} failed: {e}");
@@ -194,6 +351,9 @@ async fn push_table(
             )
                 .into_response();
         }
+    }
+    if !rows.is_empty() {
+        state.events.publish(&table, &origin_device_id);
     }
     StatusCode::CREATED.into_response()
 }

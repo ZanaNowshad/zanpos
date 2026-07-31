@@ -20,7 +20,11 @@ const SYNC_TABLES: &[&str] = &[
     "tax_rules",
     "products",
     "devices",
+    "roles",
     "users",
+    "suppliers",
+    "purchase_orders",
+    "purchase_order_lines",
     "customers",
     "shifts",
     "sales",
@@ -33,6 +37,7 @@ const SYNC_TABLES: &[&str] = &[
     "audit_logs",
     "delivery_orders",
     "product_prices",
+    "product_cost_history",
     "cash_events", // was missing — cash events never counted in sync status
 ];
 

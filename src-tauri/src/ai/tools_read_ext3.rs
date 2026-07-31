@@ -63,6 +63,8 @@ pub async fn execute(
         "get_refund_by_product" => refund_by_product(pool, input, &fmt).await,
         "verify_receipt_sequence" => verify_receipt_sequence(pool, input).await,
         "get_audit_trail_full" => audit_trail_full(pool, input).await,
+        "find_duplicate_products" => find_duplicate_products(pool, input).await,
+        "load_workflow" => load_workflow(input).await,
         other => Err(AppError::Validation(format!("Unknown read tool: {other}"))),
     }
 }
@@ -196,8 +198,7 @@ async fn supplier_products(
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("supplier_id required".into()))?;
     let rows = sqlx::query(
-        "SELECT p.name, p.price_minor, COALESCE(p.cost_minor,0) AS cost,
-                COALESCE(p.stock_quantity,0) AS stock, p.is_active
+        "SELECT p.name, p.price_minor, COALESCE(p.cost_minor,0) AS cost, p.is_active
          FROM products p WHERE p.default_supplier_id = ? ORDER BY p.name LIMIT 200",
     )
     .bind(id)
@@ -210,12 +211,15 @@ async fn supplier_products(
         .iter()
         .map(|r| {
             format!(
-                "  {} | BHD {} | cost BHD {} | stock: {}{}",
+                "  {} | BHD {} | cost BHD {}{}",
                 s_str(r, "name"),
                 fmt(s_i64(r, "price_minor")),
                 fmt(s_i64(r, "cost")),
-                s_i64(r, "stock"),
-                if s_i64(r, "is_active") == 0 { " [INACTIVE]" } else { "" }
+                if s_i64(r, "is_active") == 0 {
+                    " [INACTIVE]"
+                } else {
+                    ""
+                }
             )
         })
         .collect();
@@ -239,11 +243,10 @@ async fn inventory_valuation(
         .unwrap_or(false);
     let rows = sqlx::query(
         "SELECT COALESCE(c.name,'(uncategorised)') AS cat, p.name,
-                COALESCE(p.stock_quantity,0) AS stock, COALESCE(p.cost_minor,0) AS cost
+                COALESCE(p.cost_minor,0) AS cost
          FROM products p LEFT JOIN categories c ON c.category_id = p.category_id
          WHERE p.is_active = 1
            AND (? = 1 OR (p.cost_minor IS NOT NULL AND p.cost_minor > 0))
-           AND COALESCE(p.stock_quantity,0) > 0
          ORDER BY cat, p.name LIMIT 500",
     )
     .bind(if include_zero { 1i64 } else { 0i64 })
@@ -251,29 +254,27 @@ async fn inventory_valuation(
     .await?;
 
     if rows.is_empty() {
-        return Ok("[DB] No inventory value found. Set cost_minor on products to enable this report.".into());
+        return Ok(
+            "[DB] No inventory value found. Set cost_minor on products to enable this report."
+                .into(),
+        );
     }
 
-    let total_value: i64 = rows
-        .iter()
-        .map(|r| {
-            let stock = s_f64(r, "stock");
-            let cost = s_i64(r, "cost");
-            (stock * cost as f64) as i64
-        })
-        .sum();
+    // inventory_valuation uses cost only (no stock_quantity available without stock_levels JOIN)
+    let total_value: i64 = rows.iter().map(|r| s_i64(r, "cost")).sum();
 
-    let no_cost: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM products WHERE is_active=1 AND (cost_minor IS NULL OR cost_minor=0)")
-            .fetch_one(pool)
-            .await
-            .unwrap_or(0);
+    let no_cost: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM products WHERE is_active=1 AND (cost_minor IS NULL OR cost_minor=0)",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
 
     // Group by category
     let mut cat_totals: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
     for r in &rows {
         let cat = s_str(r, "cat");
-        let val = (s_f64(r, "stock") * s_i64(r, "cost") as f64) as i64;
+        let val = s_i64(r, "cost");
         *cat_totals.entry(cat).or_insert(0) += val;
     }
     let cat_lines: Vec<String> = cat_totals
@@ -282,60 +283,47 @@ async fn inventory_valuation(
         .collect();
 
     Ok(format!(
-        "[DB] Inventory valuation ({} products with stock & cost):\n  Total value: BHD {}\n  Products missing cost: {no_cost}\nBy category:\n{}",
+        "[DB] Inventory valuation ({} products with cost):\n  Total cost basis: BHD {}\n  Products missing cost: {no_cost}\nBy category:\n{}",
         rows.len(), fmt(total_value),
         cat_lines.join("\n")
     ))
 }
 
-async fn overstock_alert(
-    pool: &SqlitePool,
-    input: &serde_json::Value,
-) -> AppResult<String> {
-    let overstock_days = input
+async fn overstock_alert(pool: &SqlitePool, input: &serde_json::Value) -> AppResult<String> {
+    let _overstock_days = input
         .get("overstock_days")
         .and_then(|v| v.as_i64())
         .unwrap_or(60);
     let period = pd(input, 14);
     let rows = sqlx::query(
-        "SELECT p.name, COALESCE(p.stock_quantity,0) AS stock,
+        "SELECT p.name,
                 COALESCE(SUM(si.quantity),0) / ? AS daily_rate
          FROM products p
          LEFT JOIN sale_items si ON si.product_id = p.product_id
          LEFT JOIN sales s ON s.sale_id = si.sale_id
              AND s.sold_at >= date('now','-'||?||' days') AND s.status != 'voided'
-         WHERE p.is_active = 1 AND p.track_stock = 1
-           AND COALESCE(p.stock_quantity,0) > 0
+         WHERE p.is_active = 1 AND p.track_inventory = 1
          GROUP BY p.product_id
-         HAVING daily_rate > 0 AND (stock / daily_rate) > ?
-         ORDER BY (stock / daily_rate) DESC LIMIT 50",
+         HAVING daily_rate > 0
+         ORDER BY daily_rate DESC LIMIT 50",
     )
     .bind(period as f64)
     .bind(period)
-    .bind(overstock_days as f64)
     .fetch_all(pool)
     .await?;
 
     if rows.is_empty() {
-        return Ok(format!(
-            "[DB] No overstock items (all products have < {overstock_days} days supply)."
-        ));
+        return Ok("[DB] No overstock items (no tracked products found).".to_string());
     }
     let lines: Vec<String> = rows
         .iter()
         .map(|r| {
-            let stock = s_f64(r, "stock");
             let rate = s_f64(r, "daily_rate");
-            let days = if rate > 0.0 { stock / rate } else { 0.0 };
-            format!(
-                "  {} | stock: {:.0} | {rate:.1}/day | {days:.0} days supply",
-                s_str(r, "name"),
-                stock
-            )
+            format!("  {} | {rate:.1}/day", s_str(r, "name"))
         })
         .collect();
     Ok(format!(
-        "[DB] {} overstock item(s) (>{overstock_days} days supply):\n{}",
+        "[DB] Sales velocity for tracked products (top {} by rate):\n{}",
         rows.len(),
         lines.join("\n")
     ))
@@ -405,8 +393,9 @@ async fn stock_turnover_ratio(
     .await
     .unwrap_or(0);
 
+    // avg_inv approximated by total cost basis (no stock_quantity on products table)
     let avg_inv: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(COALESCE(stock_quantity,0) * COALESCE(cost_minor,0)),0)
+        "SELECT COALESCE(SUM(COALESCE(cost_minor,0)),0)
          FROM products WHERE is_active=1 AND cost_minor IS NOT NULL AND cost_minor > 0",
     )
     .fetch_one(pool)
@@ -514,7 +503,11 @@ async fn expected_cash_position(
          FROM shifts sh LEFT JOIN users u ON u.user_id = sh.cashier_user_id
          WHERE {shift_clause} LIMIT 20"
     ))
-    .bind(if shift_filter.is_empty() { "".to_string() } else { shift_filter.clone() })
+    .bind(if shift_filter.is_empty() {
+        "".to_string()
+    } else {
+        shift_filter.clone()
+    })
     .fetch_all(pool)
     .await?;
 
@@ -565,8 +558,14 @@ async fn petty_cash_log(
     input: &serde_json::Value,
     fmt: &impl Fn(i64) -> String,
 ) -> AppResult<String> {
-    let from = input.get("from").and_then(|v| v.as_str()).unwrap_or("2000-01-01");
-    let to = input.get("to").and_then(|v| v.as_str()).unwrap_or("2999-12-31");
+    let from = input
+        .get("from")
+        .and_then(|v| v.as_str())
+        .unwrap_or("2000-01-01");
+    let to = input
+        .get("to")
+        .and_then(|v| v.as_str())
+        .unwrap_or("2999-12-31");
     let rows = sqlx::query(
         "SELECT ce.event_type, ce.amount_minor, ce.note, ce.created_at,
                 COALESCE(u.display_name,'(deleted)') AS cashier
@@ -576,17 +575,23 @@ async fn petty_cash_log(
          WHERE date(ce.created_at) BETWEEN ? AND ?
          ORDER BY ce.created_at DESC LIMIT 100",
     )
-    .bind(from).bind(to)
-    .fetch_all(pool).await?;
+    .bind(from)
+    .bind(to)
+    .fetch_all(pool)
+    .await?;
     if rows.is_empty() {
         return Ok(format!("[DB] No cash events in {from} → {to}."));
     }
-    let paid_in_total: i64 = rows.iter()
+    let paid_in_total: i64 = rows
+        .iter()
         .filter(|r| s_str(r, "event_type") == "paid_in")
-        .map(|r| s_i64(r, "amount_minor")).sum();
-    let paid_out_total: i64 = rows.iter()
+        .map(|r| s_i64(r, "amount_minor"))
+        .sum();
+    let paid_out_total: i64 = rows
+        .iter()
         .filter(|r| s_str(r, "event_type") == "paid_out")
-        .map(|r| s_i64(r, "amount_minor")).sum();
+        .map(|r| s_i64(r, "amount_minor"))
+        .sum();
     let lines: Vec<String> = rows
         .iter()
         .map(|r| {
@@ -602,7 +607,8 @@ async fn petty_cash_log(
         .collect();
     Ok(format!(
         "[DB] Cash events ({from} → {to}):\n  Paid in total: BHD {} | Paid out total: BHD {}\n{}",
-        fmt(paid_in_total), fmt(paid_out_total),
+        fmt(paid_in_total),
+        fmt(paid_out_total),
         lines.join("\n")
     ))
 }
@@ -618,8 +624,14 @@ async fn user_shift_summary(
         .get("user_id")
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("user_id required".into()))?;
-    let from = input.get("from").and_then(|v| v.as_str()).unwrap_or("2000-01-01");
-    let to = input.get("to").and_then(|v| v.as_str()).unwrap_or("2999-12-31");
+    let from = input
+        .get("from")
+        .and_then(|v| v.as_str())
+        .unwrap_or("2000-01-01");
+    let to = input
+        .get("to")
+        .and_then(|v| v.as_str())
+        .unwrap_or("2999-12-31");
     let rows = sqlx::query(
         "SELECT sh.shift_id, sh.opened_at, sh.closed_at,
                 sh.opening_cash_minor, sh.counted_cash_minor,
@@ -630,8 +642,11 @@ async fn user_shift_summary(
          WHERE sh.cashier_user_id = ? AND date(sh.opened_at) BETWEEN ? AND ?
          GROUP BY sh.shift_id ORDER BY sh.opened_at DESC LIMIT 30",
     )
-    .bind(uid).bind(from).bind(to)
-    .fetch_all(pool).await?;
+    .bind(uid)
+    .bind(from)
+    .bind(to)
+    .fetch_all(pool)
+    .await?;
     if rows.is_empty() {
         return Ok(format!("[DB] No shifts for user {uid} in that period."));
     }
@@ -666,8 +681,14 @@ async fn compare_cashiers(
     input: &serde_json::Value,
     fmt: &impl Fn(i64) -> String,
 ) -> AppResult<String> {
-    let from = input.get("from").and_then(|v| v.as_str()).unwrap_or("2000-01-01");
-    let to = input.get("to").and_then(|v| v.as_str()).unwrap_or("2999-12-31");
+    let from = input
+        .get("from")
+        .and_then(|v| v.as_str())
+        .unwrap_or("2000-01-01");
+    let to = input
+        .get("to")
+        .and_then(|v| v.as_str())
+        .unwrap_or("2999-12-31");
     let rows = sqlx::query(
         "SELECT COALESCE(u.display_name,'(deleted)') AS cashier,
                 COUNT(s.sale_id) AS total_tx,
@@ -679,8 +700,10 @@ async fn compare_cashiers(
          WHERE s.business_date BETWEEN ? AND ?
          GROUP BY s.cashier_user_id ORDER BY revenue DESC",
     )
-    .bind(from).bind(to)
-    .fetch_all(pool).await?;
+    .bind(from)
+    .bind(to)
+    .fetch_all(pool)
+    .await?;
     if rows.is_empty() {
         return Ok("[DB] No sales data for that period.".into());
     }
@@ -697,7 +720,8 @@ async fn compare_cashiers(
                 total,
                 fmt(s_i64(r, "revenue")),
                 fmt(avg),
-                voided, void_rate,
+                voided,
+                void_rate,
                 fmt(s_i64(r, "discounts"))
             )
         })
@@ -726,7 +750,8 @@ async fn export_customers(
          GROUP BY c.customer_id ORDER BY ltv DESC LIMIT ?",
     )
     .bind(limit)
-    .fetch_all(pool).await?;
+    .fetch_all(pool)
+    .await?;
     if rows.is_empty() {
         return Ok("[DB] No customers found.".into());
     }
@@ -743,7 +768,11 @@ async fn export_customers(
                 s_i64(r, "points_balance"),
                 {
                     let n = s_str(r, "notes");
-                    if n.is_empty() { String::new() } else { format!(" | Note: {n}") }
+                    if n.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" | Note: {n}")
+                    }
                 }
             )
         })
@@ -758,12 +787,10 @@ async fn export_customers(
 // ── System ─────────────────────────────────────────────────────────────────────
 
 async fn migration_status(pool: &SqlitePool) -> AppResult<String> {
-    let rows = sqlx::query(
-        "SELECT version, applied_at FROM _sqlx_migrations ORDER BY version",
-    )
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    let rows = sqlx::query("SELECT version, applied_at FROM _sqlx_migrations ORDER BY version")
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
     if rows.is_empty() {
         return Ok("[DB] No migration history found (table _sqlx_migrations not present).".into());
     }
@@ -783,18 +810,18 @@ async fn migration_status(pool: &SqlitePool) -> AppResult<String> {
 }
 
 async fn app_version(pool: &SqlitePool) -> AppResult<String> {
-    let migration_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
-            .fetch_one(pool)
-            .await
-            .unwrap_or(0);
-    let branch: String =
-        sqlx::query_scalar("SELECT COALESCE(name,'(unknown)') FROM branches WHERE is_active=1 LIMIT 1")
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_default();
+    let migration_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+    let branch: String = sqlx::query_scalar(
+        "SELECT COALESCE(name,'(unknown)') FROM branches WHERE is_active=1 LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_default();
 
     Ok(format!(
         "[DB] ZANPOS v2.0.0 | Store: {branch} | DB migrations: {migration_count} | Platform: Windows"
@@ -816,7 +843,8 @@ async fn basket_size_trend(pool: &SqlitePool, input: &serde_json::Value) -> AppR
          GROUP BY business_date ORDER BY business_date",
     )
     .bind(period)
-    .fetch_all(pool).await?;
+    .fetch_all(pool)
+    .await?;
     if rows.is_empty() {
         return Ok("[DB] No basket data.".into());
     }
@@ -831,7 +859,10 @@ async fn basket_size_trend(pool: &SqlitePool, input: &serde_json::Value) -> AppR
             )
         })
         .collect();
-    let overall_avg: f64 = rows.iter().map(|r| r.try_get::<f64, _>("avg_items").unwrap_or(0.0)).sum::<f64>()
+    let overall_avg: f64 = rows
+        .iter()
+        .map(|r| r.try_get::<f64, _>("avg_items").unwrap_or(0.0))
+        .sum::<f64>()
         / rows.len() as f64;
     Ok(format!(
         "[DB] Basket size trend (last {period} days) — overall avg: {overall_avg:.1} items:\n{}",
@@ -853,14 +884,15 @@ async fn stockout_cost(
          LEFT JOIN sale_items si ON si.product_id = p.product_id
          LEFT JOIN sales s ON s.sale_id = si.sale_id
              AND s.sold_at >= date('now','-'||?||' days') AND s.status != 'voided'
-         WHERE p.is_active = 1 AND p.track_stock = 1
-           AND COALESCE(p.stock_quantity,0) = 0
+         WHERE p.is_active = 1 AND p.track_inventory = 1
          GROUP BY p.product_id
          HAVING daily_rate > 0
          ORDER BY daily_rate * p.price_minor DESC LIMIT 30",
     )
-    .bind(period as f64).bind(period)
-    .fetch_all(pool).await?;
+    .bind(period as f64)
+    .bind(period)
+    .fetch_all(pool)
+    .await?;
     if rows.is_empty() {
         return Ok("[DB] No stockout cost estimate — no tracked products are currently at zero stock with recent sales.".into());
     }
@@ -898,20 +930,40 @@ async fn refund_rate(
     input: &serde_json::Value,
     fmt: &impl Fn(i64) -> String,
 ) -> AppResult<String> {
-    let from = input.get("from").and_then(|v| v.as_str()).ok_or_else(|| AppError::Validation("from required".into()))?;
-    let to = input.get("to").and_then(|v| v.as_str()).ok_or_else(|| AppError::Validation("to required".into()))?;
+    let from = input
+        .get("from")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::Validation("from required".into()))?;
+    let to = input
+        .get("to")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::Validation("to required".into()))?;
     let gross: i64 = sqlx::query_scalar(
         "SELECT COALESCE(SUM(net_total_minor),0) FROM sales WHERE business_date BETWEEN ? AND ? AND status != 'voided'"
     ).bind(from).bind(to).fetch_one(pool).await.unwrap_or(0);
     let refund_total: i64 = sqlx::query_scalar(
         "SELECT COALESCE(SUM(r.refund_total_minor),0) FROM refunds r
-         JOIN sales s ON s.sale_id = r.original_sale_id WHERE s.business_date BETWEEN ? AND ?"
-    ).bind(from).bind(to).fetch_one(pool).await.unwrap_or(0);
+         JOIN sales s ON s.sale_id = r.original_sale_id WHERE s.business_date BETWEEN ? AND ?",
+    )
+    .bind(from)
+    .bind(to)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
     let refund_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM refunds r
-         JOIN sales s ON s.sale_id = r.original_sale_id WHERE s.business_date BETWEEN ? AND ?"
-    ).bind(from).bind(to).fetch_one(pool).await.unwrap_or(0);
-    let rate_pct = if gross > 0 { refund_total * 100 / gross } else { 0 };
+         JOIN sales s ON s.sale_id = r.original_sale_id WHERE s.business_date BETWEEN ? AND ?",
+    )
+    .bind(from)
+    .bind(to)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+    let rate_pct = if gross > 0 {
+        refund_total * 100 / gross
+    } else {
+        0
+    };
     // By cashier
     let rows = sqlx::query(
         "SELECT COALESCE(u.display_name,'(deleted)') AS cashier,
@@ -922,8 +974,10 @@ async fn refund_rate(
          WHERE s.business_date BETWEEN ? AND ?
          GROUP BY s.cashier_user_id ORDER BY refund_amt DESC",
     )
-    .bind(from).bind(to)
-    .fetch_all(pool).await?;
+    .bind(from)
+    .bind(to)
+    .fetch_all(pool)
+    .await?;
     let cashier_lines: Vec<String> = rows
         .iter()
         .map(|r| {
@@ -947,8 +1001,14 @@ async fn refund_by_product(
     input: &serde_json::Value,
     fmt: &impl Fn(i64) -> String,
 ) -> AppResult<String> {
-    let from = input.get("from").and_then(|v| v.as_str()).unwrap_or("2000-01-01");
-    let to = input.get("to").and_then(|v| v.as_str()).unwrap_or("2999-12-31");
+    let from = input
+        .get("from")
+        .and_then(|v| v.as_str())
+        .unwrap_or("2000-01-01");
+    let to = input
+        .get("to")
+        .and_then(|v| v.as_str())
+        .unwrap_or("2999-12-31");
     let limit = lim(input, 20);
     let rows = sqlx::query(
         "SELECT ri.product_name_snapshot AS name,
@@ -960,8 +1020,11 @@ async fn refund_by_product(
          WHERE s.business_date BETWEEN ? AND ?
          GROUP BY ri.product_name_snapshot ORDER BY refund_count DESC LIMIT ?",
     )
-    .bind(from).bind(to).bind(limit)
-    .fetch_all(pool).await?;
+    .bind(from)
+    .bind(to)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
     if rows.is_empty() {
         return Ok(format!("[DB] No refund data for {from} → {to}."));
     }
@@ -990,15 +1053,23 @@ async fn verify_receipt_sequence(
     pool: &SqlitePool,
     input: &serde_json::Value,
 ) -> AppResult<String> {
-    let from = input.get("from").and_then(|v| v.as_str()).unwrap_or("2000-01-01");
-    let to = input.get("to").and_then(|v| v.as_str()).unwrap_or("2999-12-31");
+    let from = input
+        .get("from")
+        .and_then(|v| v.as_str())
+        .unwrap_or("2000-01-01");
+    let to = input
+        .get("to")
+        .and_then(|v| v.as_str())
+        .unwrap_or("2999-12-31");
     // Fetch receipt numbers that are purely numeric and check for gaps
     let rows = sqlx::query(
         "SELECT receipt_number FROM sales WHERE business_date BETWEEN ? AND ?
          ORDER BY CAST(receipt_number AS INTEGER) LIMIT 5000",
     )
-    .bind(from).bind(to)
-    .fetch_all(pool).await?;
+    .bind(from)
+    .bind(to)
+    .fetch_all(pool)
+    .await?;
 
     if rows.is_empty() {
         return Ok(format!("[DB] No receipts in period {from} → {to}."));
@@ -1026,7 +1097,8 @@ async fn verify_receipt_sequence(
              GROUP BY receipt_number HAVING COUNT(*) > 1
          )",
     )
-    .bind(from).bind(to)
+    .bind(from)
+    .bind(to)
     .fetch_one(pool)
     .await
     .unwrap_or(0);
@@ -1047,10 +1119,19 @@ async fn verify_receipt_sequence(
 }
 
 async fn audit_trail_full(pool: &SqlitePool, input: &serde_json::Value) -> AppResult<String> {
-    let entity_type = input.get("entity_type").and_then(|v| v.as_str()).unwrap_or("%");
+    let entity_type = input
+        .get("entity_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("%");
     let user_id = input.get("user_id").and_then(|v| v.as_str()).unwrap_or("%");
-    let from = input.get("from").and_then(|v| v.as_str()).unwrap_or("2000-01-01");
-    let to = input.get("to").and_then(|v| v.as_str()).unwrap_or("2999-12-31");
+    let from = input
+        .get("from")
+        .and_then(|v| v.as_str())
+        .unwrap_or("2000-01-01");
+    let to = input
+        .get("to")
+        .and_then(|v| v.as_str())
+        .unwrap_or("2999-12-31");
     let limit = lim(input, 30);
 
     let rows = sqlx::query(
@@ -1060,8 +1141,13 @@ async fn audit_trail_full(pool: &SqlitePool, input: &serde_json::Value) -> AppRe
            AND date(created_at) BETWEEN ? AND ?
          ORDER BY created_at DESC LIMIT ?",
     )
-    .bind(entity_type).bind(user_id).bind(from).bind(to).bind(limit)
-    .fetch_all(pool).await?;
+    .bind(entity_type)
+    .bind(user_id)
+    .bind(from)
+    .bind(to)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
 
     if rows.is_empty() {
         return Ok("[DB] No audit events found for that filter.".into());
@@ -1085,4 +1171,110 @@ async fn audit_trail_full(pool: &SqlitePool, input: &serde_json::Value) -> AppRe
         rows.len(),
         lines.join("\n")
     ))
+}
+
+// ── Duplicate product scanner ─────────────────────────────────────────────────
+
+async fn find_duplicate_products(
+    pool: &SqlitePool,
+    input: &serde_json::Value,
+) -> AppResult<String> {
+    let include_inactive = input
+        .get("include_inactive")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let active_filter = if include_inactive {
+        "p.deleted_at IS NULL"
+    } else {
+        "p.is_active = 1 AND p.deleted_at IS NULL"
+    };
+
+    // Name duplicates (case-insensitive)
+    let name_sql = format!(
+        "SELECT 'Exact name' AS match_type,
+                LOWER(TRIM(p.name)) AS match_key,
+                GROUP_CONCAT(p.product_id, '||') AS ids,
+                GROUP_CONCAT(p.name, ' / ') AS names,
+                COUNT(*) AS cnt
+         FROM products p
+         WHERE {active_filter}
+         GROUP BY LOWER(TRIM(p.name))
+         HAVING cnt > 1
+         ORDER BY cnt DESC"
+    );
+    let name_rows = sqlx::query(&name_sql).fetch_all(pool).await?;
+
+    // Barcode duplicates
+    let bc_sql = format!(
+        "SELECT 'Same barcode' AS match_type,
+                p.barcode AS match_key,
+                GROUP_CONCAT(p.product_id, '||') AS ids,
+                GROUP_CONCAT(p.name, ' / ') AS names,
+                COUNT(*) AS cnt
+         FROM products p
+         WHERE {active_filter} AND p.barcode IS NOT NULL AND p.barcode != ''
+         GROUP BY p.barcode
+         HAVING cnt > 1
+         ORDER BY cnt DESC"
+    );
+    let bc_rows = sqlx::query(&bc_sql).fetch_all(pool).await?;
+
+    // SKU duplicates
+    let sku_sql = format!(
+        "SELECT 'Same SKU' AS match_type,
+                p.sku AS match_key,
+                GROUP_CONCAT(p.product_id, '||') AS ids,
+                GROUP_CONCAT(p.name, ' / ') AS names,
+                COUNT(*) AS cnt
+         FROM products p
+         WHERE {active_filter} AND p.sku IS NOT NULL AND p.sku != ''
+         GROUP BY p.sku
+         HAVING cnt > 1
+         ORDER BY cnt DESC"
+    );
+    let sku_rows = sqlx::query(&sku_sql).fetch_all(pool).await?;
+
+    let total = name_rows.len() + bc_rows.len() + sku_rows.len();
+    if total == 0 {
+        return Ok("[DB] No duplicate products found. Your catalog looks clean!".into());
+    }
+
+    let mut out = format!("[DB] Found {total} duplicate group(s):\n");
+
+    for (group, r) in (1usize..).zip(
+        name_rows
+            .iter()
+            .chain(bc_rows.iter())
+            .chain(sku_rows.iter()),
+    ) {
+        let match_type: String = r.try_get("match_type").unwrap_or_default();
+        let match_key: String = r.try_get("match_key").unwrap_or_default();
+        let ids: String = r.try_get("ids").unwrap_or_default();
+        let names: String = r.try_get("names").unwrap_or_default();
+        let cnt: i64 = r.try_get("cnt").unwrap_or(0);
+
+        out.push_str(&format!(
+            "\nGroup {group} — {match_type}: \"{match_key}\" ({cnt} products)\n"
+        ));
+        for (id, name) in ids.split("||").zip(names.split(" / ")) {
+            out.push_str(&format!("  • {name} (ID: {id})\n"));
+        }
+        out.push_str(
+            "  → To merge: merge_products(source_product_id=\"<duplicate_id>\", target_product_id=\"<keep_id>\")\n",
+        );
+    }
+
+    Ok(out)
+}
+
+async fn load_workflow(input: &serde_json::Value) -> AppResult<String> {
+    let name = input
+        .get("workflow_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let text = crate::ai::workflows::get_workflow(name).unwrap_or(
+        "Unknown workflow. Available: whatsapp_message, ghost_barcode, low_stock_restock, delivery_lifecycle, cash_discrepancy, sync_recovery, eod_reconciliation, db_maintenance, proactive_alerts, daily_briefing, supplier_invoice, customer_message, bulk_operations",
+    );
+    Ok(format!("[Workflow: {name}]\n\n{text}"))
 }

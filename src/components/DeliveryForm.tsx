@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import type { CustomerRow, DeliveryInput } from "../types";
 import { DEVICE } from "../types";
 import * as cmd from "../tauri/commands";
+import { useLanguage } from "../hooks/useLanguage";
+import { detailTranslator } from "../i18n/detailStrings";
 
 interface Props {
   value: Partial<DeliveryInput>;
@@ -29,6 +31,8 @@ export default function DeliveryForm({
   value, onChange, selectedCustomer, expectedPaymentMethod,
   actorUserId, phoneRaw, phoneError, onPhoneChange, onPhoneFocus,
 }: Props) {
+  const { language } = useLanguage();
+  const t = detailTranslator(language);
   const [riderSuggestions, setRiderSuggestions] = useState<string[]>([]);
   const [showRiderDrop, setShowRiderDrop] = useState(false);
 
@@ -70,7 +74,9 @@ export default function DeliveryForm({
 
   const methodLabel =
     expectedPaymentMethod === "wallet" ? "BenefitPay" :
-    expectedPaymentMethod.charAt(0).toUpperCase() + expectedPaymentMethod.slice(1);
+    expectedPaymentMethod === "cash" ? t("cash") :
+    expectedPaymentMethod === "card" ? t("card") :
+    expectedPaymentMethod;
 
   return (
     <div className="delivery-form">
@@ -78,8 +84,8 @@ export default function DeliveryForm({
       {/* Contact number — DIALPAD-CONNECTED */}
       <div className="delivery-field">
         <label className="delivery-label">
-          Contact Number <span className="delivery-required">*</span>
-          <span className="delivery-label-hint"> — tap to use dialpad</span>
+          {t("contactNumber")} <span className="delivery-required">*</span>
+          <span className="delivery-label-hint"> — {t("tapUseDialpad")}</span>
         </label>
         <div className="delivery-phone-row">
           <span className="delivery-phone-prefix">+973</span>
@@ -90,7 +96,7 @@ export default function DeliveryForm({
             onChange={e => {
               const raw = e.target.value.replace(/\D/g, "").slice(0, 8);
               const normalized = normalizePhone(raw);
-              const err = raw && !normalized ? "Enter 8-digit Bahrain number (e.g. 33050666)" : null;
+              const err = raw && !normalized ? t("invalidBahrainNumber") : null;
               onPhoneChange(raw, normalized, err);
             }}
             onFocus={onPhoneFocus}
@@ -104,17 +110,17 @@ export default function DeliveryForm({
       {/* Flat No + Bldg/House in one row */}
       <div className="delivery-field-row">
         <div className="delivery-field" style={{ flex: 1 }}>
-          <label className="delivery-label">Flat No</label>
+          <label className="delivery-label">{t("flatNumber")}</label>
           <input
             className="delivery-input"
-            placeholder="Apt / Flat"
+            placeholder={t("apartmentFlat")}
             value={value.area ?? ""}
             onChange={e => set("area", e.target.value)}
           />
         </div>
         <div className="delivery-field" style={{ flex: 1 }}>
           <label className="delivery-label">
-            Bldg / House <span className="delivery-required">*</span>
+            {t("buildingHouse")} <span className="delivery-required">*</span>
           </label>
           <input
             className="delivery-input"
@@ -128,11 +134,11 @@ export default function DeliveryForm({
       {/* Road Number */}
       <div className="delivery-field">
         <label className="delivery-label">
-          Road No <span className="delivery-required">*</span>
+          {t("roadNumber")} <span className="delivery-required">*</span>
         </label>
         <input
           className="delivery-input"
-          placeholder="Road / Block number"
+          placeholder={t("roadBlockNumber")}
           value={value.address_text ?? ""}
           onChange={e => set("address_text", e.target.value)}
         />
@@ -140,10 +146,10 @@ export default function DeliveryForm({
 
       {/* Rider */}
       <div className="delivery-field" style={{ position: "relative" }}>
-        <label className="delivery-label">Rider</label>
+        <label className="delivery-label">{t("rider")}</label>
         <input
           className="delivery-input"
-          placeholder="Staff name"
+          placeholder={t("staffName")}
           value={value.delivery_staff_name ?? ""}
           onChange={e => { set("delivery_staff_name", e.target.value); setShowRiderDrop(true); }}
           onFocus={() => setShowRiderDrop(true)}
@@ -168,7 +174,7 @@ export default function DeliveryForm({
       </div>
 
       <div className="delivery-method-note">
-        Expected payment: <strong>{methodLabel}</strong>
+        {t("expectedPayment")}: <strong>{methodLabel}</strong>
       </div>
     </div>
   );

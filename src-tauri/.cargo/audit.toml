@@ -17,42 +17,4 @@
 # Reassess when: sqlx 0.9+ decouples backend compilation, or rsa 0.10 is patched.
 ignore = [
     "RUSTSEC-2023-0071",
-
-    # RUSTSEC-2024-0388 — derivative: potential unsoundness in derived Eq/Hash
-    # Transitive dep only; no safety-critical paths use derivative-derived types.
-    "RUSTSEC-2024-0388",
-
-    # RUSTSEC-2024-0384 — instant: unmaintained wasm shim
-    # ZANPOS targets Windows only; std::time is always available.
-    "RUSTSEC-2024-0384",
-
-    # GTK3 / Linux Tauri bindings: unmaintained or unsound Linux-only libs.
-    # These appear as transitive deps of Tauri's Linux WebKit/GTK renderer
-    # and keyring's Linux backend. ZANPOS targets Windows; these crates are
-    # never compiled or loaded in production builds.
-    # Reassess when Tauri upgrades its GTK/WebKit bindings.
-    "RUSTSEC-2024-0411",
-    "RUSTSEC-2024-0412",
-    "RUSTSEC-2024-0413",
-    "RUSTSEC-2024-0414",
-    "RUSTSEC-2024-0415",
-    "RUSTSEC-2024-0416",
-    "RUSTSEC-2024-0417",
-    "RUSTSEC-2024-0418",
-    "RUSTSEC-2024-0419",
-    "RUSTSEC-2024-0420",
-    "RUSTSEC-2024-0429",   # glib VariantStrIter unsoundness — Linux GTK only
-
-    # proc-macro-error (RUSTSEC-2024-0370): unmaintained compile-time only crate.
-    # Used by gtk3-macros (Linux Tauri path) — no runtime impact on Windows.
-    "RUSTSEC-2024-0370",
-
-    # unic-* crates (RUSTSEC-2025-*): unmaintained Unicode util crates.
-    # Transitive via urlpattern → tauri-utils. No known exploitable CVE.
-    # Reassess when tauri-utils migrates to a maintained Unicode crate.
-    "RUSTSEC-2025-0081",
-    "RUSTSEC-2025-0075",
-    "RUSTSEC-2025-0080",
-    "RUSTSEC-2025-0100",
-    "RUSTSEC-2025-0098",
 ]

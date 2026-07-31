@@ -1,15 +1,35 @@
-import { useCallback, useEffect, useState } from "react";
-import type { HubStatus } from "../../types";
-import { hubStatus, hubEnable, hubRegenerateToken, hubTestConnection, hubConnectExisting, hubSetUrl } from "../../tauri/commands";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { HubStatus, HubTruthCompareResult, SyncConflictRow } from "../../types";
+import {
+  hubStatus,
+  hubEnable,
+  hubRegenerateToken,
+  hubTestConnection,
+  hubConnectExisting,
+  hubSetUrl,
+  hubTruthCompare,
+  hubTruthPull,
+  syncConflictsList,
+} from "../../tauri/commands";
+import AppConfirmModal from "../AppConfirmModal";
+import { useLanguage } from "../../hooks/useLanguage";
+import { hubTruthStatusText, operationsTranslator } from "../../i18n/operationsStrings";
 
 interface Props { sessionUserId: string; }
 
 export default function HubTab({ sessionUserId }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => operationsTranslator(language), [language]);
   const [status, setStatus] = useState<HubStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [showToken, setShowToken] = useState(false);
+  const [confirmRegenerate, setConfirmRegenerate] = useState(false);
+  const [truth, setTruth] = useState<HubTruthCompareResult | null>(null);
+  const [conflicts, setConflicts] = useState<SyncConflictRow[]>([]);
+  const [truthLoading, setTruthLoading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -24,9 +44,43 @@ export default function HubTab({ sessionUserId }: Props) {
 
   useEffect(() => { load(); }, [load]);
 
+  const loadTruth = useCallback(async () => {
+    setTruthLoading(true);
+    setError(null);
+    try {
+      const [compare, inbox] = await Promise.all([
+        hubTruthCompare(sessionUserId),
+        syncConflictsList(sessionUserId).catch(() => []),
+      ]);
+      setTruth(compare);
+      setConflicts(inbox);
+    } catch (e: unknown) {
+      setError(String(e));
+    } finally {
+      setTruthLoading(false);
+    }
+  }, [sessionUserId]);
+
+  const pullTruth = useCallback(async () => {
+    setTruthLoading(true);
+    setError(null);
+    try {
+      const compare = await hubTruthPull(sessionUserId);
+      const inbox = await syncConflictsList(sessionUserId).catch(() => []);
+      setTruth(compare);
+      setConflicts(inbox);
+      setMessage(t(compare.ok ? "hubTruthVerified" : "hubTruthReview"));
+    } catch (e: unknown) {
+      setError(String(e));
+    } finally {
+      setTruthLoading(false);
+    }
+  }, [sessionUserId, t]);
+
   const doAction = async (fn: () => Promise<unknown>) => {
     setActionLoading(true);
     setError(null);
+    setMessage(null);
     try { await fn(); await load(); }
     catch (e: unknown) { setError(String(e)); }
     finally { setActionLoading(false); }
@@ -40,8 +94,7 @@ export default function HubTab({ sessionUserId }: Props) {
   });
 
   const handleRegenerateToken = () => {
-    if (!window.confirm("Regenerate the store token? ALL terminals will need to re-enter it.")) return;
-    doAction(async () => { await hubRegenerateToken(sessionUserId); });
+    setConfirmRegenerate(true);
   };
 
   // ─── Connect to existing hub ─────────────────────────────────────────────────
@@ -51,10 +104,11 @@ export default function HubTab({ sessionUserId }: Props) {
   const handleTest = async () => {
     setActionLoading(true);
     setError(null);
+    setMessage(null);
     try {
       const r = await hubTestConnection(connectUrl, connectToken);
-      if (!r.ok) { setError(r.error ?? "Connection failed"); }
-      else { setError(null); alert(`✓ Found store: ${r.store_name}`); }
+      if (!r.ok) { setError(r.error ?? t("connectionFailed")); }
+      else { setError(null); setMessage(`${t("foundStore")}: ${r.store_name}`); }
     } catch (e: unknown) { setError(String(e)); }
     finally { setActionLoading(false); }
   };
@@ -77,8 +131,67 @@ export default function HubTab({ sessionUserId }: Props) {
     navigator.clipboard.writeText(text).catch(() => {});
   };
 
-  if (loading) return <div className="bo-loading">Loading…</div>;
-  if (!status) return <div className="bo-error">Could not load hub status</div>;
+  const truthPanel = (
+    <section className="hub-status-card">
+      <div className="hub-status-row">
+        <span>{t("hubTruthAudit")}</span>
+        <strong style={{ color: truth?.ok ? "var(--success)" : truth ? "var(--warning)" : "var(--text)" }}>
+          {truth ? `${truth.score}% ${t("consistent")}` : t("notChecked")}
+        </strong>
+      </div>
+      {truth && (
+        <>
+          <p className="setup-hint">{truth.message}</p>
+          <div className="hub-status-row">
+            <span>{t("schema")}</span>
+            <strong>{truth.schema_match ? t("match") : `${t("local")} ${truth.local_schema_version} / ${t("hub")} ${truth.hub_schema_version}`}</strong>
+          </div>
+          {truth.tables.filter(t => t.status !== "match").length > 0 && (
+            <table className="bo-table">
+              <thead><tr><th>{t("table")}</th><th>{t("local")}</th><th>{t("hub")}</th><th>{t("status")}</th></tr></thead>
+              <tbody>
+                {truth.tables.filter(t => t.status !== "match").map(t => (
+                  <tr key={t.table}>
+                    <td>{t.table}</td>
+                    <td>{t.local_count}</td>
+                    <td>{t.hub_count}</td>
+                    <td>{hubTruthStatusText(language, t.status)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button className="btn-secondary" onClick={loadTruth} disabled={truthLoading}>
+          {truthLoading ? t("checking") : t("compareTerminalHub")}
+        </button>
+        {truth && !truth.ok && (
+          <button className="btn-primary" onClick={pullTruth} disabled={truthLoading}>
+            {t("pullHubTruth")}
+          </button>
+        )}
+      </div>
+      {conflicts.length > 0 && (
+        <>
+          <h4>{t("conflictInbox")}</h4>
+          <div className="hub-conflict-list">
+            {conflicts.slice(0, 6).map(c => (
+              <div key={c.conflict_id} className="hub-conflict-row">
+                <strong>{c.title}</strong>
+                <span>{c.table_name}{c.entity_id ? ` · ${c.entity_id}` : ""}</span>
+                <small>{c.detail}</small>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
+  );
+
+  if (loading) return <div className="bo-loading">{t("loading")}</div>;
+  if (!status) return <div className="bo-error">{t("hubStatusLoadFailed")}</div>;
 
   const { mode, running, lan_ips, token, hub_url, last_error: hubError, terminals } = status;
 
@@ -89,64 +202,79 @@ export default function HubTab({ sessionUserId }: Props) {
       : null;
     return (
       <div className="bo-tab-content">
-        <h3 className="bo-section-title">Hub Server</h3>
+        {confirmRegenerate && (
+          <AppConfirmModal
+            title={t("regenerateStoreToken")}
+            description={t("regenerateTokenDescription")}
+            confirmLabel={t("regenerate")}
+            danger
+            onCancel={() => setConfirmRegenerate(false)}
+            onConfirm={() => {
+              setConfirmRegenerate(false);
+              void doAction(async () => { await hubRegenerateToken(sessionUserId); });
+            }}
+          />
+        )}
+        <h3 className="bo-section-title">{t("hubServer")}</h3>
+        {message && <div className="settings-action-msg settings-action-ok">{message}</div>}
+
+        {truthPanel}
 
         <div className={`hub-status-card ${running ? "hub-online" : "hub-offline"}`}>
           <div className="hub-status-row">
-            <span>Status:</span>
+            <span>{t("status")}:</span>
             <strong style={{ color: running ? "var(--success)" : "var(--danger)" }}>
-              {running ? "Running on port " + status.port : "Not running"}
+              {running ? `${t("runningOnPort")} ${status.port}` : t("notRunning")}
             </strong>
           </div>
           {hubError && (
             <div className="hub-status-row">
-              <span>Error:</span>
+              <span>{t("error")}:</span>
               <strong style={{ color: "var(--danger)" }}>{hubError}</strong>
             </div>
           )}
         </div>
 
-        <h4>LAN Addresses</h4>
+        <h4>{t("lanAddresses")}</h4>
         <div className="hub-ip-list">
-          {lan_ips.length === 0 && <p className="setup-hint">No LAN IP detected — check your network connection.</p>}
+          {lan_ips.length === 0 && <p className="setup-hint">{t("noLanIp")}</p>}
           {lan_ips.map(ip => (
             <div key={ip} className="hub-ip-row">
               <code>{ip}:{status.port}</code>
-              <button className="btn-sm" onClick={() => copy(`${ip}:${status.port}`)}>Copy</button>
+              <button className="btn-sm" onClick={() => copy(`${ip}:${status.port}`)}>{t("copy")}</button>
             </div>
           ))}
         </div>
 
-        <h4>Store Token</h4>
+        <h4>{t("storeToken")}</h4>
         <div className="hub-token-row">
           <code style={{ wordBreak: "break-all" }}>
-            {showToken ? token : (masked ?? "Not set")}
+            {showToken ? token : (masked ?? t("notSet"))}
           </code>
           <button className="btn-sm" onClick={() => setShowToken(v => !v)}>
-            {showToken ? "Hide" : "Reveal"}
+            {t(showToken ? "hide" : "reveal")}
           </button>
-          {token && <button className="btn-sm" onClick={() => copy(token)}>Copy</button>}
+          {token && <button className="btn-sm" onClick={() => copy(token)}>{t("copy")}</button>}
         </div>
         <p className="setup-hint">
-          Share the IP address + store token with other terminals. They'll enter it
-          in Back Office → Settings → Hub → "Connect to existing Hub".
+          {t("shareHubCredentials")}
         </p>
 
         <button className="btn-secondary" onClick={handleRegenerateToken} disabled={actionLoading}>
-          Regenerate Token
+          {t("regenerateStoreToken")}
         </button>
 
         {terminals.length > 0 && (
           <>
-            <h4>Connected Terminals</h4>
+            <h4>{t("connectedTerminals")}</h4>
             <table className="bo-table">
-              <thead><tr><th>Device ID</th><th>IP</th><th>Last Seen</th></tr></thead>
+              <thead><tr><th>{t("deviceId")}</th><th>{t("ip")}</th><th>{t("lastSeen")}</th></tr></thead>
               <tbody>
                 {terminals.map(t => (
                   <tr key={t.device_id}>
                     <td><code>{t.device_id}</code></td>
                     <td>{t.ip}</td>
-                    <td>{new Date(t.last_seen).toLocaleString()}</td>
+                    <td>{new Date(t.last_seen).toLocaleString(language === "ar" ? "ar-BH" : "en-BH")}</td>
                   </tr>
                 ))}
               </tbody>
@@ -163,15 +291,17 @@ export default function HubTab({ sessionUserId }: Props) {
   if (mode === "terminal") {
     return (
       <div className="bo-tab-content">
-        <h3 className="bo-section-title">Connected to Hub</h3>
+        <h3 className="bo-section-title">{t("connectedToHub")}</h3>
+        {message && <div className="settings-action-msg settings-action-ok">{message}</div>}
+        {truthPanel}
         <div className="hub-status-card hub-online">
           <div className="hub-status-row">
-            <span>Hub Address:</span>
+            <span>{t("hubAddress")}:</span>
             <strong><code>{hub_url}</code></strong>
           </div>
         </div>
 
-        <h4>Change Hub Address</h4>
+        <h4>{t("changeHubAddress")}</h4>
         <div className="hub-form-row">
           <input
             className="field-input"
@@ -180,16 +310,16 @@ export default function HubTab({ sessionUserId }: Props) {
             onChange={e => setNewUrl(e.target.value)}
           />
           <button className="btn-primary" onClick={handleSetUrl} disabled={actionLoading || !newUrl.trim()}>
-            Update
+            {t("updateAddress")}
           </button>
         </div>
 
-        <h4>Re-enter Store Token</h4>
+        <h4>{t("reenterStoreToken")}</h4>
         <div className="hub-form-row">
           <input
             className="field-input"
             type="password"
-            placeholder="Paste the store token"
+            placeholder={t("pasteStoreToken")}
             value={connectToken}
             onChange={e => setConnectToken(e.target.value)}
           />
@@ -200,7 +330,7 @@ export default function HubTab({ sessionUserId }: Props) {
             })}
             disabled={actionLoading || !connectToken.trim()}
           >
-            Update Token
+            {t("updateAddress")}
           </button>
         </div>
 
@@ -212,17 +342,18 @@ export default function HubTab({ sessionUserId }: Props) {
   // ─── Standalone mode ─────────────────────────────────────────────────────────
   return (
     <div className="bo-tab-content">
-      <h3 className="bo-section-title">Multi-Terminal Hub</h3>
+      <h3 className="bo-section-title">{t("multiTerminalHub")}</h3>
+      {message && <div className="settings-action-msg settings-action-ok">{message}</div>}
+      {truthPanel}
       <p className="setup-body">
-        Connect this device to other tills over your shop WiFi for real-time stock
-        and sales sync — no internet required.
+        {t("multiTerminalDescription")}
       </p>
 
       <div className="hub-card-group">
         <div className="hub-card">
-          <h4>Become Hub</h4>
-          <p>Make THIS device the store hub. Other tills connect to it.</p>
-          <label className="field-label">Port</label>
+          <h4>{t("becomeHub")}</h4>
+          <p>{t("becomeHubDescription")}</p>
+          <label className="field-label">{t("port")}</label>
           <input
             className="field-input"
             type="number"
@@ -231,34 +362,34 @@ export default function HubTab({ sessionUserId }: Props) {
             style={{ width: 120 }}
           />
           <button className="btn-primary" onClick={handleEnableHub} disabled={actionLoading}>
-            {actionLoading ? "Starting…" : "Become Hub"}
+            {t(actionLoading ? "starting" : "becomeHub")}
           </button>
         </div>
 
         <div className="hub-card">
-          <h4>Connect to Existing Hub</h4>
-          <p>This device becomes a terminal of another ZANPOS machine on the same WiFi.</p>
-          <label className="field-label">Hub Address</label>
+          <h4>{t("connectExistingHub")}</h4>
+          <p>{t("connectExistingDescription")}</p>
+          <label className="field-label">{t("hubAddress")}</label>
           <input
             className="field-input"
             placeholder="192.168.1.50"
             value={connectUrl}
             onChange={e => setConnectUrl(e.target.value)}
           />
-          <label className="field-label">Store Token</label>
+          <label className="field-label">{t("storeToken")}</label>
           <input
             className="field-input"
             type="password"
-            placeholder="Paste the token from the hub"
+            placeholder={t("pasteHubToken")}
             value={connectToken}
             onChange={e => setConnectToken(e.target.value)}
           />
           <div style={{ display: "flex", gap: 8 }}>
             <button className="btn-secondary" onClick={handleTest} disabled={actionLoading || !connectUrl.trim() || !connectToken.trim()}>
-              Test
+              {t(actionLoading ? "testing" : "testConnection")}
             </button>
             <button className="btn-primary" onClick={handleConnect} disabled={actionLoading || !connectUrl.trim() || !connectToken.trim()}>
-              Connect
+              {t(actionLoading ? "connecting" : "connect")}
             </button>
           </div>
         </div>

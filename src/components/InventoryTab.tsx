@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { StockLevel, StockMovementRow } from "../types";
 import * as cmd from "../tauri/commands";
+import { useLanguage } from "../hooks/useLanguage";
+import { backOfficeTranslator, inventoryMovementTypeText } from "../i18n/backOfficeStrings";
 
 interface Props {
   sessionUserId: string;
@@ -11,6 +13,8 @@ type Mode = "levels" | "receive" | "adjust" | "movements";
 const PAGE_SIZE = 100;
 
 export default function InventoryTab({ sessionUserId }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => backOfficeTranslator(language), [language]);
   // ── Paginated list state ──────────────────────────────────────────────────
   const [levels, setLevels]           = useState<StockLevel[]>([]);
   const [total, setTotal]             = useState(0);
@@ -26,6 +30,7 @@ export default function InventoryTab({ sessionUserId }: Props) {
 
   // Receive stock form
   const [recvQty, setRecvQty]       = useState("");
+  const [recvExpiry, setRecvExpiry] = useState("");
   const [recvNotes, setRecvNotes]   = useState("");
   const [recvLoading, setRecvLoading] = useState(false);
   const [recvError, setRecvError]   = useState<string | null>(null);
@@ -65,7 +70,7 @@ export default function InventoryTab({ sessionUserId }: Props) {
   // ── Detail views (togglable — click again to collapse) ───────────────────
 
   const openReceive = (level: StockLevel) => {
-    setSelected(level); setRecvQty(""); setRecvNotes(""); setRecvError(null);
+    setSelected(level); setRecvQty(""); setRecvExpiry(""); setRecvNotes(""); setRecvError(null);
     setMode(mode === "receive" && selected?.product_id === level.product_id ? "levels" : "receive");
     setTimeout(() => recvRef.current?.focus(), 50);
   };
@@ -92,12 +97,13 @@ export default function InventoryTab({ sessionUserId }: Props) {
     try {
       const updated = await cmd.inventoryReceiveStock(
         selected.product_id, recvQty,
+        recvExpiry || undefined,
         recvNotes || undefined, sessionUserId
       );
       setLevels(prev => prev.map(l => l.product_id === updated.product_id ? updated : l));
       setMode("levels");
     } catch (e: unknown) {
-      setRecvError(typeof e === "string" ? e : "Failed to receive stock");
+      setRecvError(typeof e === "string" ? e : t("failedReceiveStock"));
     } finally {
       setRecvLoading(false);
     }
@@ -115,7 +121,7 @@ export default function InventoryTab({ sessionUserId }: Props) {
       setLevels(prev => prev.map(l => l.product_id === updated.product_id ? updated : l));
       setMode("levels");
     } catch (e: unknown) {
-      setAdjError(typeof e === "string" ? e : "Failed to adjust stock");
+      setAdjError(typeof e === "string" ? e : t("failedAdjustStock"));
     } finally {
       setAdjLoading(false);
     }
@@ -128,20 +134,23 @@ export default function InventoryTab({ sessionUserId }: Props) {
       <tr className="inv-expanded-row"><td colSpan={6}>
         <div className="inv-form-inline">
           <div className="inv-current">
-            Current stock: <strong>{parseFloat(selected.quantity_on_hand).toLocaleString()}</strong>
-            {selected.is_low_stock && <span className="inv-badge-low"> ⚠ Low</span>}
+            {t("currentStock")}: <strong>{parseFloat(selected.quantity_on_hand).toLocaleString()}</strong>
+            {selected.is_low_stock && <span className="inv-badge-low"> ⚠ {t("lowStock")}</span>}
           </div>
-          <label className="bo-label">Quantity received *</label>
+          <label className="bo-label">{t("quantityReceived")} *</label>
           <input ref={recvRef} className="bo-input" type="number" step="0.001" min="0.001"
             placeholder="0.000" value={recvQty} onChange={e => setRecvQty(e.target.value)} />
-          <label className="bo-label">Notes (PO number, supplier, etc.)</label>
-          <input className="bo-input" type="text" placeholder="Optional"
+          <label className="bo-label">{t("expiryDate")}</label>
+          <input className="bo-input" type="date" value={recvExpiry}
+            onChange={e => setRecvExpiry(e.target.value)} />
+          <label className="bo-label">{t("notesPoSupplier")}</label>
+          <input className="bo-input" type="text" placeholder={t("optional")}
             value={recvNotes} onChange={e => setRecvNotes(e.target.value)} />
           {recvError && <div className="modal-error">{recvError}</div>}
           <div className="inv-form-actions">
-            <button className="modal-btn-secondary" onClick={() => setMode("levels")}>Cancel</button>
+            <button className="modal-btn-secondary" onClick={() => setMode("levels")}>{t("cancel")}</button>
             <button className="modal-btn-primary" onClick={handleReceive}
-              disabled={recvLoading || !recvQty || parseFloat(recvQty) <= 0}>{recvLoading ? "Saving…" : "Receive Stock"}</button>
+              disabled={recvLoading || !recvQty || parseFloat(recvQty) <= 0}>{recvLoading ? t("saving") : t("receiveStock")}</button>
           </div>
         </div>
       </td></tr>);
@@ -151,23 +160,23 @@ export default function InventoryTab({ sessionUserId }: Props) {
       const delta = newQty - oldQty;
       return (<tr className="inv-expanded-row"><td colSpan={6}>
         <div className="inv-form-inline">
-          <div className="inv-current">System quantity: <strong>{oldQty.toLocaleString()}</strong></div>
-          <label className="bo-label">Actual counted quantity *</label>
+          <div className="inv-current">{t("systemQuantity")}: <strong>{oldQty.toLocaleString()}</strong></div>
+          <label className="bo-label">{t("actualCountedQuantity")} *</label>
           <input ref={adjRef} className="bo-input" type="number" step="0.001" min="0"
             value={adjQty} onChange={e => setAdjQty(e.target.value)} />
           {adjQty && !isNaN(delta) && (
             <div className={`inv-delta ${delta < 0 ? "inv-delta-neg" : delta > 0 ? "inv-delta-pos" : ""}`}>
-              {delta === 0 ? "No change" : `${delta > 0 ? "+" : ""}${delta.toFixed(3)} variance`}
+              {delta === 0 ? t("noChange") : `${delta > 0 ? "+" : ""}${delta.toFixed(3)} ${t("variance")}`}
             </div>
           )}
-          <label className="bo-label">Reason for adjustment</label>
-          <input className="bo-input" type="text" placeholder="e.g. Stocktake, damaged goods…"
+          <label className="bo-label">{t("reasonForAdjustment")}</label>
+          <input className="bo-input" type="text" placeholder={t("stockAdjustmentExample")}
             value={adjNotes} onChange={e => setAdjNotes(e.target.value)} />
           {adjError && <div className="modal-error">{adjError}</div>}
           <div className="inv-form-actions">
-            <button className="modal-btn-secondary" onClick={() => setMode("levels")}>Cancel</button>
+            <button className="modal-btn-secondary" onClick={() => setMode("levels")}>{t("cancel")}</button>
             <button className="modal-btn-primary" onClick={handleAdjust}
-              disabled={adjLoading || !adjQty}>{adjLoading ? "Saving…" : "Save Adjustment"}</button>
+              disabled={adjLoading || !adjQty}>{adjLoading ? t("saving") : t("saveAdjustment")}</button>
           </div>
         </div>
       </td></tr>);
@@ -176,17 +185,17 @@ export default function InventoryTab({ sessionUserId }: Props) {
       <tr className="inv-expanded-row"><td colSpan={6}>
         <div className="inv-form-inline">
           <div className="inv-current">
-            Current stock: <strong>{parseFloat(selected.quantity_on_hand).toLocaleString()}</strong>
+            {t("currentStock")}: <strong>{parseFloat(selected.quantity_on_hand).toLocaleString()}</strong>
           </div>
-          {movLoading ? <div className="bo-empty">Loading…</div> :
-           movements.length === 0 ? <div className="bo-empty">No movements recorded yet.</div> :
+          {movLoading ? <div className="bo-empty">{t("loading")}</div> :
+           movements.length === 0 ? <div className="bo-empty">{t("noMovements")}</div> :
            <table className="rpt-table" style={{ marginTop: 12 }}><thead><tr>
-             <th>Date</th><th>Type</th><th className="rpt-num">Delta</th><th className="rpt-num">After</th><th>Notes</th>
+             <th>{t("date")}</th><th>{t("type")}</th><th className="rpt-num">{t("delta")}</th><th className="rpt-num">{t("after")}</th><th>{t("notes")}</th>
            </tr></thead><tbody>
              {movements.map(m => (
                <tr key={m.movement_id}>
                  <td className="rpt-date">{new Date(m.created_at).toLocaleString([], {month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"})}</td>
-                 <td><span className={`inv-move-type inv-move-${m.movement_type}`}>{m.movement_type}</span></td>
+                 <td><span className={`inv-move-type inv-move-${m.movement_type}`}>{inventoryMovementTypeText(language, m.movement_type)}</span></td>
                  <td className={`rpt-num ${parseFloat(m.quantity_delta) < 0 ? "inv-neg" : "inv-pos"}`}>
                    {parseFloat(m.quantity_delta) > 0 ? "+" : ""}{parseFloat(m.quantity_delta).toLocaleString()}</td>
                  <td className="rpt-num">{parseFloat(m.quantity_after).toLocaleString()}</td>
@@ -195,7 +204,7 @@ export default function InventoryTab({ sessionUserId }: Props) {
              ))}
            </tbody></table>}
           <div className="inv-form-actions">
-            <button className="modal-btn-secondary" onClick={() => setMode("levels")}>Close</button>
+            <button className="modal-btn-secondary" onClick={() => setMode("levels")}>{t("close")}</button>
           </div>
         </div>
       </td></tr>);
@@ -209,12 +218,12 @@ export default function InventoryTab({ sessionUserId }: Props) {
         <input
           className="bo-input inv-search"
           type="text"
-          placeholder="Search products…"
+          placeholder={t("searchProducts")}
           value={searchInput}
           onChange={e => setSearchInput(e.target.value)}
         />
         <button className="btn-secondary" onClick={() => fetchPage(search, offset)} disabled={loading}>
-          {loading ? "…" : "↺ Refresh"}
+          {loading ? "…" : `↺ ${t("refresh")}`}
         </button>
       </div>
 
@@ -223,37 +232,37 @@ export default function InventoryTab({ sessionUserId }: Props) {
         <div className="bo-pagination">
           <span className="bo-pagination-info">
             {loading
-              ? "Loading…"
-              : `${offset + 1}–${Math.min(offset + levels.length, total)} of ${total.toLocaleString()}`}
+              ? t("loading")
+              : `${offset + 1}–${Math.min(offset + levels.length, total)} ${t("of")} ${total.toLocaleString()}`}
           </span>
           <button
             className="bo-pagination-btn"
             disabled={offset === 0 || loading}
             onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-          >‹ Prev</button>
+          ><span className="icon-directional" aria-hidden="true">‹</span> {t("previous")}</button>
           <button
             className="bo-pagination-btn"
             disabled={offset + PAGE_SIZE >= total || loading}
             onClick={() => setOffset(offset + PAGE_SIZE)}
-          >Next ›</button>
+          >{t("next")} <span className="icon-directional" aria-hidden="true">›</span></button>
         </div>
       )}
 
       {loading && levels.length === 0 ? (
-        <div className="bo-empty">Loading inventory…</div>
+        <div className="bo-empty">{t("loadingInventory")}</div>
       ) : levels.length === 0 ? (
         <div className="bo-empty">
-          {search ? "No products match your search." : "No tracked products found."}
+          {search ? t("noProductsMatch") : t("noTrackedProducts")}
         </div>
       ) : (
         <table className="rpt-table inv-table">
           <thead>
             <tr>
-              <th>Product</th>
-              <th>SKU</th>
-              <th className="rpt-num">On Hand</th>
-              <th className="rpt-num">Reorder At</th>
-              <th>Status</th>
+              <th>{t("product")}</th>
+              <th>{t("sku")}</th>
+              <th className="rpt-num">{t("onHand")}</th>
+              <th className="rpt-num">{t("reorderAt")}</th>
+              <th>{t("status")}</th>
               <th></th>
             </tr>
           </thead>
@@ -266,16 +275,16 @@ export default function InventoryTab({ sessionUserId }: Props) {
                 <td className="rpt-num rpt-dim">{l.reorder_point}</td>
                 <td>
                   {l.is_out_of_stock
-                    ? <span className="inv-badge inv-badge-oos">Out of Stock</span>
+                    ? <span className="inv-badge inv-badge-oos">{t("outOfStock")}</span>
                     : l.is_low_stock
-                      ? <span className="inv-badge inv-badge-low">⚠ Low</span>
-                      : <span className="inv-badge inv-badge-ok">OK</span>
+                      ? <span className="inv-badge inv-badge-low">⚠ {t("lowStock")}</span>
+                      : <span className="inv-badge inv-badge-ok">{t("statusOk")}</span>
                   }
                 </td>
                 <td className="inv-actions">
-                  <button className="inv-btn" onClick={() => openReceive(l)} title="Receive stock">+ Receive</button>
-                  <button className="inv-btn inv-btn-adj" onClick={() => openAdjust(l)} title="Count correction">⟳ Adjust</button>
-                  <button className="inv-btn inv-btn-hist" onClick={() => openMovements(l)} title="View history">History</button>
+                  <button className="inv-btn" onClick={() => openReceive(l)} title={t("receiveStock")}>+ {t("receive")}</button>
+                  <button className="inv-btn inv-btn-adj" onClick={() => openAdjust(l)} title={t("countCorrection")}>⟳ {t("adjust")}</button>
+                  <button className="inv-btn inv-btn-hist" onClick={() => openMovements(l)} title={t("viewHistory")}>{t("history")}</button>
                 </td>
               </tr>
             ))}

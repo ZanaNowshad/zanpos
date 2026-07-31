@@ -42,7 +42,13 @@ function findChangedLineId(before: Cart, after: Cart): string | null {
   return after.lines.filter(l => !l.voided).at(-1)?.cart_line_id ?? null;
 }
 
-export function useCart(session: CartSession) {
+export function useCart(
+  session: CartSession,
+  /** Training mode. When supplied, `finalizeSale` builds the result from this
+   *  instead of calling the backend, so a rehearsal sale never reaches the
+   *  database — see utils/trainingSale.ts. Null/undefined = normal trading. */
+  buildTrainingResult?: ((cart: Cart, payments: PaymentInput[]) => SaleResult) | null,
+) {
   const [cart, setCart] = useState<Cart>(() => makeEmptyCart(session));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -119,8 +125,10 @@ export function useCart(session: CartSession) {
     try {
       const updated = await cmd.posApplyBillDiscount(cart, discount_minor, reason, session.cashier_user_id);
       setCart(updated);
+      return updated;
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to apply discount");
+      throw e;
     }
   }, [cart, session.cashier_user_id]);
 
@@ -171,11 +179,18 @@ export function useCart(session: CartSession) {
     payments: PaymentInput[],
     customerId?: string,
     deliveryInput?: import("../types").DeliveryInput,
+    cartOverride?: Cart,
   ): Promise<SaleResult> => {
     setLoading(true);
     setError(null);
+    const targetCart = cartOverride ?? cart;
     try {
-      const result = await cmd.posFinalizeSale(cart, payments, cart.cart_id, customerId, deliveryInput);
+      // A training sale is built locally and never sent: no sale row, no stock
+      // movement, no receipt number consumed. The cart still clears and the
+      // receipt still prints, so the rehearsal covers the whole till loop.
+      const result = buildTrainingResult
+        ? buildTrainingResult(targetCart, payments)
+        : await cmd.posFinalizeSale(targetCart, payments, targetCart.cart_id, customerId, deliveryInput);
       setCart(makeEmptyCart(session));
       setRecentLineId(null);
       return result;
@@ -186,7 +201,7 @@ export function useCart(session: CartSession) {
     } finally {
       setLoading(false);
     }
-  }, [cart, session]);
+  }, [cart, session, buildTrainingResult]);
 
   const clearCart = useCallback(() => {
     const activeLines = cart.lines.filter(l => !l.voided);

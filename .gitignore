@@ -3,6 +3,7 @@ dist/
 src-tauri/target*/
 src-tauri/binaries/
 src-tauri/sidecar/whatsapp-sidecar/node_modules/
+src-tauri/sidecar/whatsapp-sidecar/node.exe
 *.log
 .env
 .sidecar_token
@@ -10,5 +11,8 @@ src-tauri/sidecar/whatsapp-sidecar/node_modules/
 src-tauri/.npm-cache/
 src-tauri/src/.npm-cache/
 src-tauri/sidecar/**/.npm-cache/
+# Repo Cognition layer — derived state with machine-specific paths.
+# Remove this line to commit it and share architectural memory with the team.
+.repo-cognition/
 zanpos.key
 zanpos.key.pub

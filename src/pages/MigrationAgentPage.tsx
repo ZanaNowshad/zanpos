@@ -61,7 +61,8 @@ interface ChatMsg {
 
 interface Props {
   onDone: () => void;
-  sessionUserId?: string;
+  sessionUserId: string;
+  sessionToken: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -96,7 +97,7 @@ function SimpleMarkdown({ text }: { text: string }) {
 
 // ─── AI Config Setup Panel ────────────────────────────────────────────────────
 
-function AiSetupPanel({ onConfigured, sessionUserId = "" }: { onConfigured: () => void; sessionUserId?: string }) {
+function AiSetupPanel({ onConfigured, sessionToken }: { onConfigured: () => void; sessionToken: string }) {
   const [provider, setProvider]     = useState<AiProvider>("anthropic");
   const [anthropicKey, setAnthropicKey] = useState("");
   const [baseUrl, setBaseUrl]       = useState("https://api.openai.com/v1");
@@ -120,14 +121,14 @@ function AiSetupPanel({ onConfigured, sessionUserId = "" }: { onConfigured: () =
     const key = anthropicKey.trim();
     if (!key.startsWith("sk-ant-")) { setError("Key must start with sk-ant-"); return; }
     setSaving(true); setError(null);
-    try { await adminSetAnthropic(sessionUserId, key); onConfigured(); }
+    try { await adminSetAnthropic(sessionToken, key); onConfigured(); }
     catch (e) { setError(sanitizeErrorMessage(String(e))); } finally { setSaving(false); }
   };
 
   const handleValidateOpenai = async () => {
     setError(null); setModels([]); setSelectedModel(""); setValidating(true);
     try {
-      const res = await adminValidateOpenai(sessionUserId, baseUrl.trim(), openaiKey.trim());
+      const res = await adminValidateOpenai(sessionToken, baseUrl.trim(), openaiKey.trim());
       if (res.success && res.models.length > 0) {
         setModels(res.models); setSelectedModel(res.models[0].id);
       } else setError(res.error ?? "Validation failed");
@@ -137,7 +138,7 @@ function AiSetupPanel({ onConfigured, sessionUserId = "" }: { onConfigured: () =
   const handleSaveOpenai = async () => {
     if (!selectedModel) return;
     setSaving(true); setError(null);
-    try { await adminSetOpenai(sessionUserId, baseUrl.trim(), openaiKey.trim(), selectedModel); onConfigured(); }
+    try { await adminSetOpenai(sessionToken, baseUrl.trim(), openaiKey.trim(), selectedModel); onConfigured(); }
     catch (e) { setError(sanitizeErrorMessage(String(e))); } finally { setSaving(false); }
   };
 
@@ -169,7 +170,7 @@ function AiSetupPanel({ onConfigured, sessionUserId = "" }: { onConfigured: () =
             <button onClick={handleSaveAnthropic} disabled={saving || !anthropicKey.trim()}
               style={{ width:"100%", padding:10, background:"var(--accent)", color:"#fff", border:"none", borderRadius:8, fontWeight:700, fontSize:"0.9rem",
                 cursor:saving||!anthropicKey.trim()?"not-allowed":"pointer", opacity:saving||!anthropicKey.trim()?0.5:1 }}>
-              {saving?"Saving…":"Save & Start Migration →"}
+              {saving ? "Saving…" : <>Save & Start Migration <span className="icon-directional" aria-hidden="true">→</span></>}
             </button>
             <p style={{ margin:"10px 0 0", fontSize:"0.75rem", color:"var(--text-dim)", textAlign:"center" }}>
               Get your key at <span style={{ color:"var(--accent)" }}>console.anthropic.com</span>
@@ -202,7 +203,7 @@ function AiSetupPanel({ onConfigured, sessionUserId = "" }: { onConfigured: () =
                 <button onClick={handleSaveOpenai} disabled={saving||!selectedModel}
                   style={{ width:"100%", padding:10, background:"var(--accent)", color:"#fff", border:"none", borderRadius:8, fontWeight:700, fontSize:"0.9rem",
                     cursor:saving||!selectedModel?"not-allowed":"pointer", opacity:saving||!selectedModel?0.5:1 }}>
-                  {saving?"Saving…":"Save & Start Migration →"}
+                  {saving ? "Saving…" : <>Save & Start Migration <span className="icon-directional" aria-hidden="true">→</span></>}
                 </button>
               </>
             )}
@@ -215,7 +216,7 @@ function AiSetupPanel({ onConfigured, sessionUserId = "" }: { onConfigured: () =
 
 // ─── AI Settings Drawer ───────────────────────────────────────────────────────
 
-function AiSettingsDrawer({ onClose, onSaved, sessionUserId = "" }: { onClose: () => void; onSaved: (label: string) => void; sessionUserId?: string }) {
+function AiSettingsDrawer({ onClose, onSaved, sessionToken }: { onClose: () => void; onSaved: (label: string) => void; sessionToken: string }) {
   const [provider, setProvider]     = useState<AiProvider>("anthropic");
   const [anthropicKey, setAnthropicKey] = useState("");
   const [baseUrl, setBaseUrl]       = useState("https://api.openai.com/v1");
@@ -227,14 +228,14 @@ function AiSettingsDrawer({ onClose, onSaved, sessionUserId = "" }: { onClose: (
   const [error, setError]           = useState<string | null>(null);
 
   useEffect(() => {
-    adminGetProviderConfig(sessionUserId).then(cfg => {
+    adminGetProviderConfig(sessionToken).then(cfg => {
       if (cfg.provider === "openai") {
         setProvider("openai");
         if (cfg.openai_base_url) setBaseUrl(cfg.openai_base_url);
         if (cfg.openai_model)    setSelectedModel(cfg.openai_model);
       }
     }).catch(() => {});
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   const inp: React.CSSProperties = { width:"100%", padding:"8px 11px", borderRadius:7, border:"1px solid var(--border)", background:"var(--bg)", color:"var(--text)", fontSize:"0.85rem", boxSizing:"border-box", marginBottom:10 };
   const lbl: React.CSSProperties = { display:"block", fontSize:"0.78rem", fontWeight:600, marginBottom:4, color:"var(--text-dim)" };
@@ -267,7 +268,7 @@ function AiSettingsDrawer({ onClose, onSaved, sessionUserId = "" }: { onClose: (
                   const key = anthropicKey.trim();
                   if (!key.startsWith("sk-ant-")) { setError("Key must start with sk-ant-"); return; }
                   setSaving(true); setError(null);
-                  try { await adminSetAnthropic(sessionUserId, key); onSaved("◆ Claude"); }
+                  try { await adminSetAnthropic(sessionToken, key); onSaved("◆ Claude"); }
                   catch (ex) { setError(sanitizeErrorMessage(String(ex))); } finally { setSaving(false); }
                 })()} style={inp} />
               {error && <div style={{ color:"#ef4444", fontSize:"0.78rem", marginBottom:8 }}>{error}</div>}
@@ -275,7 +276,7 @@ function AiSettingsDrawer({ onClose, onSaved, sessionUserId = "" }: { onClose: (
                 const key = anthropicKey.trim();
                 if (!key.startsWith("sk-ant-")) { setError("Key must start with sk-ant-"); return; }
                 setSaving(true); setError(null);
-                try { await adminSetAnthropic(sessionUserId, key); onSaved("◆ Claude"); }
+                try { await adminSetAnthropic(sessionToken, key); onSaved("◆ Claude"); }
                 catch (ex) { setError(sanitizeErrorMessage(String(ex))); } finally { setSaving(false); }
               }} disabled={saving||!anthropicKey.trim()}
                 style={{ width:"100%", padding:9, background:"var(--accent)", color:"#fff", border:"none", borderRadius:7, fontWeight:700, fontSize:"0.875rem", cursor:saving||!anthropicKey.trim()?"not-allowed":"pointer", opacity:saving||!anthropicKey.trim()?0.5:1 }}>
@@ -294,7 +295,7 @@ function AiSettingsDrawer({ onClose, onSaved, sessionUserId = "" }: { onClose: (
                 <button onClick={async () => {
                   setError(null); setModels([]); setSelectedModel(""); setValidating(true);
                   try {
-                    const res = await adminValidateOpenai(sessionUserId, baseUrl.trim(), openaiKey.trim());
+                    const res = await adminValidateOpenai(sessionToken, baseUrl.trim(), openaiKey.trim());
                     if (res.success && res.models.length > 0) { setModels(res.models); setSelectedModel(res.models[0].id); }
                     else setError(res.error ?? "Validation failed");
                   } catch (ex) { setError(sanitizeErrorMessage(String(ex))); } finally { setValidating(false); }
@@ -311,7 +312,7 @@ function AiSettingsDrawer({ onClose, onSaved, sessionUserId = "" }: { onClose: (
                   <button onClick={async () => {
                     if (!selectedModel) return;
                     setSaving(true); setError(null);
-                    try { await adminSetOpenai(sessionUserId, baseUrl.trim(), openaiKey.trim(), selectedModel); onSaved(`⬡ ${selectedModel}`); }
+                    try { await adminSetOpenai(sessionToken, baseUrl.trim(), openaiKey.trim(), selectedModel); onSaved(`⬡ ${selectedModel}`); }
                     catch (ex) { setError(sanitizeErrorMessage(String(ex))); } finally { setSaving(false); }
                   }} disabled={saving||!selectedModel}
                     style={{ width:"100%", padding:9, background:"var(--accent)", color:"#fff", border:"none", borderRadius:7, fontWeight:700, fontSize:"0.875rem", cursor:saving||!selectedModel?"not-allowed":"pointer", opacity:saving||!selectedModel?0.5:1 }}>
@@ -446,7 +447,7 @@ function MappingDrawer({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function MigrationAgentPage({ onDone, sessionUserId = "" }: Props) {
+export default function MigrationAgentPage({ onDone, sessionUserId, sessionToken }: Props) {
   const [aiReady, setAiReady]               = useState<boolean | null>(null);
   const [providerLabel, setProviderLabel]   = useState("⚙ AI");
   const [showAiSettings, setShowAiSettings] = useState(false);
@@ -487,7 +488,7 @@ export default function MigrationAgentPage({ onDone, sessionUserId = "" }: Props
 
   // ── Check AI on mount ──────────────────────────────────────────────────────
   useEffect(() => {
-    adminGetProviderConfig(sessionUserId)
+    adminGetProviderConfig(sessionToken)
       .then(cfg => {
         const ready = cfg.provider !== "" && (cfg.anthropic_key_set || cfg.openai_key_set);
         setAiReady(ready);
@@ -495,7 +496,7 @@ export default function MigrationAgentPage({ onDone, sessionUserId = "" }: Props
         else if (cfg.provider === "openai") setProviderLabel(`⬡ ${cfg.openai_model || "OpenAI"}`);
       })
       .catch(() => setAiReady(false));
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   // ── Welcome message (once AI is ready) ────────────────────────────────────
   useEffect(() => {
@@ -844,7 +845,7 @@ export default function MigrationAgentPage({ onDone, sessionUserId = "" }: Props
     );
   }
   if (aiReady === false) {
-    return <AiSetupPanel onConfigured={() => setAiReady(true)} sessionUserId={sessionUserId} />;
+    return <AiSetupPanel onConfigured={() => setAiReady(true)} sessionToken={sessionToken} />;
   }
 
   return (
@@ -865,21 +866,21 @@ export default function MigrationAgentPage({ onDone, sessionUserId = "" }: Props
       {/* Header */}
       <div className="mig-header">
         <span className="mig-header-title">🤖 Migration Agent</span>
-        <div style={{ marginLeft:"auto", display:"flex", gap:6, alignItems:"center" }}>
+        <div style={{ marginInlineStart:"auto", display:"flex", gap:6, alignItems:"center" }}>
           <button onClick={() => setShowAiSettings(true)}
             style={{ padding:"4px 10px", borderRadius:6, cursor:"pointer", background:"var(--accent)", color:"#fff", border:"none", fontSize:"0.78rem", fontWeight:600, opacity:0.9 }}>
             {providerLabel}
           </button>
           <button onClick={onDone}
             style={{ padding:"4px 12px", background:"transparent", border:"1px solid var(--border)", borderRadius:6, cursor:"pointer", color:"var(--text-dim)", fontSize:"0.8rem" }}>
-            Skip → Launch POS
+            Skip <span className="icon-directional" aria-hidden="true">→</span> Launch POS
           </button>
         </div>
       </div>
 
       {/* AI Settings Drawer */}
       {showAiSettings && (
-        <AiSettingsDrawer onClose={() => setShowAiSettings(false)} onSaved={label => { setProviderLabel(label); setShowAiSettings(false); }} sessionUserId={sessionUserId} />
+        <AiSettingsDrawer onClose={() => setShowAiSettings(false)} onSaved={label => { setProviderLabel(label); setShowAiSettings(false); }} sessionToken={sessionToken} />
       )}
 
       {/* Mapping Drawer */}

@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DEVICE } from "../types";
 import { formatMoney, parseMoney } from "../money";
 import Dialpad, { applyDialpadKey } from "./Dialpad";
+import { useLanguage } from "../hooks/useLanguage";
+import { modalTranslator } from "../i18n/modalStrings";
+import { detailTranslator } from "../i18n/detailStrings";
 
 interface Props {
   onAdd: (name: string, priceMajor: string, quantity: string) => Promise<void>;
@@ -30,6 +33,9 @@ function saveSuggestions(list: Suggestion[]) {
 type ActiveField = "price" | "qty";
 
 export default function CustomItemModal({ onAdd, onCancel }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => modalTranslator(language), [language]);
+  const dt = useMemo(() => detailTranslator(language), [language]);
   const [name, setName]         = useState("");
   const [price, setPrice]       = useState("");
   const [qty, setQty]           = useState("1");
@@ -81,12 +87,12 @@ export default function CustomItemModal({ onAdd, onCancel }: Props) {
 
   const handleAdd = async () => {
     setError(null);
-    if (priceMinor <= 0)   { setError("Enter a valid price"); return; }
-    if (!qtyValid)                          { setError("Enter a valid quantity"); return; }
+    if (priceMinor <= 0) { setError(dt("enterValidPrice")); return; }
+    if (!qtyValid) { setError(dt("enterValidQuantity")); return; }
     const finalName = name.trim() || "NO BARCODE ITEM";
     setLoading(true);
     try { await onAdd(finalName, price, qty); }
-    catch (e: unknown) { setError(typeof e === "string" ? e : "Failed to add item"); }
+    catch (e: unknown) { setError(typeof e === "string" ? e : dt("failedAddItem")); }
     finally { setLoading(false); }
   };
 
@@ -100,11 +106,11 @@ export default function CustomItemModal({ onAdd, onCancel }: Props) {
 
   const addSuggestion = () => {
     setSugError(null);
-    if (!newSugName.trim()) { setSugError("Name required"); return; }
+    if (!newSugName.trim()) { setSugError(dt("nameRequired")); return; }
     // Price is optional — blank/zero means "price varies" (cashier enters at sale time)
     const p = parseFloat(newSugPrice);
     if (newSugPrice.trim() !== "" && (isNaN(p) || p < 0)) {
-      setSugError("Enter a valid price, or leave blank for variable price");
+      setSugError(dt("variablePriceHint"));
       return;
     }
     const priceToSave = newSugPrice.trim() === "" ? "" : newSugPrice;
@@ -130,7 +136,7 @@ export default function CustomItemModal({ onAdd, onCancel }: Props) {
 
         {/* ── Left: form ── */}
         <div className="modal custom-item-left">
-          <h2 className="modal-title">Custom Item</h2>
+          <h2 className="modal-title">{t("customItem")}</h2>
 
           {/* Suggestion chips */}
           <div className="ci-suggest-row">
@@ -151,7 +157,7 @@ export default function CustomItemModal({ onAdd, onCancel }: Props) {
             <button
               className={`ci-manage-btn${managing ? " ci-manage-btn-active" : ""}`}
               onClick={() => { setManaging(m => !m); setSugError(null); }}
-              title={managing ? "Close" : "Add / manage suggestions"}
+              title={managing ? t("close") : dt("addManageSuggestions")}
             >
               {managing ? "✕" : "+"}
             </button>
@@ -168,7 +174,7 @@ export default function CustomItemModal({ onAdd, onCancel }: Props) {
                       <div key={s.id} className="ci-manage-row">
                         <span className="ci-manage-name">{s.name}</span>
                         <span className="ci-manage-price">{hasPrice ? `${cur} ${s.price}` : "varies"}</span>
-                        <button className="ci-manage-del" onClick={() => removeSuggestion(s.id)} title="Remove">×</button>
+                        <button className="ci-manage-del" onClick={() => removeSuggestion(s.id)} title={t("remove")}>×</button>
                       </div>
                     );
                   })}
@@ -177,7 +183,7 @@ export default function CustomItemModal({ onAdd, onCancel }: Props) {
               <div className="ci-manage-add">
                 <input
                   className="ci-manage-input"
-                  placeholder="Name"
+                  placeholder={t("name")}
                   value={newSugName}
                   onChange={e => setNewSugName(e.target.value)}
                   onKeyDown={e => e.key === "Enter" && addSuggestion()}
@@ -189,24 +195,24 @@ export default function CustomItemModal({ onAdd, onCancel }: Props) {
                   inputMode="decimal"
                   min="0"
                   step={Math.pow(10, -EXP).toFixed(EXP)}
-                  placeholder="varies"
+                  placeholder={dt("varies")}
                   value={newSugPrice}
                   onChange={e => setNewSugPrice(e.target.value)}
                   onKeyDown={e => e.key === "Enter" && addSuggestion()}
                 />
-                <button className="btn-primary ci-manage-save" onClick={addSuggestion}>Save</button>
+                <button className="btn-primary ci-manage-save" onClick={addSuggestion}>{t("save")}</button>
               </div>
               {sugError && <div className="ci-manage-error">{sugError}</div>}
             </div>
           )}
 
           {/* Description */}
-          <label className="ce-note-label">Description <span className="ce-label-optional">(optional)</span></label>
+          <label className="ce-note-label">{t("description")} <span className="ce-label-optional">({t("optional")})</span></label>
           <input
             ref={nameRef}
             className="ce-note-input"
             type="text"
-            placeholder="Leave blank for 'NO BARCODE ITEM'"
+            placeholder={dt("noBarcodeNameHint")}
             value={name}
             onChange={e => { setName(e.target.value); setError(null); }}
             onKeyDown={e => e.key === "Escape" && onCancel()}
@@ -237,7 +243,7 @@ export default function CustomItemModal({ onAdd, onCancel }: Props) {
               />
             </div>
             <div className={`ci-field-tab${activeField === "qty" ? " ci-field-tab-active" : ""}`}>
-              <span className="ce-tab-label">Qty</span>
+              <span className="ce-tab-label">{t("quantity")}</span>
               <input
                 ref={qtyRef}
                 className="ci-field-input"
@@ -271,7 +277,7 @@ export default function CustomItemModal({ onAdd, onCancel }: Props) {
               </>
             ) : (
               <>
-                <span className="ce-amount-cur" style={{ fontSize: "0.9rem" }}>QTY</span>
+                <span className="ce-amount-cur" style={{ fontSize: "0.9rem" }}>{t("quantity")}</span>
                 <span className={`ce-amount-value${!qty ? " ce-amount-placeholder" : ""}`}
                   style={qty ? { color: "var(--accent)" } : {}}>
                   {qty || "1"}
@@ -285,7 +291,7 @@ export default function CustomItemModal({ onAdd, onCancel }: Props) {
           {lineTotal > 0 && (
             <div className="ci-line-total">
               <span className="ci-line-total-label">
-                {qtyNum !== 1 ? `${cur} ${formatMoney(priceMinor, EXP)} × ${qty}` : "Total"}
+                {qtyNum !== 1 ? `${cur} ${formatMoney(priceMinor, EXP)} × ${qty}` : dt("total")}
               </span>
               <span className="ci-line-total-value">{cur} {formatMoney(lineTotal, EXP)}</span>
             </div>
@@ -297,7 +303,7 @@ export default function CustomItemModal({ onAdd, onCancel }: Props) {
         {/* ── Right: dialpad ── */}
         <div className="payment-dialpad-panel">
           <div className="dialpad-field-indicator">
-            {activeField === "price" ? `Enter ${cur} Price` : "Enter Quantity"}
+            {activeField === "price" ? `${dt("enterPrice")} (${cur})` : dt("enterQuantity")}
           </div>
 
           <Dialpad onKey={handleDialpadKey} />
@@ -311,11 +317,11 @@ export default function CustomItemModal({ onAdd, onCancel }: Props) {
               disabled={!canConfirm || loading}
             >
               {loading ? (
-                <span className="dialpad-confirm-label">Adding…</span>
+                <span className="dialpad-confirm-label">{t("adding")}</span>
               ) : (
                 <>
                   <span className="dialpad-confirm-icon">✓</span>
-                  <span className="dialpad-confirm-label">Add to Cart</span>
+                  <span className="dialpad-confirm-label">{t("addToCart")}</span>
                   {lineTotal > 0 && (
                     <span className="dialpad-confirm-total">{cur} {formatMoney(lineTotal, EXP)}</span>
                   )}

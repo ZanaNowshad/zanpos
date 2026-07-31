@@ -1,9 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { BarChart2, Receipt } from "lucide-react";
 import type { RangeSummary, SaleListRow, SaleListPage, TopProduct } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney } from "../money";
 import * as cmd from "../tauri/commands";
+import { useLanguage } from "../hooks/useLanguage";
+import {
+  backOfficeTranslator,
+  reportPaymentMethodsText,
+  reportSaleStatusText,
+} from "../i18n/backOfficeStrings";
+import ReportSummaryCard from "./ReportSummaryCard";
 
 const BRANCH_ID = DEVICE.branch_id;
 const EXP       = DEVICE.currency_exponent;
@@ -19,7 +26,6 @@ function defaultRange() {
   from.setDate(from.getDate() - 29);   // last 30 days
   return { from: isoDate(from), to: isoDate(to) };
 }
-
 type Preset = "today" | "week" | "month" | "custom";
 
 interface TaxRow {
@@ -34,6 +40,8 @@ interface Props {
 }
 
 export default function ReportsTab({ sessionUserId }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => backOfficeTranslator(language), [language]);
   const [preset, setPreset]         = useState<Preset>("month");
   const [from, setFrom]             = useState(defaultRange().from);
   const [to, setTo]                 = useState(defaultRange().to);
@@ -79,11 +87,11 @@ export default function ReportsTab({ sessionUserId }: Props) {
       ]);
       setSummary(s); setTopProducts(tp); setSalesPage(sl); setTaxRows(tx as TaxRow[]);
     } catch (e: unknown) {
-      setLoadError(typeof e === "string" ? e : "Failed to load report. Check dates and try again.");
+      setLoadError(typeof e === "string" ? e : t("failedLoadReport"));
     } finally {
       setLoading(false);
     }
-  }, [from, to, sessionUserId]);
+  }, [from, to, sessionUserId, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -106,9 +114,9 @@ export default function ReportsTab({ sessionUserId }: Props) {
         setStockWarning(result.stock_warning);
       }
     } catch (e: unknown) {
-      const msg = typeof e === "string" ? e : "Failed to void sale";
+      const msg = typeof e === "string" ? e : t("failedVoidSale");
       const display = msg.toLowerCase().includes("not permitted") || msg.toLowerCase().includes("permission")
-        ? "Only managers and owners can void sales."
+        ? t("voidPermissionRequired")
         : msg;
       setLoadError(display);
     } finally {
@@ -128,21 +136,21 @@ export default function ReportsTab({ sessionUserId }: Props) {
   }
 
   const handleExportCSV = () => {
-    const header = ["Receipt#","Date","Cashier","Method","Discount","Total","Status"];
+    const header = [t("receipt"), t("date"), t("cashier"), t("payment"), t("discounts"), t("total"), t("status")];
     const rows = sales.map(s => [
       `#${s.receipt_number}`,
       new Date(s.sold_at).toLocaleString(),
       s.cashier_name,
-      s.payment_methods,
+      reportPaymentMethodsText(language, s.payment_methods),
       formatMoney(s.discount_total_minor, EXP),
       formatMoney(s.net_total_minor, EXP),
-      s.status,
+      reportSaleStatusText(language, s.status),
     ]);
     downloadCSV(`zanpos-sales-${from}-${to}.csv`, [header, ...rows]);
   };
 
   const handleExportProductsCSV = () => {
-    const header = ["Rank","Product","Qty Sold","Transactions","Revenue"];
+    const header = ["#", t("product"), t("quantitySold"), t("transactions"), t("revenue")];
     const rows = topProducts.map((p, i) => [
       i + 1,
       p.product_name,
@@ -154,30 +162,30 @@ export default function ReportsTab({ sessionUserId }: Props) {
   };
 
   const handleExportTaxCSV = () => {
-    const header = ["Date","Transactions","VAT Collected","Cumulative VAT"];
+    const header = [t("date"), t("transactions"), t("vatCollected"), t("cumulativeVat")];
     const rows = taxRows.map(r => [
       r.day,
       r.transaction_count,
       formatMoney(r.tax_minor, EXP),
       formatMoney(r.cumulative_minor, EXP),
     ]);
-    const totalRow = ["Total", taxTxCount, formatMoney(taxTotal, EXP), ""];
+    const totalRow = [t("total"), taxTxCount, formatMoney(taxTotal, EXP), ""];
     downloadCSV(`zanpos-tax-${from}-${to}.csv`, [header, ...rows, totalRow]);
   };
 
   const handleExportSummaryCSV = () => {
     if (!summary) return;
     const rows: (string | number)[][] = [
-      ["Metric", "Value"],
-      ["Period", `${from} to ${to}`],
-      ["Transactions", summary.transaction_count],
-      ["Gross Sales", formatMoney(summary.gross_total_minor, EXP)],
-      ["Discounts", formatMoney(summary.discount_total_minor, EXP)],
-      ["Tax", formatMoney(summary.tax_total_minor, EXP)],
-      ["Net Revenue", formatMoney(summary.net_total_minor, EXP)],
-      ["Cash", formatMoney(summary.cash_total_minor, EXP)],
-      ["Card", formatMoney(summary.card_total_minor, EXP)],
-      ["Refunds", `${summary.refund_count} (${formatMoney(summary.refund_total_minor, EXP)})`],
+      [t("metric"), t("value")],
+      [t("period"), `${from} ${t("to")} ${to}`],
+      [t("transactions"), summary.transaction_count],
+      [t("grossSales"), formatMoney(summary.gross_total_minor, EXP)],
+      [t("discounts"), formatMoney(summary.discount_total_minor, EXP)],
+      [t("taxReport"), formatMoney(summary.tax_total_minor, EXP)],
+      [t("netRevenue"), formatMoney(summary.net_total_minor, EXP)],
+      [t("cash"), formatMoney(summary.cash_total_minor, EXP)],
+      [t("card"), formatMoney(summary.card_total_minor, EXP)],
+      [t("refunds"), `${summary.refund_count} (${formatMoney(summary.refund_total_minor, EXP)})`],
     ];
     downloadCSV(`zanpos-summary-${from}-${to}.csv`, rows);
   };
@@ -196,30 +204,30 @@ export default function ReportsTab({ sessionUserId }: Props) {
               className={`rpt-preset2-btn ${preset === p ? "rpt-preset2-active" : ""}`}
               onClick={() => handlePreset(p)}
             >
-              {p === "today" ? "Today" : p === "week" ? "This Week" : "This Month"}
+              {p === "today" ? t("today") : p === "week" ? t("thisWeek") : t("thisMonth")}
             </button>
           ))}
         </div>
         <div className="rpt-date-range">
           <input type="date" className="rpt-date-input" value={from}
             onChange={e => { setFrom(e.target.value); setPreset("custom"); }} />
-          <span className="rpt-date-arrow">→</span>
+          <span className="rpt-date-arrow icon-directional" aria-hidden="true">→</span>
           <input type="date" className="rpt-date-input" value={to}
             onChange={e => { setTo(e.target.value); setPreset("custom"); }} />
           <button className="btn-primary rpt-run-btn2" onClick={load} disabled={loading}>
-            {loading ? "Loading…" : "▶ Run"}
+            {loading ? t("loading") : `▶ ${t("runReport")}`}
           </button>
           {activeSection === "sales" && sales.length > 0 && (
-            <button className="btn-secondary rpt-export-btn2" onClick={handleExportCSV}>↓ CSV</button>
+            <button className="btn-secondary rpt-export-btn2" onClick={handleExportCSV}>↓ {t("exportCsv")}</button>
           )}
           {activeSection === "products" && topProducts.length > 0 && (
-            <button className="btn-secondary rpt-export-btn2" onClick={handleExportProductsCSV}>↓ CSV</button>
+            <button className="btn-secondary rpt-export-btn2" onClick={handleExportProductsCSV}>↓ {t("exportCsv")}</button>
           )}
           {activeSection === "tax" && taxRows.length > 0 && (
-            <button className="btn-secondary rpt-export-btn2" onClick={handleExportTaxCSV}>↓ CSV</button>
+            <button className="btn-secondary rpt-export-btn2" onClick={handleExportTaxCSV}>↓ {t("exportCsv")}</button>
           )}
           {activeSection === "summary" && summary && (
-            <button className="btn-secondary rpt-export-btn2" onClick={handleExportSummaryCSV}>↓ CSV</button>
+            <button className="btn-secondary rpt-export-btn2" onClick={handleExportSummaryCSV}>↓ {t("exportCsv")}</button>
           )}
         </div>
       </div>
@@ -231,10 +239,10 @@ export default function ReportsTab({ sessionUserId }: Props) {
             className={`rpt-tab2 ${activeSection === s ? "rpt-tab2-active" : ""}`}
             onClick={() => setActiveSection(s)}
           >
-            {s === "summary" ? "📊 Summary"
-              : s === "products" ? "🏆 Top Products"
-              : s === "sales" ? "🧾 Sales List"
-              : "🧮 Tax"}
+            {s === "summary" ? `📊 ${t("reportSummary")}`
+              : s === "products" ? `🏆 ${t("topProducts")}`
+              : s === "sales" ? `🧾 ${t("salesList")}`
+              : `🧮 ${t("taxReport")}`}
             {s === "sales" && sales.length > 0 && (
               <span className="rpt-tab2-badge">{sales.length}</span>
             )}
@@ -247,29 +255,30 @@ export default function ReportsTab({ sessionUserId }: Props) {
         {loadError && (
           <div className="rpt-error-banner" role="alert">
             ⚠ {loadError}
-            <button className="rpt-error-retry" onClick={load}>Retry</button>
+            <button className="rpt-error-retry" onClick={load}>{t("retry")}</button>
           </div>
         )}
         {stockWarning && (
           <div className="rpt-error-banner" role="alert" style={{ background: "var(--warning-bg, #fef3c7)" }}>
             ⚠ {stockWarning}
-            <button className="rpt-error-retry" onClick={() => setStockWarning(null)}>Dismiss</button>
+            <button className="rpt-error-retry" onClick={() => setStockWarning(null)}>{t("dismiss")}</button>
           </div>
         )}
         {/* ── Summary cards ── */}
         {activeSection === "summary" && summary && (
           <div className="rpt-summary2">
-            <SummaryCard label="Transactions"   value={String(summary.transaction_count)} accent />
-            <SummaryCard label="Gross Sales"    value={fmt(summary.gross_total_minor)} />
-            <SummaryCard label="Discounts"      value={`− ${fmt(summary.discount_total_minor)}`} dim />
-            <SummaryCard label="Tax"            value={fmt(summary.tax_total_minor)} dim />
-            <SummaryCard label="Net Revenue"    value={fmt(summary.net_total_minor)} accent />
-            <SummaryCard label="Cash"           value={fmt(summary.cash_total_minor)} />
-            <SummaryCard label="Card"           value={fmt(summary.card_total_minor)} />
-            <SummaryCard label="Refunds"        value={`${summary.refund_count} (${fmt(summary.refund_total_minor)})`} dim />
+            <ReportSummaryCard metric="transactions" label={t("transactions")} value={String(summary.transaction_count)} accent />
+            <ReportSummaryCard metric="grossSales" label={t("grossSales")} value={fmt(summary.gross_total_minor)} />
+            <ReportSummaryCard metric="discounts" label={t("discounts")} value={`− ${fmt(summary.discount_total_minor)}`} dim />
+            <ReportSummaryCard metric="tax" label={t("taxReport")} value={fmt(summary.tax_total_minor)} dim />
+            <ReportSummaryCard metric="netRevenue" label={t("netRevenue")} value={fmt(summary.net_total_minor)} accent />
+            <ReportSummaryCard metric="cash" label={t("cash")} value={fmt(summary.cash_total_minor)} />
+            <ReportSummaryCard metric="card" label={t("card")} value={fmt(summary.card_total_minor)} />
+            <ReportSummaryCard metric="refunds" label={t("refunds")} value={`${summary.refund_count} (${fmt(summary.refund_total_minor)})`} dim />
             {summary.pending_delivery_count > 0 && (
-              <SummaryCard
-                label="Pending Deliveries"
+              <ReportSummaryCard
+                metric="pendingDeliveries"
+                label={t("pendingDeliveries")}
                 value={`${summary.pending_delivery_count} (${fmt(summary.pending_delivery_minor)})`}
                 warning
               />
@@ -283,18 +292,18 @@ export default function ReportsTab({ sessionUserId }: Props) {
             {topProducts.length === 0 ? (
               <div className="bo-empty">
                 <div className="bo-empty-icon"><BarChart2 size={40} strokeWidth={1.5} /></div>
-                <p className="bo-empty-title">No data for this period</p>
-                <p className="bo-empty-hint">Adjust the date range and run the report again.</p>
+                <p className="bo-empty-title">{t("noDataForPeriod")}</p>
+                <p className="bo-empty-hint">{t("adjustDateRange")}</p>
               </div>
             ) : (
               <table className="rpt-table">
                 <thead>
                   <tr>
                     <th>#</th>
-                    <th>Product</th>
-                    <th className="rpt-num">Qty Sold</th>
-                    <th className="rpt-num">Transactions</th>
-                    <th className="rpt-num">Revenue</th>
+                    <th>{t("product")}</th>
+                    <th className="rpt-num">{t("quantitySold")}</th>
+                    <th className="rpt-num">{t("transactions")}</th>
+                    <th className="rpt-num">{t("revenue")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -319,20 +328,20 @@ export default function ReportsTab({ sessionUserId }: Props) {
             {sales.length === 0 ? (
               <div className="bo-empty">
                 <div className="bo-empty-icon"><BarChart2 size={40} strokeWidth={1.5} /></div>
-                <p className="bo-empty-title">No data for this period</p>
-                <p className="bo-empty-hint">Adjust the date range and run the report again.</p>
+                <p className="bo-empty-title">{t("noDataForPeriod")}</p>
+                <p className="bo-empty-hint">{t("adjustDateRange")}</p>
               </div>
             ) : (
               <table className="rpt-table">
                 <thead>
                   <tr>
-                    <th>Receipt</th>
-                    <th>Date / Time</th>
-                    <th>Cashier</th>
-                    <th>Payment</th>
-                    <th className="rpt-num">Discount</th>
-                    <th className="rpt-num">Total</th>
-                    <th>Status</th>
+                    <th>{t("receipt")}</th>
+                    <th>{t("dateTime")}</th>
+                    <th>{t("cashier")}</th>
+                    <th>{t("payment")}</th>
+                    <th className="rpt-num">{t("discounts")}</th>
+                    <th className="rpt-num">{t("total")}</th>
+                    <th>{t("status")}</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -345,13 +354,13 @@ export default function ReportsTab({ sessionUserId }: Props) {
                         hour: "2-digit", minute: "2-digit"
                       })}</td>
                       <td>{s.cashier_name}</td>
-                      <td className="rpt-method">{s.payment_methods}</td>
+                      <td className="rpt-method">{reportPaymentMethodsText(language, s.payment_methods)}</td>
                       <td className="rpt-num rpt-dim">
                         {s.discount_total_minor > 0 ? `− ${fmt(s.discount_total_minor)}` : "—"}
                       </td>
                       <td className="rpt-num rpt-money">{fmt(s.net_total_minor)}</td>
                       <td>
-                        <span className={`rpt-badge rpt-badge-${s.status}`}>{s.status}</span>
+                        <span className={`rpt-badge rpt-badge-${s.status}`}>{reportSaleStatusText(language, s.status)}</span>
                       </td>
                       <td>
                         {s.status === "completed" && (
@@ -359,9 +368,9 @@ export default function ReportsTab({ sessionUserId }: Props) {
                             className="rpt-void-btn"
                             onClick={() => handleVoid(s)}
                             disabled={voidingId === s.sale_id}
-                            title="Void this sale"
+                            title={t("voidAction")}
                           >
-                            {voidingId === s.sale_id ? "…" : "Void"}
+                            {voidingId === s.sale_id ? "…" : t("voidAction")}
                           </button>
                         )}
                       </td>
@@ -378,9 +387,9 @@ export default function ReportsTab({ sessionUserId }: Props) {
                     setSalesOffset(newOff);
                     const pg = await cmd.reportSalesList(sessionUserId, BRANCH_ID, from, to, newOff, 100);
                     setSalesPage(pg as SaleListPage);
-                  }}>← Prev</button>
+                  }}><span className="icon-directional" aria-hidden="true">←</span> {t("previous")}</button>
                 <span className="bo-pagination-info">
-                  {salesOffset + 1}–{Math.min(salesOffset + sales.length, salesPage.total)} of {salesPage.total}
+                  {salesOffset + 1}–{Math.min(salesOffset + sales.length, salesPage.total)} {t("of")} {salesPage.total}
                 </span>
                 <button className="btn-secondary btn-sm" disabled={salesOffset + sales.length >= salesPage.total}
                   onClick={async () => {
@@ -388,7 +397,7 @@ export default function ReportsTab({ sessionUserId }: Props) {
                     setSalesOffset(newOff);
                     const pg = await cmd.reportSalesList(sessionUserId, BRANCH_ID, from, to, newOff, 100);
                     setSalesPage(pg as SaleListPage);
-                  }}>Next →</button>
+                  }}>{t("next")} <span className="icon-directional" aria-hidden="true">→</span></button>
               </div>
             )}
           </div>
@@ -400,17 +409,17 @@ export default function ReportsTab({ sessionUserId }: Props) {
             {taxRows.length === 0 ? (
               <div className="bo-empty">
                 <div className="bo-empty-icon"><Receipt size={40} strokeWidth={1.5} /></div>
-                <p className="bo-empty-title">No taxable sales</p>
-                <p className="bo-empty-hint">No taxable transactions were recorded in this period.</p>
+                <p className="bo-empty-title">{t("noTaxableSales")}</p>
+                <p className="bo-empty-hint">{t("noTaxableTransactions")}</p>
               </div>
             ) : (
               <table className="rpt-table">
                 <thead>
                   <tr>
-                    <th>Date</th>
-                    <th className="rpt-num">Transactions</th>
-                    <th className="rpt-num">VAT Collected</th>
-                    <th className="rpt-num">Cumulative VAT</th>
+                    <th>{t("date")}</th>
+                    <th className="rpt-num">{t("transactions")}</th>
+                    <th className="rpt-num">{t("vatCollected")}</th>
+                    <th className="rpt-num">{t("cumulativeVat")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -423,7 +432,7 @@ export default function ReportsTab({ sessionUserId }: Props) {
                     </tr>
                   ))}
                   <tr className="rpt-tax-total-row">
-                    <td><strong>Total</strong></td>
+                    <td><strong>{t("total")}</strong></td>
                     <td className="rpt-num"><strong>{taxTxCount}</strong></td>
                     <td className="rpt-num rpt-money"><strong>{fmt(taxTotal)}</strong></td>
                     <td></td>
@@ -439,46 +448,20 @@ export default function ReportsTab({ sessionUserId }: Props) {
       {voidConfirm && (
         <div className="settings-confirm-overlay" onClick={() => setVoidConfirm(null)}>
           <div className="settings-confirm-dialog" onClick={e => e.stopPropagation()}>
-            <div className="settings-confirm-header">Confirm Void</div>
+            <div className="settings-confirm-header">{t("confirmVoidSale")}</div>
             <p className="settings-confirm-msg">
-              Void sale #{voidConfirm.receipt_number} ({fmt(voidConfirm.net_total_minor)})?
-              <br /><strong>This cannot be undone.</strong>
+              #{voidConfirm.receipt_number} ({fmt(voidConfirm.net_total_minor)})
+              <br /><strong>{t("voidSalePrompt")}</strong>
             </p>
             <div className="settings-confirm-buttons">
               <button className="btn-primary" style={{ background: "var(--error, #ef4444)" }} onClick={executeVoid} disabled={voidingId !== null}>
-                {voidingId ? "Voiding…" : "Yes, Void Sale"}
+                {voidingId ? t("voiding") : t("yesVoidSale")}
               </button>
-              <button className="btn-secondary" onClick={() => setVoidConfirm(null)} disabled={voidingId !== null}>Cancel</button>
+              <button className="btn-secondary" onClick={() => setVoidConfirm(null)} disabled={voidingId !== null}>{t("cancel")}</button>
             </div>
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-const CARD_META: Record<string, { icon: string; color: string }> = {
-  "Transactions":        { icon: "🧾", color: "var(--accent)" },
-  "Gross Sales":         { icon: "💵", color: "var(--success, #22c55e)" },
-  "Net Revenue":         { icon: "✅", color: "var(--success, #22c55e)" },
-  "Discounts":           { icon: "🏷️", color: "var(--warning, #f59e0b)" },
-  "Tax":                 { icon: "📋", color: "var(--text-dim)" },
-  "Cash":                { icon: "💵", color: "var(--text)" },
-  "Card":                { icon: "💳", color: "var(--text)" },
-  "Wallet":              { icon: "📱", color: "var(--text)" },
-  "Refunds":             { icon: "↩️", color: "var(--error, #ef4444)" },
-  "Pending Deliveries":  { icon: "🛵", color: "var(--warning, #f59e0b)" },
-};
-
-function SummaryCard({ label, value, accent, dim, warning }: {
-  label: string; value: string; accent?: boolean; dim?: boolean; warning?: boolean;
-}) {
-  const meta = CARD_META[label] ?? { icon: "📊", color: "var(--text-dim)" };
-  return (
-    <div className={`rpt-card2 ${accent ? "rpt-card2-accent" : ""} ${dim ? "rpt-card2-dim" : ""} ${warning ? "rpt-card2-warning" : ""}`}>
-      <div className="rpt-card2-icon" style={{ color: meta.color }}>{meta.icon}</div>
-      <div className="rpt-card2-label">{label}</div>
-      <div className="rpt-card2-value">{value}</div>
     </div>
   );
 }

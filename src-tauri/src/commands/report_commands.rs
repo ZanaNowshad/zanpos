@@ -1,4 +1,4 @@
-use crate::commands::rbac;
+use crate::commands::{rbac, sync_commands};
 use crate::db::repositories::audit_hash;
 use crate::db::repositories::report_repo;
 use crate::domain::report::TodaySummary;
@@ -34,6 +34,30 @@ pub struct TopProduct {
     pub total_quantity: String,
     pub revenue_minor: i64,
     pub transaction_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MarginSummary {
+    pub from_date: String,
+    pub to_date: String,
+    pub transaction_count: i64,
+    pub revenue_minor: i64,
+    pub cogs_minor: i64,
+    pub gross_margin_minor: i64,
+    pub margin_basis_points: Option<i64>,
+    pub unknown_cost_line_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProductMarginRow {
+    pub product_id: Option<String>,
+    pub product_name: String,
+    pub quantity: String,
+    pub revenue_minor: i64,
+    pub cogs_minor: i64,
+    pub gross_margin_minor: i64,
+    pub margin_basis_points: Option<i64>,
+    pub unknown_cost_line_count: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -218,6 +242,154 @@ pub async fn report_top_products(
             transaction_count: r.get("transaction_count"),
         })
         .collect())
+}
+
+#[tauri::command]
+pub async fn report_margin(
+    actor_user_id: String,
+    branch_id: String,
+    from_date: String,
+    to_date: String,
+    state: State<'_, AppState>,
+) -> Result<MarginSummary, AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    report_margin_inner(&state.db, &branch_id, &from_date, &to_date).await
+}
+
+#[tauri::command]
+pub async fn report_product_margin(
+    actor_user_id: String,
+    branch_id: String,
+    from_date: String,
+    to_date: String,
+    limit: Option<i64>,
+    state: State<'_, AppState>,
+) -> Result<Vec<ProductMarginRow>, AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    report_product_margin_inner(
+        &state.db,
+        &branch_id,
+        &from_date,
+        &to_date,
+        limit.unwrap_or(50).clamp(1, 200),
+    )
+    .await
+}
+
+async fn report_margin_inner(
+    pool: &SqlitePool,
+    branch_id: &str,
+    from_date: &str,
+    to_date: &str,
+) -> Result<MarginSummary, AppError> {
+    let (scope, origin_device_id) = report_scope(pool).await;
+    let row = sqlx::query(
+        "SELECT COUNT(DISTINCT s.sale_id) AS transaction_count,
+                COALESCE(SUM(si.line_total_minor - si.tax_amount_minor), 0) AS revenue_minor,
+                COALESCE(SUM(
+                    CASE
+                      WHEN si.cost_minor_snapshot IS NULL THEN 0
+                      ELSE CAST(ROUND(CAST(si.quantity AS REAL) * si.cost_minor_snapshot) AS INTEGER)
+                    END
+                ), 0) AS cogs_minor,
+                COALESCE(SUM(CASE WHEN si.cost_minor_snapshot IS NULL THEN 1 ELSE 0 END), 0) AS unknown_cost_line_count
+         FROM sales s
+         JOIN sale_items si ON si.sale_id = s.sale_id
+         WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
+           AND s.status != 'voided' AND si.voided = 0
+           AND (s.is_delivery = 0 OR EXISTS (
+               SELECT 1 FROM delivery_orders d WHERE d.sale_id = s.sale_id AND d.payment_status = 'paid'
+           ))
+           AND (? = 'all' OR s.origin_device_id = ?)",
+    )
+    .bind(branch_id)
+    .bind(from_date)
+    .bind(to_date)
+    .bind(scope.as_str())
+    .bind(&origin_device_id)
+    .fetch_one(pool)
+    .await?;
+
+    let revenue_minor: i64 = row.get("revenue_minor");
+    let cogs_minor: i64 = row.get("cogs_minor");
+    Ok(MarginSummary {
+        from_date: from_date.to_string(),
+        to_date: to_date.to_string(),
+        transaction_count: row.get("transaction_count"),
+        revenue_minor,
+        cogs_minor,
+        gross_margin_minor: revenue_minor - cogs_minor,
+        margin_basis_points: margin_basis_points(revenue_minor, cogs_minor),
+        unknown_cost_line_count: row.get("unknown_cost_line_count"),
+    })
+}
+
+async fn report_product_margin_inner(
+    pool: &SqlitePool,
+    branch_id: &str,
+    from_date: &str,
+    to_date: &str,
+    limit: i64,
+) -> Result<Vec<ProductMarginRow>, AppError> {
+    let (scope, origin_device_id) = report_scope(pool).await;
+    let rows = sqlx::query(
+        "SELECT si.product_id AS product_id,
+                si.product_name_snapshot AS product_name,
+                CAST(SUM(CAST(si.quantity AS REAL)) AS TEXT) AS quantity,
+                COALESCE(SUM(si.line_total_minor - si.tax_amount_minor), 0) AS revenue_minor,
+                COALESCE(SUM(
+                    CASE
+                      WHEN si.cost_minor_snapshot IS NULL THEN 0
+                      ELSE CAST(ROUND(CAST(si.quantity AS REAL) * si.cost_minor_snapshot) AS INTEGER)
+                    END
+                ), 0) AS cogs_minor,
+                COALESCE(SUM(CASE WHEN si.cost_minor_snapshot IS NULL THEN 1 ELSE 0 END), 0) AS unknown_cost_line_count
+         FROM sales s
+         JOIN sale_items si ON si.sale_id = s.sale_id
+         WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
+           AND s.status != 'voided' AND si.voided = 0
+           AND (s.is_delivery = 0 OR EXISTS (
+               SELECT 1 FROM delivery_orders d WHERE d.sale_id = s.sale_id AND d.payment_status = 'paid'
+           ))
+           AND (? = 'all' OR s.origin_device_id = ?)
+         GROUP BY si.product_id, si.product_name_snapshot
+         ORDER BY (revenue_minor - cogs_minor) DESC, revenue_minor DESC
+         LIMIT ?",
+    )
+    .bind(branch_id)
+    .bind(from_date)
+    .bind(to_date)
+    .bind(scope.as_str())
+    .bind(&origin_device_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .iter()
+        .map(|r| {
+            let revenue_minor: i64 = r.get("revenue_minor");
+            let cogs_minor: i64 = r.get("cogs_minor");
+            ProductMarginRow {
+                product_id: r.get("product_id"),
+                product_name: r.get("product_name"),
+                quantity: r.get("quantity"),
+                revenue_minor,
+                cogs_minor,
+                gross_margin_minor: revenue_minor - cogs_minor,
+                margin_basis_points: margin_basis_points(revenue_minor, cogs_minor),
+                unknown_cost_line_count: r.get("unknown_cost_line_count"),
+            }
+        })
+        .collect())
+}
+
+fn margin_basis_points(revenue_minor: i64, cogs_minor: i64) -> Option<i64> {
+    if revenue_minor <= 0 {
+        None
+    } else {
+        Some(((revenue_minor - cogs_minor) * 10_000) / revenue_minor)
+    }
 }
 
 #[tauri::command]
@@ -596,7 +768,15 @@ pub(crate) async fn report_eod_cashup_inner(
                       FROM payments p2
                       WHERE p2.sale_id = s.sale_id AND p2.payment_method = 'cash'),
                      s.net_total_minor
-                 ) * r.refund_total_minor / s.net_total_minor
+                 ) * MAX(
+                     r.refund_total_minor - COALESCE((
+                         SELECT SUM(ep.amount_minor)
+                         FROM payments ep
+                         WHERE ep.payment_method = 'exchange_credit'
+                           AND ep.external_reference = r.refund_id
+                     ), 0),
+                     0
+                 ) / s.net_total_minor
                  END
              ), 0)
              FROM refunds r
@@ -767,22 +947,32 @@ pub async fn report_z_report(
     .unwrap_or_default();
 
     // Record Z-report issuance in the audit hash-chain.
-    let _ = audit_hash::insert_audit_entry(
-        &state.db,
+    record_z_report_issued(&state.db, &date, &actor_user_id, &device_id, &branch_id).await?;
+
+    Ok(report)
+}
+
+async fn record_z_report_issued(
+    pool: &SqlitePool,
+    date: &str,
+    actor_user_id: &str,
+    device_id: &str,
+    branch_id: &str,
+) -> AppResult<()> {
+    audit_hash::insert_audit_entry(
+        pool,
         "Z_REPORT_ISSUED",
         "report",
-        &date,
-        &actor_user_id,
+        date,
+        actor_user_id,
         "user",
-        &device_id,
-        &branch_id,
+        device_id,
+        branch_id,
         None,
         None,
         None,
     )
-    .await;
-
-    Ok(report)
+    .await
 }
 
 // ─── Integrity check ──────────────────────────────────────────────────────────
@@ -861,6 +1051,7 @@ pub async fn reports_config_save(
     .await?;
 
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
+    sync_commands::schedule_immediate_sync(&state);
 
     Ok(())
 }
@@ -1002,7 +1193,7 @@ mod tests {
         .expect("finalize sale");
 
         // Close the shift
-        crate::db::repositories::shift_repo::close_shift(&pool, &shift_id, Some(250 + 0), None)
+        crate::db::repositories::shift_repo::close_shift(&pool, &shift_id, Some(250), None)
             .await
             .expect("close shift");
 
@@ -1029,6 +1220,84 @@ mod tests {
             row.cashier_name, "Cashier 1",
             "cashier_name must match seed data"
         );
+    }
+
+    #[tokio::test]
+    async fn test_margin_report_uses_sale_cost_snapshot() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+
+        sqlx::query("UPDATE products SET cost_minor = 100 WHERE product_id = ?")
+            .bind("01JPROD00000000000WATR001")
+            .execute(&pool)
+            .await
+            .expect("set starting product cost");
+
+        let mut cart = Cart::new(
+            BRANCH.into(),
+            DEVICE.into(),
+            shift_id.clone(),
+            CASHIER.into(),
+        );
+        cart.lines.push(CartLine {
+            cart_line_id: ulid::Ulid::new().to_string(),
+            product_id: Some("01JPROD00000000000WATR001".into()),
+            product_name: "Water 500ml".into(),
+            sku: Some("WATR500".into()),
+            barcode: None,
+            quantity: "2".to_string(),
+            unit_price_minor: 250,
+            line_discount_minor: 0,
+            line_discount_reason: None,
+            tax_rule_id: TAX_ZER.to_string(),
+            tax_rate_basis_points: 0,
+            tax_inclusive: false,
+            tax_amount_minor: 0,
+            line_total_minor: 500,
+            note: None,
+            voided: false,
+        });
+        let payments = vec![PaymentInput {
+            method: "cash".into(),
+            amount_minor: 500,
+            tendered_minor: Some(500),
+            external_reference: None,
+        }];
+        sale_repo::finalize_sale(
+            &pool,
+            &cart,
+            payments,
+            "idem-margin-snapshot",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("finalize sale");
+
+        sqlx::query("UPDATE products SET cost_minor = 999 WHERE product_id = ?")
+            .bind("01JPROD00000000000WATR001")
+            .execute(&pool)
+            .await
+            .expect("change current product cost");
+
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let summary = report_margin_inner(&pool, BRANCH, &today, &today)
+            .await
+            .expect("margin report");
+        let rows = report_product_margin_inner(&pool, BRANCH, &today, &today, 10)
+            .await
+            .expect("product margin report");
+
+        assert_eq!(summary.revenue_minor, 500);
+        assert_eq!(summary.cogs_minor, 200);
+        assert_eq!(summary.gross_margin_minor, 300);
+        assert_eq!(summary.margin_basis_points, Some(6000));
+        assert_eq!(summary.unknown_cost_line_count, 0);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].cogs_minor, 200);
+        assert_eq!(rows[0].gross_margin_minor, 300);
     }
 
     // ── T11. payment_method CHECK constraint rejects invalid values ───────────
@@ -1075,6 +1344,31 @@ mod tests {
         assert!(
             err.is_err(),
             "invalid payment_method 'bribe' must violate CHECK constraint"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_z_report_audit_failure_is_returned() {
+        let pool = make_pool().await;
+        sqlx::query(
+            "CREATE TRIGGER fail_z_report_audit
+             BEFORE INSERT ON audit_logs
+             WHEN NEW.event_type = 'Z_REPORT_ISSUED'
+             BEGIN
+               SELECT RAISE(FAIL, 'audit write blocked');
+             END",
+        )
+        .execute(&pool)
+        .await
+        .expect("create audit failure trigger");
+
+        let err = record_z_report_issued(&pool, "2026-07-05", CASHIER, DEVICE, BRANCH)
+            .await
+            .expect_err("Z-report audit write failure must be returned");
+
+        assert!(
+            matches!(err, AppError::Database(_)),
+            "expected database error, got {err:?}"
         );
     }
 }

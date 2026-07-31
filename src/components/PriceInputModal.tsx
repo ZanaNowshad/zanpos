@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DEVICE } from "../types";
 import { formatMoney, parseMoney } from "../money";
 import Dialpad, { applyDialpadKey } from "./Dialpad";
+import { useLanguage } from "../hooks/useLanguage";
+import { modalTranslator } from "../i18n/modalStrings";
 
 interface Props {
   productName: string;
@@ -10,6 +12,8 @@ interface Props {
 }
 
 export default function PriceInputModal({ productName, onConfirm, onCancel }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => modalTranslator(language), [language]);
   const [price, setPrice]     = useState("");
   const [error, setError]     = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -34,12 +38,12 @@ export default function PriceInputModal({ productName, onConfirm, onCancel }: Pr
   };
 
   const handleConfirm = async () => {
-    if (!canConfirm) { setError("Enter a valid price"); return; }
+    if (!canConfirm) { setError(t("enterValidPrice")); return; }
     setLoading(true);
     try {
       await onConfirm(price);
     } catch (e: unknown) {
-      setError(typeof e === "string" ? e : "Failed to set price");
+      setError(typeof e === "string" ? e : t("failedSetPrice"));
     } finally {
       setLoading(false);
     }
@@ -51,10 +55,10 @@ export default function PriceInputModal({ productName, onConfirm, onCancel }: Pr
 
         {/* ── Left: info + price display ── */}
         <div className="modal custom-item-left">
-          <h2 className="modal-title">Set Price</h2>
+          <h2 className="modal-title">{t("setPrice")}</h2>
 
           <div className="pi-product-name">{productName}</div>
-          <div className="pi-hint">This item has no base price. Enter the selling price:</div>
+          <div className="pi-hint">{t("itemHasNoBasePrice")}</div>
 
           {/* Keyboard-typeable price input (dialpad on the right still works for touch) */}
           <div className="ce-amount-block ce-amount-input-block">
@@ -80,7 +84,7 @@ export default function PriceInputModal({ productName, onConfirm, onCancel }: Pr
           {/* Line total preview */}
           {priceMinor > 0 && (
             <div className="ci-line-total">
-              <span className="ci-line-total-label">Price</span>
+              <span className="ci-line-total-label">{t("price")}</span>
               <span className="ci-line-total-value">{cur} {formatMoney(priceMinor, EXP)}</span>
             </div>
           )}
@@ -90,7 +94,7 @@ export default function PriceInputModal({ productName, onConfirm, onCancel }: Pr
 
         {/* ── Right: dialpad ── */}
         <div className="payment-dialpad-panel">
-          <div className="dialpad-field-indicator">Enter {cur} Price</div>
+          <div className="dialpad-field-indicator">{t("enterPrice")} ({cur})</div>
 
           <Dialpad onKey={handleDialpadKey} />
 
@@ -102,11 +106,11 @@ export default function PriceInputModal({ productName, onConfirm, onCancel }: Pr
               disabled={!canConfirm || loading}
             >
               {loading ? (
-                <span className="dialpad-confirm-label">Saving…</span>
+                <span className="dialpad-confirm-label">{t("saving")}</span>
               ) : (
                 <>
                   <span className="dialpad-confirm-icon">✓</span>
-                  <span className="dialpad-confirm-label">Confirm Price</span>
+                  <span className="dialpad-confirm-label">{t("confirmPrice")}</span>
                   {priceMinor > 0 && (
                     <span className="dialpad-confirm-total">{cur} {formatMoney(priceMinor, EXP)}</span>
                   )}
@@ -114,7 +118,7 @@ export default function PriceInputModal({ productName, onConfirm, onCancel }: Pr
               )}
             </button>
             <button className="dialpad-cancel-btn" onClick={onCancel} disabled={loading}>
-              ✕ Cancel
+              ✕ {t("cancel")}
             </button>
           </div>
         </div>

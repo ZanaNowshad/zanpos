@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { useLanguage } from "../hooks/useLanguage";
+import { backOfficeTranslator } from "../i18n/backOfficeStrings";
 import type { BranchSettings, BusinessFlags, TaxRuleRow, ThermalConfig } from "../types";
 import {
   settingsGetBranch,
@@ -18,15 +20,13 @@ import {
   adminSaveTaxRule,
   adminDeleteTaxRule,
 } from "../tauri/commands";
-import { IcoStore, IcoReceipt, IcoRules, IcoPrinter, IcoWA, IcoSystem } from "./settings/Icons";
+import { IcoStore, IcoReceipt, IcoRules, IcoPrinter, IcoSystem } from "./settings/Icons";
 import StoreTab from "./settings/StoreTab";
 import ReceiptTab from "./settings/ReceiptTab";
 import BusinessTab from "./settings/BusinessTab";
 import PrinterTab from "./settings/PrinterTab";
-import WhatsAppTab from "./settings/WhatsAppTab";
-import HubTab from "./settings/HubTab";
-import SystemTab from "./settings/SystemTab";
-import MaintenanceTab from "./settings/MaintenanceTab";
+import SystemControlTab from "./settings/SystemControlTab";
+import StorefrontManagementTab from "./settings/StorefrontManagementTab";
 
 const TIMEZONES = [
   "Asia/Bahrain", "Asia/Riyadh", "Asia/Dubai", "Asia/Kuwait", "Asia/Muscat",
@@ -41,12 +41,26 @@ function timeoutLabel(m: number) {
   return `${m} minute${m !== 1 ? "s" : ""}`;
 }
 
-interface Props { sessionUserId: string; sessionRole: string; }
+interface Props {
+  sessionUserId: string;
+  sessionToken: string;
+  sessionRole: string;
+  initialMaintenancePane?: boolean;
+}
 
-type SettingsSubTab = "store" | "receipt" | "business" | "printer" | "whatsapp" | "hub" | "system" | "maintenance";
+type SettingsSubTab = "store" | "receipt" | "business" | "printer" | "storefront" | "system_control";
 
-export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
-  const [settingsSubTab, setSettingsSubTab] = useState<SettingsSubTab>("store");
+export default function SettingsTab({
+  sessionUserId,
+  sessionToken,
+  sessionRole,
+  initialMaintenancePane = false,
+}: Props) {
+  const [settingsSubTab, setSettingsSubTab] = useState<SettingsSubTab>(
+    initialMaintenancePane ? "system_control" : "store",
+  );
+  const { language } = useLanguage();
+  const t = useMemo(() => backOfficeTranslator(language), [language]);
   const [settings, setSettings] = useState<BranchSettings | null>(null);
   const [loading, setLoading]   = useState(true);
   const [appVersion, setAppVersion] = useState("1.0.2");
@@ -340,42 +354,32 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
         <button role="tab" aria-selected={settingsSubTab === 'store'}
           className={`settings-sub-tab${settingsSubTab === 'store' ? ' active' : ''}`}
           onClick={() => setSettingsSubTab('store')}>
-          <IcoStore /> Store
+          <IcoStore /> {t("store")}
         </button>
         <button role="tab" aria-selected={settingsSubTab === 'receipt'}
           className={`settings-sub-tab${settingsSubTab === 'receipt' ? ' active' : ''}`}
           onClick={() => setSettingsSubTab('receipt')}>
-          <IcoReceipt /> Receipt
+          <IcoReceipt /> {t("receipt")}
         </button>
         <button role="tab" aria-selected={settingsSubTab === 'business'}
           className={`settings-sub-tab${settingsSubTab === 'business' ? ' active' : ''}`}
           onClick={() => setSettingsSubTab('business')}>
-          <IcoRules /> Business
+          <IcoRules /> {t("business")}
         </button>
         <button role="tab" aria-selected={settingsSubTab === 'printer'}
           className={`settings-sub-tab${settingsSubTab === 'printer' ? ' active' : ''}`}
           onClick={() => setSettingsSubTab('printer')}>
-          <IcoPrinter /> Printer
+          <IcoPrinter /> {t("printer")}
         </button>
-        <button role="tab" aria-selected={settingsSubTab === 'whatsapp'}
-          className={`settings-sub-tab${settingsSubTab === 'whatsapp' ? ' active' : ''}`}
-          onClick={() => setSettingsSubTab('whatsapp')}>
-          <IcoWA /> WhatsApp
+        <button role="tab" aria-selected={settingsSubTab === 'storefront'}
+          className={`settings-sub-tab${settingsSubTab === 'storefront' ? ' active' : ''}`}
+          onClick={() => setSettingsSubTab('storefront')}>
+          <IcoStore /> ZanShop
         </button>
-        <button role="tab" aria-selected={settingsSubTab === 'hub'}
-          className={`settings-sub-tab${settingsSubTab === 'hub' ? ' active' : ''}`}
-          onClick={() => setSettingsSubTab('hub')}>
-          <IcoSystem /> Hub
-        </button>
-        <button role="tab" aria-selected={settingsSubTab === 'system'}
-          className={`settings-sub-tab${settingsSubTab === 'system' ? ' active' : ''}`}
-          onClick={() => setSettingsSubTab('system')}>
-          <IcoSystem /> System
-        </button>
-        <button role="tab" aria-selected={settingsSubTab === 'maintenance'}
-          className={`settings-sub-tab${settingsSubTab === 'maintenance' ? ' active' : ''}`}
-          onClick={() => setSettingsSubTab('maintenance')}>
-          <IcoSystem /> Maintenance
+        <button role="tab" aria-selected={settingsSubTab === 'system_control'}
+          className={`settings-sub-tab${settingsSubTab === 'system_control' ? ' active' : ''}`}
+          onClick={() => setSettingsSubTab('system_control')}>
+          <IcoSystem /> {t("systemControl")}
         </button>
       </div>
 
@@ -429,23 +433,21 @@ export default function SettingsTab({ sessionUserId, sessionRole }: Props) {
           loadPorts={loadPorts}
         />
       )}
-      {settingsSubTab === 'whatsapp' && (
-        <WhatsAppTab sessionUserId={sessionUserId} sessionRole={sessionRole} registerTimer={registerTimer} />
+      {settingsSubTab === 'storefront' && (
+        <StorefrontManagementTab sessionUserId={sessionUserId} sessionRole={sessionRole} />
       )}
-      {settingsSubTab === 'hub' && (
-        <HubTab sessionUserId={sessionUserId} />
-      )}
-      {settingsSubTab === 'system' && (
-        <SystemTab
+      {settingsSubTab === 'system_control' && (
+        <SystemControlTab
+          sessionUserId={sessionUserId}
+          sessionToken={sessionToken}
+          sessionRole={sessionRole}
           appVersion={appVersion}
           backingUp={backingUp} backupMsg={backupMsg}
           checkingUpdate={checkingUpdate} updateMsg={updateMsg}
           handleBackup={handleBackup} handleCheckUpdate={handleCheckUpdate}
+          registerTimer={registerTimer}
+          initialPane={initialMaintenancePane ? "maintenance" : undefined}
         />
-      )}
-
-      {settingsSubTab === 'maintenance' && (
-        <MaintenanceTab sessionUserId={sessionUserId} />
       )}
     </div>
   );

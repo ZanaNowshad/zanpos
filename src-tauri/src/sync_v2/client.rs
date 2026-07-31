@@ -1,4 +1,6 @@
 use crate::errors::{AppError, AppResult};
+use crate::hub::HubChangeEvent;
+use futures::StreamExt;
 use reqwest::StatusCode;
 use serde_json::Value;
 use std::time::Duration;
@@ -243,6 +245,119 @@ impl HttpSyncClient {
             }
             s => Err(AppError::Internal(format!("Hub returned {s}"))),
         }
+    }
+
+    /// GET {base}/zanpos/health — authenticated hub-wide health report.
+    pub async fn hub_health(
+        &self,
+    ) -> AppResult<crate::commands::system_health_commands::SystemHealthReport> {
+        let resp = self
+            .http
+            .get(format!("{}/zanpos/health", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.key))
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(format!("{TRANSIENT_TAG} Hub health error: {e}")))?;
+        match resp.status() {
+            s if s.is_success() => resp
+                .json::<crate::commands::system_health_commands::SystemHealthReport>()
+                .await
+                .map_err(|e| AppError::Internal(format!("Hub health parse error: {e}"))),
+            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN => {
+                Err(AppError::Validation("Wrong store token".into()))
+            }
+            s => {
+                let body = resp.text().await.unwrap_or_default();
+                Err(AppError::Internal(format!(
+                    "Hub health returned {s}: {body}"
+                )))
+            }
+        }
+    }
+
+    /// GET {base}/zanpos/consistency — authenticated hub table counts/checksums.
+    pub async fn hub_consistency(
+        &self,
+    ) -> AppResult<crate::sync_v2::consistency::ConsistencySnapshot> {
+        let resp = self
+            .http
+            .get(format!("{}/zanpos/consistency", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.key))
+            .send()
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!("{TRANSIENT_TAG} Hub consistency error: {e}"))
+            })?;
+        match resp.status() {
+            s if s.is_success() => resp
+                .json::<crate::sync_v2::consistency::ConsistencySnapshot>()
+                .await
+                .map_err(|e| AppError::Internal(format!("Hub consistency parse error: {e}"))),
+            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN => {
+                Err(AppError::Validation("Wrong store token".into()))
+            }
+            s => {
+                let body = resp.text().await.unwrap_or_default();
+                Err(AppError::Internal(format!(
+                    "Hub consistency returned {s}: {body}"
+                )))
+            }
+        }
+    }
+
+    /// Keep an authenticated SSE connection open and dispatch hub table changes.
+    /// The caller owns reconnection/backoff so stream closure never stops polling sync.
+    pub async fn listen_hub_changes<F, Fut>(&self, mut on_event: F) -> AppResult<()>
+    where
+        F: FnMut(HubChangeEvent) -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
+        let response = self
+            .http
+            .get(format!("{}/zanpos/events", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.key))
+            .header("Accept", "text/event-stream")
+            .send()
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!("{TRANSIENT_TAG} Hub event stream error: {e}"))
+            })?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(AppError::Internal(format!(
+                "Hub event stream returned {status}: {body}"
+            )));
+        }
+
+        let mut bytes = response.bytes_stream();
+        let mut buffer = String::new();
+        while let Some(chunk) = bytes.next().await {
+            let chunk = chunk.map_err(|e| {
+                AppError::Internal(format!("{TRANSIENT_TAG} Hub event stream interrupted: {e}"))
+            })?;
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+            buffer = buffer.replace("\r\n", "\n");
+            while let Some(end) = buffer.find("\n\n") {
+                let frame = buffer[..end].to_string();
+                buffer.drain(..end + 2);
+                let data = frame
+                    .lines()
+                    .filter_map(|line| line.strip_prefix("data:"))
+                    .map(str::trim_start)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if data.is_empty() {
+                    continue;
+                }
+                if let Ok(event) = serde_json::from_str::<HubChangeEvent>(&data) {
+                    on_event(event).await;
+                }
+            }
+        }
+        Err(AppError::Internal(format!(
+            "{TRANSIENT_TAG} Hub event stream closed"
+        )))
     }
 }
 

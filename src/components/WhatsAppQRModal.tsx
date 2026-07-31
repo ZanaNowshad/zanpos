@@ -1,6 +1,9 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import type { WhatsAppStatus } from "../types";
 import { whatsappStatus } from "../tauri/commands";
+import { useLanguage } from "../hooks/useLanguage";
+import { modalTranslator } from "../i18n/modalStrings";
+import { detailTranslator } from "../i18n/detailStrings";
 
 interface Props {
   onClose: () => void;
@@ -9,6 +12,9 @@ interface Props {
 }
 
 export default function WhatsAppQRModal({ onClose, onConnected, sessionUserId = "" }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => modalTranslator(language), [language]);
+  const dt = useMemo(() => detailTranslator(language), [language]);
   const [status, setStatus]     = useState<WhatsAppStatus>({ connected: false });
   const [loading, setLoading]   = useState(true);
   const [unreachable, setUnreachable] = useState(false);
@@ -33,7 +39,7 @@ export default function WhatsAppQRModal({ onClose, onConnected, sessionUserId = 
 
   useEffect(() => {
     poll();
-    const id = setInterval(poll, 20_000);
+    const id = setInterval(poll, 3_000);
     return () => clearInterval(id);
   }, [poll]);
 
@@ -61,7 +67,7 @@ export default function WhatsAppQRModal({ onClose, onConnected, sessionUserId = 
           {(loading || waitingForQr) && !unreachable && (
             <div className="wa-qr-hint wa-qr-warming">
               <span className="wa-qr-spinner">⟳</span>
-              {loading ? "Connecting to sidecar…" : "Generating QR code, please wait…"}
+              {loading ? dt("connectingSidecar") : dt("generatingQr")}
             </div>
           )}
 
@@ -69,12 +75,12 @@ export default function WhatsAppQRModal({ onClose, onConnected, sessionUserId = 
           {!loading && !unreachable && !status.connected && status.qr && (
             <>
               <p className="wa-qr-instruction">
-                Open WhatsApp on your phone → <strong>Linked Devices</strong> → <strong>Link a Device</strong> and scan this QR code.
+                {t("whatsappLinkInstructions")}
               </p>
               <div className="wa-qr-img-wrap">
-                <img src={status.qr} alt="WhatsApp QR Code" className="wa-qr-img" />
+                <img src={status.qr} alt={dt("whatsappQrAlt")} className="wa-qr-img" />
               </div>
-              <p className="wa-qr-hint">QR refreshes automatically every 20 seconds.</p>
+              <p className="wa-qr-hint">{t("qrRefreshHint")}</p>
             </>
           )}
 
@@ -87,9 +93,9 @@ export default function WhatsAppQRModal({ onClose, onConnected, sessionUserId = 
         <div className="modal-actions">
           {/* Retry button shown only when unreachable */}
           {unreachable && (
-            <button className="btn-primary" onClick={poll}>Retry</button>
+            <button className="btn-primary" onClick={poll}>{t("retry")}</button>
           )}
-          <button className="btn-secondary" onClick={onClose}>Close</button>
+          <button className="btn-secondary" onClick={onClose}>{t("close")}</button>
         </div>
       </div>
     </div>

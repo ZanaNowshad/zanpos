@@ -58,7 +58,7 @@ export default function AuditLogTab({ sessionUserId }: Props) {
           value={from}
           onChange={e => { setFrom(e.target.value); setLoaded(false); }}
         />
-        <span className="rpt-date-sep">→</span>
+        <span className="rpt-date-sep icon-directional" aria-hidden="true">→</span>
         <input
           type="date"
           className="rpt-date-input"
@@ -114,7 +114,7 @@ export default function AuditLogTab({ sessionUserId }: Props) {
               onClick={() => load(page - 1)}
               disabled={page === 0 || loading}
             >
-              ← Prev
+              <span className="icon-directional" aria-hidden="true">←</span> Prev
             </button>
             <span className="audit-page-info">Page {page + 1}</span>
             <button
@@ -122,7 +122,7 @@ export default function AuditLogTab({ sessionUserId }: Props) {
               onClick={() => load(page + 1)}
               disabled={rows.length < 50 || loading}
             >
-              Next →
+              Next <span className="icon-directional" aria-hidden="true">→</span>
             </button>
           </div>
         </>

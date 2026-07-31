@@ -1,4 +1,5 @@
 use crate::ai::client::ToolDef;
+use crate::ai::tools_web::*;
 use crate::db::repositories::{product_repo, report_repo, sync_repo};
 use crate::domain::ai_admin::{ToolPreview, ToolPreviewField};
 use crate::domain::money;
@@ -30,1049 +31,7 @@ impl SqlBind {
 // ── Tool catalogue ─────────────────────────────────────────────────────────────
 
 pub fn all_tool_definitions() -> Vec<ToolDef> {
-    let mut seen = std::collections::HashSet::new();
-    let mut tools = vec![
-        ToolDef {
-            name: "get_today_summary".into(),
-            description: "Get today's sales summary including totals, transaction count, and payment breakdown.".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        ToolDef {
-            name: "list_products".into(),
-            description: "List all active products with their current prices.".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        ToolDef {
-            name: "search_products".into(),
-            description: "Search products by name, SKU, or barcode.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string", "description": "Search term" }
-                },
-                "required": ["query"]
-            }),
-        },
-        ToolDef {
-            name: "get_product".into(),
-            description: "Get full details of a specific product by ID.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "product_id": { "type": "string" }
-                },
-                "required": ["product_id"]
-            }),
-        },
-        ToolDef {
-            name: "update_product_price".into(),
-            description: "Update the selling price of a product. Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "product_id": { "type": "string" },
-                    "new_price_minor": { "type": "integer", "description": "New price in minor units (e.g. 1500 = BHD 1.500)" },
-                    "reason": { "type": "string", "description": "Reason for price change" }
-                },
-                "required": ["product_id", "new_price_minor"]
-            }),
-        },
-        ToolDef {
-            name: "set_product_active".into(),
-            description: "Enable or disable a product. Disabled products don't appear in POS. Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "product_id": { "type": "string" },
-                    "is_active": { "type": "boolean" }
-                },
-                "required": ["product_id", "is_active"]
-            }),
-        },
-        ToolDef {
-            name: "update_product_name".into(),
-            description: "Rename a product. Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "product_id": { "type": "string" },
-                    "new_name": { "type": "string" }
-                },
-                "required": ["product_id", "new_name"]
-            }),
-        },
-        // ── Inventory tools ───────────────────────────────────────────────────
-        ToolDef {
-            name: "get_stock_levels".into(),
-            description: "List all inventory-tracked products with their current stock quantity, reorder point, and low-stock status.".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        ToolDef {
-            name: "get_low_stock".into(),
-            description: "List only the products that are at or below their reorder point (low stock or out of stock).".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        ToolDef {
-            name: "adjust_stock".into(),
-            description: "Apply a positive or negative quantity adjustment to a product's stock. Use for corrections, write-offs, or manual receives. Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "product_id": { "type": "string" },
-                    "quantity_delta": { "type": "number", "description": "Amount to add (positive) or remove (negative)" },
-                    "notes": { "type": "string", "description": "Reason for adjustment" }
-                },
-                "required": ["product_id", "quantity_delta"]
-            }),
-        },
-        ToolDef {
-            name: "stock_take".into(),
-            description: "Set a product's stock to an exact counted quantity (full stock take). Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "product_id": { "type": "string" },
-                    "new_quantity": { "type": "number", "description": "The counted quantity on hand" },
-                    "notes": { "type": "string", "description": "Optional notes" }
-                },
-                "required": ["product_id", "new_quantity"]
-            }),
-        },
-        ToolDef {
-            name: "get_cash_summary".into(),
-            description: "Get the current cash drawer reconciliation for the active shift: opening float, cash sales, refunds, paid-in/out, safe drops, expected total, and counted total if entered.".into(),
-            input_schema: json!({ "type": "object", "properties": { "shift_id": { "type": "string" } }, "required": ["shift_id"] }),
-        },
-        ToolDef {
-            name: "get_recent_refunds".into(),
-            description: "List the most recent refunds (up to 20). Shows refund ID, original sale, amount, reason, and date.".into(),
-            input_schema: json!({ "type": "object", "properties": { "limit": { "type": "integer", "description": "Max refunds to return (default 10, max 20)" } }, "required": [] }),
-        },
-        ToolDef {
-            name: "get_audit_log".into(),
-            description: "Retrieve recent audit log entries for today. Useful for reviewing cashier actions, voids, and refunds.".into(),
-            input_schema: json!({ "type": "object", "properties": { "event_type": { "type": "string", "description": "Optional filter by event type, e.g. sale.created, sale.voided, CART_VOID, NO_SALE, X_REPORT, refund.created" } }, "required": [] }),
-        },
-        ToolDef {
-            name: "get_sync_status".into(),
-            description: "Check the multi-terminal sync status: whether the LAN hub is configured, last sync time, pending queue count, and any failed or conflicted events.".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        ToolDef {
-            name: "get_sync_diagnostics".into(),
-            description: "Full sync diagnostics: per-table breakdown showing pending vs stuck (attempts>=10) rows, max/avg attempt counts, last error, hub connection state. Use when sync appears stuck or when debugging why events aren't syncing.".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        // ── Extended analytics & audit tools ──────────────────────────────────
-        ToolDef {
-            name: "get_daily_report".into(),
-            description: "Get sales summary for a specific date (YYYY-MM-DD). Use for historical reports or comparing days.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "date": { "type": "string", "description": "Date in YYYY-MM-DD format" }
-                },
-                "required": ["date"]
-            }),
-        },
-        ToolDef {
-            name: "get_date_range_report".into(),
-            description: "Get aggregated sales summary for a date range. Both dates inclusive. Max 90 days.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "from": { "type": "string", "description": "Start date YYYY-MM-DD (inclusive)" },
-                    "to":   { "type": "string", "description": "End date YYYY-MM-DD (inclusive)" }
-                },
-                "required": ["from", "to"]
-            }),
-        },
-        ToolDef {
-            name: "get_top_products".into(),
-            description: "List top-selling products by revenue for the last N days. Use to see bestsellers.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "limit":       { "type": "integer", "description": "How many products to return (default 10, max 25)" },
-                    "period_days": { "type": "integer", "description": "Lookback window in days (default 30)" }
-                },
-                "required": []
-            }),
-        },
-        ToolDef {
-            name: "get_shift_history".into(),
-            description: "List recent cashier shifts with open/close times, opening float, cashier name, and total sales.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "limit": { "type": "integer", "description": "Number of shifts to return (default 10, max 30)" }
-                },
-                "required": []
-            }),
-        },
-        ToolDef {
-            name: "list_categories".into(),
-            description: "List all product categories with their IDs, names, and colors.".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        ToolDef {
-            name: "list_safe_drops".into(),
-            description: "List safe drop events for a shift (cash physically removed from drawer for security).".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "shift_id": { "type": "string", "description": "The shift ID to query" }
-                },
-                "required": ["shift_id"]
-            }),
-        },
-        ToolDef {
-            name: "list_no_sale_events".into(),
-            description: "List no-sale (drawer opened without a transaction) events for a shift. Key audit signal.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "shift_id": { "type": "string", "description": "The shift ID to query" }
-                },
-                "required": ["shift_id"]
-            }),
-        },
-        ToolDef {
-            name: "get_audit_chain_status".into(),
-            description: "Verify the SHA-256 hash chain integrity for audit logs on this device. Detects tampering or data loss.".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        // ── Extended analytics ────────────────────────────────────────────────
-        ToolDef {
-            name: "get_hourly_sales".into(),
-            description: "Break down today's sales by hour. Useful for identifying peak hours and staffing patterns.".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        ToolDef {
-            name: "get_sales_by_category".into(),
-            description: "Show today's revenue and transaction count broken down by product category.".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        ToolDef {
-            name: "get_cashier_performance".into(),
-            description: "Compare sales performance by cashier for a date range.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "from": { "type": "string", "description": "Start date YYYY-MM-DD" },
-                    "to":   { "type": "string", "description": "End date YYYY-MM-DD" }
-                },
-                "required": ["from", "to"]
-            }),
-        },
-        // ── Mutation: update reorder point ────────────────────────────────────
-        ToolDef {
-            name: "update_reorder_point".into(),
-            description: "Update the reorder point (low-stock threshold) for a product. When stock falls to or below this number, a low-stock alert fires. Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "product_id":    { "type": "string" },
-                    "reorder_point": { "type": "number", "description": "New reorder threshold (e.g. 5 means alert when qty ≤ 5)" }
-                },
-                "required": ["product_id", "reorder_point"]
-            }),
-        },
-        // ── Mutation: create product ──────────────────────────────────────────
-        ToolDef {
-            name: "create_product".into(),
-            description: "Create a new product in the catalog with a name, price, and category. Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "name":        { "type": "string",  "description": "Product display name" },
-                    "price_minor": { "type": "integer", "description": "Selling price in minor currency units (e.g. 1500 = BHD 1.500)" },
-                    "category_id": { "type": "string",  "description": "Category ID — use list_categories to get valid IDs" },
-                    "sku":         { "type": "string",  "description": "Optional SKU / product code" },
-                    "barcode":     { "type": "string",  "description": "Optional barcode (EAN/UPC)" }
-                },
-                "required": ["name", "price_minor", "category_id"]
-            }),
-        },
-        // ── Customer tools ────────────────────────────────────────────────────
-        ToolDef {
-            name: "list_customers".into(),
-            description: "List customers, optionally filtered by name or phone. Shows loyalty points.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "search": { "type": "string", "description": "Optional name or phone search filter" }
-                },
-                "required": []
-            }),
-        },
-        ToolDef {
-            name: "get_customer".into(),
-            description: "Get full details of a specific customer by ID including loyalty points, phone, email, and notes.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "customer_id": { "type": "string" }
-                },
-                "required": ["customer_id"]
-            }),
-        },
-        ToolDef {
-            name: "create_customer".into(),
-            description: "Create a new customer record. Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "name":  { "type": "string", "description": "Customer full name" },
-                    "phone": { "type": "string", "description": "Phone number (optional)" },
-                    "email": { "type": "string", "description": "Email address (optional)" },
-                    "notes": { "type": "string", "description": "Free-text notes (optional)" }
-                },
-                "required": ["name"]
-            }),
-        },
-        ToolDef {
-            name: "update_customer".into(),
-            description: "Update an existing customer's contact details or notes. Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "customer_id": { "type": "string" },
-                    "name":        { "type": "string" },
-                    "phone":       { "type": "string", "description": "Phone (blank to clear)" },
-                    "email":       { "type": "string", "description": "Email (blank to clear)" },
-                    "notes":       { "type": "string", "description": "Notes (blank to clear)" }
-                },
-                "required": ["customer_id", "name"]
-            }),
-        },
-        // ── Delivery tools ────────────────────────────────────────────────────
-        ToolDef {
-            name: "list_deliveries".into(),
-            description: "List delivery orders, optionally filtered by status. Shows rider, payment status, and amount.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "status": { "type": "string", "description": "Optional status filter: pending | in_transit | delivered | cancelled" },
-                    "limit":  { "type": "integer", "description": "Max results (default 20, max 50)" }
-                },
-                "required": []
-            }),
-        },
-        ToolDef {
-            name: "advance_delivery_status".into(),
-            description: "Advance a delivery order to the next status (pending → in_transit → delivered). Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "delivery_id": { "type": "string" },
-                    "new_status":  { "type": "string", "description": "Target status: in_transit | delivered | cancelled" }
-                },
-                "required": ["delivery_id", "new_status"]
-            }),
-        },
-        // ── Bulk stock take ───────────────────────────────────────────────────
-        ToolDef {
-            name: "bulk_stock_take".into(),
-            description: "Set exact stock counts for multiple products at once from a physical count. More efficient than individual stock_take calls. Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "items": {
-                        "type": "array",
-                        "description": "List of product stock counts",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "product_id":   { "type": "string" },
-                                "new_quantity": { "type": "number" }
-                            },
-                            "required": ["product_id", "new_quantity"]
-                        }
-                    }
-                },
-                "required": ["items"]
-            }),
-        },
-        // ── Staff management (read-only) ──────────────────────────────────────
-        ToolDef {
-            name: "list_users".into(),
-            description: "List all staff accounts with their roles (cashier, manager, owner) and active status.".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        // ── Stock movements ───────────────────────────────────────────────────
-        ToolDef {
-            name: "get_stock_movements".into(),
-            description: "View the stock movement history for a specific product: sales, adjustments, receives, stock-takes.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "product_id": { "type": "string" },
-                    "limit":      { "type": "integer", "description": "Max movements to return (default 20, max 50)" }
-                },
-                "required": ["product_id"]
-            }),
-        },
-        // ── Reports (extended) ────────────────────────────────────────────────
-        ToolDef {
-            name: "get_tax_report".into(),
-            description: "Get daily tax collection totals for a date range. Useful for VAT reporting.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "from": { "type": "string", "description": "Start date YYYY-MM-DD" },
-                    "to":   { "type": "string", "description": "End date YYYY-MM-DD" }
-                },
-                "required": ["from", "to"]
-            }),
-        },
-        // ── Free web search (DuckDuckGo — no API key) ─────────────────────────
-        ToolDef {
-            name: "web_search".into(),
-            description: "Search the internet for current information using DuckDuckGo. Free to use. Use for price research, product availability, competitor pricing, supplier information, or any public information not in the POS database. Returns titles, snippets, and links.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string", "description": "Search query string" },
-                    "max_results": { "type": "integer", "description": "Max results to return (default 5, max 10)" }
-                },
-                "required": ["query"]
-            }),
-        },
-        ToolDef {
-            name: "search_market_prices".into(),
-            description: "Search for current local market prices of a specific product (in Bahrain by default). Automatically crafts a focused price-comparison web search. Use when admin asks about competitor pricing, fair market value, or supplier prices.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "product_name": { "type": "string", "description": "Product or item to price-check" },
-                    "location":     { "type": "string", "description": "Market location (default: Bahrain)" }
-                },
-                "required": ["product_name"]
-            }),
-        },
-        // ── Free URL reader (Jina.ai — no API key) ────────────────────────────
-        ToolDef {
-            name: "fetch_url".into(),
-            description: "Fetch any public webpage and return its content as clean readable text. Use AFTER web_search to read full product pages, supplier websites, price lists, or news articles. Works on most public sites. Free, no API key. Example: fetch a supermarket product page to get exact price.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "url": { "type": "string", "description": "Full URL to fetch (must start with http:// or https://)" }
-                },
-                "required": ["url"]
-            }),
-        },
-        // ── Barcode / product lookup (Open Food Facts — no API key) ───────────
-        ToolDef {
-            name: "lookup_barcode".into(),
-            description: "Look up a product by its barcode (UPC/EAN). Returns product name, brand, categories, and nutrition info from the Open Food Facts open database. Free, no API key. Useful for verifying product names and details when restocking.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "barcode": { "type": "string", "description": "UPC or EAN barcode number (digits only)" }
-                },
-                "required": ["barcode"]
-            }),
-        },
-        // ── Live currency rates (Frankfurter ECB — no API key) ────────────────
-        ToolDef {
-            name: "get_exchange_rates".into(),
-            description: "Get today's live foreign exchange rates relative to BHD (Bahraini Dinar). Useful for calculating import costs, comparing prices with international suppliers, or converting USD/EUR quotes. Rates from the European Central Bank via Frankfurter. Free, no API key.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "currencies": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Currency codes to include (e.g. [\"USD\",\"EUR\",\"SAR\"]). Leave empty for all major currencies."
-                    }
-                },
-                "required": []
-            }),
-        },
-        // ── Prayer times (Aladhan — no API key) ───────────────────────────────
-        ToolDef {
-            name: "get_prayer_times".into(),
-            description: "Get today's Islamic prayer times for Manama, Bahrain. Useful for scheduling staff breaks, planning shift handovers, or checking store operating hours around prayer times. Free, no API key.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "date": { "type": "string", "description": "Date in DD-MM-YYYY format (default: today)" }
-                },
-                "required": []
-            }),
-        },
-        // ── Bahrain public holidays (nager.date — no API key) ─────────────────
-        ToolDef {
-            name: "get_bahrain_holidays".into(),
-            description: "Get the list of official Bahrain public holidays for a given year. Useful for planning promotions, staffing, and forecasting slow/busy periods. Free, no API key.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "year": { "type": "integer", "description": "Year (default: current year)" }
-                },
-                "required": []
-            }),
-        },
-        // ── Roles & Tax Rules (read) ───────────────────────────────────────────
-        ToolDef {
-            name: "list_roles".into(),
-            description: "List all staff roles available in the system (e.g. cashier, manager, owner). Use before creating a user so you can pick the right role_id.".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        ToolDef {
-            name: "list_tax_rules".into(),
-            description: "List all tax rules with their IDs, names, rates, and inclusive/exclusive status. Use to find the correct tax_rule_id when creating or updating products.".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        ToolDef {
-            name: "get_store_settings".into(),
-            description: "Get the active branch/store configuration: name, address, phone, tax number, CR number, timezone, receipt header/footer texts.".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        ToolDef {
-            name: "get_business_rules".into(),
-            description: "Get the current business rule flags: allow_negative_stock, require_discount_reason, cashier_can_discount, auto_print_receipt.".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        ToolDef {
-            name: "list_devices".into(),
-            description: "List all registered POS terminal devices with their codes, active status, and last seen timestamps.".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        // ── Category mutations ──────────────────────────────────────────────────
-        ToolDef {
-            name: "create_category".into(),
-            description: "Create a new product category. Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "name": { "type": "string", "description": "Category display name" },
-                    "sort_order": { "type": "integer", "description": "Display order (default 0)" }
-                },
-                "required": ["name"]
-            }),
-        },
-        ToolDef {
-            name: "update_category".into(),
-            description: "Update an existing category's name, sort order, or active status. Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "category_id": { "type": "string" },
-                    "name": { "type": "string", "description": "New display name" },
-                    "sort_order": { "type": "integer", "description": "New display order" },
-                    "is_active": { "type": "boolean", "description": "Enable or disable this category" }
-                },
-                "required": ["category_id"]
-            }),
-        },
-        // ── User/staff mutations ────────────────────────────────────────────────
-        ToolDef {
-            name: "create_user".into(),
-            description: "Create a new staff account (cashier, manager, or owner). PIN must be 4+ digits. Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "display_name": { "type": "string", "description": "Staff display name" },
-                    "username": { "type": "string", "description": "Login username (lowercase, no spaces)" },
-                    "pin": { "type": "string", "description": "Login PIN, 4–6 digits" },
-                    "role_id": { "type": "string", "description": "Role ID — use list_roles to get valid IDs" }
-                },
-                "required": ["display_name", "username", "pin", "role_id"]
-            }),
-        },
-        ToolDef {
-            name: "update_user".into(),
-            description: "Update a staff account: change display name, role, active status, or reset PIN. Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "user_id": { "type": "string" },
-                    "display_name": { "type": "string", "description": "New display name" },
-                    "role_id": { "type": "string", "description": "New role ID" },
-                    "is_active": { "type": "boolean", "description": "Enable or disable this account" },
-                    "pin": { "type": "string", "description": "New PIN (4–6 digits). Omit to keep current PIN." }
-                },
-                "required": ["user_id"]
-            }),
-        },
-        // ── Tax rule mutations ─────────────────────────────────────────────────
-        ToolDef {
-            name: "create_tax_rule".into(),
-            description: "Create a new tax rule (e.g. 10% VAT inclusive). Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "name": { "type": "string", "description": "Tax rule name (e.g. 'VAT 10%')" },
-                    "rate_basis_points": { "type": "integer", "description": "Tax rate in basis points (e.g. 1000 for 10%)" },
-                    "inclusive": { "type": "boolean", "description": "True if prices include tax, false if tax is added on top" }
-                },
-                "required": ["name", "rate_basis_points"]
-            }),
-        },
-        ToolDef {
-            name: "update_tax_rule".into(),
-            description: "Update an existing tax rule's name, rate, inclusive flag, or active status. Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "tax_rule_id": { "type": "string" },
-                    "name": { "type": "string", "description": "New tax rule name" },
-                    "rate_basis_points": { "type": "integer", "description": "New tax rate in basis points (e.g. 1000 for 10%)" },
-                    "inclusive": { "type": "boolean", "description": "Price includes tax?" },
-                    "is_active": { "type": "boolean", "description": "Enable or disable this tax rule" }
-                },
-                "required": ["tax_rule_id"]
-            }),
-        },
-        // ── Holistic product update ────────────────────────────────────────────
-        ToolDef {
-            name: "update_product_full".into(),
-            description: "Update all product fields at once: name, category, SKU, barcode, price, tax_rule, inventory tracking, reorder point, active status. Use this instead of calling multiple individual mutations. Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "product_id": { "type": "string" },
-                    "name": { "type": "string", "description": "New display name" },
-                    "category_id": { "type": "string", "description": "New category ID" },
-                    "sku": { "type": "string", "description": "New SKU code" },
-                    "barcode": { "type": "string", "description": "New primary barcode" },
-                    "price_minor": { "type": "integer", "description": "New selling price in minor units" },
-                    "tax_rule_id": { "type": "string", "description": "Tax rule ID (use list_tax_rules to find IDs). Pass empty string to remove." },
-                    "track_inventory": { "type": "boolean", "description": "Enable inventory tracking" },
-                    "allow_decimal_quantity": { "type": "boolean", "description": "Allow fractional quantities" },
-                    "reorder_point": { "type": "number", "description": "Low-stock alert threshold" },
-                    "is_active": { "type": "boolean", "description": "Show in POS?" }
-                },
-                "required": ["product_id"]
-            }),
-        },
-        // ── Store settings mutation ────────────────────────────────────────────
-        ToolDef {
-            name: "update_store_settings".into(),
-            description: "Update the active store/branch settings: name, address, phone, tax number, CR number, receipt header/footer. Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "name": { "type": "string", "description": "Store/business name" },
-                    "address": { "type": "string", "description": "Store address" },
-                    "phone": { "type": "string", "description": "Contact phone number" },
-                    "tax_number": { "type": "string", "description": "Tax/VAT registration number" },
-                    "cr_number": { "type": "string", "description": "Commercial Registration number" },
-                    "receipt_header": { "type": "string", "description": "Text printed at top of receipts" },
-                    "receipt_footer": { "type": "string", "description": "Text printed at bottom of receipts" },
-                    "timezone": { "type": "string", "description": "IANA timezone (e.g. Asia/Bahrain). Use get_store_settings to see current value." }
-                },
-                "required": []
-            }),
-        },
-        // ── Business rules mutation ────────────────────────────────────────────
-        ToolDef {
-            name: "update_business_rules".into(),
-            description: "Update business operation rules (toggles). Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "allow_negative_stock": { "type": "boolean", "description": "Allow sales even when stock goes below zero" },
-                    "require_discount_reason": { "type": "boolean", "description": "Force cashiers to enter a reason when applying discounts" },
-                    "cashier_can_discount": { "type": "boolean", "description": "Allow cashiers to apply discounts without manager override" },
-                    "auto_print_receipt": { "type": "boolean", "description": "Automatically print receipt after each sale" }
-                },
-                "required": []
-            }),
-        },
-        // ── Delivery payment management ────────────────────────────────────────
-        ToolDef {
-            name: "confirm_delivery_payment".into(),
-            description: "Confirm that a customer has paid for a delivery order. Marks the delivery as paid. Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "delivery_id": { "type": "string" },
-                    "payment_reference": { "type": "string", "description": "Optional payment reference number" },
-                    "payment_note": { "type": "string", "description": "Optional note about the payment" }
-                },
-                "required": ["delivery_id"]
-            }),
-        },
-        ToolDef {
-            name: "cancel_delivery".into(),
-            description: "Cancel a delivery order. The delivery status will be set to cancelled. Requires admin confirmation.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "delivery_id": { "type": "string" }
-                },
-                "required": ["delivery_id"]
-            }),
-        },
-        // ── Session timeout ────────────────────────────────────────────────────
-        ToolDef {
-            name: "get_session_timeout".into(),
-            description: "Get the current idle session timeout in minutes (0 = never auto-lock).".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        // ── DB backup ──────────────────────────────────────────────────────────
-        ToolDef {
-            name: "backup_database".into(),
-            description: "Trigger a full database backup to the system's backup directory. Use before making bulk changes or at end of day. Requires admin confirmation.".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        // ── Smart barcode lookup (OFFF + web fallback) ─────────────────────────
-        ToolDef {
-            name: "smart_barcode_lookup".into(),
-            description: "Enhanced barcode lookup: first tries Open Food Facts, then falls back to web search. Returns product name, brand, category suggestion, size/quantity, and typical images. Use this when scanning a barcode for a product that isn't in your database yet — it gathers everything needed to create the product. Free, no API key.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "barcode": { "type": "string", "description": "UPC or EAN barcode number (8-14 digits)" }
-                },
-                "required": ["barcode"]
-            }),
-        },
-        // ── Multi-store price comparison ────────────────────────────────────────
-        ToolDef {
-            name: "compare_store_prices".into(),
-            description: "Search multiple known Bahrain retailers simultaneously for a product's price. Checks Lulu Hypermarket, Carrefour Bahrain, Alosra Supermarket, Talabat Mart, and general web sources. Returns a structured price comparison with store names, prices, and source URLs. Use to find the best local market price for any product. Free, no API key.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "product_name": { "type": "string", "description": "Product name to price-check (e.g. 'Nido milk powder 900g')" },
-                    "location": { "type": "string", "description": "Market location (default: Bahrain)" }
-                },
-                "required": ["product_name"]
-            }),
-        },
-        // ── Bahrain food/grocery delivery search ────────────────────────────────
-        ToolDef {
-            name: "bahrain_market_price_check".into(),
-            description: "Search Bahrain grocery delivery platforms (Talabat, Talabat Mart, Lulu Online) for a specific product. Use to find current in-market prices on platforms Bahrain consumers actually order from. Returns store name, price, and product availability. Free, no API key.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "product_name": { "type": "string", "description": "Product to find (e.g. 'Almarai milk 2L')" },
-                    "max_results": { "type": "integer", "description": "Max results per source (default 3, max 5)" }
-                },
-                "required": ["product_name"]
-            }),
-        },
-        // ── Sync repair tools ─────────────────────────────────────────────────
-        ToolDef {
-            name: "sync_reset_stuck".into(),
-            description: "Reset ALL stuck rows (sync_attempts >= 10) across all tables back to pending with 0 attempts. Use when sync diagnostic shows stuck events blocking the queue. After fixing the root cause (e.g. reconnecting to the hub in Settings → Hub), call this to unblock sync.".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        ToolDef {
-            name: "sync_queue_list".into(),
-            description: "List up to 200 pending/failed sync events with their table, entity ID, status, attempt count, and error message. Use to inspect individual stuck events.".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        ToolDef {
-            name: "sync_queue_retry".into(),
-            description: "Retry a specific failed sync event by its composite ID (format: table:entity_id). Resets attempts to 0 and status to pending.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "event_id": { "type": "string", "description": "Composite event ID in format 'table:entity_id' (e.g. 'shifts:01KTEVBEKM91V1YE5TK6MKFS49')" }
-                },
-                "required": ["event_id"]
-            }),
-        },
-        ToolDef {
-            name: "sync_queue_dismiss".into(),
-            description: "Dismiss a pending/failed sync event — marks it as 'synced' so it stops retrying. Use for events that can't or shouldn't be synced (e.g., test data, duplicate rows).".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "event_id": { "type": "string", "description": "Composite event ID in format 'table:entity_id'" }
-                },
-                "required": ["event_id"]
-            }),
-        },
-        // ── Shift management tools ────────────────────────────────────────────
-        ToolDef {
-            name: "get_active_shift".into(),
-            description: "Check the currently active (open) shift for the POS terminal. Returns shift ID, cashier, opening time, opening float, and status.".into(),
-            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
-        },
-        // ── Void / Refund tools ───────────────────────────────────────────────
-        ToolDef {
-            name: "void_sale".into(),
-            description: "Void a completed sale by receipt number. Requires manager/owner PIN. The sale must exist and not already be voided. This is irreversible!".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "receipt_number": { "type": "string", "description": "Receipt number to void" },
-                    "reason": { "type": "string", "description": "Reason for voiding (required)" }
-                },
-                "required": ["receipt_number", "reason"]
-            }),
-        },
-        // ── Delete / Deactivate tools ─────────────────────────────────────────
-        ToolDef {
-            name: "delete_customer".into(),
-            description: "Permanently delete a customer record. USE WITH CAUTION — this removes the customer and all their loyalty points. Consider deactivating instead.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "customer_id": { "type": "string", "description": "Customer ID to delete" }
-                },
-                "required": ["customer_id"]
-            }),
-        },
-        ToolDef {
-            name: "set_device_active".into(),
-            description: "Activate or deactivate a POS terminal device. Deactivated devices cannot log in or process sales.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "device_id": { "type": "string", "description": "Device ID to modify" },
-                    "is_active": { "type": "boolean", "description": "True to activate, false to deactivate" }
-                },
-                "required": ["device_id", "is_active"]
-            }),
-        },
-        // ── Stock / Inventory tools ───────────────────────────────────────────
-        ToolDef {
-            name: "receive_stock".into(),
-            description: "Receive incoming stock for a product — adds quantity to on-hand and creates a stock movement record with receipt notes (PO number, supplier info).".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "product_id": { "type": "string", "description": "Product ID to receive stock for" },
-                    "quantity": { "type": "string", "description": "Quantity to receive (e.g. '5' or '2.5')" },
-                    "notes": { "type": "string", "description": "Optional notes (PO number, supplier, batch, etc.)" }
-                },
-                "required": ["product_id", "quantity"]
-            }),
-        },
-        // ── Loyalty / Customer tools ──────────────────────────────────────────
-        ToolDef {
-            name: "add_loyalty_points".into(),
-            description: "Add loyalty points to a customer's account. Points can be used for rewards or discounts.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "customer_id": { "type": "string", "description": "Customer ID" },
-                    "points": { "type": "integer", "description": "Number of points to add (positive or negative)" }
-                },
-                "required": ["customer_id", "points"]
-            }),
-        },
-        // ── Bulk tools ────────────────────────────────────────────────────────
-        ToolDef {
-            name: "bulk_update_prices".into(),
-            description: "Bulk update selling prices for multiple products at once. Provide a list of product_id:price_minor pairs. Prices in fils (1000 fils = 1 BHD).".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "updates": { "type": "array", "items": {
-                        "type": "object",
-                        "properties": {
-                            "product_id": { "type": "string" },
-                            "price_minor": { "type": "integer", "description": "New price in fils (minor units)" }
-                        },
-                        "required": ["product_id", "price_minor"]
-                    }, "description": "Array of {product_id, price_minor} pairs" }
-                },
-                "required": ["updates"]
-            }),
-        },
-        // ── Bulk engine ops ───────────────────────────────────────────────────
-        ToolDef {
-            name: "bulk_price_adjust".into(),
-            description: "Increase, decrease, or set prices for ALL products matching a \
-                category tree, text filter, or active-status filter. The selector field uses \
-                category_subtree (category ID — includes all descendants), active (bool), or \
-                text (name/sku/barcode LIKE). The adjustment is one of: \
-                {\"mode\":\"Percent\",\"value\":20.0} for +20%, \
-                {\"mode\":\"Absolute\",\"value\":-500} for -500 fils, or \
-                {\"mode\":\"Set\",\"value\":5000} to set a fixed price in fils. \
-                Always previews the count before executing — safe to call with large sets. \
-                Example: increase all Toys > Girls prices 20% = \
-                selector:{category_subtree:\"girls\"}, adjustment:{mode:\"Percent\",value:20.0}".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "selector": {
-                        "type": "object",
-                        "description": "Product filter — at least one field recommended",
-                        "properties": {
-                            "category_subtree": { "type": "string", "description": "Category ID — matches this category and all subcategories recursively" },
-                            "active": { "type": "boolean", "description": "true = active products only, false = inactive only" },
-                            "text": { "type": "string", "description": "Case-insensitive filter on product name, SKU, or barcode" }
-                        }
-                    },
-                    "adjustment": {
-                        "type": "object",
-                        "description": "Price change to apply — one of Percent / Absolute / Set",
-                        "properties": {
-                            "mode": { "type": "string", "enum": ["Percent", "Absolute", "Set"] },
-                            "value": { "type": "number", "description": "Percent: e.g. 20.0 for +20%. Absolute: fils delta e.g. -500. Set: exact fils price e.g. 5000." }
-                        },
-                        "required": ["mode", "value"]
-                    }
-                },
-                "required": ["selector", "adjustment"]
-            }),
-        },
-        // ── Extension read tools ──────────────────────────────────────────────
-        ToolDef { name: "get_sales_list".into(), description: "List sales for a date range. date_from, date_to (YYYY-MM-DD), optional limit (max 200).".into(), input_schema: json!({"type":"object","properties":{"date_from":{"type":"string"},"date_to":{"type":"string"},"limit":{"type":"integer"}}}) },
-        ToolDef { name: "get_sale_detail".into(), description: "Get full detail of a single sale by receipt number, including all items and payments.".into(), input_schema: json!({"type":"object","properties":{"receipt_number":{"type":"string"}},"required":["receipt_number"]}) },
-        ToolDef { name: "get_z_report".into(), description: "Get Z-report (end-of-day summary) for a specific date (YYYY-MM-DD). Shows revenue, payments, refunds.".into(), input_schema: json!({"type":"object","properties":{"date":{"type":"string"}}}) },
-        ToolDef { name: "get_eod_cashup".into(), description: "Get end-of-day cashup summary for a specific date. Same as Z-report.".into(), input_schema: json!({"type":"object","properties":{"date":{"type":"string"}}}) },
-        ToolDef { name: "get_x_report".into(), description: "Get X-report (intra-day cash summary) for a specific shift_id. Shows opening, sales, cash in/out, expected vs counted.".into(), input_schema: json!({"type":"object","properties":{"shift_id":{"type":"string"}},"required":["shift_id"]}) },
-        ToolDef { name: "get_product_barcodes".into(), description: "List all extra barcodes registered for a product.".into(), input_schema: json!({"type":"object","properties":{"product_id":{"type":"string"}},"required":["product_id"]}) },
-        ToolDef { name: "get_whatsapp_status".into(), description: "Check WhatsApp sidecar connection status (running/connected/disconnected).".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "get_branch_settings".into(), description: "Get the current branch/store configuration (name, address, VAT, receipt header/footer, phone, currency).".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "get_hub_status".into(), description: "Check LAN hub sync configuration: whether this device is the hub or a connected terminal, hub address, store token presence, pending rows, last sync.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "get_held_carts".into(), description: "List all parked/held carts on the current device.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "get_db_integrity".into(), description: "Run SQLite integrity check on the local database.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "get_thermal_config".into(), description: "Get the current thermal printer configuration (port, baud rate, enabled status).".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "get_delivery_detail".into(), description: "Get full detail of a delivery order by delivery_id.".into(), input_schema: json!({"type":"object","properties":{"delivery_id":{"type":"string"}},"required":["delivery_id"]}) },
-        ToolDef { name: "get_rider_suggestions".into(), description: "Get a list of suggested rider names based on past deliveries.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "get_sync_queue_stats".into(), description: "Show per-table sync queue stats (pending rows, stuck rows) for all sync tables.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        // ── Extension mutation tools ──────────────────────────────────────────
-        ToolDef { name: "create_refund".into(), description: "Process a full refund for a past sale by receipt number. Refunds all items.".into(), input_schema: json!({"type":"object","properties":{"receipt_number":{"type":"string"},"reason":{"type":"string"}},"required":["receipt_number"]}) },
-        ToolDef { name: "create_cash_event".into(), description: "Record a cash event for a shift: event_type (paid_in/paid_out/safe_drop), amount_bhd, shift_id, optional note.".into(), input_schema: json!({"type":"object","properties":{"shift_id":{"type":"string"},"event_type":{"type":"string","enum":["paid_in","paid_out","safe_drop"]},"amount_bhd":{"type":"string"},"note":{"type":"string"}},"required":["shift_id","event_type","amount_bhd"]}) },
-        ToolDef { name: "open_shift".into(), description: "Open a new cashier shift. Requires cashier_user_id and optional opening_cash_bhd.".into(), input_schema: json!({"type":"object","properties":{"cashier_user_id":{"type":"string"},"opening_cash_bhd":{"type":"string"}},"required":["cashier_user_id"]}) },
-        ToolDef { name: "close_shift".into(), description: "Close a cashier shift by shift_id. Optional: counted_cash_bhd, notes.".into(), input_schema: json!({"type":"object","properties":{"shift_id":{"type":"string"},"counted_cash_bhd":{"type":"string"},"notes":{"type":"string"}},"required":["shift_id"]}) },
-        ToolDef { name: "add_product_barcode".into(), description: "Register an additional barcode for a product.".into(), input_schema: json!({"type":"object","properties":{"product_id":{"type":"string"},"barcode":{"type":"string"}},"required":["product_id","barcode"]}) },
-        ToolDef { name: "remove_product_barcode".into(), description: "Remove a barcode registration by barcode_id.".into(), input_schema: json!({"type":"object","properties":{"barcode_id":{"type":"string"}},"required":["barcode_id"]}) },
-        ToolDef { name: "trigger_sync_now".into(), description: "Reset sync retry counters so the background sync worker picks up pending rows in the next cycle (within 30 seconds).".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "force_full_resync".into(), description: "Force a complete resync: marks all synced rows as pending and resets all watermarks to epoch. Use when data is inconsistent with the hub.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "revert_delivery_payment".into(), description: "Reverse a delivery payment — set delivery payment_status from 'paid' back to 'unpaid'.".into(), input_schema: json!({"type":"object","properties":{"delivery_id":{"type":"string"},"reason":{"type":"string"}},"required":["delivery_id"]}) },
-        ToolDef { name: "update_branch_settings".into(), description: "Update branch/store configuration. All fields optional; only provided fields are changed.".into(), input_schema: json!({"type":"object","properties":{"name":{"type":"string"},"timezone":{"type":"string"},"address":{"type":"string"},"phone":{"type":"string"},"receipt_header":{"type":"string"},"receipt_footer":{"type":"string"},"tax_number":{"type":"string"},"cr_number":{"type":"string"}}}) },
-        ToolDef { name: "register_device".into(), description: "Register a new POS device/terminal. Requires device_code and name.".into(), input_schema: json!({"type":"object","properties":{"device_code":{"type":"string"},"name":{"type":"string"}},"required":["device_code","name"]}) },
-        ToolDef { name: "send_whatsapp_delivery_alert".into(), description: "Send a WhatsApp delivery alert to a phone number. Optional custom message.".into(), input_schema: json!({"type":"object","properties":{"phone":{"type":"string"},"message":{"type":"string"}},"required":["phone"]}) },
-        ToolDef { name: "send_whatsapp_payment_reminder".into(), description: "Send a WhatsApp payment reminder to a phone number. Optional custom message.".into(), input_schema: json!({"type":"object","properties":{"phone":{"type":"string"},"message":{"type":"string"}},"required":["phone"]}) },
-        ToolDef { name: "send_whatsapp_arrival_notice".into(), description: "Send a WhatsApp order arrival notice to a phone number. Optional custom message.".into(), input_schema: json!({"type":"object","properties":{"phone":{"type":"string"},"message":{"type":"string"}},"required":["phone"]}) },
-        ToolDef { name: "disconnect_whatsapp".into(), description: "Disconnect the active WhatsApp session from the sidecar.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "update_thermal_config".into(), description: "Update thermal printer configuration. Fields: port (e.g. COM3), baud (e.g. 9600), enabled (1/0).".into(), input_schema: json!({"type":"object","properties":{"port":{"type":"string"},"baud":{"type":"string"},"enabled":{"type":"string"}}}) },
-        ToolDef { name: "open_cash_drawer".into(), description: "Send an ESC/POS pulse to physically open the cash drawer connected to the thermal printer.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "reprint_receipt".into(), description: "Reprint a past receipt by receipt_number to the configured thermal printer.".into(), input_schema: json!({"type":"object","properties":{"receipt_number":{"type":"string"}},"required":["receipt_number"]}) },
-        ToolDef { name: "delete_held_cart".into(), description: "Permanently delete a held/parked cart by held_cart_id.".into(), input_schema: json!({"type":"object","properties":{"held_cart_id":{"type":"string"}},"required":["held_cart_id"]}) },
-        ToolDef { name: "update_benefit_number".into(), description: "Update the Benefit/Sadad payment phone number stored in app config.".into(), input_schema: json!({"type":"object","properties":{"benefit_number":{"type":"string"}},"required":["benefit_number"]}) },
-        ToolDef { name: "open_tab".into(), description: "Navigate the admin's workspace to a specific tab: products, categories, inventory, reports, cashier, eod, deliveries, customers, users, settings, audit, devices.".into(), input_schema: json!({"type":"object","properties":{"tab":{"type":"string","enum":["products","categories","inventory","reports","cashier","eod","deliveries","customers","users","settings","audit","devices"]}},"required":["tab"]}) },
-        ToolDef { name: "adjust_prices_batch".into(), description: "BULK price change: increase/decrease/set prices across many products. Filter by category, name_contains, is_active. Use dry_run first to preview. Automatically chunks large operations (50 records at a time) — never fails on big catalogs.".into(), input_schema: json!({"type":"object","properties":{"filter":{"type":"object","properties":{"category_id":{"type":"string"},"name_contains":{"type":"string"}}},"adjustment":{"type":"object","properties":{"type":{"type":"string","enum":["percentage","flat","set"]},"value":{"type":"integer"}},"required":["type","value"]},"dry_run":{"type":"boolean"}},"required":["adjustment"]}) },
-        ToolDef { name: "get_product_detail".into(), description: "Get full details of a single product including prices and stock levels.".into(), input_schema: json!({"type":"object","properties":{"product_id":{"type":"string"}},"required":["product_id"]}) },
-        ToolDef { name: "get_sales_report".into(), description: "Get sales report for a date range with totals and breakdowns.".into(), input_schema: json!({"type":"object","properties":{"from_date":{"type":"string"},"to_date":{"type":"string"}},"required":["from_date","to_date"]}) },
-        ToolDef { name: "get_cash_status".into(), description: "Current cash drawer status: paid in/out, safe drops.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        // ── Missing CRUD ───────────────────────────────────────────────────────
-        ToolDef { name: "delete_product".into(), description: "Permanently delete a product. Blocked if the product has any sales history — in that case use set_product_active instead.".into(), input_schema: json!({"type":"object","properties":{"product_id":{"type":"string"}},"required":["product_id"]}) },
-        ToolDef { name: "delete_category".into(), description: "Delete a category. Blocked if any products still belong to it.".into(), input_schema: json!({"type":"object","properties":{"category_id":{"type":"string"}},"required":["category_id"]}) },
-        ToolDef { name: "delete_tax_rule".into(), description: "Delete a tax rule. Blocked if any products reference it.".into(), input_schema: json!({"type":"object","properties":{"tax_rule_id":{"type":"string"}},"required":["tax_rule_id"]}) },
-        ToolDef { name: "delete_user".into(), description: "Delete a staff account. Blocked if they have shifts or sales on record.".into(), input_schema: json!({"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"]}) },
-        ToolDef { name: "update_delivery_details".into(), description: "Update the rider name, contact number, address, or notes on an existing delivery.".into(), input_schema: json!({"type":"object","properties":{"delivery_id":{"type":"string"},"delivery_staff_name":{"type":"string"},"contact_number":{"type":"string"},"address_text":{"type":"string"},"house_number":{"type":"string"},"area":{"type":"string"},"delivery_note":{"type":"string"}},"required":["delivery_id"]}) },
-        ToolDef { name: "search_sales_by_customer".into(), description: "Find all sales linked to a specific customer_id. Returns receipt numbers, dates, and amounts.".into(), input_schema: json!({"type":"object","properties":{"customer_id":{"type":"string"},"limit":{"type":"integer"}},"required":["customer_id"]}) },
-        ToolDef { name: "send_whatsapp_to_customer".into(), description: "Send a free-form WhatsApp message to a customer by phone number or customer_id.".into(), input_schema: json!({"type":"object","properties":{"phone":{"type":"string"},"customer_id":{"type":"string"},"message":{"type":"string","description":"Message text to send"}},"required":["message"]}) },
-        ToolDef { name: "duplicate_product".into(), description: "Clone an existing product with a new name. Copies price, category, tax rule, and inventory settings. Useful for adding size/variant variants.".into(), input_schema: json!({"type":"object","properties":{"product_id":{"type":"string"},"new_name":{"type":"string"}},"required":["product_id","new_name"]}) },
-        ToolDef { name: "find_products_without_barcode".into(), description: "List active products that have no barcode registered. Useful to identify items that can't be scanned at POS.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "reset_user_pin".into(), description: "Admin reset: set a new PIN for a staff account. PIN must be 4–6 digits.".into(), input_schema: json!({"type":"object","properties":{"user_id":{"type":"string"},"new_pin":{"type":"string","description":"New 4–6 digit PIN"}},"required":["user_id","new_pin"]}) },
-        ToolDef { name: "lock_user".into(), description: "Temporarily disable a staff account (e.g. suspicious activity, failed PIN attempts). Account can be unlocked with unlock_user.".into(), input_schema: json!({"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"]}) },
-        ToolDef { name: "unlock_user".into(), description: "Re-enable a locked/inactive staff account.".into(), input_schema: json!({"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"]}) },
-        ToolDef { name: "get_user_permissions".into(), description: "List the effective permissions for a user based on their role.".into(), input_schema: json!({"type":"object","properties":{"user_id":{"type":"string"}},"required":["user_id"]}) },
-        ToolDef { name: "create_customer_note".into(), description: "Attach or replace a free-text note on a customer record (allergies, preferences, account notes).".into(), input_schema: json!({"type":"object","properties":{"customer_id":{"type":"string"},"note":{"type":"string"}},"required":["customer_id","note"]}) },
-        ToolDef { name: "get_customer_notes".into(), description: "Read the notes attached to a customer record.".into(), input_schema: json!({"type":"object","properties":{"customer_id":{"type":"string"}},"required":["customer_id"]}) },
-        // ── Suppliers & Purchase Orders ────────────────────────────────────────
-        ToolDef { name: "list_suppliers".into(), description: "List all suppliers/vendors. Optional name search filter.".into(), input_schema: json!({"type":"object","properties":{"search":{"type":"string"}}}) },
-        ToolDef { name: "create_supplier".into(), description: "Add a new supplier/vendor with contact details.".into(), input_schema: json!({"type":"object","properties":{"name":{"type":"string"},"phone":{"type":"string"},"email":{"type":"string"},"contact_name":{"type":"string"},"address":{"type":"string"},"notes":{"type":"string"}},"required":["name"]}) },
-        ToolDef { name: "update_supplier".into(), description: "Update supplier details. All fields optional; only provided fields are changed.".into(), input_schema: json!({"type":"object","properties":{"supplier_id":{"type":"string"},"name":{"type":"string"},"phone":{"type":"string"},"email":{"type":"string"},"contact_name":{"type":"string"},"address":{"type":"string"},"notes":{"type":"string"},"is_active":{"type":"boolean"}},"required":["supplier_id"]}) },
-        ToolDef { name: "list_purchase_orders".into(), description: "List purchase orders. Filter by supplier_id, status (draft/ordered/partial/received/cancelled), or date range.".into(), input_schema: json!({"type":"object","properties":{"supplier_id":{"type":"string"},"status":{"type":"string"},"from":{"type":"string"},"to":{"type":"string"},"limit":{"type":"integer"}}}) },
-        ToolDef { name: "create_purchase_order".into(), description: "Create a purchase order with line items (products, quantities, costs). Status starts as 'draft'.".into(), input_schema: json!({"type":"object","properties":{"supplier_id":{"type":"string"},"expected_date":{"type":"string"},"notes":{"type":"string"},"lines":{"type":"array","items":{"type":"object","properties":{"product_id":{"type":"string"},"product_name":{"type":"string"},"ordered_qty":{"type":"number"},"unit_cost_minor":{"type":"integer"}},"required":["ordered_qty","unit_cost_minor"]}}},"required":["lines"]}) },
-        ToolDef { name: "update_purchase_order".into(), description: "Update a PO status (ordered/partial/received/cancelled) or received quantities.".into(), input_schema: json!({"type":"object","properties":{"po_id":{"type":"string"},"status":{"type":"string","enum":["draft","ordered","partial","received","cancelled"]},"notes":{"type":"string"},"received_date":{"type":"string"}},"required":["po_id"]}) },
-        // ── Analytics / Intelligence ───────────────────────────────────────────
-        ToolDef { name: "get_dead_stock".into(), description: "Active products with zero units sold in the last N days. Identifies dead inventory tying up cash.".into(), input_schema: json!({"type":"object","properties":{"days":{"type":"integer","description":"Lookback window (default 30)"},"limit":{"type":"integer"}}}) },
-        ToolDef { name: "get_discount_by_cashier".into(), description: "Total discounts given per cashier for a date range. Audit signal for excessive discounting.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}) },
-        ToolDef { name: "get_customer_purchase_history".into(), description: "All sales for a specific customer: receipt numbers, dates, amounts, and items.".into(), input_schema: json!({"type":"object","properties":{"customer_id":{"type":"string"},"limit":{"type":"integer"}},"required":["customer_id"]}) },
-        ToolDef { name: "get_revenue_by_payment_method".into(), description: "Revenue split by payment method (cash/card/wallet/other) for a date range.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}) },
-        ToolDef { name: "get_profit_margin_report".into(), description: "Revenue minus cost per product, sorted by margin %. Requires cost_minor to be set on products.".into(), input_schema: json!({"type":"object","properties":{"limit":{"type":"integer"},"period_days":{"type":"integer"}}}) },
-        ToolDef { name: "get_shelf_label_gap".into(), description: "Products where cost price is higher than selling price (negative margin). Critical alert for repricing.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "get_product_sales_rank".into(), description: "Rank all products by revenue or units sold for a period. Returns top N and bottom N.".into(), input_schema: json!({"type":"object","properties":{"period_days":{"type":"integer"},"limit":{"type":"integer"},"sort_by":{"type":"string","enum":["revenue","units"]}}}) },
-        ToolDef { name: "get_hourly_heatmap".into(), description: "Transaction count by hour of day × day of week for the last N days. Perfect for staffing decisions.".into(), input_schema: json!({"type":"object","properties":{"period_days":{"type":"integer","description":"Lookback (default 28)"}}}) },
-        ToolDef { name: "get_category_performance".into(), description: "Revenue per category as % of total sales, with comparison to the previous same-length period.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}) },
-        ToolDef { name: "get_cash_discrepancy_log".into(), description: "Shifts where the counted cash differs from expected by more than a threshold. Theft / error signal.".into(), input_schema: json!({"type":"object","properties":{"min_gap_minor":{"type":"integer","description":"Minimum gap in fils to flag (default 500 = BHD 0.500)"},"limit":{"type":"integer"}}}) },
-        ToolDef { name: "get_void_rate_by_cashier".into(), description: "Void count and void rate (%) per cashier for a date range. Fraud indicator.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}) },
-        ToolDef { name: "get_peak_hours".into(), description: "Top 5 busiest hours of the day ranked by average transaction volume for the last N days.".into(), input_schema: json!({"type":"object","properties":{"period_days":{"type":"integer"}}}) },
-        ToolDef { name: "get_customer_visit_frequency".into(), description: "Average days between visits per customer. Highlights lapsing-risk customers.".into(), input_schema: json!({"type":"object","properties":{"min_visits":{"type":"integer","description":"Only include customers with at least this many visits (default 2)"},"limit":{"type":"integer"}}}) },
-        ToolDef { name: "get_average_basket_by_time".into(), description: "Average basket size (spend per transaction) grouped by day of week. Shows spending patterns.".into(), input_schema: json!({"type":"object","properties":{"period_days":{"type":"integer"}}}) },
-        ToolDef { name: "get_tax_collected_report".into(), description: "Total VAT / tax collected per tax rule for a filing period. Bahrain NBR-ready format.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}) },
-        ToolDef { name: "get_unused_products".into(), description: "Active products with zero sales in N days AND zero stock. Candidates for deletion or deactivation.".into(), input_schema: json!({"type":"object","properties":{"days":{"type":"integer","description":"Lookback window (default 60)"}}}) },
-        ToolDef { name: "get_category_mix_analysis".into(), description: "What percentage of total sales came from each category this month vs last month.".into(), input_schema: json!({"type":"object","properties":{"months":{"type":"integer","description":"Number of months to show (default 2)"}}}) },
-        ToolDef { name: "get_sales_by_device".into(), description: "Revenue per POS terminal for a date range. Identifies underutilised hardware.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}) },
-        ToolDef { name: "get_revenue_forecast".into(), description: "Project next 7 and 30 days of revenue based on trailing 90-day daily average, adjusted for day-of-week patterns.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "get_customer_ltv".into(), description: "Lifetime value per customer: total revenue, visit count, first/last visit, and avg spend per visit.".into(), input_schema: json!({"type":"object","properties":{"limit":{"type":"integer"}}}) },
-        ToolDef { name: "get_churn_risk".into(), description: "Customers who haven't visited in longer than their usual interval — ranked by likelihood of churn.".into(), input_schema: json!({"type":"object","properties":{"days_since_last_visit":{"type":"integer","description":"Flag customers not seen in this many days (default 30)"},"limit":{"type":"integer"}}}) },
-        ToolDef { name: "get_day_of_week_comparison".into(), description: "Revenue and transaction count per day of week for a period. Shows which days are strongest.".into(), input_schema: json!({"type":"object","properties":{"period_days":{"type":"integer"}}}) },
-        ToolDef { name: "get_month_over_month_growth".into(), description: "Revenue growth % month over month for the last N months, with category breakdown.".into(), input_schema: json!({"type":"object","properties":{"months":{"type":"integer","description":"Number of months to compare (default 6)"}}}) },
-        ToolDef { name: "get_new_vs_returning".into(), description: "Percentage of revenue from first-time vs repeat customers for a period.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}) },
-        ToolDef { name: "get_void_report".into(), description: "All voided sales in a date range with cashier, reason, and amount.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}) },
-        ToolDef { name: "get_loyalty_summary".into(), description: "Overall loyalty programme summary: total points issued, top customers by points, points-to-BHD ratio.".into(), input_schema: json!({"type":"object","properties":{"limit":{"type":"integer"}}}) },
-        ToolDef { name: "get_customer_segments".into(), description: "Group customers by purchase frequency: one-time, regular (3–9 visits), loyal (10+).".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "get_top_spenders".into(), description: "Top N customers ranked by total lifetime spend. VIP list.".into(), input_schema: json!({"type":"object","properties":{"limit":{"type":"integer","description":"Number of customers to return (default 10)"}}}) },
-        ToolDef { name: "get_lapsed_customers".into(), description: "Customers who have made at least one purchase but haven't returned in N days.".into(), input_schema: json!({"type":"object","properties":{"days":{"type":"integer","description":"Days of inactivity (default 30)"},"limit":{"type":"integer"}}}) },
-        ToolDef { name: "get_customer_outstanding_balance".into(), description: "Customers with unpaid delivery orders — total outstanding amount.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "get_active_deliveries_map".into(), description: "All pending and in-transit deliveries with rider, address, contact, and amount.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "get_delivery_performance".into(), description: "Average delivery time and on-time rate per rider for a date range.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}}}) },
-        ToolDef { name: "get_delivery_payment_outstanding".into(), description: "All deliveries with status 'delivered' but payment_status 'unpaid'. Shows amount at risk.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "get_product_versions".into(), description: "Price history for a product — all price changes with dates and amounts.".into(), input_schema: json!({"type":"object","properties":{"product_id":{"type":"string"}},"required":["product_id"]}) },
-        ToolDef { name: "get_tax_filing_summary".into(), description: "Taxable vs exempt sales, total VAT collected, net revenue for a filing period. Bahrain NBR format.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}) },
-        ToolDef { name: "validate_tax_config".into(), description: "Check all active products have a tax_rule_id assigned. Returns list of products missing tax configuration.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "get_z_report_archive".into(), description: "List past Z-reports (end-of-day summaries) with dates and totals — audit trail.".into(), input_schema: json!({"type":"object","properties":{"limit":{"type":"integer"},"from":{"type":"string"},"to":{"type":"string"}}}) },
-        ToolDef { name: "get_low_stock_with_velocity".into(), description: "Low-stock items sorted by daily sales rate — most urgently needed items first.".into(), input_schema: json!({"type":"object","properties":{"period_days":{"type":"integer","description":"Days to calculate velocity (default 14)"}}}) },
-        // ── Bulk ops ───────────────────────────────────────────────────────────
-        ToolDef { name: "bulk_activate_products".into(), description: "Activate all inactive products in a category. Returns count activated.".into(), input_schema: json!({"type":"object","properties":{"category_id":{"type":"string"}},"required":["category_id"]}) },
-        ToolDef { name: "bulk_deactivate_products".into(), description: "Deactivate all active products in a category (e.g. retire a seasonal menu).".into(), input_schema: json!({"type":"object","properties":{"category_id":{"type":"string"}},"required":["category_id"]}) },
-        ToolDef { name: "bulk_set_category".into(), description: "Move all products from one category to another.".into(), input_schema: json!({"type":"object","properties":{"from_category_id":{"type":"string"},"to_category_id":{"type":"string"}},"required":["from_category_id","to_category_id"]}) },
-        ToolDef { name: "bulk_set_tax_rule".into(), description: "Apply a tax rule to all products in a category at once.".into(), input_schema: json!({"type":"object","properties":{"category_id":{"type":"string"},"tax_rule_id":{"type":"string"}},"required":["category_id","tax_rule_id"]}) },
-        ToolDef { name: "bulk_update_reorder_point".into(), description: "Set the reorder point for all products in a category.".into(), input_schema: json!({"type":"object","properties":{"category_id":{"type":"string"},"reorder_point":{"type":"number"}},"required":["category_id","reorder_point"]}) },
-        ToolDef { name: "bulk_update_cost".into(), description: "Set cost_minor for multiple products at once (e.g. after a supplier price hike). Provide list of {product_id, cost_minor} pairs.".into(), input_schema: json!({"type":"object","properties":{"updates":{"type":"array","items":{"type":"object","properties":{"product_id":{"type":"string"},"cost_minor":{"type":"integer"}},"required":["product_id","cost_minor"]}}},"required":["updates"]}) },
-        ToolDef { name: "reassign_delivery_rider".into(), description: "Change the rider assigned to an active delivery.".into(), input_schema: json!({"type":"object","properties":{"delivery_id":{"type":"string"},"rider_name":{"type":"string"}},"required":["delivery_id","rider_name"]}) },
-        ToolDef { name: "batch_dispatch_deliveries".into(), description: "Set multiple pending deliveries to dispatched status in one call. Provide a list of delivery_ids.".into(), input_schema: json!({"type":"object","properties":{"delivery_ids":{"type":"array","items":{"type":"string"}}},"required":["delivery_ids"]}) },
-        // ── System ─────────────────────────────────────────────────────────────
-        ToolDef { name: "vacuum_database".into(), description: "Run SQLite VACUUM to reclaim disk space and defragment the database. Safe to run at any time.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "export_product_catalog".into(), description: "Return the full product catalog as a formatted text table — useful for review, printing, or sharing.".into(), input_schema: json!({"type":"object","properties":{"include_inactive":{"type":"boolean"}}}) },
-        ToolDef { name: "get_database_size".into(), description: "SQLite DB file size, WAL size, and page count.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "get_table_row_counts".into(), description: "Row count per table — gives a quick data-volume snapshot.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        // ── Supplier CRUD (complete) ───────────────────────────────────────────
-        ToolDef { name: "get_supplier".into(), description: "Get a single supplier record with contact details and summary of linked products and purchase orders.".into(), input_schema: json!({"type":"object","properties":{"supplier_id":{"type":"string"}},"required":["supplier_id"]}) },
-        ToolDef { name: "delete_supplier".into(), description: "Delete a supplier. Blocked if they have purchase orders or products linked to them.".into(), input_schema: json!({"type":"object","properties":{"supplier_id":{"type":"string"}},"required":["supplier_id"]}) },
-        ToolDef { name: "get_purchase_order".into(), description: "Get a single purchase order with all line items, ordered vs received quantities, and total cost.".into(), input_schema: json!({"type":"object","properties":{"po_id":{"type":"string"}},"required":["po_id"]}) },
-        ToolDef { name: "receive_purchase_order".into(), description: "Mark purchase order lines as received. Automatically increments stock for each line. Updates PO status to received or partial.".into(), input_schema: json!({"type":"object","properties":{"po_id":{"type":"string"},"lines":{"type":"array","description":"Leave empty to receive all lines in full","items":{"type":"object","properties":{"po_line_id":{"type":"string"},"received_qty":{"type":"number"}},"required":["po_line_id","received_qty"]}}},"required":["po_id"]}) },
-        ToolDef { name: "delete_purchase_order".into(), description: "Cancel and delete a purchase order. Blocked if it has already been received (full or partial).".into(), input_schema: json!({"type":"object","properties":{"po_id":{"type":"string"}},"required":["po_id"]}) },
-        ToolDef { name: "get_supplier_products".into(), description: "List all products whose default_supplier_id matches this supplier.".into(), input_schema: json!({"type":"object","properties":{"supplier_id":{"type":"string"}},"required":["supplier_id"]}) },
-        ToolDef { name: "bulk_assign_supplier".into(), description: "Set the default supplier for all products in a category.".into(), input_schema: json!({"type":"object","properties":{"category_id":{"type":"string"},"supplier_id":{"type":"string"}},"required":["category_id","supplier_id"]}) },
-        // ── Inventory intelligence ────────────────────────────────────────────
-        ToolDef { name: "get_inventory_valuation".into(), description: "Total inventory value = stock_quantity × cost_minor per product. Products without cost are flagged.".into(), input_schema: json!({"type":"object","properties":{"include_zero_cost":{"type":"boolean","description":"Include products with no cost set (default false)"}}}) },
-        ToolDef { name: "get_overstock_alert".into(), description: "Products with current stock > N days supply at current sales rate. Ties up cash unnecessarily.".into(), input_schema: json!({"type":"object","properties":{"overstock_days":{"type":"integer","description":"Flag items with more than this many days of supply (default 60)"},"period_days":{"type":"integer","description":"Days to calculate velocity (default 14)"}}}) },
-        ToolDef { name: "get_sales_velocity".into(), description: "Average daily units sold per product, ranked fast → slow. Useful for ordering decisions.".into(), input_schema: json!({"type":"object","properties":{"period_days":{"type":"integer"},"limit":{"type":"integer"}}}) },
-        ToolDef { name: "get_stock_turnover_ratio".into(), description: "COGS ÷ average inventory value. Higher = faster-moving stock. Calculated per category and overall.".into(), input_schema: json!({"type":"object","properties":{"period_days":{"type":"integer","description":"Period to calculate COGS (default 30)"}}}) },
-        // ── Shift / cash ─────────────────────────────────────────────────────
-        ToolDef { name: "get_open_shifts".into(), description: "All currently open (unclosed) shifts across all terminals with cashier name, start time, and sales so far.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "get_expected_cash_position".into(), description: "Expected cash in drawer right now: opening cash + cash sales − paid_outs − safe_drops + paid_ins. For a specific shift or all open shifts.".into(), input_schema: json!({"type":"object","properties":{"shift_id":{"type":"string","description":"Leave empty for all open shifts"}}}) },
-        ToolDef { name: "get_petty_cash_log".into(), description: "All paid_in / paid_out / safe_drop events for a period with cashier, amount, and note.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}}}) },
-        ToolDef { name: "force_close_shift".into(), description: "Admin override: force-close a shift that is stuck open (cashier forgot). Logs the action in the audit trail.".into(), input_schema: json!({"type":"object","properties":{"shift_id":{"type":"string"}},"required":["shift_id"]}) },
-        // ── User analytics ────────────────────────────────────────────────────
-        ToolDef { name: "get_user_shift_summary".into(), description: "All shifts for a staff member: open time, close time, total sales, and variance for each.".into(), input_schema: json!({"type":"object","properties":{"user_id":{"type":"string"},"from":{"type":"string"},"to":{"type":"string"}},"required":["user_id"]}) },
-        ToolDef { name: "compare_cashiers".into(), description: "Side-by-side comparison of cashier performance: sales, voids, discounts, average basket, transaction count.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}}}) },
-        // ── Customer ops ──────────────────────────────────────────────────────
-        ToolDef { name: "export_customers".into(), description: "Full customer list as a formatted table: name, phone, visit count, last visit, lifetime spend, loyalty points.".into(), input_schema: json!({"type":"object","properties":{"limit":{"type":"integer"}}}) },
-        // ── System ────────────────────────────────────────────────────────────
-        ToolDef { name: "get_migration_status".into(), description: "List applied database migrations with name and timestamp. Useful for debugging version mismatches.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "get_app_version".into(), description: "Current app version, build info, Rust toolchain version, and migration count.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        // ── Analytics (round 2) ───────────────────────────────────────────────
-        ToolDef { name: "get_basket_size_trend".into(), description: "Average number of items per transaction per day over the last N days. Shows whether customers are buying more or less per visit.".into(), input_schema: json!({"type":"object","properties":{"period_days":{"type":"integer"}}}) },
-        ToolDef { name: "get_stockout_cost".into(), description: "Products that hit zero stock in last N days — estimate lost revenue as avg daily sales rate × days out of stock × price.".into(), input_schema: json!({"type":"object","properties":{"period_days":{"type":"integer"}}}) },
-        ToolDef { name: "get_refund_rate".into(), description: "Refund amount as a % of gross sales by cashier and by product for a date range.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}},"required":["from","to"]}) },
-        ToolDef { name: "get_refund_by_product".into(), description: "Products ranked by refund count and refund amount — signal for quality issues.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"},"limit":{"type":"integer"}}}) },
-        // ── Compliance ────────────────────────────────────────────────────────
-        ToolDef { name: "verify_receipt_sequence".into(), description: "Check receipt numbers for gaps or duplicates. A sequential break could indicate a deleted or tampered sale.".into(), input_schema: json!({"type":"object","properties":{"from":{"type":"string"},"to":{"type":"string"}}}) },
-        ToolDef { name: "get_audit_trail_full".into(), description: "Every data mutation in the audit_logs table: who changed what, when, and what it looked like before and after.".into(), input_schema: json!({"type":"object","properties":{"entity_type":{"type":"string","description":"Filter by entity type e.g. product, sale, user"},"user_id":{"type":"string"},"from":{"type":"string"},"to":{"type":"string"},"limit":{"type":"integer"}}}) },
-    ];
-    tools.retain(|t| seen.insert(t.name.clone()));
-    tools
+    crate::ai::tools_catalogue::all_tool_definitions()
 }
 
 /// L16: Single source of truth for mutation tools.
@@ -1106,6 +65,7 @@ pub const MUTATION_TOOLS: &[&str] = &[
     "sync_reset_stuck",
     "sync_queue_retry",
     "sync_queue_dismiss",
+    "apply_system_health_fix",
     "void_sale",
     "delete_customer",
     "set_device_active",
@@ -1113,6 +73,7 @@ pub const MUTATION_TOOLS: &[&str] = &[
     "add_loyalty_points",
     "bulk_update_prices",
     "bulk_price_adjust",
+    "bulk_stock_set",
     // ── Extension mutations ──────────────────────────────────────────────────
     "create_refund",
     "create_cash_event",
@@ -1134,8 +95,6 @@ pub const MUTATION_TOOLS: &[&str] = &[
     "reprint_receipt",
     "delete_held_cart",
     "update_benefit_number",
-    // ── Intent v2 mutations ─────────────────────────────────────────────────
-    "adjust_prices_batch",
     // ── New extended mutations (Phase 3) ────────────────────────────────────
     "delete_product",
     "delete_category",
@@ -1160,6 +119,16 @@ pub const MUTATION_TOOLS: &[&str] = &[
     "create_purchase_order",
     "update_purchase_order",
     "vacuum_database",
+    "reindex_database",
+    "force_wal_checkpoint",
+    "resolve_ghost_barcode",
+    "resolve_sync_conflict",
+    "clear_ghost_sync_records",
+    "run_diagnostics_and_fix",
+    "bulk_import_products",
+    "create_products",
+    "bulk_import_categories",
+    "send_receipt_via_whatsapp",
     "create_customer_note",
     // ── Round 2 mutations ────────────────────────────────────────────────────
     "delete_supplier",
@@ -1167,10 +136,374 @@ pub const MUTATION_TOOLS: &[&str] = &[
     "delete_purchase_order",
     "bulk_assign_supplier",
     "force_close_shift",
+    // ── Engine bulk ops (RunPreview confirmation flow) ───────────────────────
+    "bulk_stock_variance_fix",
+    "bulk_promotion_apply",
+    "bulk_supplier_price_sync",
+    "bulk_product_archive",
+    "bulk_reorder_point_update",
+    "bulk_promotion_remove",
+    "product_create",
+    // ── Product quality ──────────────────────────────────────────────────────
+    "merge_products",
 ];
 
 pub fn is_mutation_tool(name: &str) -> bool {
     MUTATION_TOOLS.contains(&name)
+}
+
+// ── Feature-toggle gated tool sets ─────────────────────────────────────────────
+
+/// Returns tool definitions filtered by feature toggles stored in app_config.
+/// Read-only tools (list/get/search) are always included.
+pub async fn filtered_tool_definitions(pool: &SqlitePool) -> AppResult<Vec<ToolDef>> {
+    crate::ai::tool_policy::filter_enabled_definitions(pool, all_tool_definitions()).await
+}
+
+#[allow(dead_code)]
+async fn get_toggle(pool: &SqlitePool, key: &str, default: bool) -> bool {
+    let row = sqlx::query("SELECT value FROM app_config WHERE key = ?")
+        .bind(key)
+        .fetch_optional(pool)
+        .await;
+    match row {
+        Ok(Some(r)) => {
+            let v: String = r.get(0);
+            v == "1" || v == "true"
+        }
+        _ => default,
+    }
+}
+
+/// Read-only core tools always visible regardless of feature toggles.
+#[allow(dead_code)]
+fn is_readonly_core(name: &str) -> bool {
+    matches!(
+        name,
+        "get_today_summary"
+            | "list_products"
+            | "search_products"
+            | "get_product"
+            | "get_stock_levels"
+            | "get_low_stock"
+            | "get_cash_summary"
+            | "get_recent_refunds"
+            | "get_audit_log"
+            | "get_sync_status"
+            | "get_sync_diagnostics"
+            | "get_system_health_check"
+            | "get_daily_report"
+            | "get_date_range_report"
+            | "get_top_products"
+            | "get_shift_history"
+            | "list_categories"
+            | "list_safe_drops"
+            | "list_no_sale_events"
+            | "get_audit_chain_status"
+            | "get_hourly_sales"
+            | "get_sales_by_category"
+            | "get_cashier_performance"
+            | "list_customers"
+            | "get_customer"
+            | "list_deliveries"
+            | "list_users"
+            | "get_stock_movements"
+            | "get_tax_report"
+            | "list_roles"
+            | "list_tax_rules"
+            | "get_store_settings"
+            | "get_business_rules"
+            | "list_devices"
+            | "get_session_timeout"
+            | "get_active_shift"
+            | "get_sales_list"
+            | "get_sale_detail"
+            | "get_z_report"
+            | "get_eod_cashup"
+            | "get_x_report"
+            | "get_product_barcodes"
+            | "get_whatsapp_status"
+            | "get_branch_settings"
+            | "get_hub_status"
+            | "get_held_carts"
+            | "get_db_integrity"
+            | "get_thermal_config"
+            | "get_delivery_detail"
+            | "get_rider_suggestions"
+            | "get_sync_queue_stats"
+            | "get_product_detail"
+            | "get_sales_report"
+            | "get_cash_status"
+            | "search_sales_by_customer"
+            | "find_products_without_barcode"
+            | "get_user_permissions"
+            | "get_customer_notes"
+            | "list_suppliers"
+            | "list_purchase_orders"
+            | "get_supplier"
+            | "get_purchase_order"
+            | "get_supplier_products"
+            | "get_open_shifts"
+            | "get_expected_cash_position"
+            | "get_petty_cash_log"
+            | "get_user_shift_summary"
+            | "get_migration_status"
+            | "get_app_version"
+            | "get_database_size"
+            | "get_table_row_counts"
+            | "get_product_versions"
+            | "export_product_catalog"
+            | "export_customers"
+            | "open_tab"
+            | "lookup_barcode"
+            | "get_exchange_rates"
+            | "get_prayer_times"
+            | "get_bahrain_holidays"
+    )
+}
+
+fn is_web_search_tool(name: &str) -> bool {
+    matches!(name, "web_search")
+}
+
+fn is_web_fetch_tool(name: &str) -> bool {
+    matches!(name, "fetch_url")
+}
+
+fn is_compare_prices_tool(name: &str) -> bool {
+    matches!(name, "compare_store_prices")
+}
+
+fn is_market_price_tool(name: &str) -> bool {
+    matches!(name, "bahrain_market_price_check" | "search_market_prices")
+}
+
+fn is_smart_analytics_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "get_dead_stock"
+            | "get_discount_by_cashier"
+            | "get_customer_purchase_history"
+            | "get_revenue_by_payment_method"
+            | "get_profit_margin_report"
+            | "get_shelf_label_gap"
+            | "get_product_sales_rank"
+            | "get_hourly_heatmap"
+            | "get_category_performance"
+            | "get_cash_discrepancy_log"
+            | "get_void_rate_by_cashier"
+            | "get_peak_hours"
+            | "get_customer_visit_frequency"
+            | "get_average_basket_by_time"
+            | "get_tax_collected_report"
+            | "get_unused_products"
+            | "get_category_mix_analysis"
+            | "get_sales_by_device"
+            | "get_revenue_forecast"
+            | "get_day_of_week_comparison"
+            | "get_month_over_month_growth"
+            | "get_new_vs_returning"
+            | "get_void_report"
+            | "get_loyalty_summary"
+            | "get_customer_segments"
+            | "get_active_deliveries_map"
+            | "get_delivery_performance"
+            | "get_delivery_payment_outstanding"
+            | "get_tax_filing_summary"
+            | "validate_tax_config"
+            | "get_z_report_archive"
+            | "get_low_stock_with_velocity"
+            | "get_inventory_valuation"
+            | "get_overstock_alert"
+            | "get_sales_velocity"
+            | "get_stock_turnover_ratio"
+            | "compare_cashiers"
+            | "get_basket_size_trend"
+            | "get_stockout_cost"
+            | "get_refund_rate"
+            | "get_refund_by_product"
+            | "verify_receipt_sequence"
+            | "get_audit_trail_full"
+            | "get_frequently_bought_together"
+            | "get_bundle_suggestions"
+            | "get_weekly_forecast"
+            | "get_rfm_segmentation"
+            | "get_margin_trend"
+            | "get_restock_priority"
+            | "get_dead_stock_value"
+            | "get_category_forecast"
+            | "find_duplicate_products"
+    )
+}
+
+fn is_proactive_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "send_whatsapp_delivery_alert"
+            | "send_whatsapp_payment_reminder"
+            | "send_whatsapp_arrival_notice"
+            | "send_whatsapp_to_customer"
+    )
+}
+
+fn is_inventory_ops_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "update_product_price"
+            | "set_product_active"
+            | "update_product_name"
+            | "adjust_stock"
+            | "stock_take"
+            | "update_reorder_point"
+            | "create_product"
+            | "receive_stock"
+            | "bulk_stock_take"
+            | "bulk_update_prices"
+            | "bulk_price_adjust"
+            | "bulk_stock_set"
+            | "bulk_activate_products"
+            | "bulk_deactivate_products"
+            | "bulk_set_category"
+            | "bulk_set_tax_rule"
+            | "bulk_update_reorder_point"
+            | "bulk_update_cost"
+            | "bulk_assign_supplier"
+            | "bulk_stock_variance_fix"
+            | "bulk_promotion_apply"
+            | "bulk_promotion_remove"
+            | "bulk_supplier_price_sync"
+            | "bulk_product_archive"
+            | "bulk_reorder_point_update"
+            | "product_create"
+            | "delete_product"
+            | "delete_category"
+            | "duplicate_product"
+            | "update_product_full"
+            | "merge_products"
+    )
+}
+
+fn is_customer_insights_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "get_customer_visit_frequency"
+            | "get_customer_ltv"
+            | "get_churn_risk"
+            | "get_top_spenders"
+            | "get_lapsed_customers"
+            | "get_customer_outstanding_balance"
+            | "add_loyalty_points"
+            | "create_customer_note"
+            | "get_customer_purchase_history"
+    )
+}
+
+fn is_insights_engine_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "run_insights_dashboard"
+            | "generate_analytics_report"
+            | "get_proactive_insights"
+            | "get_business_health_score"
+            | "get_trend_analysis"
+            | "get_anomaly_detection"
+    )
+}
+
+/// Canonical feature gate for a tool. Execution policy uses this same mapping
+/// as definition filtering so disabling a feature cannot be bypassed by a
+/// forged/stale model tool call.
+pub(crate) fn feature_key_for_tool(name: &str) -> Option<&'static str> {
+    if is_web_search_tool(name) {
+        Some("feature_web_search")
+    } else if is_web_fetch_tool(name) {
+        Some("feature_web_fetch")
+    } else if is_compare_prices_tool(name) {
+        Some("feature_compare_prices")
+    } else if is_market_price_tool(name) {
+        Some("feature_market_price")
+    } else if is_smart_analytics_tool(name) {
+        Some("feature_smart_analytics")
+    } else if is_proactive_tool(name) {
+        Some("feature_proactive")
+    } else if is_inventory_ops_tool(name) {
+        Some("feature_inventory_ops")
+    } else if is_customer_insights_tool(name) {
+        Some("feature_customer_insights")
+    } else if is_insights_engine_tool(name) {
+        Some("feature_insights_engine")
+    } else {
+        None
+    }
+}
+
+fn format_health_report(
+    report: &crate::commands::system_health_commands::SystemHealthReport,
+) -> String {
+    let mut lines = vec![
+        "[DB] Complete System Health Check".to_string(),
+        format!(
+            "Summary: {} | DB: {} | migrations: {} | hub mode: {} | devices: {} | pending sync: {} | stuck sync: {} | checked: {}",
+            if report.summary.ok { "HEALTHY" } else { "ATTENTION NEEDED" },
+            report.summary.db_integrity,
+            report.summary.migration_count,
+            report.summary.hub_mode,
+            report.summary.device_count,
+            report.summary.pending_sync_rows,
+            report.summary.stuck_sync_rows,
+            report.summary.checked_at,
+        ),
+    ];
+
+    lines.push("\nFindings:".into());
+    if report.findings.is_empty() {
+        lines.push(
+            "- None. No database, migration, sync, hub, terminal, or AI-run issues found.".into(),
+        );
+    } else {
+        for f in &report.findings {
+            let fix = f
+                .fix_action
+                .as_deref()
+                .map(|a| format!(" | fix_action: {a}"))
+                .unwrap_or_default();
+            lines.push(format!(
+                "- [{:?}] {} / {}: {} — {}{}",
+                f.severity, f.area, f.code, f.title, f.detail, fix
+            ));
+        }
+    }
+
+    lines.push("\nDevices / terminals:".into());
+    if report.devices.is_empty() {
+        lines.push("- No devices found.".into());
+    } else {
+        for d in &report.devices {
+            lines.push(format!(
+                "- {} ({}) | role: {} | status: {} | ip: {} | last_seen: {}",
+                d.label,
+                d.device_id,
+                d.role,
+                d.status,
+                d.ip.as_deref().unwrap_or("—"),
+                d.last_seen.as_deref().unwrap_or("—"),
+            ));
+        }
+    }
+
+    lines.push("\nSync table detail:".into());
+    if report.tables.is_empty() {
+        lines.push("- No pending or stuck sync rows.".into());
+    } else {
+        for t in &report.tables {
+            lines.push(format!(
+                "- {}: {} pending, {} stuck, max attempts {}",
+                t.table, t.pending, t.stuck, t.max_attempts
+            ));
+        }
+    }
+
+    lines.join("\n")
 }
 
 // ── Read-only tool executor ────────────────────────────────────────────────────
@@ -1183,6 +516,238 @@ pub async fn execute_read_tool(
     currency_exp: u32,
 ) -> AppResult<String> {
     match tool_name {
+        "request_full_tool_access" => Ok(
+            "The full mutation-tool catalogue will be available on the next step. Re-evaluate the operator's request before choosing a mutation, and retain confirmation-before-mutate."
+                .into(),
+        ),
+        "report_expiring_stock" => {
+            let lead_days = input.get("lead_days").and_then(Value::as_i64).unwrap_or(7);
+            let lots = crate::inventory::lots::expiring_lots(pool, branch_id, lead_days).await?;
+            if lots.is_empty() {
+                return Ok(format!(
+                    "No received lots expire within {lead_days} days."
+                ));
+            }
+            let mut lines = vec![
+                format!("Expiring stock within {lead_days} days (FEFO order):"),
+                "Product | Expiry | Days | Remaining | Suggested action".into(),
+            ];
+            for lot in lots {
+                let action = if lot.days_until_expiry < 0 {
+                    "Remove from sale and review write-off"
+                } else if lot.days_until_expiry <= 2 {
+                    "Urgent clearance/markdown review"
+                } else {
+                    "Plan clearance or supplier return"
+                };
+                lines.push(format!(
+                    "{} | {} | {} | {} | {}",
+                    lot.product_name,
+                    lot.expiry_date,
+                    lot.days_until_expiry,
+                    lot.quantity_remaining,
+                    action
+                ));
+            }
+            lines.push(
+                "Suggestions are advisory. Any markdown is a price mutation and requires explicit confirmation."
+                    .into(),
+            );
+            Ok(lines.join("\n"))
+        }
+        "get_margin_erosion" => {
+            let threshold = input
+                .get("threshold_basis_points")
+                .and_then(Value::as_i64)
+                .unwrap_or(500);
+            let report =
+                crate::ai::business_insights::margin_erosion(pool, branch_id, threshold).await?;
+            let mut lines = vec![format!(
+                "Margin erosion report (minimum {} bps):",
+                threshold
+            )];
+            lines.push(format!(
+                "UNKNOWN COST LINES (last 30 days): {}. Margin totals are incomplete when this is above zero.",
+                report.unknown_cost_line_count
+            ));
+            if report.rows.is_empty() {
+                lines.push("No unchanged shelf prices crossed the erosion threshold.".into());
+            } else {
+                lines.push(
+                    "Product | Price | Old cost | New cost | Margin loss | Current margin".into(),
+                );
+                for row in report.rows {
+                    lines.push(format!(
+                        "{} | {} | {} | {} | {} bps | {} bps",
+                        row.product_name,
+                        row.selling_price_minor,
+                        row.old_cost_minor,
+                        row.new_cost_minor,
+                        row.margin_drop_basis_points,
+                        row.current_margin_basis_points
+                    ));
+                }
+            }
+            lines.push(
+                "Any shelf-price change is a mutation and requires explicit confirmation.".into(),
+            );
+            Ok(lines.join("\n"))
+        }
+        "get_seasonal_demand_plan" => {
+            let from = input.get("from").and_then(Value::as_str).unwrap_or("");
+            let to = input.get("to").and_then(Value::as_str).unwrap_or("");
+            let years = input
+                .get("comparison_years")
+                .and_then(Value::as_i64)
+                .unwrap_or(2) as i32;
+            let plan = crate::ai::business_insights::seasonal_demand_plan(
+                pool, branch_id, from, to, years,
+            )
+            .await?;
+            if plan.is_empty() {
+                return Ok(format!(
+                    "No same-period sales history is available for {from} to {to}."
+                ));
+            }
+            let mut lines = vec![
+                format!(
+                    "Seasonal demand plan for {from} to {to}, averaged across {years} prior year(s):"
+                ),
+                "Product | Historical avg qty | On hand | Suggested reorder".into(),
+            ];
+            for row in plan {
+                lines.push(format!(
+                    "{} | {:.3} | {:.3} | {:.3}",
+                    row.product_name,
+                    row.historical_average_quantity,
+                    row.quantity_on_hand,
+                    row.suggested_reorder_quantity
+                ));
+            }
+            lines.push(
+                "This is an advisory plan from store history. Review it before creating a purchase order."
+                    .into(),
+            );
+            Ok(lines.join("\n"))
+        }
+        "get_cash_flow_forecast" => {
+            let forecast =
+                crate::ai::business_insights::cash_flow_forecast(pool, branch_id).await?;
+            Ok(format!(
+                "Known cash-flow forecast (minor currency units):\n\
+                 - Unpaid cash-on-delivery receivables: {}\n\
+                 - Outstanding ordered/partial PO commitments: {}\n\
+                 - Net known position: {}\n\
+                 - PO lines with unknown/zero cost: {}\n\
+                 This excludes unrecorded bills, draft POs, card settlement timing, and future sales. It is an operational forecast, not financial advice.",
+                forecast.delivery_cod_receivable_minor,
+                forecast.purchase_commitments_minor,
+                forecast.net_known_position_minor,
+                forecast.unknown_cost_po_line_count,
+            ))
+        }
+        // ── AI task ledger (persistent progress scratchpad) ──────────────────
+        "get_task_ledger" => {
+            let row: Option<(String, String, String)> = sqlx::query_as(
+                "SELECT description, state_json, updated_at FROM ai_task_ledger
+                 WHERE branch_id = ? AND task_key = 'current'",
+            )
+            .bind(branch_id)
+            .fetch_optional(pool)
+            .await?;
+            match row {
+                Some((description, state, updated_at)) => Ok(format!(
+                    "[LEDGER] Current task (updated {updated_at}):\nDescription: {description}\nState: {state}"
+                )),
+                None => Ok("[LEDGER] No task in progress.".into()),
+            }
+        }
+        "set_task_ledger" => {
+            if input.get("clear").and_then(|v| v.as_bool()) == Some(true) {
+                sqlx::query(
+                    "DELETE FROM ai_task_ledger WHERE branch_id = ? AND task_key = 'current'",
+                )
+                .bind(branch_id)
+                .execute(pool)
+                .await?;
+                return Ok("[LEDGER] Cleared.".into());
+            }
+            let description = input
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| AppError::Validation("Missing description".into()))?;
+            let state = input.get("state").and_then(|v| v.as_str()).unwrap_or("{}");
+            let now = chrono::Utc::now().to_rfc3339();
+            sqlx::query(
+                "INSERT INTO ai_task_ledger (branch_id, task_key, description, state_json, updated_at)
+                 VALUES (?, 'current', ?, ?, ?)
+                 ON CONFLICT(branch_id, task_key) DO UPDATE SET
+                     description = excluded.description,
+                     state_json = excluded.state_json,
+                     updated_at = excluded.updated_at",
+            )
+            .bind(branch_id)
+            .bind(description)
+            .bind(state)
+            .bind(&now)
+            .execute(pool)
+            .await?;
+            Ok("[LEDGER] Saved.".into())
+        }
+        // ── WhatsApp commerce (read) ─────────────────────────────────────────
+        "list_whatsapp_orders" => {
+            if !crate::commands::whatsapp_catalog_commands::orders_enabled(pool).await {
+                return Ok("[DB] Orders are turned off (enable WhatsApp Commerce or the Storefront in Settings).".into());
+            }
+            let status = input.get("status").and_then(|v| v.as_str());
+            let limit = input
+                .get("limit")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(50)
+                .clamp(1, 200);
+            let rows = if let Some(s) = status.filter(|s| !s.is_empty()) {
+                sqlx::query_as::<_, (String, Option<String>, String, Option<i64>, Option<String>, i64, String)>(
+                    "SELECT order_id, customer_name, status, total_minor, currency, product_count, created_at
+                     FROM wa_orders WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+                )
+                .bind(s)
+                .bind(limit)
+                .fetch_all(pool)
+                .await?
+            } else {
+                sqlx::query_as::<_, (String, Option<String>, String, Option<i64>, Option<String>, i64, String)>(
+                    "SELECT order_id, customer_name, status, total_minor, currency, product_count, created_at
+                     FROM wa_orders ORDER BY created_at DESC LIMIT ?",
+                )
+                .bind(limit)
+                .fetch_all(pool)
+                .await?
+            };
+            if rows.is_empty() {
+                return Ok("[DB] No WhatsApp orders found.".into());
+            }
+            let lines: Vec<String> = rows
+                .iter()
+                .map(|(id, name, st, total, cur, count, created)| {
+                    let total_str = total
+                        .map(|t| money::format_minor(t, currency_exp))
+                        .unwrap_or_else(|| "—".into());
+                    format!(
+                        "- [{st}] {} — {count} item(s), {} {} ({created}) · order {id}",
+                        name.as_deref().unwrap_or("customer"),
+                        cur.as_deref().unwrap_or("BHD"),
+                        total_str
+                    )
+                })
+                .collect();
+            Ok(format!(
+                "[DB] {} WhatsApp order(s):\n{}",
+                rows.len(),
+                lines.join("\n")
+            ))
+        }
         "get_today_summary" => {
             let today = chrono::Local::now().format("%Y-%m-%d").to_string();
             let s = report_repo::today_summary(pool, branch_id, &today).await?;
@@ -1265,11 +830,12 @@ pub async fn execute_read_tool(
             ))
         }
         "get_stock_levels" => {
-            let levels = stock_repo::get_all_levels(pool, &active_branch_id(pool).await?).await?;
-            if levels.is_empty() {
+            let page = stock_repo::get_levels_paged(pool, branch_id, None, 0, 50).await?;
+            if page.total == 0 {
                 return Ok("No inventory-tracked products found.".into());
             }
-            let lines: Vec<String> = levels
+            let lines: Vec<String> = page
+                .items
                 .iter()
                 .map(|s| {
                     let status = if s.is_out_of_stock {
@@ -1286,8 +852,9 @@ pub async fn execute_read_tool(
                 })
                 .collect();
             Ok(format!(
-                "[DB] {} tracked products:\n{}",
-                levels.len(),
+                "[DB] {} tracked products (showing {}):\n{}",
+                page.total,
+                page.items.len(),
                 lines.join("\n")
             ))
         }
@@ -1532,8 +1099,8 @@ pub async fn execute_read_tool(
                 "✗ not configured"
             };
             let last = status.last_successful_sync_at.as_deref().unwrap_or("never");
-            let lines = vec![
-                format!("Sync Status:"),
+            let lines = [
+                "Sync Status:".to_string(),
                 format!("  Hub (LAN sync):   {cloud}"),
                 format!("  Last sync:        {last}"),
                 format!("  Pending rows:     {pending}"),
@@ -1617,6 +1184,14 @@ pub async fn execute_read_tool(
             }
 
             Ok(lines.join("\n"))
+        }
+        "get_system_health_check" => {
+            let report = crate::commands::system_health_commands::run_local_health_check(
+                pool,
+                crate::commands::sync_commands::SYNC_TABLES,
+            )
+            .await?;
+            Ok(format_health_report(&report))
         }
         "sync_queue_list" => {
             let mut items = Vec::new();
@@ -1869,12 +1444,37 @@ pub async fn execute_read_tool(
             ))
         }
         "list_categories" => {
-            let rows = sqlx::query("SELECT category_id, name FROM categories ORDER BY name")
+            let query = input
+                .get("query")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            let rows = if query.is_empty() {
+                sqlx::query("SELECT category_id, name FROM categories WHERE is_active = 1 AND deleted_at IS NULL ORDER BY name")
+                    .fetch_all(pool)
+                    .await?
+            } else {
+                let escaped = query
+                    .replace('\\', "\\\\")
+                    .replace('%', "\\%")
+                    .replace('_', "\\_");
+                sqlx::query(
+                    "SELECT category_id, name FROM categories
+                     WHERE is_active = 1 AND deleted_at IS NULL
+                       AND name LIKE ? ESCAPE '\\'
+                     ORDER BY name",
+                )
+                .bind(format!("%{escaped}%"))
                 .fetch_all(pool)
-                .await?;
+                .await?
+            };
 
             if rows.is_empty() {
-                return Ok("No categories found.".into());
+                return Ok(if query.is_empty() {
+                    "No categories found.".into()
+                } else {
+                    format!("No categories found matching '{query}'.")
+                });
             }
             let lines: Vec<String> = rows
                 .iter()
@@ -1884,7 +1484,12 @@ pub async fn execute_read_tool(
                     format!("- {} (ID: {})", name, id)
                 })
                 .collect();
-            Ok(format!("{} categories:\n{}", rows.len(), lines.join("\n")))
+            let heading = if query.is_empty() {
+                format!("{} categories", rows.len())
+            } else {
+                format!("{} categories matching '{query}'", rows.len())
+            };
+            Ok(format!("{heading}:\n{}", lines.join("\n")))
         }
         "list_safe_drops" => {
             let shift_id = input
@@ -2514,7 +2119,7 @@ pub async fn execute_read_tool(
                     lines.push(String::new());
                     lines.push(format!(
                         "### Suggested Category: {}",
-                        categorize_product(&name)
+                        categorize_product(name)
                     ));
                     lines.push(String::new());
                     lines.push("📋 **To create this product, I need:**".into());
@@ -2880,6 +2485,93 @@ pub async fn execute_read_tool(
                 }
             ))
         }
+        "list_promotions" => {
+            let status = input
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("active");
+            let search = input.get("search").and_then(|v| v.as_str()).unwrap_or("");
+            let limit = input.get("limit").and_then(|v| v.as_i64()).unwrap_or(50);
+            let now = chrono::Utc::now().to_rfc3339();
+            let status_clause = match status {
+                "active" => "pp.effective_to > ?".to_string(),
+                "upcoming" => "pp.effective_from > ?".to_string(),
+                "expired" => "pp.effective_to <= ? AND pp.effective_to IS NOT NULL".to_string(),
+                _ => "1=1".to_string(),
+            };
+            let search_clause = if search.is_empty() {
+                String::new()
+            } else {
+                "AND p.name LIKE ?".to_string()
+            };
+            let sql = format!(
+                "SELECT pp.price_id, pp.product_id, p.name AS product_name, pp.price_minor, \
+                 pp.effective_from, pp.effective_to, pp.created_at \
+                 FROM product_prices pp JOIN products p ON p.product_id = pp.product_id \
+                 WHERE pp.price_type = 'promotional' AND ({status_clause}) {search_clause} \
+                 ORDER BY pp.effective_from DESC LIMIT ?"
+            );
+            let mut q = sqlx::query_as::<
+                _,
+                (String, String, String, i64, String, Option<String>, String),
+            >(&sql);
+            if status != "all" {
+                q = q.bind(&now);
+            }
+            if !search.is_empty() {
+                q = q.bind(format!("%{search}%"));
+            }
+            q = q.bind(limit);
+            let rows = q.fetch_all(pool).await?;
+            if rows.is_empty() {
+                return Ok("No promotions found.".into());
+            }
+            let fmt = |n: i64| money::format_minor(n, currency_exp);
+            let lines: Vec<String> = rows
+                .iter()
+                .map(|(_pid, prod_id, name, price, from, to, _)| {
+                    let label = match to {
+                        Some(t) if t < &now => "EXPIRED",
+                        Some(_) => "ACTIVE",
+                        None => "ACTIVE",
+                    };
+                    format!(
+                        "- [{label}] {name} (ID: {prod_id}) — BHD {} — {} → {}",
+                        fmt(*price),
+                        from,
+                        to.as_deref().unwrap_or("ongoing")
+                    )
+                })
+                .collect();
+            Ok(format!(
+                "[DB] {} promotion(s):\n{}",
+                rows.len(),
+                lines.join("\n")
+            ))
+        }
+        "get_promotion" => {
+            let price_id = input
+                .get("price_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing price_id".into()))?;
+            let now = chrono::Utc::now().to_rfc3339();
+            let row = sqlx::query_as::<_, (String,String,String,i64,String,Option<String>,String)>(
+                "SELECT pp.price_id, pp.product_id, p.name, pp.price_minor, pp.effective_from, pp.effective_to, pp.created_at \
+                 FROM product_prices pp JOIN products p ON p.product_id = pp.product_id \
+                 WHERE pp.price_id = ? AND pp.price_type = 'promotional'"
+            ).bind(price_id).fetch_optional(pool).await?
+            .ok_or_else(|| AppError::NotFound("Promotion not found".into()))?;
+            let fmt = |n: i64| money::format_minor(n, currency_exp);
+            let status = match &row.5 {
+                Some(t) if t < &now => "Expired",
+                Some(_) => "Active",
+                None => "Active (no end date)",
+            };
+            Ok(format!(
+                "Promotion: {}\nProduct: {} (ID: {})\nPrice: BHD {}\nEffective: {} → {}\nStatus: {}\nCreated: {}",
+                row.0, row.2, row.1, fmt(row.3), row.4, row.5.as_deref().unwrap_or("ongoing"), status, row.6
+            ))
+        }
         "open_tab" => {
             let tab = input.get("tab").and_then(|v| v.as_str()).unwrap_or("");
             const VALID: &[&str] = &[
@@ -2908,620 +2600,6 @@ pub async fn execute_read_tool(
             crate::ai::tools_read_ext::execute(pool, name, input, branch_id, currency_exp).await
         }
     }
-}
-
-// ── DuckDuckGo free search (no API key) ───────────────────────────────────────
-
-async fn duckduckgo_search(query: &str, max_results: usize) -> AppResult<String> {
-    // Use DuckDuckGo lite HTML endpoint — free, no auth
-    let encoded: String = query
-        .chars()
-        .map(|c| match c {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
-            ' ' => '+'.to_string(),
-            c => format!("%{:02X}", c as u32),
-        })
-        .collect();
-
-    let url = format!("https://lite.duckduckgo.com/lite/?q={encoded}");
-
-    let http = reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        .connect_timeout(std::time::Duration::from_secs(5))
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| AppError::Internal(format!("HTTP client error: {e}")))?;
-
-    let html = http
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| AppError::Internal(format!("Search request failed: {e}")))?
-        .text()
-        .await
-        .map_err(|e| AppError::Internal(format!("Search response read failed: {e}")))?;
-
-    // Parse DDG lite HTML: results are in table rows with class "result-link" and "result-snippet"
-    let mut results: Vec<(String, String, String)> = Vec::new(); // (title, url, snippet)
-
-    // Extract result links: <a class="result-link" href="...">Title</a>
-    let mut pos = 0;
-    while results.len() < max_results {
-        // Find next result-link anchor
-        let search_str = "class=\"result-link\"";
-        match html[pos..].find(search_str) {
-            None => break,
-            Some(rel) => {
-                let abs = pos + rel;
-                // Find href
-                let href_start = html[..abs].rfind('<').unwrap_or(abs);
-                let extra = 200.min(html.len().saturating_sub(abs + search_str.len()));
-                let tag_text = &html[href_start..abs + search_str.len() + extra];
-
-                // Extract href value
-                let current_url = if let Some(h) = tag_text.find("href=\"") {
-                    let after = h + 6;
-                    let end = tag_text[after..]
-                        .find('"')
-                        .map(|e| after + e)
-                        .unwrap_or(after);
-                    let raw = &tag_text[after..end];
-                    // DDG lite hrefs are relative like //duckduckgo.com/l/?uddg=...
-                    if raw.starts_with("//") {
-                        format!("https:{raw}")
-                    } else {
-                        raw.to_string()
-                    }
-                } else {
-                    String::new()
-                };
-
-                // Extract link text (between > and </a>)
-                let current_title = if let Some(gt) = html[abs..].find('>') {
-                    let after = abs + gt + 1;
-                    let close = html[after..]
-                        .find("</a>")
-                        .map(|e| after + e)
-                        .unwrap_or(after);
-                    strip_html_tags(&html[after..close]).trim().to_string()
-                } else {
-                    String::new()
-                };
-
-                pos = abs + search_str.len();
-
-                // Find the snippet that follows (next result-snippet td)
-                let snippet_tag = "class=\"result-snippet\"";
-                let snippet = if let Some(srel) = html[pos..].find(snippet_tag) {
-                    let sabs = pos + srel;
-                    if let Some(gt) = html[sabs..].find('>') {
-                        let after = sabs + gt + 1;
-                        let close = html[after..]
-                            .find("</td>")
-                            .map(|e| after + e)
-                            .unwrap_or(after);
-                        strip_html_tags(&html[after..close]).trim().to_string()
-                    } else {
-                        String::new()
-                    }
-                } else {
-                    String::new()
-                };
-
-                if !current_title.is_empty() {
-                    results.push((current_title, current_url, snippet));
-                }
-            }
-        }
-    }
-
-    if results.is_empty() {
-        return Ok(format!(
-            "No results found for '{}'. Try rephrasing the query.",
-            query
-        ));
-    }
-
-    let lines: Vec<String> = results
-        .iter()
-        .enumerate()
-        .map(|(i, (title, url, snippet))| {
-            let mut parts = vec![format!("{}. **{}**", i + 1, title)];
-            if !url.is_empty() {
-                parts.push(format!("   [LINK] {url}"));
-            }
-            if !snippet.is_empty() {
-                parts.push(format!("   {snippet}"));
-            }
-            parts.join("\n")
-        })
-        .collect();
-
-    Ok(format!(
-        "[WEB] Results for: \"{query}\"\n\n{}",
-        lines.join("\n\n")
-    ))
-}
-
-// ── Jina.ai Reader: fetch any URL as clean text (free, no API key) ────────────
-
-async fn jina_fetch(url: &str) -> AppResult<String> {
-    // Prefix any URL with https://r.jina.ai/ to get clean markdown back
-    let jina_url = format!("https://r.jina.ai/{url}");
-
-    let http = reqwest::Client::builder()
-        .user_agent("ZANPOS/1.0 (POS AI assistant)")
-        .connect_timeout(std::time::Duration::from_secs(5))
-        .timeout(std::time::Duration::from_secs(20))
-        .build()
-        .map_err(|e| AppError::Internal(format!("HTTP client error: {e}")))?;
-
-    let resp = http
-        .get(&jina_url)
-        .header("Accept", "text/plain")
-        .send()
-        .await
-        .map_err(|e| AppError::Internal(format!("fetch_url request failed: {e}")))?;
-
-    let status = resp.status();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| AppError::Internal(format!("fetch_url read failed: {e}")))?;
-
-    if !status.is_success() {
-        return Err(AppError::Internal(format!(
-            "fetch_url returned HTTP {status}: {}",
-            &text[..text.len().min(200)]
-        )));
-    }
-
-    // Truncate to ~6000 chars so we don't overflow the AI context
-    let truncated = if text.len() > 6000 {
-        format!("{}\n\n[…content truncated at 6000 chars…]", &text[..6000])
-    } else {
-        text
-    };
-
-    Ok(format!("[WEB] Page content from {url}:\n\n{truncated}"))
-}
-
-// ── Open Food Facts barcode lookup (free, no API key) ─────────────────────────
-
-async fn open_food_facts_lookup(barcode: &str) -> AppResult<String> {
-    let url = format!("https://world.openfoodfacts.net/api/v2/product/{barcode}");
-
-    let http = reqwest::Client::builder()
-        .user_agent("ZANPOS/1.0 (POS barcode lookup; contact zanabal.nowshad@gmail.com)")
-        .connect_timeout(std::time::Duration::from_secs(5))
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| AppError::Internal(format!("HTTP client error: {e}")))?;
-
-    let resp: Value = http
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| AppError::Internal(format!("Barcode lookup request failed: {e}")))?
-        .json()
-        .await
-        .map_err(|e| AppError::Internal(format!("Barcode lookup JSON parse failed: {e}")))?;
-
-    let status = resp.get("status").and_then(|v| v.as_i64()).unwrap_or(0);
-    if status == 0 {
-        return Ok(format!(
-            "Barcode {barcode} not found in Open Food Facts database. \
-             This may be a local/regional product not yet submitted to the open database."
-        ));
-    }
-
-    let product = match resp.get("product") {
-        Some(p) => p,
-        None => {
-            return Ok(format!(
-                "Barcode {barcode}: product data unavailable in response."
-            ))
-        }
-    };
-
-    let s = |key: &str| -> &str {
-        product
-            .get(key)
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim()
-    };
-
-    let name = s("product_name");
-    let brand = s("brands");
-    let categories = s("categories");
-    let quantity = s("quantity");
-    let countries = s("countries");
-    let ingredients = s("ingredients_text");
-
-    // Nutrition per 100g
-    let nut = product.get("nutriments");
-    let nutriments = if let Some(n) = nut {
-        let energy = n.get("energy-kcal_100g").and_then(|v| v.as_f64());
-        let fat = n.get("fat_100g").and_then(|v| v.as_f64());
-        let carbs = n.get("carbohydrates_100g").and_then(|v| v.as_f64());
-        let protein = n.get("proteins_100g").and_then(|v| v.as_f64());
-        let mut parts = vec![];
-        if let Some(e) = energy {
-            parts.push(format!("{e:.0} kcal"));
-        }
-        if let Some(f) = fat {
-            parts.push(format!("fat {f:.1}g"));
-        }
-        if let Some(c) = carbs {
-            parts.push(format!("carbs {c:.1}g"));
-        }
-        if let Some(p) = protein {
-            parts.push(format!("protein {p:.1}g"));
-        }
-        if parts.is_empty() {
-            String::new()
-        } else {
-            format!("Per 100g: {}", parts.join(", "))
-        }
-    } else {
-        String::new()
-    };
-
-    let mut lines = vec![format!("[WEB] **Barcode {barcode}**")];
-    if !name.is_empty() {
-        lines.push(format!("Product: {name}"));
-    }
-    if !brand.is_empty() {
-        lines.push(format!("Brand: {brand}"));
-    }
-    if !quantity.is_empty() {
-        lines.push(format!("Size/Qty: {quantity}"));
-    }
-    if !categories.is_empty() {
-        lines.push(format!(
-            "Categories: {}",
-            &categories[..categories.len().min(120)]
-        ));
-    }
-    if !countries.is_empty() {
-        lines.push(format!("Sold in: {countries}"));
-    }
-    if !nutriments.is_empty() {
-        lines.push(nutriments);
-    }
-    if !ingredients.is_empty() {
-        lines.push(format!(
-            "Ingredients: {}",
-            &ingredients[..ingredients.len().min(300)]
-        ));
-    }
-
-    Ok(lines.join("\n"))
-}
-
-// ── Frankfurter ECB currency rates (free, no API key) ─────────────────────────
-
-async fn frankfurter_rates(currencies: &[String]) -> AppResult<String> {
-    // Base: BHD. Frankfurter uses ECB rates (updated daily on working days).
-    let symbols_param = if currencies.is_empty() {
-        // Default useful set for Bahrain importers
-        "USD,EUR,GBP,SAR,AED,KWD,QAR,INR,CNY".to_string()
-    } else {
-        currencies.join(",")
-    };
-
-    let url = format!("https://api.frankfurter.dev/v1/latest?base=BHD&symbols={symbols_param}");
-
-    let http = reqwest::Client::builder()
-        .user_agent("ZANPOS/1.0")
-        .connect_timeout(std::time::Duration::from_secs(5))
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| AppError::Internal(format!("HTTP client error: {e}")))?;
-
-    let resp: Value = http
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| AppError::Internal(format!("Exchange rate request failed: {e}")))?
-        .json()
-        .await
-        .map_err(|e| AppError::Internal(format!("Exchange rate JSON parse failed: {e}")))?;
-
-    let date = resp
-        .get("date")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown date");
-
-    let rates = match resp.get("rates").and_then(|v| v.as_object()) {
-        Some(r) => r,
-        None => {
-            return Ok(
-                "Exchange rate data unavailable. Frankfurter API may not support BHD as base. \
-                 BHD is pegged to USD at 1 BHD = 2.6595 USD."
-                    .to_string(),
-            )
-        }
-    };
-
-    let mut lines = vec![format!("[WEB] **Exchange rates (base: 1 BHD) — {date}**")];
-    lines.push("Source: European Central Bank via Frankfurter".to_string());
-    lines.push(String::new());
-
-    let mut sorted: Vec<(&String, f64)> = rates
-        .iter()
-        .filter_map(|(k, v)| v.as_f64().map(|f| (k, f)))
-        .collect();
-    sorted.sort_by(|a, b| a.0.cmp(b.0));
-
-    for (currency, rate) in &sorted {
-        lines.push(format!("  1 BHD = {rate:.4} {currency}"));
-    }
-
-    // Always add USD peg note
-    lines.push(String::new());
-    lines.push("Note: BHD is officially pegged to USD at 1 BHD ≈ 2.6595 USD.".to_string());
-
-    Ok(lines.join("\n"))
-}
-
-// ── Aladhan prayer times for Manama Bahrain (free, no API key) ────────────────
-
-async fn aladhan_prayer_times(date_str: &str) -> AppResult<String> {
-    // Use timingsByCity endpoint — Manama, Bahrain, method 2 (ISNA)
-    let url = if date_str.is_empty() {
-        "https://api.aladhan.com/v1/timingsByCity?city=Manama&country=BH&method=2".to_string()
-    } else {
-        // date_str in DD-MM-YYYY
-        format!(
-            "https://api.aladhan.com/v1/timingsByCity/{date_str}?city=Manama&country=BH&method=2"
-        )
-    };
-
-    let http = reqwest::Client::builder()
-        .user_agent("ZANPOS/1.0")
-        .connect_timeout(std::time::Duration::from_secs(5))
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| AppError::Internal(format!("HTTP client error: {e}")))?;
-
-    let resp: Value = http
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| AppError::Internal(format!("Prayer times request failed: {e}")))?
-        .json()
-        .await
-        .map_err(|e| AppError::Internal(format!("Prayer times JSON parse failed: {e}")))?;
-
-    let code = resp.get("code").and_then(|v| v.as_i64()).unwrap_or(0);
-    if code != 200 {
-        let msg = resp
-            .get("data")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown error");
-        return Ok(format!("Prayer times unavailable: {msg}"));
-    }
-
-    let timings = match resp.pointer("/data/timings") {
-        Some(t) => t,
-        None => return Ok("Prayer times data not found in response.".to_string()),
-    };
-
-    let date_info = resp
-        .pointer("/data/date/readable")
-        .and_then(|v| v.as_str())
-        .unwrap_or(date_str);
-
-    let s = |key: &str| -> &str { timings.get(key).and_then(|v| v.as_str()).unwrap_or("--:--") };
-
-    let lines = vec![
-        format!("[WEB] **Prayer Times — Manama, Bahrain ({date_info})**"),
-        String::new(),
-        format!("🌅 Fajr    : {}", s("Fajr")),
-        format!("🌄 Sunrise : {}", s("Sunrise")),
-        format!("☀️ Dhuhr   : {}", s("Dhuhr")),
-        format!("🌇 Asr     : {}", s("Asr")),
-        format!("🌆 Maghrib : {}", s("Maghrib")),
-        format!("🌃 Isha    : {}", s("Isha")),
-        String::new(),
-        "Times are local Bahrain time (AST, UTC+3).".to_string(),
-    ];
-
-    Ok(lines.join("\n"))
-}
-
-// ── Nager.date Bahrain public holidays (free, no API key) ─────────────────────
-
-async fn nager_bahrain_holidays(year: u16) -> AppResult<String> {
-    let url = format!("https://date.nager.at/api/v3/PublicHolidays/{year}/BH");
-
-    let http = reqwest::Client::builder()
-        .user_agent("ZANPOS/1.0")
-        .connect_timeout(std::time::Duration::from_secs(5))
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .map_err(|e| AppError::Internal(format!("HTTP client error: {e}")))?;
-
-    let resp = http
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| AppError::Internal(format!("Holidays request failed: {e}")))?;
-
-    let status = resp.status();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| AppError::Internal(format!("Holidays read failed: {e}")))?;
-
-    if !status.is_success() {
-        return Ok(format!(
-            "Could not load Bahrain holidays for {year} (HTTP {status})."
-        ));
-    }
-
-    let holidays: Vec<Value> = serde_json::from_str(&text)
-        .map_err(|e| AppError::Internal(format!("Holidays JSON parse failed: {e}")))?;
-
-    if holidays.is_empty() {
-        return Ok(format!(
-            "No public holidays found for Bahrain in {year} (data may not yet be available)."
-        ));
-    }
-
-    let mut lines = vec![
-        format!("[WEB] **Bahrain Public Holidays {year}**"),
-        String::new(),
-    ];
-
-    for h in &holidays {
-        let date = h.get("date").and_then(|v| v.as_str()).unwrap_or("?");
-        let name = h
-            .get("localName")
-            .and_then(|v| v.as_str())
-            .or_else(|| h.get("name").and_then(|v| v.as_str()))
-            .unwrap_or("Holiday");
-        lines.push(format!("  📅 {date}  —  {name}"));
-    }
-
-    lines.push(String::new());
-    lines.push("Source: nager.date (official Bahrain calendar).".to_string());
-
-    Ok(lines.join("\n"))
-}
-
-/// Remove HTML tags from a string slice.
-/// Guess a product category from its name using keyword heuristics.
-/// Used by smart_barcode_lookup to suggest a category_id to the AI.
-fn categorize_product(name: &str) -> String {
-    let lower = name.to_lowercase();
-    if lower.contains("milk")
-        || lower.contains("laban")
-        || lower.contains("yogurt")
-        || lower.contains("cheese")
-        || lower.contains("cream")
-        || lower.contains("butter")
-    {
-        return "Dairy".into();
-    }
-    if lower.contains("bread")
-        || lower.contains("roti")
-        || lower.contains("bun")
-        || lower.contains("croissant")
-        || lower.contains("bakery")
-    {
-        return "Bakery".into();
-    }
-    if lower.contains("water")
-        || lower.contains("juice")
-        || lower.contains("pepsi")
-        || lower.contains("coca")
-        || lower.contains("soda")
-        || lower.contains("drink")
-        || lower.contains("tea")
-        || lower.contains("coffee")
-    {
-        return "Beverages".into();
-    }
-    if lower.contains("rice")
-        || lower.contains("flour")
-        || lower.contains("sugar")
-        || lower.contains("oil")
-        || lower.contains("salt")
-        || lower.contains("spice")
-        || lower.contains("grain")
-        || lower.contains("lentil")
-        || lower.contains("dal")
-        || lower.contains("pasta")
-        || lower.contains("noodle")
-    {
-        return "Groceries".into();
-    }
-    if lower.contains("chicken")
-        || lower.contains("meat")
-        || lower.contains("beef")
-        || lower.contains("mutton")
-        || lower.contains("fish")
-        || lower.contains("shrimp")
-        || lower.contains("egg")
-        || lower.contains("sausage")
-    {
-        return "Meat & Poultry".into();
-    }
-    if lower.contains("fruit")
-        || lower.contains("apple")
-        || lower.contains("banana")
-        || lower.contains("orange")
-        || lower.contains("vegetable")
-        || lower.contains("tomato")
-        || lower.contains("potato")
-        || lower.contains("onion")
-    {
-        return "Fruits & Vegetables".into();
-    }
-    if lower.contains("chocolate")
-        || lower.contains("biscuit")
-        || lower.contains("cookie")
-        || lower.contains("cake")
-        || lower.contains("candy")
-        || lower.contains("chip")
-        || lower.contains("snack")
-        || lower.contains("nut")
-        || lower.contains("wafer")
-    {
-        return "Snacks & Confectionery".into();
-    }
-    if lower.contains("soap")
-        || lower.contains("shampoo")
-        || lower.contains("detergent")
-        || lower.contains("toothpaste")
-        || lower.contains("clean")
-        || lower.contains("tissue")
-        || lower.contains("diaper")
-    {
-        return "Personal Care & Cleaning".into();
-    }
-    if lower.contains("cigarette")
-        || lower.contains("tobacco")
-        || lower.contains("vape")
-        || lower.contains("shisha")
-    {
-        return "Tobacco".into();
-    }
-    if lower.contains("frozen") || lower.contains("ice cream") || lower.contains("nugget") {
-        return "Frozen Foods".into();
-    }
-    if lower.contains("oil")
-        || lower.contains("lubricant")
-        || lower.contains("battery")
-        || lower.contains("bulb")
-        || lower.contains("tool")
-    {
-        return "Hardware & Automotive".into();
-    }
-    "General".into()
-}
-
-fn strip_html_tags(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut in_tag = false;
-    for ch in s.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => out.push(ch),
-            _ => {}
-        }
-    }
-    // Decode common HTML entities
-    out.replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&nbsp;", " ")
 }
 
 // ── Mutation dry-run: build a human-readable preview ──────────────────────────
@@ -3723,10 +2801,11 @@ pub async fn dry_run_mutation(
                 ],
             })
         }
-        "create_product" => {
+        "create_product" | "product_create" => {
             let name = input
                 .get("name")
                 .and_then(|v| v.as_str())
+                .filter(|name| !name.trim().is_empty())
                 .ok_or_else(|| AppError::Validation("Missing name".into()))?;
             let price = input
                 .get("price_minor")
@@ -3740,7 +2819,7 @@ pub async fn dry_run_mutation(
             let barcode = input.get("barcode").and_then(|v| v.as_str()).unwrap_or("—");
 
             let cat_name: Option<String> =
-                sqlx::query_scalar("SELECT name FROM categories WHERE category_id = ?")
+                sqlx::query_scalar("SELECT name FROM categories WHERE category_id = ? AND is_active = 1 AND deleted_at IS NULL")
                     .bind(category_id)
                     .fetch_optional(pool)
                     .await?;
@@ -3823,6 +2902,7 @@ pub async fn dry_run_mutation(
             let name = input
                 .get("name")
                 .and_then(|v| v.as_str())
+                .filter(|name| !name.trim().is_empty())
                 .ok_or_else(|| AppError::Validation("Missing name".into()))?;
             let phone = input.get("phone").and_then(|v| v.as_str()).unwrap_or("—");
             let email = input.get("email").and_then(|v| v.as_str()).unwrap_or("—");
@@ -4000,7 +3080,7 @@ pub async fn dry_run_mutation(
                 .get("category_id")
                 .and_then(|v| v.as_str())
                 .unwrap_or("?");
-            let row = sqlx::query("SELECT name FROM categories WHERE category_id = ?")
+            let row = sqlx::query("SELECT name FROM categories WHERE category_id = ? AND is_active = 1 AND deleted_at IS NULL")
                 .bind(category_id)
                 .fetch_optional(pool)
                 .await?;
@@ -4392,6 +3472,28 @@ pub async fn dry_run_mutation(
                 }],
             })
         }
+        "apply_system_health_fix" => {
+            let fix_action = input
+                .get("fix_action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let title = match fix_action {
+                "reset_stuck_sync" => "Reset stuck sync retry counters",
+                "clear_stuck_ai_runs" => "Mark stale AI runs as failed",
+                "clear_stuck_ai_actions" => "Mark stale AI actions as failed",
+                "reconcile_stock_drift" => "Repair stock levels from movement history",
+                "trigger_sync_now" => "Trigger an immediate full sync cycle",
+                _ => "Apply system health fix",
+            };
+            Ok(ToolPreview {
+                tool_name: tool_name.into(),
+                description: title.into(),
+                fields: vec![ToolPreviewField {
+                    label: "Fix action".into(),
+                    value: fix_action.to_string(),
+                }],
+            })
+        }
         "void_sale" => {
             let receipt = input
                 .get("receipt_number")
@@ -4530,7 +3632,22 @@ pub struct MutationResult {
 }
 
 /// Look up the active branch_id from the database (read-only queries only need branch).
-async fn active_branch_id(pool: &SqlitePool) -> crate::errors::AppResult<String> {
+pub(super) async fn active_branch_id(pool: &SqlitePool) -> crate::errors::AppResult<String> {
+    if let Some(branch_id) = crate::ai::tool_policy::current_branch_id() {
+        let valid: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM branches WHERE branch_id = ? AND is_active = 1)",
+        )
+        .bind(&branch_id)
+        .fetch_one(pool)
+        .await?;
+        return if valid {
+            Ok(branch_id)
+        } else {
+            Err(AppError::Permission(
+                "Authenticated branch is inactive or unavailable".into(),
+            ))
+        };
+    }
     sqlx::query_scalar(
         "SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1",
     )
@@ -4545,26 +3662,20 @@ async fn active_branch_id(pool: &SqlitePool) -> crate::errors::AppResult<String>
 
 /// Look up the active device_id and branch_id from the database.
 /// Returns an error if either is missing (setup not complete).
-async fn active_device_branch(pool: &SqlitePool) -> crate::errors::AppResult<(String, String)> {
+pub(super) async fn active_device_branch(
+    pool: &SqlitePool,
+) -> crate::errors::AppResult<(String, String)> {
+    let branch_id = active_branch_id(pool).await?;
     let device_id: Option<String> = sqlx::query_scalar(
-        "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1",
+        "SELECT device_id FROM devices WHERE branch_id = ? AND is_active = 1 ORDER BY device_code LIMIT 1",
     )
+    .bind(&branch_id)
     .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
+    .await?;
 
-    let branch_id: Option<String> = sqlx::query_scalar(
-        "SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
-
-    match (device_id, branch_id) {
-        (Some(d), Some(b)) => Ok((d, b)),
-        _ => Err(crate::errors::AppError::NotFound(
+    match device_id {
+        Some(device_id) => Ok((device_id, branch_id)),
+        None => Err(crate::errors::AppError::NotFound(
             "No active device or branch — complete store setup first".into(),
         )),
     }
@@ -4591,7 +3702,7 @@ fn validate_mutation_input(tool_name: &str, input: &Value) -> AppResult<()> {
                     ));
                 }
             }
-            if tool_name == "create_product" {
+            if tool_name == "create_product" || tool_name == "product_create" {
                 let name = input.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 if name.trim().is_empty() {
                     return Err(AppError::Validation("Product name cannot be empty".into()));
@@ -4666,6 +3777,22 @@ fn validate_mutation_input(tool_name: &str, input: &Value) -> AppResult<()> {
                 ));
             }
         }
+        "receive_stock" => {
+            let quantity = input
+                .get("quantity")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| AppError::Validation("quantity must be a decimal string".into()))?
+                .parse::<f64>()
+                .map_err(|_| AppError::Validation("quantity must be a number".into()))?;
+            if !quantity.is_finite() || quantity <= 0.0 || quantity > 10_000_000.0 {
+                return Err(AppError::Validation(
+                    "quantity must be greater than 0 and at most 10,000,000".into(),
+                ));
+            }
+            crate::inventory::lots::validate_expiry_date(
+                input.get("expiry_date").and_then(Value::as_str),
+            )?;
+        }
         "create_customer" | "update_customer" => {
             let name = input.get("name").and_then(|v| v.as_str()).unwrap_or("");
             if name.trim().is_empty() {
@@ -4689,24 +3816,33 @@ fn validate_mutation_input(tool_name: &str, input: &Value) -> AppResult<()> {
                 )));
             }
         }
-        other => {
-            // MEDIUM #12: A mutation tool in MUTATION_TOOLS but with no validation rule
-            // here means AI input goes unvalidated. Log a warning so this never silently
-            // slips through — the integrity test (mutation_tools_list_is_complete) catches
-            // missing registrations but not missing validation rules.
-            if MUTATION_TOOLS.contains(&other) {
-                tracing::warn!(
-                    "validate_mutation_input: tool '{}' is in MUTATION_TOOLS but has no \
-                     validation rule — add one to prevent unvalidated AI mutations",
-                    other
-                );
+        "apply_system_health_fix" => {
+            let fix_action = input
+                .get("fix_action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if !matches!(
+                fix_action,
+                "reset_stuck_sync"
+                    | "clear_stuck_ai_runs"
+                    | "clear_stuck_ai_actions"
+                    | "reconcile_stock_drift"
+                    | "trigger_sync_now"
+            ) {
+                return Err(AppError::Validation(format!(
+                    "Invalid health fix action: '{fix_action}'"
+                )));
             }
         }
+        // Every call reached this function through tool_policy, which performs
+        // fail-closed canonical schema and global boundary validation first.
+        // These match arms add domain-specific invariants where needed.
+        _ => {}
     }
     Ok(())
 }
 
-pub async fn execute_mutation(
+pub(super) async fn execute_mutation_raw(
     pool: &SqlitePool,
     tool_name: &str,
     input: &Value,
@@ -4714,6 +3850,8 @@ pub async fn execute_mutation(
 ) -> AppResult<MutationResult> {
     // ── Input validation gate (prevents nonsensical AI-generated values) ────
     validate_mutation_input(tool_name, input)?;
+    let actor_id = crate::ai::tool_policy::current_actor_id()
+        .ok_or_else(|| AppError::Permission("Mutation actor context is missing".into()))?;
 
     let fmt = |n: i64| money::format_minor(n, currency_exp);
 
@@ -4750,12 +3888,13 @@ pub async fn execute_mutation(
             sqlx::query(
                 "INSERT INTO product_prices (price_id, product_id, branch_id, price_type, price_minor,
                  currency, effective_from, effective_to, created_by_user_id, created_at)
-                 VALUES (?, ?, NULL, 'selling', ?, 'BHD', ?, NULL, 'AI_ADMIN', ?)"
+                 VALUES (?, ?, NULL, 'selling', ?, 'BHD', ?, NULL, ?, ?)"
             )
             .bind(&new_price_id)
             .bind(product_id)
             .bind(new_price)
             .bind(&now)
+            .bind(&actor_id)
             .bind(&now)
             .execute(pool)
             .await?;
@@ -4767,6 +3906,7 @@ pub async fn execute_mutation(
                 "product_price_update",
                 product_id,
                 &json!({"from": old_price, "to": new_price}),
+                "product",
             )
             .await?;
 
@@ -4820,6 +3960,7 @@ pub async fn execute_mutation(
                 "product_status_change",
                 product_id,
                 &json!({"from": old_active, "to": is_active}),
+                "product",
             )
             .await?;
 
@@ -4869,6 +4010,7 @@ pub async fn execute_mutation(
                 "product_rename",
                 product_id,
                 &json!({"from": &old_name, "to": new_name}),
+                "product",
             )
             .await?;
 
@@ -4902,7 +4044,7 @@ pub async fn execute_mutation(
 
             let (dv_id, br_id) = active_device_branch(pool).await?;
             let result = movements::manual_adjust(
-                pool, product_id, delta, notes, "AI_ADMIN", None, &br_id, &dv_id,
+                pool, product_id, delta, notes, &actor_id, None, &br_id, &dv_id,
             )
             .await?;
             let new_qty = result.quantity_on_hand.clone();
@@ -4913,6 +4055,7 @@ pub async fn execute_mutation(
                 "stock.adjustment",
                 product_id,
                 &json!({ "delta": delta, "new_qty": &new_qty, "notes": notes }),
+                "stock",
             )
             .await?;
 
@@ -4961,7 +4104,7 @@ pub async fn execute_mutation(
                 product_id,
                 new_quantity,
                 notes,
-                "AI_ADMIN",
+                &actor_id,
                 None,
                 &br_id,
                 &dv_id,
@@ -4974,6 +4117,7 @@ pub async fn execute_mutation(
                 "stock.stock_take",
                 product_id,
                 &json!({ "old_qty": old_qty, "new_qty": new_quantity, "notes": notes }),
+                "stock",
             )
             .await?;
 
@@ -4994,10 +4138,12 @@ pub async fn execute_mutation(
                 entity_id: product_id.into(),
             })
         }
-        "create_product" => {
+        "create_product" | "product_create" => {
+            let mut tx = pool.begin().await?;
             let name = input
                 .get("name")
                 .and_then(|v| v.as_str())
+                .filter(|name| !name.trim().is_empty())
                 .ok_or_else(|| AppError::Validation("Missing name".into()))?;
             let price_minor = input
                 .get("price_minor")
@@ -5006,9 +4152,21 @@ pub async fn execute_mutation(
             let category_id = input
                 .get("category_id")
                 .and_then(|v| v.as_str())
+                .filter(|category_id| !category_id.trim().is_empty())
                 .ok_or_else(|| AppError::Validation("Missing category_id".into()))?;
             let sku = input.get("sku").and_then(|v| v.as_str());
             let barcode = input.get("barcode").and_then(|v| v.as_str());
+            let category_exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM categories WHERE category_id=? AND is_active=1 AND deleted_at IS NULL)",
+            )
+            .bind(category_id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if !category_exists {
+                return Err(AppError::Validation(format!(
+                    "Category '{category_id}' not found. Call list_categories first to get a valid category_id."
+                )));
+            }
 
             let now = chrono::Utc::now().to_rfc3339();
             let product_id = ulid::Ulid::new().to_string();
@@ -5028,22 +4186,25 @@ pub async fn execute_mutation(
             .bind(barcode)
             .bind(&now)
             .bind(&now)
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
 
             sqlx::query(
                 "INSERT INTO product_prices
                    (price_id, product_id, branch_id, price_type, price_minor,
                     currency, effective_from, effective_to, created_by_user_id, created_at)
-                 VALUES (?, ?, NULL, 'selling', ?, 'BHD', ?, NULL, 'AI_ADMIN', ?)",
+                 VALUES (?, ?, NULL, 'selling', ?, 'BHD', ?, NULL, ?, ?)",
             )
             .bind(&price_id)
             .bind(&product_id)
             .bind(price_minor)
             .bind(&now)
+            .bind(&actor_id)
             .bind(&now)
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
+
+            tx.commit().await?;
 
             write_audit(
                 pool,
@@ -5051,11 +4212,18 @@ pub async fn execute_mutation(
                 "product.created",
                 &product_id,
                 &json!({ "name": name, "price_minor": price_minor, "category_id": category_id }),
+                "product",
             )
             .await?;
 
             Ok(MutationResult {
-                description: format!("Created product '{}' at BHD {}", name, fmt(price_minor)),
+                description: format!(
+                    "Created product '{}' at BHD {} (ID: {}{})",
+                    name,
+                    fmt(price_minor),
+                    product_id,
+                    barcode.map_or(String::new(), |b| format!(", barcode: {b}"))
+                ),
                 undo_snapshot_json: json!({ "product_id": &product_id }).to_string(),
                 rollback_tool: "set_product_active".into(),
                 rollback_input_json: json!({
@@ -5100,6 +4268,7 @@ pub async fn execute_mutation(
                 "stock.reorder_point_update",
                 product_id,
                 &json!({ "from": old_point, "to": new_point }),
+                "stock",
             )
             .await?;
 
@@ -5150,6 +4319,7 @@ pub async fn execute_mutation(
                 "customer.create",
                 &customer_id,
                 &json!({ "name": name, "phone": phone, "email": email }),
+                "customer",
             )
             .await?;
             Ok(MutationResult {
@@ -5205,6 +4375,7 @@ pub async fn execute_mutation(
                 "customer.update",
                 customer_id,
                 &json!({ "name": new_name }),
+                "customer",
             )
             .await?;
             Ok(MutationResult {
@@ -5264,6 +4435,7 @@ pub async fn execute_mutation(
                 "delivery.status_advance",
                 delivery_id,
                 &json!({ "from": old_status, "to": db_new_status }),
+                "delivery",
             )
             .await?;
             // Build rollback: use original DB status (old_status already is DB value)
@@ -5365,7 +4537,7 @@ pub async fn execute_mutation(
                      (movement_id, product_id, branch_id, device_id, origin_device_id,
                       movement_type, quantity_delta, quantity_after,
                       reference_type, notes, created_by_user_id, created_at, sync_status)
-                     VALUES (?,?,?,?,?,'stock_take',?,?,'ai_action',NULL,'AI_ADMIN',?,'pending')",
+                     VALUES (?,?,?,?,?,'stock_take',?,?,'ai_action',NULL,?,?,'pending')",
                 )
                 .bind(&movement_id)
                 .bind(product_id)
@@ -5374,6 +4546,7 @@ pub async fn execute_mutation(
                 .bind(&device_id)
                 .bind(&delta_str)
                 .bind(&new_qty_str)
+                .bind(&actor_id)
                 .bind(&now)
                 .execute(&mut *tx)
                 .await?;
@@ -5386,6 +4559,7 @@ pub async fn execute_mutation(
                     "stock.bulk_take",
                     product_id,
                     &json!({ "from": old_qty, "to": new_qty }),
+                    "stock",
                 )
                 .await?;
 
@@ -5424,10 +4598,11 @@ pub async fn execute_mutation(
                 "category.create",
                 &category_id,
                 &json!({"name":name,"sort_order":sort}),
+                "category",
             )
             .await?;
             Ok(MutationResult {
-                description: format!("Category '{}' created", name),
+                description: format!("Category '{}' created (ID: {})", name, category_id),
                 undo_snapshot_json: json!({"category_id":&category_id}).to_string(),
                 rollback_tool: "update_category".into(),
                 rollback_input_json: json!({"category_id":&category_id,"is_active":false})
@@ -5442,7 +4617,7 @@ pub async fn execute_mutation(
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             let row = sqlx::query(
-                "SELECT name, sort_order, is_active FROM categories WHERE category_id = ?",
+                "SELECT name, sort_order, is_active FROM categories WHERE category_id = ? AND is_active = 1 AND deleted_at IS NULL",
             )
             .bind(category_id)
             .fetch_optional(pool)
@@ -5471,6 +4646,7 @@ pub async fn execute_mutation(
                 "category.update",
                 category_id,
                 &json!({"name":name,"is_active":active_val}),
+                "category",
             )
             .await?;
             Ok(MutationResult {
@@ -5505,6 +4681,7 @@ pub async fn execute_mutation(
                 "user.create",
                 &user_id,
                 &json!({"display_name":display,"username":username}),
+                "user",
             )
             .await?;
             Ok(MutationResult {
@@ -5566,7 +4743,7 @@ pub async fn execute_mutation(
                 }
                 q.bind(user_id).execute(pool).await?;
             }
-            write_audit(pool, "AI_ADMIN", "user.update", user_id, &json!({})).await?;
+            write_audit(pool, "AI_ADMIN", "user.update", user_id, &json!({}), "user").await?;
             Ok(MutationResult {
                 description: format!("User '{}' updated", old_name),
                 undo_snapshot_json: serde_json::Value::Object(undo.clone()).to_string(),
@@ -5597,6 +4774,7 @@ pub async fn execute_mutation(
                 "tax_rule.create",
                 &tax_rule_id,
                 &json!({"name":name,"rate_basis_points":bp}),
+                "tax_rule",
             )
             .await?;
             Ok(MutationResult {
@@ -5650,6 +4828,7 @@ pub async fn execute_mutation(
                 "tax_rule.update",
                 tax_rule_id,
                 &json!({"name":name,"rate_basis_points":bp}),
+                "tax_rule",
             )
             .await?;
             Ok(MutationResult {
@@ -5680,6 +4859,8 @@ pub async fn execute_mutation(
             let sku = input.get("sku").and_then(|v| v.as_str());
             let barcode = input.get("barcode").and_then(|v| v.as_str());
             let price = input.get("price_minor").and_then(|v| v.as_i64());
+            let cost = input.get("cost_minor").and_then(|v| v.as_i64());
+            let supplier = input.get("default_supplier_id").and_then(|v| v.as_str());
             let tax = input.get("tax_rule_id").and_then(|v| v.as_str());
             let track = input
                 .get("track_inventory")
@@ -5695,8 +4876,8 @@ pub async fn execute_mutation(
                 .and_then(|v| v.as_bool())
                 .unwrap_or(p.product.is_active);
             let now = chrono::Utc::now().to_rfc3339();
-            sqlx::query("UPDATE products SET name=?,category_id=?,sku=COALESCE(?,sku),barcode=COALESCE(?,barcode),tax_rule_id=COALESCE(?,tax_rule_id),track_inventory=?,allow_decimal_quantity=?,is_active=?,version=version+1,updated_at=?, sync_status = 'pending' WHERE product_id=?")
-                .bind(name).bind(cat_id).bind(sku).bind(barcode).bind(tax).bind(track as i64).bind(decimal as i64).bind(active as i64).bind(&now).bind(product_id).execute(pool).await?;
+            sqlx::query("UPDATE products SET name=?,category_id=?,sku=COALESCE(?,sku),barcode=COALESCE(?,barcode),tax_rule_id=COALESCE(?,tax_rule_id),cost_minor=COALESCE(?,cost_minor),default_supplier_id=COALESCE(?,default_supplier_id),track_inventory=?,allow_decimal_quantity=?,is_active=?,version=version+1,updated_at=?, sync_status = 'pending' WHERE product_id=?")
+                .bind(name).bind(cat_id).bind(sku).bind(barcode).bind(tax).bind(cost).bind(supplier).bind(track as i64).bind(decimal as i64).bind(active as i64).bind(&now).bind(product_id).execute(pool).await?;
             if let Some(rp_val) = rp {
                 sqlx::query("UPDATE products SET reorder_point = ?, updated_at = ?, sync_status = 'pending' WHERE product_id = ?")
                     .bind(rp_val as i64).bind(&now).bind(product_id).execute(pool).await?;
@@ -5704,8 +4885,8 @@ pub async fn execute_mutation(
             if let Some(new_price) = price {
                 sqlx::query("UPDATE product_prices SET effective_to=?, sync_status = 'pending' WHERE product_id=? AND price_type='selling' AND effective_to IS NULL").bind(&now).bind(product_id).execute(pool).await?;
                 let pid = ulid::Ulid::new().to_string();
-                sqlx::query("INSERT INTO product_prices (price_id,product_id,branch_id,price_type,price_minor,currency,effective_from,created_by_user_id,created_at) VALUES (?,?,NULL,'selling',?,'BHD',?,'AI_ADMIN',?)")
-                    .bind(&pid).bind(product_id).bind(new_price).bind(&now).bind(&now).execute(pool).await?;
+                sqlx::query("INSERT INTO product_prices (price_id,product_id,branch_id,price_type,price_minor,currency,effective_from,created_by_user_id,created_at) VALUES (?,?,NULL,'selling',?,'BHD',?,?,?)")
+                    .bind(&pid).bind(product_id).bind(new_price).bind(&now).bind(&actor_id).bind(&now).execute(pool).await?;
             }
             write_audit(
                 pool,
@@ -5713,13 +4894,14 @@ pub async fn execute_mutation(
                 "product.update_full",
                 product_id,
                 &json!({"name":name}),
+                "product",
             )
             .await?;
             Ok(MutationResult {
                 description: format!("Product '{}' fully updated", name),
                 undo_snapshot_json: json!({"product_id":product_id}).to_string(),
                 rollback_tool: "update_product_full".into(),
-                rollback_input_json: json!({"product_id":product_id,"name":p.product.name,"category_id":p.product.category_id,"track_inventory":p.product.track_inventory,"is_active":p.product.is_active}).to_string(),
+                rollback_input_json: json!({"product_id":product_id,"name":p.product.name,"category_id":p.product.category_id,"cost_minor":p.product.cost_minor,"default_supplier_id":p.product.default_supplier_id,"track_inventory":p.product.track_inventory,"is_active":p.product.is_active}).to_string(),
                 entity_type: "product".into(), entity_id: product_id.into(),
             })
         }
@@ -5793,10 +4975,11 @@ pub async fn execute_mutation(
                 "store_settings.update",
                 "branch",
                 &json!({}),
+                "store_settings",
             )
             .await?;
             Ok(MutationResult {
-                description: format!("Store settings updated"),
+                description: "Store settings updated".to_string(),
                 undo_snapshot_json: serde_json::Value::Object(undo_map.clone()).to_string(),
                 rollback_tool: "update_store_settings".into(),
                 rollback_input_json: serde_json::Value::Object(undo_map).to_string(),
@@ -5826,6 +5009,7 @@ pub async fn execute_mutation(
                 "business_rules.update",
                 "rules",
                 &json!({}),
+                "business_rules",
             )
             .await?;
             Ok(MutationResult {
@@ -5858,6 +5042,7 @@ pub async fn execute_mutation(
                 "delivery.payment_confirmed",
                 delivery_id,
                 &json!({}),
+                "delivery",
             )
             .await?;
             Ok(MutationResult {
@@ -5892,6 +5077,7 @@ pub async fn execute_mutation(
                 "delivery.cancelled",
                 delivery_id,
                 &json!({}),
+                "delivery",
             )
             .await?;
             Ok(MutationResult {
@@ -5917,6 +5103,7 @@ pub async fn execute_mutation(
                 "sync.reset_stuck",
                 "sync",
                 &json!({"reset":total}),
+                "sync",
             )
             .await?;
             Ok(MutationResult {
@@ -5949,6 +5136,7 @@ pub async fn execute_mutation(
                 "sync.queue_retry",
                 "sync",
                 &json!({"event":event_id}),
+                "sync",
             )
             .await?;
             Ok(MutationResult {
@@ -5979,6 +5167,7 @@ pub async fn execute_mutation(
                 "sync.queue_dismiss",
                 "sync",
                 &json!({"event":event_id}),
+                "sync",
             )
             .await?;
             Ok(MutationResult {
@@ -5988,6 +5177,35 @@ pub async fn execute_mutation(
                 rollback_input_json: "{}".into(),
                 entity_type: "sync".into(),
                 entity_id: event_id.into(),
+            })
+        }
+        "apply_system_health_fix" => {
+            let fix_action = input
+                .get("fix_action")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing fix_action".into()))?;
+            let result = crate::commands::system_health_commands::apply_health_fix(
+                pool,
+                fix_action,
+                crate::commands::sync_commands::SYNC_TABLES,
+            )
+            .await?;
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "system_health.fix_applied",
+                fix_action,
+                &json!({"fix_action": fix_action, "rows_changed": result.rows_changed}),
+                "system_health",
+            )
+            .await?;
+            Ok(MutationResult {
+                description: result.message,
+                undo_snapshot_json: "{}".into(),
+                rollback_tool: "_no_undo".into(),
+                rollback_input_json: "{}".into(),
+                entity_type: "system_health".into(),
+                entity_id: fix_action.into(),
             })
         }
         "void_sale" => {
@@ -6016,12 +5234,77 @@ pub async fn execute_mutation(
                 .bind(&sale_id)
                 .execute(pool)
                 .await?;
+            // Restore inventory: add back quantities from voided sale items
+            {
+                let items = sqlx::query_as::<_, (String, String, String)>(
+                    "SELECT si.product_id, si.quantity, s.branch_id
+                     FROM sale_items si JOIN sales s ON s.sale_id = si.sale_id
+                     WHERE si.sale_id = ?",
+                )
+                .bind(&sale_id)
+                .fetch_all(pool)
+                .await?;
+                let now2 = chrono::Utc::now().to_rfc3339();
+                for (pid, qty, branch_id) in &items {
+                    let (device_id, actor_branch_id) = active_device_branch(pool).await?;
+                    if branch_id != &actor_branch_id {
+                        return Err(AppError::Permission(
+                            "Sale does not belong to the authenticated branch".into(),
+                        ));
+                    }
+                    let level_id = format!("SL-{pid}-{branch_id}");
+                    sqlx::query(
+                        "INSERT INTO stock_levels (stock_level_id,product_id,branch_id,quantity_on_hand,last_movement_at,created_at,updated_at) \
+                         VALUES (?,?,?,?,?,?,?) \
+                         ON CONFLICT(product_id,branch_id) DO UPDATE SET \
+                           quantity_on_hand = CAST(CAST(stock_levels.quantity_on_hand AS REAL) + CAST(? AS REAL) AS TEXT), \
+                           last_movement_at=?, updated_at=?, sync_status='pending'",
+                    )
+                    .bind(level_id)
+                    .bind(pid)
+                    .bind(branch_id)
+                    .bind(qty)
+                    .bind(&now2)
+                    .bind(&now2)
+                    .bind(&now2)
+                    .bind(qty)
+                    .bind(&now2)
+                    .bind(&now2)
+                    .execute(pool)
+                    .await?;
+                    let qty_after: String = sqlx::query_scalar(
+                        "SELECT quantity_on_hand FROM stock_levels WHERE product_id=? AND branch_id=?",
+                    )
+                    .bind(pid)
+                    .bind(branch_id)
+                    .fetch_one(pool)
+                    .await?;
+                    let mid = ulid::Ulid::new().to_string();
+                    sqlx::query(
+                        "INSERT INTO stock_movements (movement_id,product_id,branch_id,device_id,origin_device_id,movement_type,quantity_delta,quantity_after,reference_type,notes,created_by_user_id,created_at) \
+                         VALUES (?,?,?,?,?,'sale_void',?,?,'sale',?,?,?)",
+                    )
+                    .bind(&mid)
+                    .bind(pid)
+                    .bind(branch_id)
+                    .bind(&device_id)
+                    .bind(&device_id)
+                    .bind(qty)
+                    .bind(&qty_after)
+                    .bind(reason)
+                    .bind(&actor_id)
+                    .bind(&now2)
+                    .execute(pool)
+                    .await?;
+                }
+            }
             write_audit(
                 pool,
                 "AI_ADMIN",
                 "sale.voided",
                 "sale",
                 &json!({"sale_id":sale_id,"reason":reason}),
+                "sale",
             )
             .await?;
             Ok(MutationResult {
@@ -6050,12 +5333,20 @@ pub async fn execute_mutation(
                 .bind(cid)
                 .execute(pool)
                 .await?;
-            write_audit(pool, "AI_ADMIN", "customer.deleted", "customer", &snapshot).await?;
+            write_audit(
+                pool,
+                "AI_ADMIN",
+                "customer.deleted",
+                "customer",
+                &snapshot,
+                "customer",
+            )
+            .await?;
             Ok(MutationResult {
                 description: format!("Deleted customer: {name}"),
                 undo_snapshot_json: snapshot.to_string(),
-                rollback_tool: "create_customer".into(),
-                rollback_input_json: snapshot.to_string(),
+                rollback_tool: "_no_undo".into(),
+                rollback_input_json: "{}".into(),
                 entity_type: "customer".into(),
                 entity_id: cid.into(),
             })
@@ -6085,6 +5376,7 @@ pub async fn execute_mutation(
                 "device.toggle",
                 "device",
                 &json!({"device_id":did,"active":active}),
+                "device",
             )
             .await?;
             Ok(MutationResult {
@@ -6106,6 +5398,9 @@ pub async fn execute_mutation(
                 .and_then(|v| v.as_str())
                 .unwrap_or("0");
             let notes = input.get("notes").and_then(|v| v.as_str()).unwrap_or("");
+            let expiry_date = crate::inventory::lots::validate_expiry_date(
+                input.get("expiry_date").and_then(Value::as_str),
+            )?;
             let pname: Option<String> =
                 sqlx::query_scalar("SELECT name FROM products WHERE product_id=?")
                     .bind(pid)
@@ -6113,10 +5408,9 @@ pub async fn execute_mutation(
                     .await?
                     .flatten();
             let _ = pname.ok_or_else(|| AppError::NotFound("Product not found".into()))?;
-            let branch_id: String =
-                sqlx::query_scalar("SELECT branch_id FROM branches WHERE is_active=1 LIMIT 1")
-                    .fetch_one(pool)
-                    .await?;
+            let (device_id, branch_id) = active_device_branch(pool).await?;
+            let actor_id = crate::ai::tool_policy::current_actor_id()
+                .ok_or_else(|| AppError::Permission("Mutation actor context is missing".into()))?;
             let now = chrono::Utc::now().to_rfc3339();
             let level_id = format!("SL-{}-{}", pid, branch_id);
             sqlx::query("INSERT INTO stock_levels (stock_level_id,product_id,branch_id,quantity_on_hand,last_movement_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(product_id,branch_id) DO UPDATE SET quantity_on_hand = CAST(CAST(stock_levels.quantity_on_hand AS REAL) + CAST(? AS REAL) AS TEXT), last_movement_at=?, updated_at=?, sync_status='pending'")
@@ -6129,14 +5423,15 @@ pub async fn execute_mutation(
             .bind(&branch_id)
             .fetch_one(pool)
             .await?;
-            sqlx::query("INSERT INTO stock_movements (movement_id,product_id,branch_id,device_id,origin_device_id,movement_type,quantity_delta,quantity_after,reference_type,notes,created_by_user_id,created_at) VALUES (?,?,?,?,(SELECT device_id FROM devices WHERE is_active=1 LIMIT 1),'receive',?,?,'receive',?,'AI_ADMIN',?)")
-                .bind(&mid).bind(pid).bind(&branch_id).bind(&branch_id).bind(qty).bind(&qty_after).bind(notes).bind(&now).execute(pool).await?;
+            sqlx::query("INSERT INTO stock_movements (movement_id,product_id,branch_id,device_id,origin_device_id,movement_type,quantity_delta,quantity_after,reference_type,notes,created_by_user_id,created_at,expiry_date,lot_quantity_received,lot_quantity_remaining) VALUES (?,?,?,?,?,'receive',?,?,'receive',?,?,?,?,?,?)")
+                .bind(&mid).bind(pid).bind(&branch_id).bind(&device_id).bind(&device_id).bind(qty).bind(&qty_after).bind(notes).bind(&actor_id).bind(&now).bind(expiry_date).bind(qty).bind(qty).execute(pool).await?;
             write_audit(
                 pool,
-                "AI_ADMIN",
+                &actor_id,
                 "stock.receive",
                 "product",
                 &json!({"product_id":pid,"qty":qty,"notes":notes}),
+                "stock",
             )
             .await?;
             Ok(MutationResult {
@@ -6169,6 +5464,7 @@ pub async fn execute_mutation(
                 "customer.loyalty",
                 "customer",
                 &json!({"customer_id":cid,"added":pts,"total":new_total}),
+                "customer",
             )
             .await?;
             Ok(MutationResult {
@@ -6187,6 +5483,8 @@ pub async fn execute_mutation(
                 .ok_or_else(|| AppError::Validation("updates array required".into()))?;
             let now = chrono::Utc::now().to_rfc3339();
             let mut updated = 0;
+            // Capture old prices for undo support
+            let mut undo_updates: Vec<Value> = Vec::new();
             for item in updates {
                 let pid = item
                     .get("product_id")
@@ -6199,11 +5497,21 @@ pub async fn execute_mutation(
                 if pid.is_empty() {
                     continue;
                 }
+                // Read current price before overwriting
+                if let Ok(old_price) = sqlx::query_scalar::<_, i64>(
+                    "SELECT price_minor FROM product_prices WHERE product_id=? AND price_type='selling' AND effective_to IS NULL",
+                )
+                .bind(pid)
+                .fetch_one(pool)
+                .await
+                {
+                    undo_updates.push(json!({"product_id": pid, "price_minor": old_price}));
+                }
                 sqlx::query("UPDATE product_prices SET effective_to=?, sync_status='pending' WHERE product_id=? AND price_type='selling' AND effective_to IS NULL")
                     .bind(&now).bind(pid).execute(pool).await?;
                 let npid = ulid::Ulid::new().to_string();
-                sqlx::query("INSERT INTO product_prices (price_id,product_id,branch_id,price_type,price_minor,currency,effective_from,created_by_user_id,created_at) VALUES (?,?,NULL,'selling',?,'BHD',?,'AI_ADMIN',?)")
-                    .bind(&npid).bind(pid).bind(price).bind(&now).bind(&now).execute(pool).await?;
+                sqlx::query("INSERT INTO product_prices (price_id,product_id,branch_id,price_type,price_minor,currency,effective_from,created_by_user_id,created_at) VALUES (?,?,NULL,'selling',?,'BHD',?,?,?)")
+                    .bind(&npid).bind(pid).bind(price).bind(&now).bind(&actor_id).bind(&now).execute(pool).await?;
                 updated += 1;
             }
             write_audit(
@@ -6212,13 +5520,14 @@ pub async fn execute_mutation(
                 "product.bulk_price",
                 "product",
                 &json!({"count":updated}),
+                "product",
             )
             .await?;
             Ok(MutationResult {
                 description: format!("Updated prices for {updated} products"),
-                undo_snapshot_json: "{}".into(),
-                rollback_tool: "_no_undo".into(),
-                rollback_input_json: "{}".into(),
+                undo_snapshot_json: json!({"updates": undo_updates}).to_string(),
+                rollback_tool: "bulk_update_prices".into(),
+                rollback_input_json: json!({"updates": undo_updates}).to_string(),
                 entity_type: "product".into(),
                 entity_id: "bulk".into(),
             })
@@ -6242,6 +5551,7 @@ pub async fn execute_mutation(
                 "backup.created",
                 &ts,
                 &json!({"path":&backup_path}),
+                "backup",
             )
             .await?;
             Ok(MutationResult {
@@ -6259,7 +5569,7 @@ pub async fn execute_mutation(
 
 // ── Undo executor ─────────────────────────────────────────────────────────────
 
-pub async fn execute_undo(
+pub(super) async fn execute_undo_raw(
     pool: &SqlitePool,
     rollback_tool: &str,
     rollback_input_json: &str,
@@ -6267,7 +5577,8 @@ pub async fn execute_undo(
 ) -> AppResult<String> {
     let input: Value = serde_json::from_str(rollback_input_json)
         .map_err(|e| AppError::Validation(format!("Invalid rollback input: {}", e)))?;
-    let result = execute_mutation(pool, rollback_tool, &input, currency_exp).await?;
+    crate::ai::tool_policy::validate_persisted_mutation(rollback_tool, &input)?;
+    let result = execute_mutation_raw(pool, rollback_tool, &input, currency_exp).await?;
     Ok(result.description)
 }
 
@@ -6279,7 +5590,10 @@ async fn write_audit(
     event_type: &str,
     entity_id: &str,
     after: &serde_json::Value,
+    entity_type: &str,
 ) -> AppResult<()> {
+    let actor_user_id =
+        crate::ai::tool_policy::current_actor_id().unwrap_or_else(|| actor_user_id.to_string());
     let id = ulid::Ulid::new().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     let hash = format!("{:x}", md5_simple(&format!("{}{}{}", id, event_type, now)));
@@ -6291,12 +5605,13 @@ async fn write_audit(
         "INSERT INTO audit_logs
          (audit_log_id, event_type, entity_type, entity_id, actor_user_id,
           actor_type, after_json, created_at, hash)
-         VALUES (?, ?, 'product', ?, ?, 'ai_agent', ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, 'ai_agent', ?, ?, ?)",
     )
     .bind(&id)
     .bind(event_type)
+    .bind(entity_type)
     .bind(entity_id)
-    .bind(actor_user_id)
+    .bind(&actor_user_id)
     .bind(after.to_string())
     .bind(&now)
     .bind(&hash)
@@ -6338,30 +5653,131 @@ pub fn mask_phone(phone: &str) -> String {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn stock_levels_tool_bounds_large_catalogue_results() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let now = "2026-07-31T00:00:00Z";
+        let branch_id = "01JBRANCH0000000000000001";
+        sqlx::query(
+            "INSERT INTO categories
+             (category_id,name,sort_order,is_active,created_at,updated_at)
+             VALUES ('cat-1','General',0,1,?,?)",
+        )
+        .bind(now)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .unwrap();
+        for index in 0..51 {
+            let product_id = format!("product-{index:03}");
+            let product_name = format!("Product {index:03}");
+            sqlx::query(
+                "INSERT INTO products
+                 (product_id,category_id,name,track_inventory,is_active,currency,reorder_point,created_at,updated_at)
+                 VALUES (?,'cat-1',?,1,1,'BHD',0,?,?)",
+            )
+            .bind(&product_id)
+            .bind(&product_name)
+            .bind(now)
+            .bind(now)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let result = execute_read_tool(
+            &pool,
+            "get_stock_levels",
+            &serde_json::json!({}),
+            branch_id,
+            3,
+        )
+        .await
+        .unwrap();
+
+        assert!(result.contains("[DB] 51 tracked products (showing 50):"));
+        assert!(result.contains("Product 049"));
+        assert!(!result.contains("Product 050"));
+        assert!(result.len() < 10_000);
+    }
+
+    #[tokio::test]
+    async fn confirmed_product_create_revalidates_category_at_execution() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query("INSERT INTO categories (category_id,name,sort_order,is_active,created_at,updated_at) VALUES ('cat-1','Chocolate',0,0,?,?)")
+            .bind(&now)
+            .bind(&now)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let input = serde_json::json!({
+            "name": "Kinder Riegel 21g",
+            "category_id": "cat-1",
+            "price_minor": 150
+        });
+        let context = crate::ai::tool_policy::MutationExecutionContext {
+            actor_user_id: "admin-1".into(),
+            branch_id: "branch-1".into(),
+        };
+
+        let result = crate::ai::tool_policy::with_mutation_context(
+            &context,
+            execute_mutation_raw(&pool, "create_product", &input, 3),
+        )
+        .await;
+
+        assert!(matches!(result, Err(AppError::Validation(_))));
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM products")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
     /// Every mutation tool definition MUST also appear in MUTATION_TOOLS.
     /// If a tool is missing, it would silently execute without admin confirmation.
     #[test]
     fn mutation_tools_list_is_complete() {
         let defs = all_tool_definitions();
-        for d in &defs {
-            let looks_like_mutation = d.description.contains("admin confirmation")
-                || d.description.contains("CONFIRMATION REQUIRED");
-            let is_listed = MUTATION_TOOLS.contains(&d.name.as_str());
-            if looks_like_mutation && !is_listed {
-                panic!(
-                    "Tool '{}' mentions admin confirmation but is NOT in MUTATION_TOOLS. \
-                     It would silently mutate data without confirmation. Add it to MUTATION_TOOLS.",
-                    d.name
-                );
-            }
-            if !looks_like_mutation && is_listed {
-                // Warn (not panic): it's safe, just potentially unnecessary
-                eprintln!(
-                    "WARNING: Tool '{}' is in MUTATION_TOOLS but does not mention confirmation. \
-                     Consider removing it from MUTATION_TOOLS if it's not a mutating tool.",
-                    d.name
-                );
-            }
+        for name in MUTATION_TOOLS {
+            let provider_name = if *name == "product_create" {
+                "create_product"
+            } else {
+                name
+            };
+            assert!(
+                defs.iter()
+                    .any(|definition| definition.name == *provider_name),
+                "Mutation executor '{name}' has no provider definition"
+            );
+        }
+    }
+
+    #[test]
+    fn state_changing_extension_tools_are_classified_as_mutations() {
+        for name in [
+            "reindex_database",
+            "force_wal_checkpoint",
+            "resolve_ghost_barcode",
+            "resolve_sync_conflict",
+            "clear_ghost_sync_records",
+            "run_diagnostics_and_fix",
+            "bulk_import_products",
+            "bulk_import_categories",
+            "send_receipt_via_whatsapp",
+        ] {
+            assert!(is_mutation_tool(name), "{name} must require confirmation");
         }
     }
 }

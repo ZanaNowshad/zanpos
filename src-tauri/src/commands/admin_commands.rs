@@ -1,5 +1,5 @@
-use crate::commands::rbac;
-use crate::db::repositories::{audit_hash, auth_repo};
+use crate::commands::{rbac, sync_commands};
+use crate::db::repositories::{audit_hash, auth_repo, product_dedup_repo};
 use crate::errors::{AppError, AppResult};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
@@ -335,7 +335,7 @@ pub async fn admin_create_product(
     .execute(&mut *tx)
     .await
     .map_err(|e| {
-        if e.to_string().contains("UNIQUE") {
+        if e.to_string().contains("UNIQUE") || e.to_string().contains("barcode already in use") {
             AppError::Validation("SKU or barcode already in use".into())
         } else {
             e.into()
@@ -377,6 +377,7 @@ pub async fn admin_create_product(
     tx.commit().await?;
 
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
+    sync_commands::schedule_immediate_sync(&state);
 
     let device_id = active_device_id(&state).await;
     let branch_id = active_branch_id(&state).await?;
@@ -532,7 +533,7 @@ pub async fn admin_update_product(
     .execute(&mut *tx)
     .await
     .map_err(|e| {
-        if e.to_string().contains("UNIQUE") {
+        if e.to_string().contains("UNIQUE") || e.to_string().contains("barcode already in use") {
             AppError::Validation("SKU or barcode already in use".into())
         } else {
             e.into()
@@ -588,6 +589,7 @@ pub async fn admin_update_product(
     tx.commit().await?;
 
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
+    sync_commands::schedule_immediate_sync(&state);
 
     // H8: Audit log — product updated
     let after = serde_json::json!({
@@ -620,6 +622,106 @@ pub async fn admin_update_product(
         .fetch_one(&state.db)
         .await?;
     Ok(row_to_admin_product(&row))
+}
+
+// ─── Duplicate-product detection & resolution ─────────────────────────────────
+
+/// Scan the whole catalog and return duplicate groups (by name, barcode, SKU)
+/// for the back-office "Duplicate Products" triage screen. Manager/owner only.
+#[tauri::command]
+pub async fn admin_find_duplicate_products(
+    actor_user_id: String,
+    include_inactive: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<Vec<product_dedup_repo::DuplicateGroup>, AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    product_dedup_repo::find_duplicate_groups(&state.db, include_inactive.unwrap_or(false)).await
+}
+
+/// Merge one duplicate product into another: combine stock, transfer movements,
+/// optionally reassign sale history, then archive the source. Manager/owner only.
+#[tauri::command]
+pub async fn admin_merge_products(
+    actor_user_id: String,
+    source_product_id: String,
+    target_product_id: String,
+    transfer_history: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let transfer = transfer_history.unwrap_or(false);
+    let outcome = product_dedup_repo::merge_products(
+        &state.db,
+        &source_product_id,
+        &target_product_id,
+        transfer,
+    )
+    .await?;
+
+    let device_id = active_device_id(&state).await;
+    let branch_id = active_branch_id(&state).await?;
+    let after = serde_json::json!({
+        "source_product_id": source_product_id,
+        "target_product_id": target_product_id,
+        "source_name": outcome.source_name,
+        "target_name": outcome.target_name,
+        "transfer_history": transfer,
+    })
+    .to_string();
+    if let Err(e) = audit_hash::insert_audit_entry(
+        &state.db,
+        "PRODUCT_MERGED",
+        "product",
+        &source_product_id,
+        &actor_user_id,
+        "user",
+        &device_id,
+        &branch_id,
+        None,
+        Some(&after),
+        None,
+    )
+    .await
+    {
+        tracing::error!("AUDIT WRITE FAILED [PRODUCT_MERGED]: {:?}", e);
+    }
+    sync_commands::schedule_immediate_sync(&state);
+    Ok(())
+}
+
+/// Soft-delete (archive) a single product — used to resolve a duplicate by
+/// dropping the redundant entry rather than merging. Manager/owner only.
+#[tauri::command]
+pub async fn admin_delete_product(
+    actor_user_id: String,
+    product_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let name = product_dedup_repo::soft_delete_product(&state.db, &product_id).await?;
+
+    let device_id = active_device_id(&state).await;
+    let branch_id = active_branch_id(&state).await?;
+    let after = serde_json::json!({ "product_id": product_id, "name": name }).to_string();
+    if let Err(e) = audit_hash::insert_audit_entry(
+        &state.db,
+        "PRODUCT_DELETED",
+        "product",
+        &product_id,
+        &actor_user_id,
+        "user",
+        &device_id,
+        &branch_id,
+        None,
+        Some(&after),
+        None,
+    )
+    .await
+    {
+        tracing::error!("AUDIT WRITE FAILED [PRODUCT_DELETED]: {:?}", e);
+    }
+    sync_commands::schedule_immediate_sync(&state);
+    Ok(())
 }
 
 // ─── Category commands ────────────────────────────────────────────────────────
@@ -809,6 +911,7 @@ pub async fn admin_save_tax_rule(
         tracing::error!("AUDIT WRITE FAILED [TAX_RULE]: {:?}", e);
     }
 
+    sync_commands::schedule_immediate_sync(&state);
     Ok(result)
 }
 
@@ -868,6 +971,7 @@ pub async fn admin_delete_tax_rule(
         tracing::error!("AUDIT WRITE FAILED [TAX_RULE_DELETED]: {:?}", e);
     }
 
+    sync_commands::schedule_immediate_sync(&state);
     Ok(())
 }
 
@@ -1043,6 +1147,7 @@ pub async fn admin_save_category(
         tracing::error!("AUDIT WRITE FAILED [CATEGORY]: {:?}", e);
     }
 
+    sync_commands::schedule_immediate_sync(&state);
     Ok(result)
 }
 
@@ -1165,6 +1270,9 @@ pub async fn admin_bulk_import_categories(
     }
 
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
+    if inserted > 0 {
+        sync_commands::schedule_immediate_sync(&state);
+    }
 
     Ok(BulkImportResult {
         inserted,
@@ -1507,6 +1615,7 @@ pub async fn admin_bulk_import_products(
     tx.commit().await?;
 
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
+    sync_commands::schedule_immediate_sync(&state);
 
     Ok(BulkImportResult {
         inserted,
@@ -1699,7 +1808,7 @@ pub async fn product_barcode_add(
     .execute(&state.db)
     .await
     .map_err(|e| {
-        if e.to_string().contains("UNIQUE") {
+        if e.to_string().contains("UNIQUE") || e.to_string().contains("barcode already in use") {
             AppError::Conflict("Barcode already registered to another product".into())
         } else {
             e.into()
@@ -1937,4 +2046,102 @@ pub async fn admin_update_user(
     }
 
     Ok(result)
+}
+
+// ─── Diagnostics & auto-fix ────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct DiagnosticReport {
+    pub ok: bool,
+    pub db_integrity: String,
+    pub issues_found: Vec<String>,
+    pub issues_fixed: Vec<String>,
+    pub note: String,
+}
+
+#[tauri::command]
+pub async fn admin_run_diagnostics(state: State<'_, AppState>) -> AppResult<DiagnosticReport> {
+    let mut issues_found: Vec<String> = Vec::new();
+    let mut issues_fixed: Vec<String> = Vec::new();
+
+    // 1. Database integrity check
+    let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or_else(|_| "check failed".into());
+
+    let db_ok = integrity == "ok";
+    if !db_ok {
+        issues_found.push(format!("Database integrity issue: {}", integrity));
+    }
+
+    // 2. Check for stuck AI runs (status='running' but no progress in >5 min)
+    let stuck_rows = sqlx::query(
+        "SELECT run_id, op_id FROM ai_runs WHERE status='running' AND updated_at < datetime('now','-5 minutes')"
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let stuck_runs: Vec<(String, String)> = stuck_rows
+        .iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect();
+
+    if !stuck_runs.is_empty() {
+        issues_found.push(format!("{} stuck AI run(s) detected", stuck_runs.len()));
+        for (run_id, _op_id) in &stuck_runs {
+            let now = chrono::Utc::now().to_rfc3339();
+            sqlx::query("UPDATE ai_runs SET status='failed', error='Auto-cleared by diagnostics (stuck)', updated_at=? WHERE run_id=?")
+                .bind(&now)
+                .bind(run_id)
+                .execute(&state.db)
+                .await?;
+            issues_fixed.push(format!("Cleared stuck AI run {}", run_id));
+        }
+    }
+
+    // 3. Check for stuck actions (status='executing' with no resolution)
+    let stuck_action_rows = sqlx::query(
+        "SELECT action_id, action_type FROM ai_actions WHERE status='executing' AND created_at < datetime('now','-10 minutes')"
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let stuck_actions: Vec<(String, String)> = stuck_action_rows
+        .iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect();
+
+    if !stuck_actions.is_empty() {
+        issues_found.push(format!(
+            "{} stuck AI action(s) detected",
+            stuck_actions.len()
+        ));
+        for (action_id, _action_type) in &stuck_actions {
+            let now = chrono::Utc::now().to_rfc3339();
+            sqlx::query("UPDATE ai_actions SET status='failed', error_message='Auto-cleared by diagnostics (stuck)', completed_at=? WHERE action_id=?")
+                .bind(&now)
+                .bind(action_id)
+                .execute(&state.db)
+                .await?;
+            issues_fixed.push(format!("Cleared stuck AI action {}", action_id));
+        }
+    }
+
+    let ok = db_ok && issues_found.is_empty();
+    let note = if ok {
+        "All systems healthy — no issues found.".into()
+    } else if issues_fixed.len() >= issues_found.len() {
+        format!("Found and fixed {} issue(s).", issues_fixed.len())
+    } else {
+        format!("Found {} issue(s), {} could be auto-fixed. Database integrity check may require a restart if corruption is detected.", issues_found.len(), issues_fixed.len())
+    };
+
+    Ok(DiagnosticReport {
+        ok,
+        db_integrity: integrity,
+        issues_found,
+        issues_fixed,
+        note,
+    })
 }

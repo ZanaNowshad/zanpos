@@ -1,8 +1,11 @@
-import { useState, useRef } from "react";
+import { useMemo, useState, useRef } from "react";
 import type { CartLine } from "../types";
 import { formatMoney, parseMoney } from "../money";
 import { DEVICE } from "../types";
 import { useFocusTrap } from "../hooks/useFocusTrap";
+import { useLanguage } from "../hooks/useLanguage";
+import { modalTranslator } from "../i18n/modalStrings";
+import { detailTranslator } from "../i18n/detailStrings";
 
 interface Props {
   line: CartLine;
@@ -11,6 +14,9 @@ interface Props {
 }
 
 export default function LineDiscountModal({ line, onApply, onCancel }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => modalTranslator(language), [language]);
+  const dt = useMemo(() => detailTranslator(language), [language]);
   const modalRef = useRef<HTMLDivElement>(null);
   useFocusTrap(modalRef, onCancel);
 
@@ -27,13 +33,13 @@ export default function LineDiscountModal({ line, onApply, onCancel }: Props) {
 
   return (
     <div className="modal-overlay" onClick={onCancel}>
-      <div ref={modalRef} className="modal" style={{ maxWidth: 380 }} role="dialog" aria-modal="true" aria-label="Line Discount" onClick={e => e.stopPropagation()}>
+      <div ref={modalRef} className="modal" style={{ maxWidth: 380 }} role="dialog" aria-modal="true" aria-label={t("lineDiscount")} onClick={e => e.stopPropagation()}>
         <h2 className="modal-title">Discount — {line.product_name}</h2>
         <p style={{ fontSize: "0.82rem", color: "var(--text-dim)", marginBottom: 10 }}>
           Qty: {line.quantity} · Unit: {fmt(line.unit_price_minor)} · Line: {fmt(total)}
         </p>
 
-        <label className="line-edit-label">Discount Amount</label>
+        <label className="line-edit-label">{t("discountAmount")}</label>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
           <span style={{ fontWeight: 700 }}>{cur}</span>
           <input
@@ -50,21 +56,21 @@ export default function LineDiscountModal({ line, onApply, onCancel }: Props) {
           />
         </div>
 
-        <label className="line-edit-label">Reason (required)</label>
+        <label className="line-edit-label">{t("reasonRequired")}</label>
         <input
           className="line-edit-note-input"
           type="text"
           maxLength={120}
-          placeholder="e.g. Damaged, Expiring, Manager override…"
+          placeholder={dt("damagedDiscountExample")}
           value={reason}
           onChange={e => setReason(e.target.value)}
           style={{ marginBottom: 12 }}
         />
 
         <div className="modal-actions line-edit-actions">
-          <button className="btn-secondary" onClick={onCancel}>Cancel</button>
+          <button className="btn-secondary" onClick={onCancel}>{t("cancel")}</button>
           <button className="btn-primary" onClick={() => onApply(discountMinor, reason.trim())} disabled={!valid}>
-            Apply −{fmt(discountMinor)}
+            {t("applyDiscount")} −{fmt(discountMinor)}
           </button>
         </div>
       </div>

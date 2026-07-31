@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import type { BusinessFlags, TaxRuleRow } from "../../types";
+import type { BusinessFlags, OperationalSettings, TaxRuleRow } from "../../types";
 import type { ReportsConfig } from "../../tauri/commands";
-import { reportsConfigLoad, reportsConfigSave } from "../../tauri/commands";
+import { reportsConfigLoad, reportsConfigSave, operationalSettingsLoad, operationalSettingsSave } from "../../tauri/commands";
 
 interface BusinessTabProps {
   flags: BusinessFlags; setFlags: Dispatch<SetStateAction<BusinessFlags>>;
@@ -35,6 +35,28 @@ export default function BusinessTab(props: BusinessTabProps) {
       .then(setReportsCfg)
       .catch(() => setReportsCfg({ device_scope: "origin", device_count: 1, local_device_id: "" }));
   }, [sessionUserId]);
+
+  const [opSettings, setOpSettings] = useState<OperationalSettings | null>(null);
+  const [opSaving, setOpSaving] = useState(false);
+  const [opSaved, setOpSaved] = useState(false);
+  const [opError, setOpError] = useState<string | null>(null);
+
+  useEffect(() => {
+    operationalSettingsLoad()
+      .then(setOpSettings)
+      .catch(() => {});
+  }, []);
+
+  const handleSaveOpSettings = async () => {
+    if (!opSettings) return;
+    setOpSaving(true); setOpError(null); setOpSaved(false);
+    try {
+      await operationalSettingsSave(opSettings, sessionUserId);
+      setOpSaved(true);
+      setTimeout(() => setOpSaved(false), 2000);
+    } catch (e: unknown) { setOpError(String(e)); }
+    finally { setOpSaving(false); }
+  };
 
   const handleSaveScope = async () => {
     if (!reportsCfg) return;
@@ -175,6 +197,76 @@ export default function BusinessTab(props: BusinessTabProps) {
           </button>
         </div>
       </section>
+
+      <hr className="settings-page-divider" />
+
+      {opSettings && (
+        <>
+          <section>
+            <h3 className="settings-page-title">Loyalty</h3>
+            <p className="settings-hint">
+              Configure how loyalty points are earned. Set the number of points a customer receives for every 1 BHD spent.
+            </p>
+            <div className="ai-params-grid">
+              <label className="ai-param-row">
+                <span>Points per 1 BHD</span>
+                <input type="number" className="field-input" min={0} value={opSettings.loyalty_points_per_bhd}
+                  onChange={e => setOpSettings(s => s ? { ...s, loyalty_points_per_bhd: Number(e.target.value) } : s)} />
+              </label>
+            </div>
+          </section>
+
+          <hr className="settings-page-divider" />
+
+          <section>
+            <h3 className="settings-page-title">Data Retention</h3>
+            <p className="settings-hint">
+              Auto-delete synced data older than the configured number of days. Lower values save disk space; higher values keep more history for reports.
+            </p>
+            <div className="ai-params-grid">
+              <label className="ai-param-row">
+                <span>Keep sales (days)</span>
+                <input type="number" className="field-input" min={1} value={opSettings.retention_days_sales}
+                  onChange={e => setOpSettings(s => s ? { ...s, retention_days_sales: Number(e.target.value) } : s)} />
+              </label>
+              <label className="ai-param-row">
+                <span>Keep logs (days)</span>
+                <input type="number" className="field-input" min={1} value={opSettings.retention_days_logs}
+                  onChange={e => setOpSettings(s => s ? { ...s, retention_days_logs: Number(e.target.value) } : s)} />
+              </label>
+            </div>
+          </section>
+
+          <hr className="settings-page-divider" />
+
+          <section>
+            <h3 className="settings-page-title">Sync Intervals</h3>
+            <p className="settings-hint">
+              How often the app syncs data. Terminal mode syncs frequently for real-time stock; hub mode runs housekeeping less often. Changes take effect on the next sync cycle.
+            </p>
+            <div className="ai-params-grid">
+              <label className="ai-param-row">
+                <span>Terminal sync (seconds)</span>
+                <input type="number" className="field-input" min={2} value={opSettings.sync_interval_terminal_secs}
+                  onChange={e => setOpSettings(s => s ? { ...s, sync_interval_terminal_secs: Number(e.target.value) } : s)} />
+              </label>
+              <label className="ai-param-row">
+                <span>Hub sync (seconds)</span>
+                <input type="number" className="field-input" min={10} value={opSettings.sync_interval_hub_secs}
+                  onChange={e => setOpSettings(s => s ? { ...s, sync_interval_hub_secs: Number(e.target.value) } : s)} />
+              </label>
+            </div>
+          </section>
+
+          <div className="settings-page-actions">
+            {opError && <span className="settings-action-msg settings-action-err">{opError}</span>}
+            {opSaved && <span className="settings-action-msg">✓ Saved</span>}
+            <button className="btn-primary" onClick={handleSaveOpSettings} disabled={opSaving}>
+              {opSaving ? "Saving…" : "Save Operational Settings"}
+            </button>
+          </div>
+        </>
+      )}
 
       <hr className="settings-page-divider" />
 

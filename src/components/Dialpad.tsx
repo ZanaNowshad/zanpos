@@ -31,11 +31,12 @@ const ROWS = [
 
 export default function Dialpad({ onKey }: Props) {
   return (
-    <div className="dialpad">
+    <div className="dialpad" role="group" aria-label="Dialpad">
       {ROWS.map((row, ri) => (
         <div key={ri} className="dialpad-row">
           {row.map(k => (
             <button
+              type="button"
               key={k}
               className={`dialpad-key${k === "⌫" ? " dialpad-key-back" : ""}${k === "C" ? " dialpad-key-clear" : ""}`}
               onMouseDown={e => { e.preventDefault(); onKey(k); }}
@@ -46,8 +47,8 @@ export default function Dialpad({ onKey }: Props) {
         </div>
       ))}
       <div className="dialpad-row">
-        <button className="dialpad-key dialpad-key-wide" onMouseDown={e => { e.preventDefault(); onKey("."); }}>.</button>
-        <button className="dialpad-key dialpad-key-wide" onMouseDown={e => { e.preventDefault(); onKey("00"); }}>00</button>
+        <button type="button" className="dialpad-key dialpad-key-wide" onMouseDown={e => { e.preventDefault(); onKey("."); }}>.</button>
+        <button type="button" className="dialpad-key dialpad-key-wide" onMouseDown={e => { e.preventDefault(); onKey("00"); }}>00</button>
       </div>
     </div>
   );

@@ -10,6 +10,41 @@ use std::path::Path;
 use std::str::FromStr;
 use std::time::Duration;
 
+const LEGACY_CATALOG_REPAIR_INDEX: &str = "idx_products_active_barcode_repair";
+
+async fn prepare_legacy_migration_indexes(pool: &SqlitePool) -> bool {
+    let repair_already_applied = sqlx::query_scalar::<_, i64>(
+        "SELECT EXISTS(
+            SELECT 1 FROM _sqlx_migrations WHERE version = 30 AND success = 1
+        )",
+    )
+    .fetch_one(pool)
+    .await
+    .map(|value| value != 0)
+    .unwrap_or(false);
+
+    if repair_already_applied {
+        return false;
+    }
+
+    let sql = format!(
+        "CREATE INDEX IF NOT EXISTS {LEGACY_CATALOG_REPAIR_INDEX}
+         ON products(barcode, product_id)
+         WHERE deleted_at IS NULL AND is_active = 1 AND barcode IS NOT NULL"
+    );
+    match sqlx::query(&sql).execute(pool).await {
+        Ok(_) => {
+            tracing::info!("Prepared index for legacy catalog identity migration");
+            true
+        }
+        Err(error) if error.to_string().contains("no such table: products") => false,
+        Err(error) => {
+            tracing::warn!("Could not prepare legacy catalog migration index: {error}");
+            false
+        }
+    }
+}
+
 pub async fn init_db(db_path: &str) -> AppResult<SqlitePool> {
     // Ensure parent directory exists
     if let Some(parent) = Path::new(db_path).parent() {
@@ -57,8 +92,21 @@ pub async fn init_db(db_path: &str) -> AppResult<SqlitePool> {
         .connect_with(connect_opts)
         .await?;
 
+    // Migration 0030 compares every active product with earlier owners of the
+    // same barcode. Large legacy catalogs need this temporary covering index;
+    // otherwise SQLite may choose idx_products_active and perform an O(n²) scan
+    // on the UI thread during startup.
+    let prepared_catalog_repair = prepare_legacy_migration_indexes(&pool).await;
+
     // Run migrations
     sqlx::migrate!("./migrations").run(&pool).await?;
+
+    if prepared_catalog_repair {
+        let sql = format!("DROP INDEX IF EXISTS {LEGACY_CATALOG_REPAIR_INDEX}");
+        if let Err(error) = sqlx::query(&sql).execute(&pool).await {
+            tracing::warn!("Could not remove temporary catalog migration index: {error}");
+        }
+    }
 
     // Reset rows that exhausted sync_attempts under the old bug where updated_at was
     // omitted from Supabase payloads, causing PostgreSQL 23502 on every upsert.
@@ -68,6 +116,7 @@ pub async fn init_db(db_path: &str) -> AppResult<SqlitePool> {
         "branches",
         "categories",
         "products",
+        "product_barcodes",
         "stock_levels",
         "users",
         "tax_rules",
@@ -97,4 +146,56 @@ pub async fn init_db(db_path: &str) -> AppResult<SqlitePool> {
 
     tracing::info!("Database initialized at {}", db_path);
     Ok(pool)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::Row;
+
+    #[tokio::test]
+    async fn legacy_catalog_repair_uses_barcode_index() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE products (
+                product_id TEXT PRIMARY KEY,
+                barcode TEXT,
+                is_active INTEGER NOT NULL,
+                deleted_at TEXT,
+                updated_at TEXT,
+                sync_status TEXT,
+                sync_attempts INTEGER NOT NULL DEFAULT 0
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("CREATE INDEX idx_products_active ON products(is_active, deleted_at)")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        prepare_legacy_migration_indexes(&pool).await;
+
+        let plan = sqlx::query(
+            "EXPLAIN QUERY PLAN
+             SELECT 1 FROM products canonical
+             WHERE canonical.deleted_at IS NULL
+               AND canonical.is_active = 1
+               AND canonical.barcode = ?
+               AND canonical.product_id < ?",
+        )
+        .bind("123")
+        .bind("P2")
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.get::<String, _>(3))
+        .collect::<Vec<_>>();
+
+        assert!(plan
+            .iter()
+            .any(|row| row.contains("idx_products_active_barcode_repair")));
+    }
 }

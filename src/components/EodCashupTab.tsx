@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { EodCashupReport } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney } from "../money";
 import { reportEodCashup } from "../tauri/commands";
+import { useLanguage } from "../hooks/useLanguage";
+import { backOfficeTranslator } from "../i18n/backOfficeStrings";
 
 const EXP = DEVICE.currency_exponent;
 const CUR = DEVICE.currency;
@@ -12,6 +14,9 @@ function fmtOpt(n: number | null | undefined) { return n != null ? fmt(n) : "—
 function isoDate(d: Date) { return d.toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" }); }
 
 export default function EodCashupTab({ sessionUserId }: { sessionUserId: string }) {
+  const { language } = useLanguage();
+  const t = useMemo(() => backOfficeTranslator(language), [language]);
+  const locale = language === "ar" ? "ar-BH" : "en-BH";
   const [date, setDate] = useState(isoDate(new Date()));
   const [report, setReport] = useState<EodCashupReport | null>(null);
   const [loading, setLoading] = useState(false);
@@ -24,7 +29,7 @@ export default function EodCashupTab({ sessionUserId }: { sessionUserId: string 
       const data = await reportEodCashup(sessionUserId, DEVICE.branch_id, date);
       setReport(data);
     } catch (e: unknown) {
-      setError(typeof e === "string" ? e : "Failed to load EOD report");
+      setError(typeof e === "string" ? e : t("failedLoadReport"));
     } finally {
       setLoading(false);
     }
@@ -32,20 +37,20 @@ export default function EodCashupTab({ sessionUserId }: { sessionUserId: string 
 
   return (
     <div className="tab-content eod-cashup-tab">
-      <h3 className="tab-title">End-of-Day Cash-Up</h3>
+      <h3 className="tab-title">{t("endOfDayCashup")}</h3>
 
       <div className="report-filters">
-        <label className="field-label">Business Date</label>
+        <label className="field-label">{t("businessDate")}</label>
         <input className="field-input date-input" type="date" value={date} onChange={e => setDate(e.target.value)} />
         <button className="btn-primary" onClick={load} disabled={loading}>
-          {loading ? "Loading…" : "Run Report"}
+          {loading ? t("loading") : t("runReport")}
         </button>
       </div>
 
       {error && <div className="modal-error">{error}</div>}
 
       {report && report.shifts.length === 0 && (
-        <div className="report-empty">No shifts found for {report.date}.</div>
+        <div className="report-empty">{t("noShiftsForDate")} {report.date}.</div>
       )}
 
       {report && report.shifts.length > 0 && (
@@ -53,15 +58,15 @@ export default function EodCashupTab({ sessionUserId }: { sessionUserId: string 
           {/* Summary banner */}
           <div className="eod-summary-banner">
             <div className="eod-summary-item">
-              <div className="eod-summary-label">Total Net Sales</div>
+              <div className="eod-summary-label">{t("totalNetSales")}</div>
               <div className="eod-summary-value">{fmt(report.total_net_minor)}</div>
             </div>
             <div className="eod-summary-item">
-              <div className="eod-summary-label">Total Cash</div>
+              <div className="eod-summary-label">{t("totalCash")}</div>
               <div className="eod-summary-value">{fmt(report.total_cash_minor)}</div>
             </div>
             <div className="eod-summary-item">
-              <div className="eod-summary-label">Total Counted</div>
+              <div className="eod-summary-label">{t("totalCounted")}</div>
               <div className="eod-summary-value">{fmtOpt(report.total_counted_minor)}</div>
             </div>
             <div className={`eod-summary-item ${
@@ -69,7 +74,7 @@ export default function EodCashupTab({ sessionUserId }: { sessionUserId: string 
               report.total_variance_minor < 0 ? "eod-summary-under" :
               report.total_variance_minor > 0 ? "eod-summary-over" : "eod-summary-exact"
             }`}>
-              <div className="eod-summary-label">Variance</div>
+              <div className="eod-summary-label">{t("variance")}</div>
               <div className="eod-summary-value">
                 {report.total_variance_minor == null ? "—" :
                   `${report.total_variance_minor >= 0 ? "+" : ""}${fmt(report.total_variance_minor)}`}
@@ -84,50 +89,51 @@ export default function EodCashupTab({ sessionUserId }: { sessionUserId: string 
                 <div className="eod-shift-header">
                   <span className="eod-shift-cashier">{s.cashier_name}</span>
                   <span className={`eod-shift-status ${s.closed_at ? "eod-closed" : "eod-open"}`}>
-                    {s.closed_at ? "Closed" : "Open"}
+                    {s.closed_at ? t("closed") : t("open")}
                   </span>
                   <span className="eod-shift-time">
-                    {new Date(s.opened_at).toLocaleTimeString("en-BH", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bahrain" })}
+                    {new Date(s.opened_at).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bahrain" })}
+                    {" "}<span className="icon-directional" aria-hidden="true">→</span>{" "}
                     {s.closed_at
-                      ? ` → ${new Date(s.closed_at).toLocaleTimeString("en-BH", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bahrain" })}`
-                      : " → now"}
+                      ? new Date(s.closed_at).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Bahrain" })
+                      : t("now")}
                   </span>
                 </div>
                 <div className="eod-shift-grid">
                   <div className="eod-shift-row">
-                    <span>Opening Float</span>
+                    <span>{t("openingFloat")}</span>
                     <span>+ {fmt(s.opening_minor)}</span>
                   </div>
                   <div className="eod-shift-row">
-                    <span>Cash Sales</span>
+                    <span>{t("cashSales")}</span>
                     <span>+ {fmt(s.cash_sales_minor)}</span>
                   </div>
                   {s.paid_in_minor > 0 && (
                     <div className="eod-shift-row">
-                      <span>Paid In</span>
+                      <span>{t("paidIn")}</span>
                       <span>+ {fmt(s.paid_in_minor)}</span>
                     </div>
                   )}
                   {s.paid_out_minor > 0 && (
                     <div className="eod-shift-row eod-row-deduct">
-                      <span>Paid Out</span>
+                      <span>{t("paidOut")}</span>
                       <span>- {fmt(s.paid_out_minor)}</span>
                     </div>
                   )}
                   {s.safe_drop_minor > 0 && (
                     <div className="eod-shift-row eod-row-deduct">
-                      <span>Safe Drop</span>
+                      <span>{t("safeDrop")}</span>
                       <span>- {fmt(s.safe_drop_minor)}</span>
                     </div>
                   )}
                   <div className="eod-shift-row eod-row-expected">
-                    <span>Expected in Drawer</span>
+                    <span>{t("expectedInDrawer")}</span>
                     <span>{fmt(s.expected_minor)}</span>
                   </div>
                   {s.counted_minor != null && (
                     <>
                       <div className="eod-shift-row">
-                        <span>Counted</span>
+                        <span>{t("counted")}</span>
                         <span>{fmt(s.counted_minor)}</span>
                       </div>
                       <div className={`eod-shift-row eod-row-variance ${
@@ -135,7 +141,7 @@ export default function EodCashupTab({ sessionUserId }: { sessionUserId: string 
                         s.variance_minor < 0 ? "eod-variance-under" :
                         s.variance_minor > 0 ? "eod-variance-over" : "eod-variance-exact"
                       }`}>
-                        <span>Variance</span>
+                        <span>{t("variance")}</span>
                         <span>
                           {s.variance_minor == null ? "—" :
                             `${s.variance_minor >= 0 ? "+" : ""}${fmt(s.variance_minor)}`}
@@ -144,7 +150,7 @@ export default function EodCashupTab({ sessionUserId }: { sessionUserId: string 
                     </>
                   )}
                   <div className="eod-shift-row eod-row-net">
-                    <span>Net Sales</span>
+                    <span>{t("netSales")}</span>
                     <span>{fmt(s.net_sales_minor)}</span>
                   </div>
                 </div>

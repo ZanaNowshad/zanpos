@@ -11,9 +11,12 @@ import {
   adminBulkImportProducts,
 } from "../tauri/commands";
 import type { BulkCategoryRow, BulkProductRow, BulkImportResult } from "../tauri/commands";
+import type { PullSummary } from "../tauri/commands";
 import WhatsAppQRModal from "../components/WhatsAppQRModal";
+import OnboardingWizard from "../components/onboarding/OnboardingWizard";
 
 interface Props {
+  initialConfig: AppConfig;
   onComplete: (config: AppConfig) => void;
   onMigrate?: (config: AppConfig) => void;
 }
@@ -43,6 +46,70 @@ const TIMEZONES = [
 // Steps: 1=Welcome/path 2=Cloud(optional) 3=StoreInfo 4=Contact 5=Owner 6=Review
 
 type NewStep = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+
+type JoinChecklistStatus = "ok" | "pending";
+
+export interface JoinSyncChecklistItem {
+  label: "Products" | "Prices" | "Barcodes" | "Users" | "Stock" | "Devices" | "Suppliers" | "Settings" | "Pending sync" | "Hub Truth";
+  count: number;
+  status: JoinChecklistStatus;
+}
+
+export function buildJoinSyncChecklist(summary: PullSummary | null): {
+  items: JoinSyncChecklistItem[];
+  showRetry: boolean;
+  canEnterPos: boolean;
+  blockingTables: string[];
+  summary: string;
+} {
+  const products = (summary?.products ?? 0) + (summary?.categories ?? 0);
+  const prices = summary?.product_prices ?? 0;
+  const barcodes = summary?.product_barcodes ?? 0;
+  const users = summary?.users ?? 0;
+  const stock = summary?.stock_levels ?? 0;
+  const devices = summary?.devices ?? 0;
+  const suppliers = summary?.suppliers ?? 0;
+  const settings = summary?.settings ?? 0;
+  const pendingSync = summary?.pending_sync ?? 0;
+  const truthScore = summary?.consistency_score ?? 0;
+  const hubTruthOk = Boolean(
+    summary?.hub_truth_ok
+      && summary.schema_match
+      && truthScore === 100
+      && pendingSync === 0,
+  );
+  const items: JoinSyncChecklistItem[] = [
+    { label: "Products", count: products, status: products > 0 ? "ok" : "pending" },
+    { label: "Prices", count: prices, status: prices > 0 ? "ok" : "pending" },
+    { label: "Barcodes", count: barcodes, status: barcodes > 0 ? "ok" : "pending" },
+    { label: "Users", count: users, status: users > 0 ? "ok" : "pending" },
+    { label: "Stock", count: stock, status: stock > 0 ? "ok" : "pending" },
+    { label: "Devices", count: devices, status: devices > 0 ? "ok" : "pending" },
+    { label: "Suppliers", count: suppliers, status: suppliers > 0 ? "ok" : "pending" },
+    { label: "Settings", count: settings, status: settings > 0 ? "ok" : "pending" },
+    { label: "Pending sync", count: pendingSync, status: pendingSync === 0 ? "ok" : "pending" },
+    { label: "Hub Truth", count: truthScore, status: hubTruthOk ? "ok" : "pending" },
+  ];
+  const blockingTables = summary?.mismatched_tables ?? [];
+  const blockers: string[] = [];
+  if (blockingTables.length > 0) blockers.push(`Mismatched: ${blockingTables.join(", ")}`);
+  if (summary && !summary.schema_match) blockers.push("Schema version differs from the hub");
+  if (pendingSync > 0) blockers.push(`${pendingSync} local change${pendingSync === 1 ? "" : "s"} still pending`);
+
+  return {
+    items,
+    showRetry: Boolean(summary && !hubTruthOk),
+    canEnterPos: hubTruthOk,
+    blockingTables,
+    summary: !summary
+      ? "Waiting for the hub snapshot."
+      : hubTruthOk
+        ? "This terminal matches the hub truth snapshot."
+        : blockers.length > 0
+          ? blockers.join(" · ")
+          : summary.error || "This terminal has not matched the hub truth snapshot yet.",
+  };
+}
 
 // ── CSV helpers (shared with step 8) ─────────────────────────────────────────
 
@@ -205,7 +272,7 @@ function CsvSection({ title, mode, userId, onImported }: CsvSectionProps) {
           </div>
           {err && <div className="modal-error">{err}</div>}
           <div className="wiz-csv-preview-actions">
-            <button className="setup-btn-skip" type="button" onClick={() => { setParsed([]); setErr(null); }}>← Cancel</button>
+            <button className="setup-btn-skip" type="button" onClick={() => { setParsed([]); setErr(null); }}><span className="icon-directional" aria-hidden="true">←</span> Cancel</button>
             <button className="setup-btn-primary" type="button" onClick={runImport} disabled={importing || rows.length === 0}>
               {importing ? "Importing…" : `Import ${rows.length} ${mode}`}
             </button>
@@ -353,8 +420,9 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
         <div className="setup-content">
           <h2 className="setup-title">Multi-Terminal Hub</h2>
           <p className="setup-body">
-            This device can act as the Store Hub — other tills connect to it over
-            your shop WiFi. No internet needed.
+            Use this on the main computer for the store. It becomes the source
+            hub for products, stock, users, settings, sales, payments, and reports
+            across your other POS terminals on the same shop WiFi.
           </p>
 
           <label className="field-label">
@@ -375,7 +443,8 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
           )}
 
           <p className="setup-hint">
-            Connection details (IP + store token) appear in Back Office → Settings → Hub after setup.
+            Set up the first device as the Hub. On every extra till, choose Join Existing Store
+            and enter the Hub address plus store token from Back Office → Settings → Hub.
           </p>
 
           <div className="setup-actions">
@@ -383,7 +452,7 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
               Skip for now
             </button>
             <button className="setup-btn-primary" onClick={() => setStep(3)}>
-              Continue →
+              Continue <span className="icon-directional" aria-hidden="true">→</span>
             </button>
           </div>
         </div>
@@ -417,8 +486,8 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
 
           {error && <div className="modal-error">{error}</div>}
           <div className="setup-actions">
-            <button className="setup-btn-secondary" onClick={() => { setError(null); setStep(2); }}>← Back</button>
-            <button className="setup-btn-primary" onClick={goNext}>Next →</button>
+            <button className="setup-btn-secondary" onClick={() => { setError(null); setStep(2); }}><span className="icon-directional" aria-hidden="true">←</span> Back</button>
+            <button className="setup-btn-primary" onClick={goNext}>Next <span className="icon-directional" aria-hidden="true">→</span></button>
           </div>
         </div>
       )}
@@ -448,8 +517,8 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
           <input className="field-input" type="text" placeholder="Thank you for your purchase!" value={receiptFooter} onChange={e => setReceiptFooter(e.target.value)} />
 
           <div className="setup-actions">
-            <button className="setup-btn-secondary" onClick={() => { setError(null); setStep(3); }}>← Back</button>
-            <button className="setup-btn-primary" onClick={goNext}>Next →</button>
+            <button className="setup-btn-secondary" onClick={() => { setError(null); setStep(3); }}><span className="icon-directional" aria-hidden="true">←</span> Back</button>
+            <button className="setup-btn-primary" onClick={goNext}>Next <span className="icon-directional" aria-hidden="true">→</span></button>
           </div>
         </div>
       )}
@@ -492,9 +561,9 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
           {error && <div className="modal-error">{error}</div>}
 
           <div className="setup-actions">
-            <button className="setup-btn-secondary" onClick={() => { setError(null); setStep(4); }}>← Back</button>
+            <button className="setup-btn-secondary" onClick={() => { setError(null); setStep(4); }}><span className="icon-directional" aria-hidden="true">←</span> Back</button>
             <button className="setup-btn-primary" onClick={goNext}>
-              Next →
+              Next <span className="icon-directional" aria-hidden="true">→</span>
             </button>
           </div>
 
@@ -528,8 +597,8 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
 
           {error && <div className="modal-error">{error}</div>}
           <div className="setup-actions">
-            <button className="setup-btn-secondary" onClick={() => { setError(null); setStep(5); }}>← Back</button>
-            <button className="setup-btn-primary" onClick={goNext}>Review →</button>
+            <button className="setup-btn-secondary" onClick={() => { setError(null); setStep(5); }}><span className="icon-directional" aria-hidden="true">←</span> Back</button>
+            <button className="setup-btn-primary" onClick={goNext}>Review <span className="icon-directional" aria-hidden="true">→</span></button>
           </div>
         </div>
       )}
@@ -542,7 +611,7 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
 
           <div className="setup-review">
             {enableHub
-              ? <div className="setup-review-row"><span>Hub</span><strong>✓ Hub enabled</strong></div>
+              ? <div className="setup-review-row"><span>Hub</span><strong>Hub enabled on this device</strong></div>
               : <div className="setup-review-row setup-review-warn"><span>Hub</span><strong>Not enabled (can enable later in Settings)</strong></div>
             }
             <div className="setup-review-row"><span>Store name</span><strong>{storeName}</strong></div>
@@ -563,7 +632,7 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
           {error && <div className="modal-error">{error}</div>}
 
           <div className="setup-actions setup-actions-back">
-            <button className="setup-btn-secondary" onClick={() => { setError(null); setStep(6); }} disabled={anyLoading}>← Back</button>
+            <button className="setup-btn-secondary" onClick={() => { setError(null); setStep(6); }} disabled={anyLoading}><span className="icon-directional" aria-hidden="true">←</span> Back</button>
           </div>
 
           <div className="setup-launch-options">
@@ -587,7 +656,7 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
                 <div className="setup-launch-card-desc">Upload your categories and products now using a spreadsheet. Quick setup in minutes.</div>
               </div>
               <button className="setup-btn-primary" onClick={handleGoImportCSV} disabled={anyLoading}>
-                {csvLoading ? "Setting up…" : "Upload CSV →"}
+                {csvLoading ? "Setting up…" : <>Upload CSV <span className="icon-directional" aria-hidden="true">→</span></>}
               </button>
             </div>
 
@@ -606,7 +675,7 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
                 }
                 onMigrate(cfg);
               }} disabled={anyLoading}>
-                {migrateLoading ? "Setting up…" : "Import with AI →"}
+                {migrateLoading ? "Setting up…" : <>Import with AI <span className="icon-directional" aria-hidden="true">→</span></>}
               </button>
             </div>
           </div>
@@ -666,8 +735,53 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
   const [error, setError]         = useState<string | null>(null);
   const [loading, setLoading]     = useState(false);
   const [pullStatus, setPullStatus] = useState<string | null>(null);
+  const [joinedConfig, setJoinedConfig] = useState<AppConfig | null>(null);
+  const [pullSummary, setPullSummary] = useState<PullSummary | null>(null);
 
   const clearError = () => setError(null);
+
+  const runInitialPull = async (): Promise<PullSummary | null> => {
+    setLoading(true);
+    setError(null);
+    setPullStatus("Downloading store data to this terminal...");
+    try {
+      const summary = await setupPullCatalog();
+      setPullSummary(summary);
+      if (summary.rows_pulled > 0) {
+        setPullStatus(`Downloaded ${summary.rows_pulled} synced records`);
+      } else if (!summary.ok) {
+        setPullStatus("Initial sync incomplete - ZANPOS will retry automatically");
+      } else {
+        setPullStatus("Connected and ready");
+      }
+      return summary;
+    } catch (e) {
+      setPullStatus("Initial sync incomplete - use Retry before opening POS");
+      setError(typeof e === "string" ? e : "Could not finish the initial sync.");
+      setPullSummary({
+        ok: false,
+        rows_pulled: 0,
+        error: typeof e === "string" ? e : String(e),
+        products: 0,
+        categories: 0,
+        product_barcodes: 0,
+        product_prices: 0,
+        users: 0,
+        devices: 0,
+        stock_levels: 0,
+        suppliers: 0,
+        settings: 0,
+        pending_sync: 0,
+        consistency_score: 0,
+        schema_match: false,
+        hub_truth_ok: false,
+        mismatched_tables: [],
+      });
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleValidateCreds = async () => {
     if (!hubUrl.trim()) { setError("Hub address is required"); return; }
@@ -696,7 +810,9 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
     setLoading(true);
     setError(null);
     setStep("joining");
-    setPullStatus("Connecting to store…");
+    setPullSummary(null);
+    setJoinedConfig(null);
+    setPullStatus("Connecting to the hub store...");
     try {
       const cfg = await hubJoin({
         hub_url: hubUrl.trim(),
@@ -704,24 +820,14 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
         device_name: deviceName.trim(),
         device_code: deviceCode.trim().toUpperCase(),
       });
+      setJoinedConfig(cfg);
 
-      setPullStatus("Pulling catalog from store…");
-      try {
-        const summary = await setupPullCatalog();
-        if (summary.rows_pulled > 0) {
-          setPullStatus(`✓ Downloaded ${summary.rows_pulled} items`);
-        } else if (!summary.ok) {
-          setPullStatus("⚠ Catalog pull incomplete — sync will retry automatically");
-        } else {
-          setPullStatus("✓ Connected");
-        }
+      const summary = await runInitialPull();
+      const checklist = buildJoinSyncChecklist(summary);
+      if (summary?.ok && !checklist.showRetry) {
         await new Promise(r => setTimeout(r, 800));
-      } catch {
-        setPullStatus("⚠ Initial pull incomplete — sync will retry automatically");
-        await new Promise(r => setTimeout(r, 1200));
+        onComplete(cfg);
       }
-
-      onComplete(cfg);
     } catch (e: unknown) {
       const raw = typeof e === "string" ? e : String(e);
       const friendlyMsg =
@@ -739,6 +845,17 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
     }
   };
 
+  const handleRetryPull = async () => {
+    const summary = await runInitialPull();
+    const checklist = buildJoinSyncChecklist(summary);
+    if (joinedConfig && summary?.ok && !checklist.showRetry) {
+      await new Promise(r => setTimeout(r, 500));
+      onComplete(joinedConfig);
+    }
+  };
+
+  const joinChecklist = buildJoinSyncChecklist(pullSummary);
+
   return (
     <div className="setup-panel">
       {step === "creds" && (
@@ -746,8 +863,9 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
           <h2 className="setup-title">Join Existing Store</h2>
           <p className="setup-body">
             Enter the hub address and store token shown on the hub device's
-            Back Office → Settings → Hub screen. This terminal will pull the
-            store's catalog, users, and configuration automatically over your shop WiFi.
+            Back Office → Settings → Hub screen. This terminal will download the
+            store catalog, stock, users, devices, settings, sales history, payments,
+            deliveries, and reports over your shop WiFi.
           </p>
 
           <label className="field-label">Hub Address *</label>
@@ -771,10 +889,10 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
           {error && <div className="modal-error">{error}</div>}
           <div className="setup-actions">
             {onBack && (
-              <button className="setup-btn-secondary" onClick={onBack} disabled={loading}>← Back</button>
+              <button className="setup-btn-secondary" onClick={onBack} disabled={loading}><span className="icon-directional" aria-hidden="true">←</span> Back</button>
             )}
             <button className="setup-btn-primary" onClick={handleValidateCreds} disabled={loading}>
-              {loading ? "Checking…" : "Next →"}
+              {loading ? "Checking…" : <>Next <span className="icon-directional" aria-hidden="true">→</span></>}
             </button>
           </div>
         </div>
@@ -785,11 +903,12 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
           <h2 className="setup-title">Register This Terminal</h2>
           {storeName && (
             <p className="setup-body" style={{ color: "var(--success)", fontWeight: 500 }}>
-              ✓ Found store: {storeName}
+              Found store: {storeName}
             </p>
           )}
           <p className="setup-body">
-            Give this terminal a unique name and short code. The code appears on receipts.
+            Give this terminal a unique name and short code. After joining, this device keeps
+            its own local database and syncs changes with the hub automatically.
           </p>
 
           <label className="field-label">Terminal Name *</label>
@@ -812,7 +931,7 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
 
           {error && <div className="modal-error">{error}</div>}
           <div className="setup-actions">
-            <button className="setup-btn-secondary" onClick={() => { setError(null); setStep("creds"); }} disabled={loading}>← Back</button>
+            <button className="setup-btn-secondary" onClick={() => { setError(null); setStep("creds"); }} disabled={loading}><span className="icon-directional" aria-hidden="true">←</span> Back</button>
             <button className="setup-btn-primary" onClick={handleJoin} disabled={loading}>
               {loading ? "Joining…" : "Join Store 🔗"}
             </button>
@@ -822,16 +941,49 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
 
       {step === "joining" && (
         <div className="setup-content" style={{ textAlign: "center", padding: "40px 0" }}>
-          <div className="app-splash-spinner" style={{ margin: "0 auto 20px" }} />
-          <p style={{ marginBottom: 16 }}>{pullStatus ?? "Connecting to store and downloading catalog…"}</p>
-          {loading && (
-            <button
-              className="setup-btn-skip"
-              onClick={() => { setStep("device"); setLoading(false); setPullStatus(null); }}
-            >
+          {loading && <div className="app-splash-spinner" style={{ margin: "0 auto 20px" }} />}
+          <p style={{ marginBottom: 16 }}>{pullStatus ?? "Connecting to store and downloading synced data..."}</p>
+
+          {pullSummary && (
+            <div className="setup-sync-review">
+              <div className={`setup-sync-summary ${joinChecklist.canEnterPos ? "setup-sync-summary-ok" : "setup-sync-summary-blocked"}`}>
+                {joinChecklist.summary}
+              </div>
+              <div className="setup-sync-checklist">
+                {joinChecklist.items.map(item => (
+                  <div key={item.label} className={`setup-sync-check ${item.status === "ok" ? "setup-sync-ok" : "setup-sync-pending"}`}>
+                    <span className="setup-sync-mark">{item.status === "ok" ? "OK" : "..."}</span>
+                    <span>{item.label}</span>
+                    <strong>{item.count}</strong>
+                  </div>
+                ))}
+              </div>
+              {joinChecklist.blockingTables.length > 0 && (
+                <div className="setup-sync-blockers" aria-label="Tables not matching hub">
+                  {joinChecklist.blockingTables.map(table => <span key={table}>{table}</span>)}
+                </div>
+              )}
+            </div>
+          )}
+
+          {error && <div className="modal-error">{error}</div>}
+
+          {joinChecklist.showRetry ? (
+            <div className="setup-actions" style={{ justifyContent: "center" }}>
+              <button className="setup-btn-secondary" onClick={() => setStep("device")} disabled={loading}>Back</button>
+              <button className="setup-btn-primary" onClick={handleRetryPull} disabled={loading}>
+                {loading ? "Retrying..." : "Retry Sync"}
+              </button>
+            </div>
+          ) : loading ? (
+            <button className="setup-btn-skip" onClick={() => { setStep("device"); setLoading(false); setPullStatus(null); }}>
               Cancel
             </button>
-          )}
+          ) : joinedConfig ? (
+            <button className="setup-btn-primary" onClick={() => onComplete(joinedConfig)}>
+              Start POS
+            </button>
+          ) : null}
         </div>
       )}
     </div>
@@ -839,14 +991,23 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
 }
 
 // ─── Root SetupWizard — path selector ────────────────────────────────────────
+//
+// Three mutually exclusive first-run routes. Only the guided "new store" flow
+// lives outside this file; the other two are defined above.
 
-type SetupPath = null | "new" | "join";
+type SetupPath = null | "new" | "join" | "migrate";
 
-export default function SetupWizard({ onComplete, onMigrate }: Props) {
+export default function SetupWizard({ initialConfig, onComplete, onMigrate }: Props) {
   const [path, setPath] = useState<SetupPath>(null);
 
-  if (path === "new")  return <div className="setup-screen"><NewStoreWizard onComplete={onComplete} onMigrate={onMigrate ?? onComplete} /></div>;
-  if (path === "join") return <div className="setup-screen"><JoinStoreWizard onComplete={onComplete} onBack={() => setPath(null)} /></div>;
+  // "new" is the guided six-step flow (store → owner → WhatsApp → products →
+  // printer → go live), resumable across restarts. "migrate" keeps the older
+  // one-shot flow, which is the only route to the AI import-from-another-POS
+  // agent and to enabling the Hub during setup — neither exists in the guided
+  // flow, so this path must not be folded away.
+  if (path === "new")     return <OnboardingWizard onComplete={onComplete} />;
+  if (path === "migrate") return <div className="setup-screen"><NewStoreWizard onComplete={onComplete} onMigrate={onMigrate ?? onComplete} /></div>;
+  if (path === "join")    return <div className="setup-screen"><JoinStoreWizard onComplete={onComplete} onBack={() => setPath(null)} /></div>;
 
   // ── Path selector ──────────────────────────────────────────────────────────
   return (
@@ -861,14 +1022,32 @@ export default function SetupWizard({ onComplete, onMigrate }: Props) {
             connect to it for multi-terminal operation.
           </p>
           <p className="setup-body">What would you like to do?</p>
+          <div className="setup-source-card" aria-label="Current database source">
+            <span>Current data source</span>
+            <code>{initialConfig.database_path || "Database path unavailable"}</code>
+            <small>
+              Setup is {initialConfig.setup_complete ? "complete" : "not complete"} for {initialConfig.branch_name} ({initialConfig.branch_code}) on device {initialConfig.device_id.slice(0, 8)}.
+            </small>
+          </div>
 
           <div className="setup-path-cards">
             <button className="setup-path-card" onClick={() => setPath("new")}>
               <span className="setup-path-icon">🏪</span>
               <span className="setup-path-title">New Store</span>
               <span className="setup-path-desc">
-                Set up a brand-new store. You'll configure your store details,
-                optionally enable the Hub, and create your owner account.
+                Set up a brand-new store, guided step by step: store details and
+                owner account, WhatsApp, your products, a printer test, and your
+                public shop. You can stop and pick up where you left off.
+              </span>
+            </button>
+
+            <button className="setup-path-card" onClick={() => setPath("migrate")}>
+              <span className="setup-path-icon">🤖</span>
+              <span className="setup-path-title">Move from Another POS</span>
+              <span className="setup-path-desc">
+                Set up a new store and bring your existing data with you — an
+                AI-guided import from SQL Server, SQLite, Access, or MySQL.
+                Also the place to enable the Hub during setup.
               </span>
             </button>
 

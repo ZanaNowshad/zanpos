@@ -324,13 +324,13 @@ impl Cart {
             }
         }
         let gross = self.gross_total();
-        if gross < 0 || gross > MAX_MINOR {
+        if !(0..=MAX_MINOR).contains(&gross) {
             return Err(AppError::Validation(format!(
                 "Cart gross total is out of valid range ({gross})."
             )));
         }
         let net = self.net_total();
-        if net < 0 || net > MAX_MINOR {
+        if !(0..=MAX_MINOR).contains(&net) {
             return Err(AppError::Validation(format!(
                 "Cart net total is out of valid range ({net})."
             )));

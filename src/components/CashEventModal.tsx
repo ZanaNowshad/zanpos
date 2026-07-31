@@ -1,8 +1,11 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { DEVICE } from "../types";
 import { formatMoney, parseMoney } from "../money";
 import { cashEventCreate, printReceiptRaw } from "../tauri/commands";
 import Dialpad, { applyDialpadKey } from "./Dialpad";
+import { useLanguage } from "../hooks/useLanguage";
+import { modalTranslator } from "../i18n/modalStrings";
+import { detailTranslator } from "../i18n/detailStrings";
 
 interface Props {
   shiftId:     string;
@@ -26,6 +29,9 @@ const TYPE_META = {
 } as const;
 
 export default function CashEventModal({ shiftId, userId, cashierName, onDone, onCancel }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => modalTranslator(language), [language]);
+  const dt = useMemo(() => detailTranslator(language), [language]);
   const [eventType, setEventType] = useState<"paid_in" | "paid_out" | "safe_drop">("paid_in");
   const [amount, setAmount]       = useState("");
   const [note, setNote]           = useState("");
@@ -39,6 +45,8 @@ export default function CashEventModal({ shiftId, userId, cashierName, onDone, o
   const exp = DEVICE.currency_exponent;
   const cur = DEVICE.currency;
   const meta = TYPE_META[eventType];
+  const displayLabel = eventType === "paid_in" ? t("paidIn") : eventType === "safe_drop" ? t("safeDrop") : t("paidOut");
+  const description = eventType === "paid_in" ? dt("paidInDescription") : eventType === "safe_drop" ? dt("safeDropDescription") : dt("paidOutDescription");
 
   // Parse amount using integer arithmetic
   const amountMinor = amount ? parseMoney(amount, exp) : 0;
@@ -61,7 +69,7 @@ export default function CashEventModal({ shiftId, userId, cashierName, onDone, o
 
   const handleConfirm = async () => {
     if (!canConfirm) {
-      setError(needsNote && !note.trim() ? "A reason is required." : "Enter a valid amount.");
+      setError(needsNote && !note.trim() ? dt("reasonRequired") : dt("validAmountRequired"));
       return;
     }
     setLoading(true);
@@ -70,9 +78,9 @@ export default function CashEventModal({ shiftId, userId, cashierName, onDone, o
       await cashEventCreate(shiftId, eventType, amountMinor, note.trim() || undefined, userId);
       setRecorded({ type: eventType, amountMinor, note: note.trim(), at: new Date() });
     } catch (e: unknown) {
-      const msg = typeof e === "string" ? e : "Failed to record cash event";
+      const msg = typeof e === "string" ? e : dt("failedCashEvent");
       setError(msg.toLowerCase().includes("not permitted") || msg.toLowerCase().includes("permission")
-        ? "Only managers and owners can record cash events." : msg);
+        ? dt("cashEventPermission") : msg);
     } finally {
       setLoading(false);
     }
@@ -111,16 +119,16 @@ export default function CashEventModal({ shiftId, userId, cashierName, onDone, o
         <div className="cash-event-shell cash-event-success-shell">
           <div className="cash-event-success">
             <div className="cash-event-success-icon" style={{ color: m.color }}>✓</div>
-            <div className="cash-event-success-type">{m.label}</div>
+            <div className="cash-event-success-type">{recorded.type === "paid_in" ? t("paidIn") : recorded.type === "safe_drop" ? t("safeDrop") : t("paidOut")}</div>
             <div className="cash-event-success-amount" style={{ color: m.color }}>
               {sign} {cur} {formatMoney(recorded.amountMinor, exp)}
             </div>
             {recorded.note && <div className="cash-event-success-note">{recorded.note}</div>}
             <div className="cash-event-success-actions">
-              <button className="dialpad-cancel-btn" style={{ flex: 1 }} onClick={onDone}>Done</button>
+              <button className="dialpad-cancel-btn" style={{ flex: 1 }} onClick={onDone}>{t("done")}</button>
               <button className="dialpad-confirm-btn" style={{ flex: 1, padding: "14px" }} onClick={handlePrint} disabled={printing}>
                 <span className="dialpad-confirm-icon">🖨</span>
-                <span className="dialpad-confirm-label">{printing ? "Printing…" : "Print Receipt"}</span>
+                <span className="dialpad-confirm-label">{printing ? dt("printing") : dt("printReceipt")}</span>
               </button>
             </div>
           </div>
@@ -137,24 +145,24 @@ export default function CashEventModal({ shiftId, userId, cashierName, onDone, o
         {/* ── Left: form ── */}
         <div className="modal cash-event-left">
 
-          <h2 className="modal-title">Cash Drawer</h2>
+          <h2 className="modal-title">{t("cashDrawerReconciliation")}</h2>
 
           {/* Event type tabs */}
           <div className="ce-type-tabs">
-            {(["paid_in", "paid_out", "safe_drop"] as const).map(t => (
+            {(["paid_in", "paid_out", "safe_drop"] as const).map(type => (
               <button
-                key={t}
-                className={`ce-type-tab${eventType === t ? " ce-type-tab-active" : ""}`}
-                style={eventType === t ? { borderColor: TYPE_META[t].color, color: TYPE_META[t].color } : {}}
-                onClick={() => { setEventType(t); setError(null); }}
+                key={type}
+                className={`ce-type-tab${eventType === type ? " ce-type-tab-active" : ""}`}
+                style={eventType === type ? { borderColor: TYPE_META[type].color, color: TYPE_META[type].color } : {}}
+                onClick={() => { setEventType(type); setError(null); }}
               >
-                <span className="ce-tab-icon">{TYPE_META[t].icon}</span>
-                <span className="ce-tab-label">{TYPE_META[t].label}</span>
+                <span className="ce-tab-icon">{TYPE_META[type].icon}</span>
+                <span className="ce-tab-label">{type === "paid_in" ? t("paidIn") : type === "safe_drop" ? t("safeDrop") : t("paidOut")}</span>
               </button>
             ))}
           </div>
 
-          <p className="ce-desc">{meta.desc}</p>
+          <p className="ce-desc">{description}</p>
 
           {/* Amount display (touch-input style) */}
           <div className="ce-amount-block">
@@ -168,7 +176,7 @@ export default function CashEventModal({ shiftId, userId, cashierName, onDone, o
 
           {/* Note */}
           <label className="ce-note-label">
-            {needsNote ? "Reason *" : "Note (optional)"}
+            {needsNote ? t("reasonRequired") : t("noteOptional")}
           </label>
           <input
             ref={noteRef}
@@ -176,10 +184,10 @@ export default function CashEventModal({ shiftId, userId, cashierName, onDone, o
             type="text"
             placeholder={
               eventType === "paid_in"
-                ? "Optional note…"
+                ? dt("optionalNote")
                 : eventType === "safe_drop"
-                ? "Drop location / bag #…"
-                : "Reason for removal…"
+                ? dt("dropLocation")
+                : dt("removalReason")
             }
             value={note}
             onChange={e => { setNote(e.target.value); setError(null); }}
@@ -192,7 +200,7 @@ export default function CashEventModal({ shiftId, userId, cashierName, onDone, o
         {/* ── Right: dialpad ── */}
         <div className="payment-dialpad-panel">
           <div className="dialpad-field-indicator" style={{ borderColor: `${meta.color}55`, color: meta.color }}>
-            {meta.label}
+            {displayLabel}
           </div>
 
           <Dialpad onKey={handleDialpadKey} />
@@ -206,12 +214,12 @@ export default function CashEventModal({ shiftId, userId, cashierName, onDone, o
               disabled={!canConfirm || loading}
             >
               {loading ? (
-                <span className="dialpad-confirm-label">Recording…</span>
+                <span className="dialpad-confirm-label">{t("saving")}</span>
               ) : (
                 <>
                   <span className="dialpad-confirm-icon">✓</span>
                   <span className="dialpad-confirm-label">
-                    {eventType === "paid_in" ? "Record Paid In" : eventType === "safe_drop" ? "Record Safe Drop" : "Record Paid Out"}
+                    {eventType === "paid_in" ? dt("recordPaidIn") : eventType === "safe_drop" ? dt("recordSafeDrop") : dt("recordPaidOut")}
                   </span>
                   {previewStr && (
                     <span className="dialpad-confirm-total">{cur} {previewStr}</span>
@@ -220,7 +228,7 @@ export default function CashEventModal({ shiftId, userId, cashierName, onDone, o
               )}
             </button>
             <button className="dialpad-cancel-btn" onClick={onCancel} disabled={loading}>
-              ✕ Cancel
+              ✕ {t("cancel")}
             </button>
           </div>
         </div>

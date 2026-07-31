@@ -3,6 +3,10 @@ import type { CashDrawerSummary, SessionUser, Shift, TodaySummary } from "../typ
 import { DEVICE } from "../types";
 import { shiftOpen, shiftClose, shiftGetActive, reportToday, cashDrawerSummary, printReceiptRaw } from "../tauri/commands";
 import { formatMoney, parseMoney } from "../money";
+import EodReprintQueue from "./EodReprintQueue";
+import { useLanguage } from "../hooks/useLanguage";
+import { modalTranslator } from "../i18n/modalStrings";
+import { detailTranslator } from "../i18n/detailStrings";
 
 // ─── Denomination sets (minor units) per currency ─────────────────────────────
 const DENOM_SETS: Record<string, { label: string; minor: number }[]> = {
@@ -58,6 +62,9 @@ interface Props {
 }
 
 export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftClosed, onCancel }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => modalTranslator(language), [language]);
+  const dt = useMemo(() => detailTranslator(language), [language]);
   const [openingCash, setOpeningCash] = useState("");
   const [countedCash, setCountedCash] = useState("");
   const [notes, setNotes] = useState("");
@@ -112,7 +119,7 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
       const opened = await shiftOpen(DEVICE.branch_id, DEVICE.device_id, user.user_id, cashMinor);
       onShiftOpened(opened);
     } catch (e: unknown) {
-      const msg = typeof e === "string" ? e : "Failed to open shift";
+      const msg = typeof e === "string" ? e : t("failedOpenShift");
       setError(msg);
       if (msg.toLowerCase().includes("already open")) setAlreadyOpen(true);
     } finally {
@@ -126,9 +133,9 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
     try {
       const active = await shiftGetActive(DEVICE.device_id, user.user_id);
       if (active) { onShiftOpened(active); return; }
-      setError("Could not find the active shift. Please contact your manager.");
+      setError(dt("activeShiftMissing"));
     } catch (e: unknown) {
-      setError(typeof e === "string" ? e : "Failed to resume shift");
+      setError(typeof e === "string" ? e : t("failedResumeShift"));
     } finally {
       setLoading(false);
     }
@@ -203,7 +210,7 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
       await shiftClose(shift.shift_id, user.user_id, countedMinor, notes || undefined);
       onShiftClosed();
     } catch (e: unknown) {
-      setError(typeof e === "string" ? e : "Failed to close shift");
+      setError(typeof e === "string" ? e : t("failedCloseShift"));
     } finally {
       setLoading(false);
     }
@@ -214,11 +221,11 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
       <div className="modal shift-modal" role="dialog" aria-modal="true" aria-labelledby="shift-dialog-title">
         {mode === "open" ? (
           <>
-            <h2 className="modal-title" id="shift-dialog-title">Open Shift</h2>
+            <h2 className="modal-title" id="shift-dialog-title">{t("openShift")}</h2>
             <p className="shift-info-text">
-              Starting shift for <strong>{user.display_name}</strong> on {DEVICE.branch_name}
+              {t("startingShiftFor")} <strong>{user.display_name}</strong> {t("on")} {DEVICE.branch_name}
             </p>
-            <label className="field-label">Opening Cash ({DEVICE.currency})</label>
+            <label className="field-label">{t("openingCash")} ({DEVICE.currency})</label>
             <input
               className="field-input"
               type="number"
@@ -232,31 +239,31 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
             <div className="modal-actions">
               {onCancel && (
                 <button className="modal-btn-secondary" onClick={onCancel} disabled={loading}>
-                  Cancel
+                  {t("cancel")}
                 </button>
               )}
               {alreadyOpen ? (
                 <button className="modal-btn-primary" onClick={handleResumeShift} disabled={loading}>
-                  {loading ? "Resuming…" : "Resume Active Shift →"}
+                  {loading ? t("resuming") : <>{t("resumeActiveShift")} <span className="icon-directional" aria-hidden="true">→</span></>}
                 </button>
               ) : (
                 <button className="modal-btn-primary" onClick={handleOpen} disabled={loading}>
-                  {loading ? "Opening…" : "Open Shift"}
+                  {loading ? t("opening") : t("openShift")}
                 </button>
               )}
             </div>
           </>
         ) : (
           <>
-            <h2 className="modal-title" id="shift-dialog-title">Close Shift — Z-Report</h2>
+            <h2 className="modal-title" id="shift-dialog-title">{t("closeShiftReport")}</h2>
             {shift && (
               <div className="shift-summary">
                 <div className="shift-summary-row">
-                  <span>Opened by</span>
+                  <span>{t("openedBy")}</span>
                   <span>{shift.cashier_name}</span>
                 </div>
                 <div className="shift-summary-row">
-                  <span>Opening cash</span>
+                  <span>{t("openingCash")}</span>
                   <span>{DEVICE.currency} {formatMoney(shift.opening_cash_minor, DEVICE.currency_exponent)}</span>
                 </div>
               </div>
@@ -264,39 +271,39 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
 
             {todaySummary && (
               <div className="zreport">
-                <div className="zreport-title">Today's Totals ({todaySummary.business_date})</div>
+                <div className="zreport-title">{t("todaysTotals")} ({todaySummary.business_date})</div>
                 <div className="zreport-grid">
                   <div className="zreport-row">
-                    <span>Transactions</span>
+                    <span>{t("transactions")}</span>
                     <span>{todaySummary.transaction_count}</span>
                   </div>
                   <div className="zreport-row">
-                    <span>Gross sales</span>
+                    <span>{t("grossSales")}</span>
                     <span>{DEVICE.currency} {formatMoney(todaySummary.gross_total_minor, DEVICE.currency_exponent)}</span>
                   </div>
                   <div className="zreport-row">
-                    <span>Discounts</span>
+                    <span>{t("discounts")}</span>
                     <span>- {DEVICE.currency} {formatMoney(todaySummary.discount_total_minor, DEVICE.currency_exponent)}</span>
                   </div>
                   <div className="zreport-row">
-                    <span>Tax collected</span>
+                    <span>{t("taxCollected")}</span>
                     <span>{DEVICE.currency} {formatMoney(todaySummary.tax_total_minor, DEVICE.currency_exponent)}</span>
                   </div>
                   <div className="zreport-row zreport-row-total">
-                    <span>Net total</span>
+                    <span>{t("netTotal")}</span>
                     <span>{DEVICE.currency} {formatMoney(todaySummary.net_total_minor, DEVICE.currency_exponent)}</span>
                   </div>
                   <div className="zreport-row">
-                    <span>Cash sales</span>
+                    <span>{t("cashSales")}</span>
                     <span>{DEVICE.currency} {formatMoney(todaySummary.cash_total_minor, DEVICE.currency_exponent)}</span>
                   </div>
                   <div className="zreport-row">
-                    <span>Card/other sales</span>
+                    <span>{t("cardOtherSales")}</span>
                     <span>{DEVICE.currency} {formatMoney(todaySummary.card_total_minor, DEVICE.currency_exponent)}</span>
                   </div>
                   {todaySummary.refund_count > 0 && (
                     <div className="zreport-row zreport-row-refund">
-                      <span>Refunds ({todaySummary.refund_count})</span>
+                      <span>{t("refunds")} ({todaySummary.refund_count})</span>
                       <span>- {DEVICE.currency} {formatMoney(todaySummary.refund_total_minor, DEVICE.currency_exponent)}</span>
                     </div>
                   )}
@@ -307,43 +314,43 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
             {/* ── Cash Drawer Reconciliation ── */}
             {drawerSummary && (
               <div className="zreport cash-recon">
-                <div className="zreport-title">Cash Drawer Reconciliation</div>
+                <div className="zreport-title">{t("cashDrawerReconciliation")}</div>
                 <div className="zreport-grid">
                   <div className="zreport-row">
-                    <span>Opening Float</span>
+                    <span>{t("openingFloat")}</span>
                     <span>+ {DEVICE.currency} {formatMoney(drawerSummary.opening_minor, DEVICE.currency_exponent)}</span>
                   </div>
                   <div className="zreport-row">
-                    <span>Cash Sales</span>
+                    <span>{t("cashSales")}</span>
                     <span>+ {DEVICE.currency} {formatMoney(drawerSummary.cash_sales_minor, DEVICE.currency_exponent)}</span>
                   </div>
                   {drawerSummary.cash_refunds_minor > 0 && (
                     <div className="zreport-row zreport-row-refund">
-                      <span>Cash Refunds</span>
+                      <span>{t("cashRefunds")}</span>
                       <span>- {DEVICE.currency} {formatMoney(drawerSummary.cash_refunds_minor, DEVICE.currency_exponent)}</span>
                     </div>
                   )}
                   {drawerSummary.paid_in_minor > 0 && (
                     <div className="zreport-row">
-                      <span>Paid In</span>
+                      <span>{t("paidIn")}</span>
                       <span>+ {DEVICE.currency} {formatMoney(drawerSummary.paid_in_minor, DEVICE.currency_exponent)}</span>
                     </div>
                   )}
                   {drawerSummary.paid_out_minor > 0 && (
                     <div className="zreport-row zreport-row-refund">
-                      <span>Paid Out</span>
+                      <span>{t("paidOut")}</span>
                       <span>- {DEVICE.currency} {formatMoney(drawerSummary.paid_out_minor, DEVICE.currency_exponent)}</span>
                     </div>
                   )}
                   {drawerSummary.safe_drop_minor > 0 && (
                     <div className="zreport-row zreport-row-refund">
-                      <span>Safe Drops</span>
+                      <span>{t("safeDrops")}</span>
                       <span>- {DEVICE.currency} {formatMoney(drawerSummary.safe_drop_minor, DEVICE.currency_exponent)}</span>
                     </div>
                   )}
                   <div className="zreport-divider" />
                   <div className="zreport-row zreport-row-cash">
-                    <span>Expected in Drawer</span>
+                    <span>{t("expectedInDrawer")}</span>
                     <span>{DEVICE.currency} {formatMoney(drawerSummary.expected_minor, DEVICE.currency_exponent)}</span>
                   </div>
                 </div>
@@ -351,11 +358,11 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
                 {/* Paid-in / Paid-out event list */}
                 {drawerSummary.events.length > 0 && (
                   <div className="cash-events-list">
-                    <div className="cash-events-list-title">Cash Events</div>
+                    <div className="cash-events-list-title">{t("cashEvents")}</div>
                     {drawerSummary.events.map(ev => (
                       <div key={ev.cash_event_id} className="cash-event-item">
                         <span className={`cash-event-badge ${ev.event_type === "paid_in" ? "cash-event-badge-in" : "cash-event-badge-out"}`}>
-                          {ev.event_type === "paid_in" ? "Paid In" : ev.event_type === "safe_drop" ? "Safe Drop" : "Paid Out"}
+                          {ev.event_type === "paid_in" ? t("paidIn") : ev.event_type === "safe_drop" ? t("safeDrop") : t("paidOut")}
                         </span>
                         <span className="cash-event-amount">
                           {ev.event_type === "paid_in" ? "+" : "-"} {DEVICE.currency} {formatMoney(ev.amount_minor, DEVICE.currency_exponent)}
@@ -369,10 +376,12 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
               </div>
             )}
 
+            <EodReprintQueue actorUserId={user.user_id} />
+
             {/* ── Denomination count grid ── */}
             {denomSet && (
               <div className="denom-section">
-                <div className="denom-title">Count Cash by Denomination</div>
+                <div className="denom-title">{t("countCashByDenomination")}</div>
                 <div className="denom-grid">
                   {denomSet.map(d => (
                     <div key={d.minor} className="denom-row">
@@ -400,13 +409,13 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
                 </div>
                 {denomTotalMinor > 0 && (
                   <div className="denom-total">
-                    Total: {DEVICE.currency} {formatMoney(denomTotalMinor, DEVICE.currency_exponent)}
+                    {t("total")}: {DEVICE.currency} {formatMoney(denomTotalMinor, DEVICE.currency_exponent)}
                   </div>
                 )}
               </div>
             )}
 
-            <label className="field-label">Counted Cash ({DEVICE.currency})</label>
+            <label className="field-label">{t("countedCash")} ({DEVICE.currency})</label>
             <input
               className="field-input"
               type="number"
@@ -419,30 +428,30 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
             {countedCash && drawerSummary && (() => {
               const countedMinor = parseMoney(countedCash, DEVICE.currency_exponent);
               const variance = countedMinor - drawerSummary.expected_minor;
-              const label = variance === 0 ? "EXACT" : variance > 0 ? "OVER" : "UNDER";
+              const label = variance === 0 ? t("exact") : variance > 0 ? t("over") : t("under");
               return (
                 <div className={`cash-variance ${variance < 0 ? "cash-variance-under" : variance > 0 ? "cash-variance-over" : "cash-variance-exact"}`}>
                   {variance === 0
-                    ? `✓ Cash balanced — ${DEVICE.currency} ${formatMoney(countedMinor, DEVICE.currency_exponent)}`
-                    : `Variance: ${variance > 0 ? "+" : ""}${DEVICE.currency} ${formatMoney(Math.abs(variance), DEVICE.currency_exponent)}`}
+                    ? `✓ ${t("cashBalanced")} — ${DEVICE.currency} ${formatMoney(countedMinor, DEVICE.currency_exponent)}`
+                    : `${t("variance")}: ${variance > 0 ? "+" : ""}${DEVICE.currency} ${formatMoney(Math.abs(variance), DEVICE.currency_exponent)}`}
                   {" "}
                   <span className="cash-variance-chip">{label}</span>
                 </div>
               );
             })()}
-            <label className="field-label">Notes (optional)</label>
+            <label className="field-label">{t("notesOptional")}</label>
             <textarea
               className="field-input"
               rows={2}
               value={notes}
               onChange={e => setNotes(e.target.value)}
-              placeholder="End of day notes…"
+              placeholder={t("endOfDayNotes")}
             />
             {error && <div className="modal-error">{error}</div>}
             <div className="modal-actions">
               {onCancel && (
                 <button className="modal-btn-secondary" onClick={onCancel} disabled={loading}>
-                  Cancel
+                  {t("cancel")}
                 </button>
               )}
               {todaySummary && (
@@ -450,13 +459,13 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
                   className="modal-btn-secondary"
                   onClick={handlePrintZReport}
                   disabled={loading}
-                  title="Print Z-Report to thermal printer"
+                  title={t("printZReport")}
                 >
-                  🖨 Print Z-Report
+                  🖨 {t("printZReport")}
                 </button>
               )}
               <button className="modal-btn-danger" onClick={handleClose} disabled={loading}>
-                {loading ? "Closing…" : "Close Shift"}
+                {loading ? t("closing") : t("closeShift")}
               </button>
             </div>
           </>

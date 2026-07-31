@@ -118,11 +118,19 @@ pub async fn shift_close(
         )));
     }
 
-    shift_repo::close_shift(
+    let closed = shift_repo::close_shift(
         &state.db,
         &input.shift_id,
         input.counted_cash_minor,
         input.notes,
     )
-    .await
+    .await?;
+
+    crate::diagnostics::record_event(&state.db, "eod_completed", None).await;
+
+    // Evening digest: best-effort, deduped per business day inside the
+    // digest module itself — never blocks or fails the shift close.
+    crate::digest::maybe_send_evening_digest(&state, &input.shift_id).await;
+
+    Ok(closed)
 }

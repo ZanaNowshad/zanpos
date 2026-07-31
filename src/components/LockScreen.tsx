@@ -4,7 +4,7 @@ import { authLoginPin } from "../tauri/commands";
 
 interface Props {
   user: SessionUser;
-  onUnlock: () => void;
+  onUnlock: (user: SessionUser) => void;
   onLogout: () => void;
 }
 
@@ -29,8 +29,8 @@ export default function LockScreen({ user, onUnlock, onLogout }: Props) {
     setLoading(true);
     setError(null);
     try {
-      await authLoginPin(user.username, pin);
-      onUnlock();
+      const refreshedUser = await authLoginPin(user.username, pin);
+      onUnlock(refreshedUser);
     } catch {
       setError("Incorrect PIN");
       setPin("");

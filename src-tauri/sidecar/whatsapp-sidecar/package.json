@@ -1,34 +1,21 @@
 {
   "name": "whatsapp-sidecar",
-  "version": "1.0.0",
-  "description": "ZANPOS WhatsApp sidecar — Baileys HTTP bridge",
-  "main": "server.js",
-  "bin": "server.js",
+  "version": "2.0.0",
+  "description": "ZANPOS WhatsApp sidecar — Baileys v7 HTTP bridge (ESM)",
+  "type": "module",
+  "main": "server.mjs",
+  "bin": "server.mjs",
   "scripts": {
-    "start": "node server.js",
-    "bundle": "esbuild server.js --bundle --platform=node --format=cjs --target=node20 --outfile=bundle.cjs --external:bufferutil --external:utf-8-validate",
-    "build": "npm run bundle && pkg bundle.cjs --target node20-win-x64 --output ../../binaries/whatsapp-sidecar-x86_64-pc-windows-msvc.exe --no-bytecode --public-packages \"*\" --public"
+    "start": "node server.mjs"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.9",
+    "@whiskeysockets/baileys": "7.0.0-rc13",
     "express": "^4.19.2",
     "pino": "^9.0.0",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "tesseract.js": "^5.1.1"
   },
-  "devDependencies": {
-    "@yao-pkg/pkg": "^6.19.0",
-    "esbuild": "^0.28.0"
-  },
-  "pkg": {
-    "assets": [
-      "node_modules/@whiskeysockets/baileys/**/*",
-      "node_modules/@adiwajshing/keyed-db/**/*",
-      "node_modules/libsignal/**/*",
-      "node_modules/node-cache/**/*"
-    ],
-    "targets": [
-      "node20-win-x64"
-    ],
-    "outputPath": "../../binaries"
+  "engines": {
+    "node": ">=20.0.0"
   }
 }

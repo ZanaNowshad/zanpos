@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build && cd src-tauri/sidecar/whatsapp-sidecar && npm run build",
+    "beforeBuildCommand": "npm run build && cd storefront && npm install --no-audit --no-fund && npm run build && cd .. && cd src-tauri/sidecar/whatsapp-sidecar && npm install --omit=dev && node -e \"require('fs').copyFileSync(process.execPath,'node.exe')\"",
     "frontendDist": "../dist"
   },
   "app": {
@@ -30,16 +30,19 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
+    "targets": ["nsis"],
+    "resources": {
+      "sidecar/whatsapp-sidecar/node.exe": "sidecar/whatsapp-sidecar/node.exe",
+      "sidecar/whatsapp-sidecar/server.mjs": "sidecar/whatsapp-sidecar/server.mjs",
+      "sidecar/whatsapp-sidecar/node_modules/": "sidecar/whatsapp-sidecar/node_modules/",
+      "../storefront/dist/": "storefront-dist/"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ],
-    "externalBin": [
-      "binaries/whatsapp-sidecar"
     ],
     "category": "Business",
     "copyright": "© 2025 ZANPOS. All rights reserved.",
@@ -49,6 +52,7 @@
       "digestAlgorithm": "sha256",
       "timestampUrl": "http://timestamp.digicert.com",
       "nsis": {
+        "compression": "none",
         "displayLanguageSelector": false,
         "languages": ["English"],
         "installMode": "perMachine",

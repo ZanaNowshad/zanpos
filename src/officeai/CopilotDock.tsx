@@ -2,12 +2,15 @@ import type { RefObject } from "react";
 import { Maximize2, Sparkles, X } from "lucide-react";
 import type { ChatController } from "./useChatController";
 import ChatPanel from "./ChatPanel";
+import { useLanguage } from "../hooks/useLanguage";
+import { officeAiTranslator } from "../i18n/officeAiStrings";
 
 interface Props {
   ctrl: ChatController;
   userName: string;
   businessName: string;
   providerLabel: string;
+  activeWorkspace?: string;
   /** false until an AI provider is configured — dock then shows a setup CTA. */
   configured: boolean;
   onSetup: () => void;
@@ -23,20 +26,25 @@ interface Props {
  */
 export default function CopilotDock({
   ctrl, userName, businessName, providerLabel, configured, onSetup, onExpand, onClose, composerRef,
+  activeWorkspace,
 }: Props) {
+  const { language } = useLanguage();
+  const t = officeAiTranslator(language);
   return (
-    <aside className="oa-dock" aria-label="ZanAI copilot">
+    <aside className="oa-dock" aria-label={t("zanAiCopilot")}>
       <div className="oa-dock-header">
         <span className="oa-dock-brand">
           <Sparkles size={15} strokeWidth={1.75} aria-hidden="true" />
           ZanAI
         </span>
-        {providerLabel && <span className="oa-dock-provider">{providerLabel}</span>}
+        <span className="oa-dock-provider">
+          {activeWorkspace ? `${activeWorkspace} context` : providerLabel}
+        </span>
         <div className="oa-dock-actions">
-          <button className="oa-dock-btn" onClick={onExpand} title="Open fullscreen Assistant">
+          <button className="oa-dock-btn" onClick={onExpand} title={t("openFullscreenAssistant")}>
             <Maximize2 size={14} strokeWidth={1.75} aria-hidden="true" />
           </button>
-          <button className="oa-dock-btn" onClick={onClose} title="Collapse copilot (Ctrl+/)">
+          <button className="oa-dock-btn" onClick={onClose} title={t("collapseCopilot")}>
             <X size={15} strokeWidth={1.75} aria-hidden="true" />
           </button>
         </div>
@@ -52,8 +60,8 @@ export default function CopilotDock({
         />
       ) : (
         <div className="oa-dock-setup">
-          <p>ZanAI needs an AI provider before it can help.</p>
-          <button className="btn-primary" onClick={onSetup}>Set up AI provider</button>
+          <p>{t("providerNeeded")}</p>
+          <button className="btn-primary" onClick={onSetup}>{t("setupAiProvider")}</button>
         </div>
       )}
     </aside>

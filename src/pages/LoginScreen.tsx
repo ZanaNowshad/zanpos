@@ -7,11 +7,17 @@ interface Props {
   onLogin: (user: SessionUser) => void;
 }
 
+export function isValidLoginPin(pin: string) {
+  return /^\d{4,6}$/.test(pin);
+}
+
 export default function LoginScreen({ onLogin }: Props) {
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [selected, setSelected] = useState<UserSummary | null>(null);
   const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+  const [loadingUsers, setLoadingUsers] = useState(true);
   const [loading, setLoading] = useState(false);
   const [shake, setShake] = useState(false);
 
@@ -41,7 +47,7 @@ export default function LoginScreen({ onLogin }: Props) {
         // Trigger submit using current ref values
         const cur = selectedRef.current;
         const curPin = pinRef.current;
-        if (cur && curPin.length > 0) {
+        if (cur && isValidLoginPin(curPin)) {
           // Simulate click on OK by calling handleSubmit indirectly via the
           // same async path — we trigger it via a microtask so React state settles
           setTimeout(() => submitRef.current?.(), 0);
@@ -60,10 +66,13 @@ export default function LoginScreen({ onLogin }: Props) {
   useEffect(() => {
     let cancelled = false;
     const load = () => {
+      setLoadingUsers(true);
+      setListError(null);
       authListUsers()
         .then(list => {
           if (cancelled) return;
           setUsers(list);
+          setListError(null);
         })
         .catch((e: unknown) => {
           if (cancelled) return;
@@ -72,8 +81,12 @@ export default function LoginScreen({ onLogin }: Props) {
           const msg = typeof e === "string" ? e : String(e);
           if (msg.includes("rate_limit")) {
             setTimeout(() => { if (!cancelled) load(); }, 3200);
+          } else {
+            setListError(msg || "Could not load cashier profiles");
           }
-          // else: genuine error — leave users empty, login screen shows "no users" state
+        })
+        .finally(() => {
+          if (!cancelled) setLoadingUsers(false);
         });
     };
     load();
@@ -100,7 +113,11 @@ export default function LoginScreen({ onLogin }: Props) {
   };
 
   const handleSubmit = async () => {
-    if (!selected || pin.length === 0) return;
+    if (!selected) return;
+    if (!isValidLoginPin(pin)) {
+      setError("Enter your 4–6 digit PIN");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -141,16 +158,26 @@ export default function LoginScreen({ onLogin }: Props) {
         <div className="login-panel">
           {!selected ? (
             <>
-              <div className="login-panel-icon">👥</div>
-              <h2 className="login-heading">Select Cashier</h2>
-              <p className="login-subheading">Choose your profile to continue</p>
+              <div className="login-panel-icon icon-directional" aria-hidden="true">→</div>
+              <span className="login-kicker">Register handoff</span>
+              <h2 className="login-heading">Who’s on register?</h2>
+              <p className="login-subheading">Tap your name, then enter your PIN.</p>
+              {loadingUsers && <div className="login-status" role="status">Loading team…</div>}
+              {!loadingUsers && listError && (
+                <div className="login-error" role="alert">{listError}</div>
+              )}
+              {!loadingUsers && !listError && users.length === 0 && (
+                <div className="login-error" role="alert">
+                  No active cashier or owner profiles found.
+                </div>
+              )}
               <div className="user-grid">
                 {users.map(u => (
                   <button key={u.user_id} className="user-card" onClick={() => handleUserSelect(u)}>
                     <div className="user-avatar">{u.display_name.charAt(0).toUpperCase()}</div>
                     <div className="user-name">{u.display_name}</div>
                     <div className="user-role">{u.role_name}</div>
-                    <div className="user-arrow">→</div>
+                    <div className="user-arrow icon-directional">→</div>
                   </button>
                 ))}
               </div>
@@ -167,7 +194,7 @@ export default function LoginScreen({ onLogin }: Props) {
               {/* PIN heading */}
               <div className="pin-enter-label">
                 <h3>Enter PIN</h3>
-                <p>Enter your 6-digit PIN to continue</p>
+                <p>Enter your 4–6 digit PIN</p>
               </div>
 
               <div className={`pin-display${shake ? " pin-display-shake" : ""}`}>
@@ -186,7 +213,7 @@ export default function LoginScreen({ onLogin }: Props) {
                         key={key}
                         className={`pin-key ${key === "OK" ? "pin-key-ok" : key === "⌫" ? "pin-key-clear" : ""}`}
                         onClick={() => handleKey(key)}
-                        disabled={loading}
+                        disabled={loading || (key === "OK" && !isValidLoginPin(pin))}
                       >
                         {key === "OK" ? <>🔒 OK</> : key}
                       </button>
@@ -198,7 +225,7 @@ export default function LoginScreen({ onLogin }: Props) {
               <p className="pin-keyboard-hint">⌨ Type digits on your keyboard · Enter to confirm · Esc to go back</p>
 
               <button className="login-back" onClick={() => { setSelected(null); setPin(""); setError(null); }}>
-                ← Back to cashier selection
+                <span className="icon-directional" aria-hidden="true">←</span> Back to cashier selection
               </button>
             </>
           )}

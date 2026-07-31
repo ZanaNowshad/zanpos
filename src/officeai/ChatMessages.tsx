@@ -3,15 +3,27 @@ import type { ChatState, DisplayMessage, ToolCallEntry } from "./officeAiTypes";
 import { QUICK_ACTIONS } from "./officeAiTypes";
 import { MarkdownContent } from "./markdown";
 import { ToolCallCard, toolMeta } from "./toolCards";
+import { useLanguage } from "../hooks/useLanguage";
+import {
+  officeAiFormat,
+  officeAiTranslator,
+  type OfficeAiStringKey,
+} from "../i18n/officeAiStrings";
 
 // ─── Quick chips bar ──────────────────────────────────────────────────────────
 
 export function QuickChipsBar({ onSelect }: { onSelect: (text: string) => void }) {
+  const { language } = useLanguage();
+  const t = officeAiTranslator(language);
+  const labelKeys: OfficeAiStringKey[] = [
+    "todaysSales", "lowStock", "cashDrawer", "topProducts",
+    "recentRefunds", "shiftHistory", "auditChain", "syncStatus",
+  ];
   return (
     <div className="quick-chips-bar">
-      {QUICK_ACTIONS.map((a) => (
+      {QUICK_ACTIONS.map((a, index) => (
         <button key={a.prompt} className="quick-chip" onClick={() => onSelect(a.prompt)}>
-          {a.label}
+          {t(labelKeys[index])}
         </button>
       ))}
     </div>
@@ -21,36 +33,38 @@ export function QuickChipsBar({ onSelect }: { onSelect: (text: string) => void }
 // ─── Welcome panel ────────────────────────────────────────────────────────────
 
 const WELCOME_CHIPS = [
-  { icon: "📊", text: "Today's sales summary", prompt: "Give me today's sales summary" },
-  { icon: "📦", text: "Low stock alerts",       prompt: "Which products are low on stock?" },
-  { icon: "💵", text: "Cash drawer status",     prompt: "Show me the current cash drawer status" },
-  { icon: "🏆", text: "Top products this week", prompt: "What are the top selling products this week?" },
-  { icon: "↩",  text: "Recent refunds",         prompt: "Show me recent refunds" },
-  { icon: "👥", text: "Today's transactions",   prompt: "How many transactions were made today?" },
-];
+  { icon: "📊", labelKey: "todaysSalesSummary", prompt: "Give me today's sales summary" },
+  { icon: "📦", labelKey: "lowStockAlerts", prompt: "Which products are low on stock?" },
+  { icon: "💵", labelKey: "cashDrawerStatus", prompt: "Show me the current cash drawer status" },
+  { icon: "🏆", labelKey: "topProductsThisWeek", prompt: "What are the top selling products this week?" },
+  { icon: "↩", labelKey: "recentRefunds", prompt: "Show me recent refunds" },
+  { icon: "👥", labelKey: "todaysTransactions", prompt: "How many transactions were made today?" },
+] satisfies Array<{ icon: string; labelKey: OfficeAiStringKey; prompt: string }>;
 
 export function WelcomePanel({ userName, businessName, onChip }: {
   userName: string;
   businessName: string;
   onChip: (text: string) => void;
 }) {
+  const { language } = useLanguage();
+  const t = officeAiTranslator(language);
   const hour = new Date().getHours();
-  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  const greeting = hour < 12 ? t("goodMorning") : hour < 17 ? t("goodAfternoon") : t("goodEvening");
   return (
     <div className="chat-welcome-advanced">
       <div className="welcome-header">
         <div className="welcome-avatar">✦</div>
         <div>
           <div className="welcome-title">{greeting}, {userName} 👋</div>
-          <div className="welcome-subtitle">I'm ZanAI, {businessName}'s admin assistant. Ask me anything about your store performance, inventory, sales, users, and more.</div>
+          <div className="welcome-subtitle">{officeAiFormat(t("welcomeSubtitleNamed"), { business: businessName })}</div>
         </div>
       </div>
-      <div className="welcome-suggested-label">SUGGESTED QUESTIONS</div>
+      <div className="welcome-suggested-label">{t("suggestedQuestions")}</div>
       <div className="welcome-suggested-grid">
         {WELCOME_CHIPS.map(s => (
           <button key={s.prompt} className="welcome-suggested-card" onClick={() => onChip(s.prompt)}>
             <span className="welcome-suggested-icon">{s.icon}</span>
-            <span className="welcome-suggested-text">{s.text}</span>
+            <span className="welcome-suggested-text">{t(s.labelKey)}</span>
           </button>
         ))}
       </div>
@@ -61,8 +75,9 @@ export function WelcomePanel({ userName, businessName, onChip }: {
 // ─── Completed tool pill (collapsible, ChatGPT-style) ────────────────────────
 
 function ToolPill({ entry }: { entry: ToolCallEntry }) {
+  const { language } = useLanguage();
   const [open, setOpen] = useState(false);
-  const meta = toolMeta(entry.name);
+  const meta = toolMeta(entry.name, language);
   return (
     <div className="tool-pill">
       <button className="tool-pill-header" onClick={() => setOpen(o => !o)}>
@@ -87,13 +102,36 @@ function ToolPill({ entry }: { entry: ToolCallEntry }) {
 export function ChatBubble({
   msg,
   onUndo,
+  onFeedback,
+  onSuggestedPrompt,
   isStreaming = false,
 }: {
   msg: DisplayMessage;
   onUndo?: () => void;
+  onFeedback?: (messageId: string, rating: "up" | "down", aiSessionId?: string) => Promise<void>;
+  onSuggestedPrompt?: (prompt: string) => void;
   isStreaming?: boolean;
 }) {
+  const { language } = useLanguage();
+  const t = officeAiTranslator(language);
   const [copied, setCopied] = useState(false);
+  const [feedback, setFeedback] = useState<"up" | "down" | null>(null);
+  const [feedbackPending, setFeedbackPending] = useState(false);
+  const [feedbackError, setFeedbackError] = useState(false);
+
+  const submitFeedback = async (rating: "up" | "down") => {
+    if (feedbackPending) return;
+    setFeedbackPending(true);
+    setFeedbackError(false);
+    try {
+      await onFeedback?.(msg.id, rating, msg.aiSessionId);
+      setFeedback(rating);
+    } catch {
+      setFeedbackError(true);
+    } finally {
+      setFeedbackPending(false);
+    }
+  };
 
   const handleCopy = () => {
     navigator.clipboard.writeText(msg.text).then(() => {
@@ -119,7 +157,7 @@ export function ChatBubble({
             isEmpty ? (
               <div className="bubble-thinking">
                 <div className="bubble-skeleton"><span /><span /><span /></div>
-                <span className="bubble-thinking-text">Thinking…</span>
+                <span className="bubble-thinking-text">{t("thinking")}</span>
               </div>
             ) : (
               <>
@@ -136,25 +174,54 @@ export function ChatBubble({
           ) : (
             <div className="bubble-text-plain">
               {msg.imagePreviewUrl && (
-                <img src={msg.imagePreviewUrl} alt="Attached image" className="bubble-img-preview" />
+                <img src={msg.imagePreviewUrl} alt={t("attachedImage")} className="bubble-img-preview" />
               )}
               {msg.text}
             </div>
           )}
-          {msg.pendingAction && (
-            <div className="chat-pending-badge">⏳ Awaiting confirmation…</div>
+          {(msg.pendingAction || msg.pendingBatchActions) && (
+            <div className="chat-pending-badge">
+              {msg.pendingBatchActions
+                ? `⏳ ${officeAiFormat(t("awaitingChanges"), { count: msg.pendingBatchActions.length })}`
+                : `⏳ ${t("awaitingConfirmation")}`}
+            </div>
           )}
           {onUndo && (
-            <button className="chat-undo-btn" onClick={onUndo}>↩ Undo this change</button>
+            <button className="chat-undo-btn" onClick={onUndo}>↩ {t("undoChange")}</button>
+          )}
+          {msg.suggestedPrompt && msg.suggestedLabel && onSuggestedPrompt && (
+            <button
+              className="chat-undo-btn"
+              onClick={() => onSuggestedPrompt(msg.suggestedPrompt!)}
+            >
+              {msg.suggestedLabel}
+            </button>
           )}
         </div>
 
         {!isEmpty && (
           <div className="bubble-footer">
             <span className="bubble-timestamp">{timeStr}</span>
-            {isStreaming && <span className="bubble-streaming-badge">● live</span>}
+            {isStreaming && <span className="bubble-streaming-badge">● {t("live")}</span>}
+            {msg.role === "assistant" && !isStreaming && msg.feedbackReady && onFeedback && (
+              <>
+                <button
+                  className={`bubble-feedback-btn${feedback === "up" ? " active" : ""}`}
+                  onClick={() => void submitFeedback("up")}
+                  disabled={feedbackPending}
+                  title={t("goodResponse")}
+                >👍</button>
+                <button
+                  className={`bubble-feedback-btn${feedback === "down" ? " active" : ""}`}
+                  onClick={() => void submitFeedback("down")}
+                  disabled={feedbackPending}
+                  title={t("badResponse")}
+                >👎</button>
+                {feedbackError && <span className="bubble-feedback-error" title={t("feedbackNotSaved")}>{t("notSaved")}</span>}
+              </>
+            )}
             {msg.role !== "system" && !isStreaming && (
-              <button className="bubble-copy-btn" onClick={handleCopy} title="Copy message">
+              <button className="bubble-copy-btn" onClick={handleCopy} title={t("copyMessage")}>
                 {copied ? "✓" : "⎘"}
               </button>
             )}
@@ -168,13 +235,14 @@ export function ChatBubble({
 // ─── Message list ─────────────────────────────────────────────────────────────
 
 export function ChatMessageList({
-  messages, chatState, streamingMsgId, liveToolCalls, onUndo, onChip, userName, businessName,
+  messages, chatState, streamingMsgId, liveToolCalls, onUndo, onFeedback, onChip, userName, businessName,
 }: {
   messages: DisplayMessage[];
   chatState: ChatState;
   streamingMsgId: string | null;
   liveToolCalls: ToolCallEntry[];
   onUndo: (undoId: string, msgId: string) => void;
+  onFeedback?: (messageId: string, rating: "up" | "down", aiSessionId?: string) => Promise<void>;
   onChip: (text: string) => void;
   userName: string;
   businessName: string;
@@ -188,7 +256,7 @@ export function ChatMessageList({
   }, [messages, chatState]);
 
   return (
-    <div className="chat-messages">
+    <div className="chat-messages" role="log" aria-live="polite" aria-relevant="additions">
       {messages.length === 0 && (
         <WelcomePanel userName={userName} businessName={businessName} onChip={onChip} />
       )}
@@ -205,6 +273,8 @@ export function ChatMessageList({
               msg={msg}
               isStreaming={isStreaming}
               onUndo={msg.undoId ? () => onUndo(msg.undoId!, msg.id) : undefined}
+              onFeedback={onFeedback}
+              onSuggestedPrompt={onChip}
             />
           </React.Fragment>
         );

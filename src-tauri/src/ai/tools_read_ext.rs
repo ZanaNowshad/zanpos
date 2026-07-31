@@ -51,6 +51,7 @@ fn cfg_val<'a>(
             .bind(&key)
             .fetch_optional(pool)
             .await
+            .inspect_err(|e| tracing::warn!("cfg_val({key}): DB error: {e}"))
             .ok()
             .flatten()
             .flatten()
@@ -84,8 +85,7 @@ pub async fn execute(
         "get_rider_suggestions" => rider_suggestions(pool).await,
         "get_sync_queue_stats" => sync_queue_stats(pool).await,
         other => {
-            crate::ai::tools_read_ext2::execute(pool, other, input, _branch_id, currency_exp)
-                .await
+            crate::ai::tools_read_ext2::execute(pool, other, input, _branch_id, currency_exp).await
         }
     }
 }
@@ -430,7 +430,7 @@ async fn hub_status(pool: &SqlitePool) -> AppResult<String> {
     let hub_url: Option<String> = cfg_val(pool, "hub_url").await;
     let hub_port: Option<String> = cfg_val(pool, "hub_port").await;
     let has_token =
-        crate::secure_store::get_secret("hub_store_token").map_or(false, |k| !k.is_empty());
+        crate::secure_store::get_secret("hub_store_token").is_some_and(|k| !k.is_empty());
     let pending: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM products WHERE sync_status = 'pending'")
             .fetch_one(pool)

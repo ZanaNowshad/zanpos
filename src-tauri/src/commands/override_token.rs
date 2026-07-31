@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 use ulid::Ulid;
 
@@ -8,8 +8,11 @@ struct OverrideToken {
     expires_at: SystemTime,
 }
 
-static OVERRIDE_TOKENS: std::sync::LazyLock<Mutex<HashMap<String, OverrideToken>>> =
-    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+static OVERRIDE_TOKENS: OnceLock<Mutex<HashMap<String, OverrideToken>>> = OnceLock::new();
+
+fn override_tokens() -> &'static Mutex<HashMap<String, OverrideToken>> {
+    OVERRIDE_TOKENS.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 /// Issue a short-lived override token (60s TTL). Persists to `app_config` so the
 /// token survives a process restart, and also caches in memory for fast-path lookup.
@@ -24,7 +27,7 @@ pub async fn store_override_token(pool: &sqlx::SqlitePool, manager_user_id: Stri
 
     // In-memory cache (fast path) — drop lock before DB await
     {
-        let mut map = OVERRIDE_TOKENS.lock().unwrap_or_else(|e| e.into_inner());
+        let mut map = override_tokens().lock().unwrap_or_else(|e| e.into_inner());
         map.insert(
             token.clone(),
             OverrideToken {
@@ -60,7 +63,7 @@ pub async fn store_override_token(pool: &sqlx::SqlitePool, manager_user_id: Stri
 pub async fn consume_override_token(pool: &sqlx::SqlitePool, token: &str) -> Option<String> {
     // 1. In-memory cache (fast path)
     let cache_hit: Option<String> = {
-        let mut map = OVERRIDE_TOKENS.lock().unwrap_or_else(|e| e.into_inner());
+        let mut map = override_tokens().lock().unwrap_or_else(|e| e.into_inner());
         let now = SystemTime::now();
         map.retain(|_, t| t.expires_at > now);
         map.remove(token).map(|t| t.manager_user_id)

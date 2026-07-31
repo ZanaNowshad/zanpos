@@ -24,7 +24,7 @@ pub enum PriceOp {
 pub fn apply_price(current_minor: i64, op: &PriceOp) -> i64 {
     let result = match op {
         PriceOp::Percent(p) => (current_minor as f64 * (1.0 + p / 100.0)).round() as i64,
-        PriceOp::Absolute(d) => current_minor + d,
+        PriceOp::Absolute(d) => current_minor.saturating_add(*d),
         PriceOp::Set(v) => *v,
     };
     result.max(0)

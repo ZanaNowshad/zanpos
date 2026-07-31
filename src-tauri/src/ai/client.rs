@@ -2,11 +2,6 @@ use crate::errors::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 
 const ANTHROPIC_API_URL: &str = "https://api.anthropic.com/v1/messages";
-/// Valid Anthropic model alias — claude-sonnet-4-20250514 retires 2026-06-15.
-const MODEL: &str = "claude-sonnet-4-6";
-/// 8096 tokens accommodates tool-call JSON + multi-step reasoning loops.
-/// 1024 was too low: tool call JSON alone can exceed it causing mid-stream truncation.
-const MAX_TOKENS: u32 = 8096;
 
 // ── Anthropic API request/response types ──────────────────────────────────────
 
@@ -79,6 +74,9 @@ pub struct AnthropicResponse {
 
 pub struct AnthropicClient {
     api_key: String,
+    model: String,
+    max_tokens: u32,
+    temperature: Option<f32>,
     http: reqwest::Client,
 }
 
@@ -87,17 +85,28 @@ impl AnthropicClient {
         &self.api_key
     }
 
-    pub fn new(api_key: impl Into<String>) -> Self {
-        // R-01: bound the request lifecycle so an unreachable API can never hang
-        // a Tauri async task forever. 60s overall covers slow tool-loop responses;
-        // 10s connect timeout fails fast on network outages.
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    pub fn new(
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+        max_tokens: u32,
+        temperature: f32,
+    ) -> Self {
+        // Bound the request lifecycle without cutting off long model reasoning.
+        // Connect failures remain fast; a genuinely idle request gets 30 minutes.
         let http = reqwest::Client::builder()
             .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(60))
+            .timeout(std::time::Duration::from_secs(1800))
             .build()
             .unwrap_or_default();
         Self {
             api_key: api_key.into(),
+            model: model.into(),
+            max_tokens,
+            temperature: Some(temperature),
             http,
         }
     }
@@ -109,9 +118,9 @@ impl AnthropicClient {
         tools: Vec<ToolDef>,
     ) -> AppResult<AnthropicResponse> {
         let req = AnthropicRequest {
-            model: MODEL.into(),
-            max_tokens: MAX_TOKENS,
-            temperature: Some(0.0),
+            model: self.model.clone(),
+            max_tokens: self.max_tokens,
+            temperature: self.temperature,
             system: system.into(),
             messages,
             tools,
@@ -161,15 +170,15 @@ pub fn extract_text(blocks: &[ContentBlock]) -> String {
         .to_string()
 }
 
-pub fn extract_tool_use(blocks: &[ContentBlock]) -> Option<(String, String, serde_json::Value)> {
-    // Returns the first ToolUse block; callers handle one tool at a time.
-    // Anthropic may return multiple parallel tool calls — the first is prioritised.
-    // L14: previous implementation used find_map which is equivalent; explicitly documented.
-    blocks.iter().find_map(|b| {
-        if let ContentBlock::ToolUse { id, name, input } = b {
-            Some((id.clone(), name.clone(), input.clone()))
-        } else {
-            None
-        }
-    })
+pub fn extract_tool_uses(blocks: &[ContentBlock]) -> Vec<(String, String, serde_json::Value)> {
+    blocks
+        .iter()
+        .filter_map(|b| {
+            if let ContentBlock::ToolUse { id, name, input } = b {
+                Some((id.clone(), name.clone(), input.clone()))
+            } else {
+                None
+            }
+        })
+        .collect()
 }

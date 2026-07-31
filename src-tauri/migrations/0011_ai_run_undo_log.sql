@@ -1,0 +1,12 @@
+-- Phase 3: AI-Assisted Bulk Operations — undo log extension index.
+-- The ai_run_undo_log table was created in 0007_run_ledger.sql with columns:
+--   entry_id TEXT PRIMARY KEY
+--   run_id   TEXT NOT NULL REFERENCES ai_runs(run_id)
+--   batch_seq INTEGER NOT NULL
+--   reverse_json TEXT NOT NULL
+--   applied  INTEGER NOT NULL DEFAULT 0
+--   created_at TEXT NOT NULL
+--
+-- Add a composite index to accelerate undo replay ordering queries
+-- (run_id + batch_seq DESC) used by the 5 new bulk operations.
+CREATE INDEX IF NOT EXISTS idx_undo_run_seq ON ai_run_undo_log(run_id, batch_seq);

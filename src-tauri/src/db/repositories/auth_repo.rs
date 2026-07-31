@@ -98,7 +98,7 @@ pub async fn list_active_users(pool: &SqlitePool) -> AppResult<Vec<UserSummary>>
 
 pub async fn login_pin(pool: &SqlitePool, username: &str, pin: &str) -> AppResult<SessionUser> {
     let row = sqlx::query(
-        "SELECT u.user_id, u.display_name, u.username, u.pin_hash, u.role_id, r.name as role_name,
+        "SELECT u.user_id, u.branch_id, u.display_name, u.username, u.pin_hash, u.role_id, r.name as role_name,
                 u.failed_pin_attempts, u.locked_until
          FROM users u JOIN roles r ON r.role_id = u.role_id
          WHERE u.username = ? AND u.is_active = 1",
@@ -178,10 +178,13 @@ pub async fn login_pin(pool: &SqlitePool, username: &str, pin: &str) -> AppResul
 
     Ok(SessionUser {
         user_id,
+        branch_id: row.get("branch_id"),
         display_name: row.get("display_name"),
         username: row.get("username"),
         role_id: row.get("role_id"),
         role_name: row.get("role_name"),
+        session_token: String::new(),
+        session_expires_at: String::new(),
     })
 }
 

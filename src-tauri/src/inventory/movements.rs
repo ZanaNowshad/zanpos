@@ -13,7 +13,18 @@ use crate::errors::AppResult;
 /// lose stock.
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
+use std::str::FromStr;
 use ulid::Ulid;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct StockDriftRow {
+    pub product_id: String,
+    pub product_name: String,
+    pub branch_id: String,
+    pub cached_quantity: String,
+    pub expected_quantity: String,
+    pub latest_movement_id: String,
+}
 
 // ── Internal: fetch or initialize stock level ─────────────────────────────────
 
@@ -97,6 +108,84 @@ fn format_qty(qty: f64) -> String {
     }
 }
 
+/// Compare the stock cache to the latest authoritative movement balance.
+pub async fn stock_drift_report(pool: &SqlitePool) -> AppResult<Vec<StockDriftRow>> {
+    let rows = sqlx::query(
+        "WITH latest AS (
+           SELECT movement_id, product_id, branch_id, quantity_after,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY product_id, branch_id
+                    ORDER BY datetime(created_at) DESC, rowid DESC
+                  ) AS rank_no
+           FROM stock_movements
+         )
+         SELECT latest.movement_id, latest.product_id, latest.branch_id,
+                latest.quantity_after,
+                COALESCE(stock_levels.quantity_on_hand, '0') AS cached_quantity,
+                COALESCE(products.name, latest.product_id) AS product_name
+         FROM latest
+         LEFT JOIN stock_levels
+           ON stock_levels.product_id = latest.product_id
+          AND stock_levels.branch_id = latest.branch_id
+         LEFT JOIN products ON products.product_id = latest.product_id
+         WHERE latest.rank_no = 1
+           AND ABS(CAST(COALESCE(stock_levels.quantity_on_hand, '0') AS REAL)
+                   - CAST(latest.quantity_after AS REAL)) > 0.001
+         ORDER BY product_name, latest.branch_id",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| StockDriftRow {
+            product_id: row.get("product_id"),
+            product_name: row.get("product_name"),
+            branch_id: row.get("branch_id"),
+            cached_quantity: row.get("cached_quantity"),
+            expected_quantity: row.get("quantity_after"),
+            latest_movement_id: row.get("movement_id"),
+        })
+        .collect())
+}
+
+/// Repair stock_levels from each product/branch's latest movement balance.
+pub async fn reconcile_stock_drift(pool: &SqlitePool) -> AppResult<u64> {
+    let drift = stock_drift_report(pool).await?;
+    if drift.is_empty() {
+        return Ok(0);
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut tx = pool.begin().await?;
+    for row in &drift {
+        let expected = row.expected_quantity.parse::<f64>().unwrap_or(0.0);
+        let expected = format_qty(expected);
+        let stock_level_id = format!("SL-{}-{}", row.product_id, row.branch_id);
+        sqlx::query(
+            "INSERT INTO stock_levels
+               (stock_level_id, product_id, branch_id, quantity_on_hand,
+                last_movement_at, created_at, updated_at, sync_status, sync_attempts)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0)
+             ON CONFLICT(product_id, branch_id) DO UPDATE SET
+               quantity_on_hand=excluded.quantity_on_hand,
+               last_movement_at=excluded.last_movement_at,
+               updated_at=excluded.updated_at,
+               sync_status='pending', sync_attempts=0",
+        )
+        .bind(stock_level_id)
+        .bind(&row.product_id)
+        .bind(&row.branch_id)
+        .bind(expected)
+        .bind(&now)
+        .bind(&now)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(drift.len() as u64)
+}
+
 async fn check_alert(pool: &SqlitePool, product_id: &str, new_qty: f64) -> Option<LowStockAlert> {
     let row = sqlx::query(
         "SELECT name, reorder_point FROM products WHERE product_id = ? AND track_inventory = 1",
@@ -160,6 +249,8 @@ pub async fn deduct_sale(
         let product_id: String = row.get("product_id");
         let qty_str: String = row.get("quantity");
         let sold_qty: f64 = qty_str.parse().unwrap_or(0.0);
+        let sold_qty_decimal =
+            rust_decimal::Decimal::from_str(&qty_str).unwrap_or(rust_decimal::Decimal::ZERO);
         if sold_qty <= 0.0 {
             continue;
         }
@@ -182,56 +273,37 @@ pub async fn deduct_sale(
 
         let movement_id = Ulid::new().to_string();
 
-        // When known_qtys was captured inside the sale transaction, the
-        // quantity_after is already correct — insert directly. Otherwise,
-        // wrap read+insert in a per-item transaction to avoid a TOCTOU
-        // window between reading stock_levels and writing the movement.
-        let new_qty: f64;
-        if let Some(ref qtys) = known_qtys {
-            new_qty = *qtys.get(&product_id).unwrap_or(&0.0);
-            sqlx::query(
-                "INSERT INTO stock_movements
-                 (movement_id, product_id, branch_id, device_id, origin_device_id, movement_type,
-                  quantity_delta, quantity_after, reference_type, reference_id,
-                  created_by_user_id, created_at, sync_status)
-                 VALUES (?,?,?,?,?,'sale',?,?,   'sale',?,?,?,'pending')",
-            )
-            .bind(&movement_id)
-            .bind(&product_id)
-            .bind(branch_id)
-            .bind(device_id)
-            .bind(device_id)
-            .bind(format_qty(-sold_qty))
-            .bind(format_qty(new_qty))
-            .bind(sale_id)
-            .bind(cashier_user_id)
-            .bind(&now)
-            .execute(pool)
-            .await?;
+        // Movement and FEFO lot allocation share one short post-sale transaction.
+        // This runs only after the sale has committed, so failure is logged by
+        // finalize_sale and can never roll the sale back.
+        let mut tx = pool.begin().await?;
+        let new_qty = if let Some(qtys) = known_qtys {
+            *qtys.get(&product_id).unwrap_or(&0.0)
         } else {
-            let mut tx = pool.begin().await?;
-            new_qty = get_qty_tx(&mut tx, &product_id, branch_id).await;
-            sqlx::query(
-                "INSERT INTO stock_movements
-                 (movement_id, product_id, branch_id, device_id, origin_device_id, movement_type,
-                  quantity_delta, quantity_after, reference_type, reference_id,
-                  created_by_user_id, created_at, sync_status)
-                 VALUES (?,?,?,?,?,'sale',?,?,   'sale',?,?,?,'pending')",
-            )
-            .bind(&movement_id)
-            .bind(&product_id)
-            .bind(branch_id)
-            .bind(device_id)
-            .bind(device_id)
-            .bind(format_qty(-sold_qty))
-            .bind(format_qty(new_qty))
-            .bind(sale_id)
-            .bind(cashier_user_id)
-            .bind(&now)
-            .execute(&mut *tx)
+            get_qty_tx(&mut tx, &product_id, branch_id).await
+        };
+        sqlx::query(
+            "INSERT INTO stock_movements
+             (movement_id, product_id, branch_id, device_id, origin_device_id, movement_type,
+              quantity_delta, quantity_after, reference_type, reference_id,
+              created_by_user_id, created_at, sync_status)
+             VALUES (?,?,?,?,?,'sale',?,?,   'sale',?,?,?,'pending')",
+        )
+        .bind(&movement_id)
+        .bind(&product_id)
+        .bind(branch_id)
+        .bind(device_id)
+        .bind(device_id)
+        .bind(format_qty(-sold_qty))
+        .bind(format_qty(new_qty))
+        .bind(sale_id)
+        .bind(cashier_user_id)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+        crate::inventory::lots::consume_fefo(&mut tx, &product_id, branch_id, sold_qty_decimal)
             .await?;
-            tx.commit().await?;
-        }
+        tx.commit().await?;
         // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
         if let Some(alert) = check_alert(pool, &product_id, new_qty).await {
@@ -764,5 +836,37 @@ mod tests {
         // Delta = 12 - 20 = -8
         let d: f64 = delta.unwrap_or_default().parse().unwrap_or(0.0);
         assert_eq!(d, -8.0, "stock_take delta should be new_qty - old_qty");
+    }
+
+    #[tokio::test]
+    async fn reconciliation_repairs_stock_level_from_latest_movement() {
+        let pool = make_pool().await;
+        manual_adjust(&pool, COLA_ID, 10.0, None, USER, None, BRANCH, DEVICE)
+            .await
+            .expect("seed movement");
+        manual_adjust(&pool, COLA_ID, -3.0, None, USER, None, BRANCH, DEVICE)
+            .await
+            .expect("second movement");
+
+        sqlx::query(
+            "UPDATE stock_levels SET quantity_on_hand = '999' WHERE product_id = ? AND branch_id = ?",
+        )
+        .bind(COLA_ID)
+        .bind(BRANCH)
+        .execute(&pool)
+        .await
+        .expect("corrupt cache");
+
+        let before = stock_drift_report(&pool).await.expect("drift report");
+        assert_eq!(before.len(), 1);
+        assert_eq!(before[0].expected_quantity, "7");
+
+        let repaired = reconcile_stock_drift(&pool).await.expect("reconcile");
+        assert_eq!(repaired, 1);
+        assert_eq!(current_qty(&pool, COLA_ID).await, 7.0);
+        assert!(stock_drift_report(&pool)
+            .await
+            .expect("clean report")
+            .is_empty());
     }
 }

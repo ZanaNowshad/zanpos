@@ -1,8 +1,11 @@
 import { useEffect, useRef, type ChangeEvent, type RefObject, type KeyboardEvent } from "react";
+import { Camera, ImagePlus, ReceiptText, Search, SendHorizontal, Square, X } from "lucide-react";
 import type { ChatController } from "./useChatController";
 import { ChatMessageList, QuickChipsBar } from "./ChatMessages";
 import { LiveActivityBar } from "./toolCards";
 import RunPanel from "./RunPanel";
+import { useLanguage } from "../hooks/useLanguage";
+import { officeAiTranslator, type OfficeAiStringKey } from "../i18n/officeAiStrings";
 
 interface Props {
   ctrl: ChatController;
@@ -19,12 +22,14 @@ interface Props {
  * between the dock and the fullscreen Assistant tab.
  */
 const IMAGE_CHIPS = [
-  { icon: "🧾", label: "Receipt → PO", prompt: "Create a purchase order from this delivery note. Extract the supplier name, products, quantities, and unit costs." },
-  { icon: "🔍", label: "Scan product",  prompt: "Identify this product and show me its current stock, price, and recent sales." },
-  { icon: "📸", label: "Audit shelf",   prompt: "What products are visible on this shelf? Which look low or out of stock?" },
-];
+  { Icon: ReceiptText, labelKey: "purchaseBill", prompt: "Create a purchase order from this delivery note. Extract the supplier name, products, quantities, and unit costs." },
+  { Icon: Search, labelKey: "scanProduct", prompt: "Identify this product and show me its current stock, price, and recent sales." },
+  { Icon: ImagePlus, labelKey: "shelfAudit", prompt: "What products are visible on this shelf? Which look low or out of stock?" },
+] satisfies Array<{ Icon: typeof ReceiptText; labelKey: OfficeAiStringKey; prompt: string }>;
 
 export default function ChatPanel({ ctrl, variant, userName, businessName, composerRef }: Props) {
+  const { language } = useLanguage();
+  const t = officeAiTranslator(language);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Auto-expand composer up to 160px
@@ -62,9 +67,9 @@ export default function ChatPanel({ ctrl, variant, userName, businessName, compo
   };
 
   const handleExport = () => {
-    const lines: string[] = [`ZanAI Conversation — ${new Date().toLocaleString()}\n`];
+    const lines: string[] = [`${t("zanAiConversation")} — ${new Date().toLocaleString()}\n`];
     for (const msg of ctrl.messages) {
-      const label = msg.role === "user" ? userName : msg.role === "assistant" ? "ZanAI" : "System";
+      const label = msg.role === "user" ? userName : msg.role === "assistant" ? "ZanAI" : t("systemRole");
       const time = msg.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       lines.push(`[${time}] ${label}:\n${msg.text}\n`);
     }
@@ -85,6 +90,7 @@ export default function ChatPanel({ ctrl, variant, userName, businessName, compo
         streamingMsgId={ctrl.streamingMsgId}
         liveToolCalls={ctrl.liveToolCalls}
         onUndo={ctrl.handleUndo}
+        onFeedback={ctrl.handleFeedback}
         onChip={(text) => ctrl.handleSend(text)}
         userName={userName}
         businessName={businessName}
@@ -96,6 +102,27 @@ export default function ChatPanel({ ctrl, variant, userName, businessName, compo
         tokenCount={ctrl.tokenCount}
         streamStartTime={ctrl.streamStartTime}
       />
+
+      {ctrl.bulkProgress && (
+        <div className="chat-bulk-progress" role="status" aria-live="polite">
+          <span className="chat-bulk-progress-label">
+            {ctrl.bulkProgress.tool === "create_products"
+              ? t("creatingProducts")
+              : ctrl.bulkProgress.tool === "bulk_import_products"
+                ? t("importingProducts")
+                : t("processing")}
+            {" "}{ctrl.bulkProgress.done} / {ctrl.bulkProgress.total}
+          </span>
+          <div className="chat-bulk-progress-track">
+            <div
+              className="chat-bulk-progress-fill"
+              style={{
+                width: `${Math.min(100, Math.round((ctrl.bulkProgress.done / Math.max(1, ctrl.bulkProgress.total)) * 100))}%`,
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {ctrl.runState && (
         <RunPanel
@@ -112,23 +139,37 @@ export default function ChatPanel({ ctrl, variant, userName, businessName, compo
             <QuickChipsBar onSelect={(text) => ctrl.handleSend(text)} />
             <div className="chat-img-chips-bar">
               {IMAGE_CHIPS.map(c => (
-                <button key={c.label} className="chat-img-chip" onClick={() => handleImageChip(c.prompt)}>
-                  {c.icon} {c.label}
+            <button key={c.labelKey} className="chat-img-chip" onClick={() => handleImageChip(c.prompt)}>
+                  <c.Icon size={14} /> {t(c.labelKey)}
                 </button>
               ))}
             </div>
           </>
         )}
 
+        {ctrl.chatState === "idle" &&
+          ctrl.messages.length > 0 &&
+          ctrl.messages[ctrl.messages.length - 1]?.role === "assistant" && (
+          <div className="chat-continue-bar">
+            <button
+              className="chat-continue-chip"
+              onClick={() => ctrl.handleSend("Continue — pick up exactly where you left off and finish the remaining work.")}
+              title={t("continueTask")}
+            >
+              {t("continueAction")} <span className="icon-directional" aria-hidden="true">▸</span>
+            </button>
+          </div>
+        )}
+
         {ctrl.imageAttachment && (
           <div className="chat-img-preview-wrap">
-            <img src={ctrl.imageAttachment.previewUrl} className="chat-img-preview-thumb" alt="Attached" />
+            <img src={ctrl.imageAttachment.previewUrl} className="chat-img-preview-thumb" alt={t("attached")} />
             <button
               className="chat-img-preview-close"
               onClick={() => ctrl.setImageAttachment(null)}
-              title="Remove image"
+              title={t("removeImage")}
             >
-              ×
+              <X size={12} />
             </button>
           </div>
         )}
@@ -145,19 +186,19 @@ export default function ChatPanel({ ctrl, variant, userName, businessName, compo
             className="chat-img-btn"
             onClick={() => fileInputRef.current?.click()}
             disabled={ctrl.chatState !== "idle"}
-            title="Attach image for AI analysis"
+            title={t("attachImage")}
           >
-            📷
+            <Camera size={17} />
           </button>
           <textarea
             ref={composerRef}
             className="chat-input-v2"
             placeholder={
-              ctrl.chatState === "confirm" ? "Confirm or cancel the action above…" :
-              ctrl.chatState === "run_confirm" ? "Confirm the bulk run above, or cancel…" :
-              ctrl.chatState === "run_executing" ? "Run in progress…" :
-              ctrl.imageAttachment ? "Ask about this image…" :
-              "Ask ZanAI anything about your business…"
+              ctrl.chatState === "confirm" ? t("confirmActionPlaceholder") :
+              ctrl.chatState === "run_confirm" ? t("confirmRunPlaceholder") :
+              ctrl.chatState === "run_executing" ? t("runInProgress") :
+              ctrl.imageAttachment ? t("askAboutImage") :
+              t("askAnything")
             }
             value={ctrl.input}
             onChange={e => ctrl.setInput(e.target.value)}
@@ -167,18 +208,21 @@ export default function ChatPanel({ ctrl, variant, userName, businessName, compo
           />
           <button
             className="chat-send-btn-v2"
-            onClick={() => ctrl.handleSend()}
-            disabled={!canSend}
+            onClick={() => ctrl.chatState === "thinking" && ctrl.canStop ? ctrl.handleStop() : ctrl.handleSend()}
+            disabled={ctrl.chatState === "thinking" ? !ctrl.canStop : !canSend}
+            title={ctrl.chatState === "thinking" ? (ctrl.canStop ? t("stopResponse") : t("startingResponse")) : t("sendMessage")}
           >
-            ↑
+            {ctrl.chatState === "thinking" && ctrl.canStop
+              ? <Square size={15} fill="currentColor" />
+              : <SendHorizontal className="icon-directional" size={17} />}
           </button>
         </div>
         <div className="chat-input-hint">
-          Enter to send · Shift+Enter for new line
+          {t("sendHint")}
           {ctrl.messages.length > 0 && (
             <>
-              <button className="chat-clear-link" onClick={ctrl.handleClearChat}>· Clear chat</button>
-              <button className="chat-clear-link" onClick={handleExport}>· Export</button>
+              <button className="chat-clear-link" onClick={ctrl.handleClearChat}>· {t("clearChat")}</button>
+              <button className="chat-clear-link" onClick={handleExport}>· {t("export")}</button>
             </>
           )}
         </div>

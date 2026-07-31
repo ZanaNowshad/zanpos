@@ -186,7 +186,7 @@ fn normalize_hub_url(raw: &str) -> String {
     } else {
         format!("http://{s}")
     };
-    let after = with_scheme.splitn(2, "://").nth(1).unwrap_or("");
+    let after = with_scheme.split_once("://").map(|x| x.1).unwrap_or("");
     if after.contains(':') {
         with_scheme
     } else {
@@ -194,16 +194,50 @@ fn normalize_hub_url(raw: &str) -> String {
     }
 }
 
+fn join_schema_compatible(local_version: i64, hub_version: i64) -> bool {
+    local_version > 0 && local_version == hub_version
+}
+
+async fn verify_join_schema(
+    client: &HttpSyncClient,
+    pool: &sqlx::SqlitePool,
+) -> Result<(), AppError> {
+    let local_version = crate::sync_v2::consistency::schema_version(pool).await;
+    let hub = client.hub_consistency().await.map_err(|error| {
+        AppError::Validation(format!(
+            "Could not verify the hub database version. Update ZANPOS on the hub and try again: {error}"
+        ))
+    })?;
+    if !join_schema_compatible(local_version, hub.schema_version) {
+        return Err(AppError::Validation(format!(
+            "ZANPOS versions do not match. This terminal uses database version {local_version}, but the hub uses version {}. Update ZANPOS on both devices before joining.",
+            hub.schema_version
+        )));
+    }
+    Ok(())
+}
+
 #[tauri::command]
-pub async fn hub_test_connection(url: String, token: String) -> Result<HubTestResult, AppError> {
+pub async fn hub_test_connection(
+    url: String,
+    token: String,
+    state: State<'_, AppState>,
+) -> Result<HubTestResult, AppError> {
     let url = normalize_hub_url(&url);
     let client = HttpSyncClient::new(&url, &token, None);
     match client.hub_info().await {
-        Ok(info) => Ok(HubTestResult {
-            ok: true,
-            store_name: Some(info.store_name),
-            error: None,
-        }),
+        Ok(info) => match verify_join_schema(&client, &state.db).await {
+            Ok(()) => Ok(HubTestResult {
+                ok: true,
+                store_name: Some(info.store_name),
+                error: None,
+            }),
+            Err(error) => Ok(HubTestResult {
+                ok: false,
+                store_name: Some(info.store_name),
+                error: Some(error.user_message().to_string()),
+            }),
+        },
         Err(AppError::Validation(m)) => Ok(HubTestResult {
             ok: false,
             store_name: None,
@@ -262,6 +296,7 @@ pub async fn hub_join(
         .await
         .map_err(|e| AppError::Validation(format!("Could not connect to the hub: {e}")))?;
     warn_on_clock_skew(&info.hub_time);
+    verify_join_schema(&client, &state.db).await?;
     let branch_val = client
         .pull_branch()
         .await
@@ -282,30 +317,15 @@ pub async fn hub_join(
         ));
     }
 
-    let mut tx = state.db.begin().await?;
-    sqlx::query(
-        "UPDATE branches SET name=?, currency=?, timezone=?, address=?, phone=?,
-           receipt_header=?, receipt_footer=?, tax_number=?, cr_number=?, updated_at=?
-         WHERE is_active=1",
-    )
-    .bind(&central_name)
-    .bind(branch_val["currency"].as_str().unwrap_or("BHD"))
-    .bind(branch_val["timezone"].as_str().unwrap_or("Asia/Bahrain"))
-    .bind(branch_val["address"].as_str())
-    .bind(branch_val["phone"].as_str())
-    .bind(branch_val["receipt_header"].as_str())
-    .bind(branch_val["receipt_footer"].as_str())
-    .bind(branch_val["tax_number"].as_str())
-    .bind(branch_val["cr_number"].as_str())
-    .bind(&now)
-    .execute(&mut *tx)
-    .await?;
+    crate::sync_v2::apply::apply_row(&state.db, "branches", &branch_val).await?;
+    let branch_id = info.branch_id.clone();
+    sqlx::query("UPDATE branches SET is_active=0 WHERE branch_id <> ?")
+        .bind(&branch_id)
+        .execute(&state.db)
+        .await?;
 
     let device_id = ulid::Ulid::new().to_string();
-    let branch_id: String =
-        sqlx::query_scalar("SELECT branch_id FROM branches WHERE is_active=1 LIMIT 1")
-            .fetch_one(&mut *tx)
-            .await?;
+    let mut tx = state.db.begin().await?;
     sqlx::query("DELETE FROM devices WHERE is_active = 0")
         .execute(&mut *tx)
         .await?;
@@ -327,12 +347,31 @@ pub async fn hub_join(
         ("device_id", device_id.as_str()),
         ("hub_url", url.as_str()),
         ("setup_complete", "1"),
+        ("join_snapshot_initialized", "0"),
     ] {
         sqlx::query("INSERT INTO app_config(key,value,updated_at) VALUES (?,?,?)
                      ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at")
             .bind(k).bind(v).bind(&now).execute(&mut *tx).await?;
     }
     tx.commit().await?;
+
+    client
+        .upsert_rows(
+            "devices",
+            &[serde_json::json!({
+                "device_id": device_id,
+                "branch_id": branch_id,
+                "device_code": device_code,
+                "name": device_name,
+                "status": "online",
+                "is_active": 1,
+                "next_receipt_seq": 1,
+                "created_at": now,
+                "updated_at": now
+            })],
+        )
+        .await
+        .map_err(|e| AppError::Internal(format!("Terminal registration failed: {e}")))?;
 
     crate::commands::setup_commands::app_config_load(state).await
 }
@@ -355,6 +394,7 @@ pub async fn hub_connect_existing(
         .await
         .map_err(|e| AppError::Validation(format!("Could not connect to the hub: {e}")))?;
     warn_on_clock_skew(&info.hub_time);
+    verify_join_schema(&client, &state.db).await?;
 
     if !crate::secure_store::set_secret("hub_store_token", &token) {
         return Err(AppError::Internal(
@@ -403,7 +443,7 @@ pub async fn hub_connect_existing(
 
     let worker = state.sync_worker.clone();
     tauri::async_runtime::spawn(async move {
-        worker.run_once().await;
+        worker.run_once_wait().await;
     });
     hub_status(actor_user_id, state).await
 }
@@ -418,13 +458,27 @@ pub async fn hub_set_url(
     let token = crate::secure_store::get_secret("hub_store_token")
         .ok_or_else(|| AppError::Validation("No store token on this terminal.".into()))?;
     let url = normalize_hub_url(&hub_url);
-    HttpSyncClient::new(&url, &token, None)
+    let client = HttpSyncClient::new(&url, &token, None);
+    client
         .hub_info()
         .await
         .map_err(|e| AppError::Validation(format!("Could not connect: {e}")))?;
+    verify_join_schema(&client, &state.db).await?;
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query("INSERT INTO app_config(key,value,updated_at) VALUES ('hub_url',?,?)
                  ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at")
         .bind(&url).bind(&now).execute(&state.db).await?;
     hub_status(actor_user_id, state).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::join_schema_compatible;
+
+    #[test]
+    fn terminal_join_requires_the_same_schema_as_the_hub() {
+        assert!(join_schema_compatible(30, 30));
+        assert!(!join_schema_compatible(30, 29));
+        assert!(!join_schema_compatible(29, 30));
+    }
 }

@@ -1,5 +1,7 @@
 import { Zap, X, RotateCcw, CheckCircle2, XCircle } from "lucide-react";
 import type { RunState } from "./officeAiTypes";
+import { useLanguage } from "../hooks/useLanguage";
+import { officeAiFormat, officeAiTranslator } from "../i18n/officeAiStrings";
 
 interface Props {
   runState: RunState;
@@ -9,6 +11,8 @@ interface Props {
 }
 
 export default function RunPanel({ runState, onExecute, onCancel, onUndo }: Props) {
+  const { language } = useLanguage();
+  const t = officeAiTranslator(language);
   const pct =
     runState.count > 0 ? Math.round((runState.done / runState.count) * 100) : 0;
 
@@ -27,24 +31,27 @@ export default function RunPanel({ runState, onExecute, onCancel, onUndo }: Prop
 
         {runState.phase === "preview" && (
           <div className="run-panel-count">
-            {runState.count.toLocaleString()} products will be updated
+            {officeAiFormat(t("productsWillUpdate"), { count: runState.count.toLocaleString() })}
           </div>
         )}
 
         {runState.phase === "executing" && (
           <>
-            <div className="run-progress-bar">
+            <div className="run-progress-bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
               <div className="run-progress-fill" style={{ width: `${pct}%` }} />
             </div>
             <div className="run-panel-count">
-              {runState.done.toLocaleString()} / {runState.count.toLocaleString()} done
+              {officeAiFormat(t("doneCount"), {
+                done: runState.done.toLocaleString(),
+                count: runState.count.toLocaleString(),
+              })}
             </div>
           </>
         )}
 
         {runState.phase === "done" && (
           <div className="run-panel-count">
-            All {runState.count.toLocaleString()} products updated
+            {officeAiFormat(t("completedRecords"), { count: runState.count.toLocaleString() })}
           </div>
         )}
 
@@ -58,18 +65,18 @@ export default function RunPanel({ runState, onExecute, onCancel, onUndo }: Prop
           <>
             <button className="run-btn run-btn--primary" onClick={onExecute}>
               <Zap size={14} />
-              Run {runState.count.toLocaleString()}
+              {officeAiFormat(t("runCount"), { count: runState.count.toLocaleString() })}
             </button>
             <button className="run-btn run-btn--ghost" onClick={onCancel}>
               <X size={14} />
-              Cancel
+              {t("cancel")}
             </button>
           </>
         )}
-        {runState.phase === "done" && (
+        {runState.phase === "done" && runState.opId === "bulk_price_adjust" && (
           <button className="run-btn run-btn--ghost" onClick={onUndo}>
             <RotateCcw size={14} />
-            Undo
+            {t("undo")}
           </button>
         )}
       </div>

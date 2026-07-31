@@ -102,7 +102,7 @@ export interface Cart {
 }
 
 export interface PaymentInput {
-  method: "cash" | "card" | "wallet" | "other";
+  method: "cash" | "card" | "wallet" | "other" | "exchange_credit";
   amount_minor: number;
   tendered_minor?: number;
   external_reference?: string;
@@ -167,10 +167,13 @@ export interface UserSummary {
 
 export interface SessionUser {
   user_id: string;
+  branch_id: string;
   display_name: string;
   username: string;
   role_id: string;
   role_name: string;
+  session_token: string;
+  session_expires_at: string;
 }
 
 export interface Shift {
@@ -244,11 +247,22 @@ export interface TodaySummary {
   pending_delivery_minor: number;
 }
 
+export interface ReprintQueueEntry {
+  id: string;
+  receipt_number: string | null;
+  store_name: string;
+  lines: string[];
+  failed_at: string;
+  error: string | null;
+  business_date: string;
+}
+
 // ─── Phase 2: AI Provider config ─────────────────────────────────────────────
 
 export interface ProviderConfig {
   provider: string; // "anthropic" | "openai" | "gemini" | ""
   anthropic_key_set: boolean;
+  anthropic_model: string;
   openai_base_url: string;
   openai_key_set: boolean;
   openai_model: string;
@@ -264,6 +278,30 @@ export interface ValidateProviderResult {
   success: boolean;
   models: ModelInfo[];
   error: string | null;
+}
+
+export interface FeatureToggles {
+  web_search: boolean;
+  web_fetch: boolean;
+  compare_prices: boolean;
+  market_price: boolean;
+  smart_analytics: boolean;
+  proactive: boolean;
+  inventory_ops: boolean;
+  customer_insights: boolean;
+  insights_engine: boolean;
+}
+
+export interface AiConfigPayload {
+  anthropic_max_tokens: number;
+  openai_max_tokens: number;
+  temperature: number;
+  max_turns: number;
+  context_window_chars: number;
+  connect_timeout_secs: number;
+  stream_timeout_secs: number;
+  action_expiry_minutes: number;
+  bulk_batch_size: number;
 }
 
 // ─── Phase 2: AI Admin types ──────────────────────────────────────────────────
@@ -284,10 +322,17 @@ export interface ToolPreview {
   fields: ToolPreviewField[];
 }
 
+export interface BatchPendingAction {
+  action_id: string;
+  tool_name: string;
+  preview: ToolPreview;
+  expires_at: string;
+}
+
 export interface AiChatInput {
+  request_id: string;
   history: ChatMessage[];
   message: string;
-  user_id: string;
   branch_id: string;
   currency_exponent: number;
   ui_context?: string;
@@ -309,7 +354,6 @@ export type AiChatResponse =
 
 export interface ExecuteActionInput {
   action_id: string;
-  user_id: string;
   history: ChatMessage[];
   assistant_text: string;
   currency_exponent: number;
@@ -330,6 +374,7 @@ export interface UndoActionResult {
 
 export interface AiChatMessage {
   id: number;
+  message_id: string;
   session_id: string;
   branch_id: string;
   user_id: string;
@@ -339,7 +384,22 @@ export interface AiChatMessage {
   created_at: string;
 }
 
+export interface ProactiveAlert {
+  alert_id: string;
+  branch_id: string;
+  alert_type: string;
+  severity: string;
+  title: string;
+  description: string;
+  detail_json: string | null;
+  detected_at: string;
+  dismissed_at: string | null;
+  dismissed_by_user_id: string | null;
+  created_at: string;
+}
+
 export type StreamEvent =
+  | { type: "started" }
   | { type: "token"; text: string }
   | { type: "tool_start"; name: string }
   | { type: "tool_done"; name: string }
@@ -350,6 +410,18 @@ export type StreamEvent =
       preview: ToolPreview;
       expires_at: string;
       assistant_text: string;
+    }
+  | {
+      type: "mutation_batch_pending";
+      actions: BatchPendingAction[];
+      assistant_text: string;
+    }
+  | {
+      type: "mutation_executed";
+      action_id: string;
+      tool_name: string;
+      undo_id: string;
+      description: string;
     }
   | { type: "navigate"; tab: string }
   | {
@@ -363,8 +435,16 @@ export type StreamEvent =
   | { type: "run_progress"; run_id: string; done: number; total: number }
   | { type: "run_done"; run_id: string }
   | { type: "run_failed"; run_id: string; error: string }
+  | { type: "message_persisted"; session_id: string; message_id: string }
+  | { type: "cancelled" }
   | { type: "done" }
   | { type: "error"; message: string };
+
+export interface TaskLedgerResume {
+  description: string;
+  state_json: string;
+  updated_at: string;
+}
 
 // ─── Phase 7: Enhanced report types ──────────────────────────────────────────
 
@@ -389,6 +469,110 @@ export interface TopProduct {
   total_quantity: string;
   revenue_minor: number;
   transaction_count: number;
+}
+
+export interface MarginSummary {
+  from_date: string;
+  to_date: string;
+  transaction_count: number;
+  revenue_minor: number;
+  cogs_minor: number;
+  gross_margin_minor: number;
+  margin_basis_points: number | null;
+  unknown_cost_line_count: number;
+}
+
+export interface ProductMarginRow {
+  product_id: string | null;
+  product_name: string;
+  quantity: string;
+  revenue_minor: number;
+  cogs_minor: number;
+  gross_margin_minor: number;
+  margin_basis_points: number | null;
+  unknown_cost_line_count: number;
+}
+
+export interface SupplierRow {
+  supplier_id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  contact_name: string | null;
+  address: string | null;
+  notes: string | null;
+  is_active: boolean;
+  product_count: number;
+  open_po_count: number;
+  updated_at: string;
+}
+
+export interface SupplierUpsertInput {
+  supplier_id?: string | null;
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  contact_name?: string | null;
+  address?: string | null;
+  notes?: string | null;
+  is_active?: boolean | null;
+}
+
+export interface PurchaseOrderRow {
+  po_id: string;
+  supplier_id: string | null;
+  supplier_name: string | null;
+  status: string;
+  expected_date: string | null;
+  received_date: string | null;
+  notes: string | null;
+  line_count: number;
+  ordered_total_minor: number;
+  received_total_minor: number;
+  updated_at: string;
+}
+
+export interface PurchaseOrderLineRow {
+  po_line_id: string;
+  product_id: string | null;
+  product_name: string;
+  ordered_qty: number;
+  received_qty: number;
+  unit_cost_minor: number;
+}
+
+export interface PurchaseOrderDetail {
+  order: PurchaseOrderRow;
+  lines: PurchaseOrderLineRow[];
+}
+
+export interface PurchaseOrderLineInput {
+  product_id?: string | null;
+  product_name: string;
+  ordered_qty: string;
+  unit_cost_minor: number;
+}
+
+export interface PurchaseOrderCreateInput {
+  supplier_id?: string | null;
+  expected_date?: string | null;
+  notes?: string | null;
+  created_by: string;
+  lines: PurchaseOrderLineInput[];
+}
+
+export interface ReceivePurchaseOrderInput {
+  po_id: string;
+  actor_user_id: string;
+  lines?: Array<{ po_line_id: string; received_qty: string; expiry_date?: string | null }> | null;
+}
+
+export interface ReceivePurchaseOrderResult {
+  po_id: string;
+  status: string;
+  lines_received: number;
+  units_received: string;
+  cost_updates: number;
 }
 
 export interface SaleListRow {
@@ -558,6 +742,7 @@ export interface HubTestResult { ok: boolean; store_name: string | null; error: 
 
 export interface AppConfig {
   setup_complete: boolean;
+  database_path: string;
   /** "hub" | "terminal" | "standalone" — drives Settings/Hub UI + SyncChip. */
   hub_mode: "hub" | "terminal" | "standalone";
   hub_url: string | null;
@@ -600,6 +785,16 @@ export interface BusinessFlags {
   cashier_can_discount: boolean;
   /** When true, the thermal receipt prints automatically after every sale. */
   auto_print_receipt: boolean;
+}
+
+// ─── Operational settings ──────────────────────────────────────────────────────
+
+export interface OperationalSettings {
+  loyalty_points_per_bhd: number;
+  retention_days_sales: number;
+  retention_days_logs: number;
+  sync_interval_terminal_secs: number;
+  sync_interval_hub_secs: number;
 }
 
 // ─── Cashier report ───────────────────────────────────────────────────────────
@@ -678,6 +873,13 @@ export interface SyncDiagTable {
   stuck: number;
   max_attempts: number;
   avg_attempts: number;
+  last_push_success_at: string | null;
+  last_pull_success_at: string | null;
+  last_error_at: string | null;
+  last_error: string | null;
+  last_failed_row_id: string | null;
+  retry_count: number;
+  table_checksum: string | null;
 }
 
 export interface SyncDiagnostics {
@@ -688,6 +890,49 @@ export interface SyncDiagnostics {
   last_error: string | null;
   online: boolean;
   tables: SyncDiagTable[];
+  consistency_score: number | null;
+  conflicts_open: number;
+}
+
+export interface HubTruthTableCompare {
+  table: string;
+  local_count: number;
+  hub_count: number;
+  local_checksum: string;
+  hub_checksum: string;
+  status: "match" | "missing_on_hub" | "count_mismatch" | "checksum_mismatch" | string;
+}
+
+export interface HubTruthCompareResult {
+  ok: boolean;
+  compared_at: string;
+  score: number;
+  schema_match: boolean;
+  local_schema_version: number;
+  hub_schema_version: number;
+  tables: HubTruthTableCompare[];
+  message: string;
+}
+
+export interface SyncConflictRow {
+  conflict_id: string;
+  conflict_type: string;
+  table_name: string;
+  entity_id: string | null;
+  severity: string;
+  title: string;
+  detail: string;
+  status: string;
+  created_at: string;
+}
+
+export interface StockDriftRow {
+  product_id: string;
+  product_name: string;
+  branch_id: string;
+  cached_quantity: string;
+  expected_quantity: string;
+  latest_movement_id: string;
 }
 
 // ─── Device constants — populated from DB at startup before any UI renders ─────
@@ -803,6 +1048,152 @@ export interface ImportContactsResult {
   imported: number;
   skipped: number;
   total: number;
+}
+
+// ── WhatsApp → POS notification inbox ──────────────────────────────────────────
+export interface WaContact {
+  id: string;   // JID, e.g. "97333050666@s.whatsapp.net"
+  name: string;
+}
+
+export interface WaGroup {
+  id: string;   // JID, e.g. "1203...@g.us"
+  name: string; // group subject
+}
+
+export interface WaTargets {
+  owner_jid: string;
+  owner_name: string;
+  group_jid: string;
+  group_name: string;
+}
+
+export interface WaMessage {
+  id: string;
+  chat_jid: string;
+  chat_name: string | null;
+  is_group: boolean;
+  sender_jid: string | null;
+  sender_name: string | null;
+  body: string;
+  ts: number;   // unix seconds
+  read: boolean;
+  media_type: string | null; // "image" when the message carries a viewable photo
+}
+
+export interface WaMedia {
+  ok: boolean;
+  base64: string | null;
+  mimetype: string | null;
+}
+
+// ── WhatsApp Commerce: orders ─────────────────────────────────────────────────
+export interface WaOrderProduct {
+  id: string;
+  name: string;
+  quantity: number;
+  price: number | null;
+  currency: string | null;
+  image_url: string | null;
+}
+
+export interface WaOrder {
+  order_id: string;
+  customer_jid: string;
+  customer_name: string | null;
+  status: string;            // new/reviewed/fulfilled/cancelled
+  total_minor: number | null;
+  currency: string | null;
+  product_count: number;
+  created_at: string;
+  linked_sale_id: string | null;
+  products: WaOrderProduct[];
+}
+
+export interface WaMatchedLine {
+  product_id: string;
+  name: string;
+  barcode: string | null;
+  quantity: number;
+}
+
+export interface WaOrderMatch {
+  matched: WaMatchedLine[];
+  unmatched: WaOrderProduct[];
+}
+
+/** A WhatsApp payment screenshot ZanAI verified (OCR + AI amount/name match). */
+export interface PaymentConfirmation {
+  id: string;
+  customer_jid: string;
+  customer_name: string | null;
+  receipt_number: string;
+  expected_amount_minor: number;
+  currency_exponent: number;
+  amount_found: string | null;
+  name_matched: boolean;
+  status: "confirmed" | "failed";
+  reason: string | null;
+  seen: boolean;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+/** One reviewable line from an invoice/price-list photo extraction. */
+export interface ProposedLine {
+  line_no: number;
+  name: string;
+  barcode: string | null;
+  quantity: number | null;
+  matched_product_id: string | null;
+  matched_name: string | null;
+  current_price_minor: number | null;
+  new_price_minor: number | null;
+  current_cost_minor: number | null;
+  new_cost_minor: number | null;
+  action: "update" | "create";
+}
+
+/** Result of extracting an invoice/price-list photo (review-first; nothing written). */
+export interface CatalogImportProposal {
+  supplier_name: string | null;
+  supplier_id: string | null;
+  currency_exponent: number;
+  lines: ProposedLine[];
+  ocr_chars: number;
+}
+
+/** One approved (possibly owner-edited) line sent back to apply. */
+export interface CatalogApplyLine {
+  action: "update" | "create";
+  product_id: string | null;
+  name: string;
+  barcode: string | null;
+  new_price_minor: number | null;
+  new_cost_minor: number | null;
+  receive_qty: string | null;
+}
+
+export interface CatalogApplyInput {
+  currency_exponent: number;
+  supplier_name: string | null;
+  supplier_id: string | null;
+  lines: CatalogApplyLine[];
+}
+
+export interface CatalogApplyResult {
+  updated: number;
+  created: number;
+  received: number;
+  supplier_id: string | null;
+  errors: string[];
+}
+
+/** A message (and optional image) handed from a POS notification to the OfficeAI assistant. */
+export interface AiHandoff {
+  text: string;
+  imageBase64?: string;
+  imageMediaType?: string;
 }
 
 export interface SendDeliveryInput {
@@ -949,4 +1340,90 @@ export interface ProductPrefill {
 export interface ResolveResult {
   resolved: number;
   not_found: number;
+}
+
+export interface DuplicateProduct {
+  product_id: string;
+  name: string;
+  sku: string | null;
+  barcode: string | null;
+  category_name: string;
+  price_minor: number;
+  is_active: boolean;
+  total_stock: number;
+  image_path: string | null;
+}
+
+export interface DuplicateGroup {
+  /** "Exact name", "Same barcode", "Same SKU", or "Similar product". */
+  match_type: string;
+  match_key: string;
+  reason: string;
+  confidence: number;
+  products: DuplicateProduct[];
+}
+
+export interface DiagnosticReport {
+  ok: boolean;
+  db_integrity: string;
+  issues_found: string[];
+  issues_fixed: string[];
+  note: string;
+}
+
+export type HealthSeverity = "ok" | "info" | "warning" | "critical";
+
+export interface HealthFinding {
+  code: string;
+  severity: HealthSeverity;
+  area: string;
+  title: string;
+  detail: string;
+  fix_action: string | null;
+}
+
+export interface HealthDevice {
+  device_id: string;
+  label: string;
+  role: string;
+  status: string;
+  ip: string | null;
+  last_seen: string | null;
+}
+
+export interface SyncHealthTable {
+  table: string;
+  pending: number;
+  stuck: number;
+  max_attempts: number;
+}
+
+export interface HealthSummary {
+  ok: boolean;
+  db_integrity: string;
+  migration_count: number;
+  pending_sync_rows: number;
+  stuck_sync_rows: number;
+  device_count: number;
+  hub_mode: string;
+  checked_at: string;
+}
+
+export interface SystemHealthReport {
+  summary: HealthSummary;
+  findings: HealthFinding[];
+  devices: HealthDevice[];
+  tables: SyncHealthTable[];
+}
+
+export interface HealthFixResult {
+  fix_action: string;
+  rows_changed: number;
+  message: string;
+}
+
+export interface StartupComponentStatus {
+  component: string;
+  status: string;
+  message: string;
 }

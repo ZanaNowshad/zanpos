@@ -1,73 +1,78 @@
+import { useLanguage } from "../hooks/useLanguage";
+import { modalText } from "../i18n/modalStrings";
+import { detailText, type DetailStringKey } from "../i18n/detailStrings";
+
 interface Props {
   onClose: () => void;
 }
 
-const SECTIONS: { heading: string; rows: { keys: string; action: string }[] }[] = [
+const SECTIONS: { heading: DetailStringKey; rows: { keys: string; action: DetailStringKey }[] }[] = [
   {
-    heading: "Barcode & Navigation",
+    heading: "barcodeNavigation",
     rows: [
-      { keys: "F2 / F3",       action: "Focus barcode scanner / search field" },
-      { keys: "Escape",         action: "Return focus to barcode scanner" },
+      { keys: "F2 / F3", action: "focusScanner" },
+      { keys: "Escape", action: "returnFocusScanner" },
     ],
   },
   {
-    heading: "Cart Management",
+    heading: "cartManagement",
     rows: [
-      { keys: "+ / =",          action: "Increment quantity of most-recent item" },
-      { keys: "−",              action: "Decrement quantity of most-recent item" },
-      { keys: "Delete",         action: "Remove most-recent item from cart" },
-      { keys: "Backspace",      action: "Remove most-recent item (barcode field empty)" },
-      { keys: "Ctrl+Delete",    action: "Clear entire cart (confirmation required)" },
-      { keys: "Ctrl+Backspace", action: "Clear entire cart (confirmation required)" },
-      { keys: "F8",             action: "Apply bill-level discount (cart must have items)" },
-      { keys: "Ctrl+D",         action: "Discount the last scanned item" },
+      { keys: "+ / =", action: "incrementRecent" },
+      { keys: "−", action: "decrementRecent" },
+      { keys: "Delete", action: "removeRecent" },
+      { keys: "Backspace", action: "removeRecentEmpty" },
+      { keys: "Ctrl+Delete", action: "clearCartConfirm" },
+      { keys: "Ctrl+Backspace", action: "clearCartConfirm" },
+      { keys: "F8", action: "applyBillDiscount" },
+      { keys: "Ctrl+D", action: "discountLastItem" },
     ],
   },
   {
-    heading: "Payment & Sales",
+    heading: "paymentSales",
     rows: [
-      { keys: "F9",             action: "Open payment modal (cart must have items)" },
-      { keys: "F12",            action: "Fast Cash — exact cash, no receipt printed" },
-      { keys: "Ctrl+P",         action: "Reprint last receipt" },
-      { keys: "F11 / Ctrl+N",  action: "No-sale — open cash drawer without a sale" },
+      { keys: "F9", action: "openPayment" },
+      { keys: "F12", action: "fastCash" },
+      { keys: "Ctrl+P", action: "reprintLastReceipt" },
+      { keys: "F11 / Ctrl+N", action: "noSaleDrawer" },
     ],
   },
   {
-    heading: "Held Carts",
+    heading: "heldCarts",
     rows: [
-      { keys: "F6",             action: "Hold current cart (save for later)" },
-      { keys: "F7",             action: "Resume a held cart" },
+      { keys: "F6", action: "holdCurrentCart" },
+      { keys: "F7", action: "resumeHeldCart" },
     ],
   },
   {
-    heading: "Refunds & Reports",
+    heading: "refundsReports",
     rows: [
-      { keys: "F10 / Ctrl+R",  action: "Open refund dialog" },
-      { keys: "Ctrl+X",         action: "X-Report — close shift report (managers only)" },
+      { keys: "F10 / Ctrl+R", action: "openRefund" },
+      { keys: "Ctrl+X", action: "xReportManagers" },
     ],
   },
   {
-    heading: "Session & Access",
+    heading: "sessionAccess",
     rows: [
-      { keys: "Ctrl+L",         action: "Lock screen / logout" },
-      { keys: "Ctrl+H",         action: "Show this keyboard shortcut help screen" },
+      { keys: "Ctrl+L", action: "lockOrLogout" },
+      { keys: "Ctrl+H", action: "showShortcutHelp" },
     ],
   },
 ];
 
 export default function HelpModal({ onClose }: Props) {
+  const { language } = useLanguage();
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal help-modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="help-title">
         <div className="modal-header">
-          <span className="modal-title" id="help-title">⌨ Keyboard Shortcuts</span>
+          <span className="modal-title" id="help-title">⌨ {detailText(language, "keyboardShortcuts")}</span>
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
 
         <div className="help-modal-body">
           {SECTIONS.map(section => (
             <div key={section.heading} className="help-section">
-              <div className="help-section-heading">{section.heading}</div>
+              <div className="help-section-heading">{detailText(language, section.heading)}</div>
               <table className="help-shortcut-table">
                 <tbody>
                   {section.rows.map(row => (
@@ -80,7 +85,7 @@ export default function HelpModal({ onClose }: Props) {
                           </span>
                         ))}
                       </td>
-                      <td className="help-action-cell">{row.action}</td>
+                      <td className="help-action-cell">{detailText(language, row.action)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -89,12 +94,12 @@ export default function HelpModal({ onClose }: Props) {
           ))}
 
           <p className="help-tip">
-            💡 Most F-key shortcuts work even when a modal is open. Ctrl shortcuts require no modal to be active.
+            💡 {detailText(language, "shortcutTip")}
           </p>
         </div>
 
         <div className="modal-actions">
-          <button className="btn-primary" onClick={onClose}>Close</button>
+          <button className="btn-primary" onClick={onClose}>{modalText(language, "close")}</button>
         </div>
       </div>
     </div>

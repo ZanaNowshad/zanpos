@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { AdminProduct, CategoryRow, ProductBarcodeRow, TaxRuleRow } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney, parseMoney } from "../money";
 import * as cmd from "../tauri/commands";
 import { useFocusTrap } from "../hooks/useFocusTrap";
+import { useLanguage } from "../hooks/useLanguage";
+import { modalTranslator } from "../i18n/modalStrings";
+import { detailTranslator } from "../i18n/detailStrings";
 
 interface Props {
   mode: "create" | "edit";
@@ -24,6 +27,9 @@ export default function ProductFormModal({
   mode, product, prefilledName, prefilledBarcode,
   categories, taxRules, sessionUserId, onClose, onSaved,
 }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => modalTranslator(language), [language]);
+  const dt = useMemo(() => detailTranslator(language), [language]);
   const modalRef = useRef<HTMLDivElement>(null);
   useFocusTrap(modalRef, onClose);
   const exp = DEVICE.currency_exponent;
@@ -58,7 +64,7 @@ export default function ProductFormModal({
 
   async function pickImage() {
     try { const p = await cmd.productPickImage(); if (p) setImagePath(p); }
-    catch { setError("Could not open file picker"); }
+    catch { setError(dt("filePickerFailed")); }
   }
 
   function computeSelling(cost: number, pct: string): number {
@@ -70,7 +76,7 @@ export default function ProductFormModal({
   function addPending() {
     const bc = newBarcodeInput.trim();
     if (!bc) return;
-    if (pendingBarcodes.some(p => p.barcode === bc)) { setBarcodeErr("Already in list"); return; }
+    if (pendingBarcodes.some(p => p.barcode === bc)) { setBarcodeErr(t("alreadyInList")); return; }
     setBarcodeErr(null);
     setPendingBarcodes(p => [...p, { tempId: Math.random().toString(36), barcode: bc }]);
     setNewBarcodeInput("");
@@ -86,20 +92,20 @@ export default function ProductFormModal({
       setExtraBarcodes(p => [...p, row]);
       setNewBarcodeInput("");
       newBarcodeRef.current?.focus();
-    } catch (e: unknown) { setBarcodeErr(typeof e === "string" ? e : "Failed"); }
+    } catch (e: unknown) { setBarcodeErr(typeof e === "string" ? e : t("failed")); }
   }
 
   async function removeBarcodeForEdit(id: string) {
     try {
       await cmd.productBarcodeRemove(sessionUserId, id);
       setExtraBarcodes(p => p.filter(b => b.barcode_id !== id));
-    } catch (e: unknown) { setBarcodeErr(typeof e === "string" ? e : "Failed"); }
+    } catch (e: unknown) { setBarcodeErr(typeof e === "string" ? e : t("failed")); }
   }
 
   async function save() {
-    if (!name.trim() || !categoryId) { setError("Name and category required"); return; }
+    if (!name.trim() || !categoryId) { setError(t("nameCategoryRequired")); return; }
     const priceMinor = parseMoney(price, exp);
-    if (priceMinor <= 0) { setError("Price must be > 0"); return; }
+    if (priceMinor <= 0) { setError(t("priceMustBePositive")); return; }
     setSaving(true); setError(null);
     try {
       if (mode === "create") {
@@ -125,7 +131,7 @@ export default function ProductFormModal({
         });
       }
       onSaved();
-    } catch (e: unknown) { setError(typeof e === "string" ? e : "Save failed"); }
+    } catch (e: unknown) { setError(typeof e === "string" ? e : t("saveFailed")); }
     finally { setSaving(false); }
   }
 
@@ -136,10 +142,10 @@ export default function ProductFormModal({
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div ref={modalRef} className="modal bo-form-modal" role="dialog" aria-modal="true"
-        aria-label={mode === "create" ? "New Product" : "Edit Product"}
+        aria-label={mode === "create" ? t("newProduct") : t("editProduct")}
         onClick={e => e.stopPropagation()}>
         <div className="bo-form-modal-header">
-          <h2>{mode === "create" ? "New Product" : "Edit Product"}</h2>
+          <h2>{mode === "create" ? t("newProduct") : t("editProduct")}</h2>
           <button className="bo-form-modal-close" onClick={onClose}>✕</button>
         </div>
         <div className="bo-form-modal-body">
@@ -147,52 +153,52 @@ export default function ProductFormModal({
 
           <div className="bo-form-grid">
             <div className="bo-form-field bo-form-field-full">
-              <label className="bo-label">Name *</label>
-              <input className="bo-input" value={name} onChange={e => setName(e.target.value)} placeholder="Product name" autoFocus />
+              <label className="bo-label">{t("name")} *</label>
+              <input className="bo-input" value={name} onChange={e => setName(e.target.value)} placeholder={t("productName")} autoFocus />
             </div>
             <div className="bo-form-field">
-              <label className="bo-label">Category *</label>
+              <label className="bo-label">{t("category")} *</label>
               <select className="bo-select" value={categoryId} onChange={e => setCategoryId(e.target.value)}>
-                <option value="">— select —</option>
+                <option value="">— {t("select")} —</option>
                 {categories.map(c => <option key={c.category_id} value={c.category_id}>{c.name}</option>)}
               </select>
             </div>
             <div className="bo-form-field">
-              <label className="bo-label">Price ({cur}) *</label>
+              <label className="bo-label">{t("price")} ({cur}) *</label>
               <input className="bo-input" type="number" inputMode="decimal" min="0" step={Math.pow(10, -exp).toFixed(exp)}
                 value={price} onChange={e => setPrice(e.target.value)} placeholder={`0.${"0".repeat(exp)}`} />
             </div>
             <div className="bo-form-field">
-              <label className="bo-label">Cost ({cur})</label>
+              <label className="bo-label">{t("cost")} ({cur})</label>
               <input className="bo-input" type="number" inputMode="decimal" min="0" step={Math.pow(10, -exp).toFixed(exp)}
                 value={costPrice} onChange={e => { setCostPrice(e.target.value); const s = computeSelling(parseMoney(e.target.value, exp), markupPct); if (s > 0) setPrice(formatMoney(s, exp)); }}
                 placeholder={`0.${"0".repeat(exp)}`} />
             </div>
             <div className="bo-form-field">
-              <label className="bo-label">Markup %</label>
+              <label className="bo-label">{t("markupPercent")}</label>
               <input className="bo-input" type="number" inputMode="decimal" min="0" step="0.1"
                 value={markupPct} onChange={e => { setMarkupPct(e.target.value); const s = computeSelling(parseMoney(costPrice, exp), e.target.value); if (s > 0) setPrice(formatMoney(s, exp)); }}
                 placeholder="0" />
             </div>
             <div className="bo-form-field">
-              <label className="bo-label">Tax Rule</label>
+              <label className="bo-label">{t("taxRule")}</label>
               <select className="bo-select" value={taxRuleId} onChange={e => setTaxRuleId(e.target.value)}>
-                <option value="">None</option>
+                <option value="">{t("none")}</option>
                 {taxRules.map(t => <option key={t.tax_rule_id} value={t.tax_rule_id}>{t.name}</option>)}
               </select>
             </div>
             <div className="bo-form-field">
-              <label className="bo-label">SKU</label>
-              <input className="bo-input" value={sku} onChange={e => setSku(e.target.value)} placeholder="Optional" />
+              <label className="bo-label">{t("sku")}</label>
+              <input className="bo-input" value={sku} onChange={e => setSku(e.target.value)} placeholder={t("optional")} />
             </div>
             <div className="bo-form-field bo-form-field-full">
-              <label className="bo-label">Barcode</label>
-              <input className="bo-input" value={barcode} onChange={e => setBarcode(e.target.value)} placeholder="Optional" />
+              <label className="bo-label">{t("barcode")}</label>
+              <input className="bo-input" value={barcode} onChange={e => setBarcode(e.target.value)} placeholder={t("optional")} />
             </div>
           </div>
 
           {/* Extra barcodes */}
-          <label className="bo-label">Additional Barcodes</label>
+          <label className="bo-label">{t("additionalBarcodes")}</label>
           {barcodeErr && <div className="bo-form-error" style={{marginTop: 4}}>{barcodeErr}</div>}
           <div style={{marginBottom: 8}}>
             {shownBarcodes.map(b => {
@@ -210,39 +216,39 @@ export default function ProductFormModal({
               <input ref={newBarcodeRef} className="bo-input" style={{flex: 1}} value={newBarcodeInput}
                 onChange={e => setNewBarcodeInput(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); if (mode === "create") addPending(); else addBarcodeForEdit(); } }}
-                placeholder="Scan or type barcode…" />
+                placeholder={t("scanOrTypeBarcode")} />
               <button className="btn-secondary" style={{whiteSpace: "nowrap"}}
-                onClick={() => mode === "create" ? addPending() : addBarcodeForEdit()}>Add</button>
+                onClick={() => mode === "create" ? addPending() : addBarcodeForEdit()}>{t("add")}</button>
             </div>
           </div>
 
           <div className="bo-checkboxes" style={{margin: "10px 0"}}>
-            <label className="bo-checkbox-label"><input type="checkbox" checked={trackInventory} onChange={e => setTrackInventory(e.target.checked)} />Track Inventory</label>
-            <label className="bo-checkbox-label"><input type="checkbox" checked={allowDecimal} onChange={e => setAllowDecimal(e.target.checked)} />Decimal Qty</label>
-            {mode === "edit" && <label className="bo-checkbox-label"><input type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} />Active</label>}
+            <label className="bo-checkbox-label"><input type="checkbox" checked={trackInventory} onChange={e => setTrackInventory(e.target.checked)} />{t("trackInventory")}</label>
+            <label className="bo-checkbox-label"><input type="checkbox" checked={allowDecimal} onChange={e => setAllowDecimal(e.target.checked)} />{t("decimalQuantity")}</label>
+            {mode === "edit" && <label className="bo-checkbox-label"><input type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} />{t("active")}</label>}
           </div>
 
           {trackInventory && (
             <div style={{marginBottom: 10}}>
-              <label className="bo-label">Reorder Point</label>
+              <label className="bo-label">{t("reorderPoint")}</label>
               <input className="bo-input" type="number" min="0" step="1" value={reorderPoint} onChange={e => setReorderPoint(parseInt(e.target.value) || 0)} />
             </div>
           )}
 
-          <label className="bo-label">Image</label>
+          <label className="bo-label">{t("image")}</label>
           <div className="prod-image-row">
             {imagePath ? (
               <img className="prod-image-preview" src={convertFileSrc(imagePath)} alt="" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
-            ) : <div className="prod-image-placeholder">No image</div>}
+            ) : <div className="prod-image-placeholder">{t("noImage")}</div>}
             <div className="prod-image-btns">
-              <button className="btn-secondary" type="button" onClick={pickImage}>Choose</button>
-              {imagePath && <button className="btn-secondary" type="button" onClick={() => setImagePath("")}>Remove</button>}
+              <button className="btn-secondary" type="button" onClick={pickImage}>{t("choose")}</button>
+              {imagePath && <button className="btn-secondary" type="button" onClick={() => setImagePath("")}>{t("remove")}</button>}
             </div>
           </div>
         </div>
         <div className="bo-form-modal-footer">
-          <button className="btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save Product"}</button>
+          <button className="btn-secondary" onClick={onClose}>{t("cancel")}</button>
+          <button className="btn-primary" onClick={save} disabled={saving}>{saving ? t("saving") : t("saveProduct")}</button>
         </div>
       </div>
     </div>

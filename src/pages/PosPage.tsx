@@ -1,69 +1,39 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  BarChart2, Clock, ClipboardList, Building2, StickyNote,
-  ShoppingBag
-} from "lucide-react";
-import type { BusinessFlags, CustomerRow, LowStockAlert, PaymentInput, SaleListRow, SaleResult, SessionUser, Shift } from "../types";
-import { type Theme, THEMES } from "../hooks/useTheme";
-import { formatMoney, parseMoney } from "../money";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { AiHandoff, Cart, PaymentInput, ProductPrefill, SaleResult, SessionUser, Shift } from "../types";
+import { type Theme } from "../hooks/useTheme";
 import { DEVICE } from "../types";
-import { businessFlagsLoad, cashNoSale, ghostRecord, receiptReprint, whatsappStatus, whatsappSendDelivery, whatsappSendReceiptPdf, appConfigLoad, openCashDrawer, settingsGetBranch, thermalGetConfig, printReceiptRaw, posLoadSaleForEdit } from "../tauri/commands";
-import { buildReceiptLines } from "../utils/receiptLines";
-import { loadWaFormat, buildDeliveryMessage, loadWaCustomerFormat, buildCustomerMessage } from "../utils/waMessageFormat";
+import PosSidebar from "../components/pos/PosSidebar";
+import PosActionBar from "../components/pos/PosActionBar";
+import PosSecondaryOverlays from "../components/pos/PosSecondaryOverlays";
+import PosCartModals from "../components/pos/PosCartModals";
+import PosOperationsModals from "../components/pos/PosOperationsModals";
+import PosTenderOverlays from "../components/pos/PosTenderOverlays";
+import PosTopBar from "../components/pos/PosTopBar";
+import PosStatusBanners from "../components/pos/PosStatusBanners";
+import PosCartColumn from "../components/pos/PosCartColumn";
+import PosNumpadPanel from "../components/pos/PosNumpadPanel";
+import type { ActiveModal, ExchangeCredit } from "../components/pos/posModalState";
+
+import { buildTrainingSale } from "../utils/trainingSale";
+import { useLanguage } from "../hooks/useLanguage";
+import { posTranslator } from "../i18n/posStrings";
 import { useCart } from "../hooks/useCart";
 import { useSyncStatus } from "../hooks/useSyncStatus";
-import { usePosShortcuts } from "../hooks/usePosShortcuts";
-// M21: useIdleTimer removed — App.tsx owns the single idle timer (deduplication)
-import BarcodeInput, { type BarcodeInputHandle } from "../components/BarcodeInput";
-import Dialpad, { applyDialpadKey } from "../components/Dialpad";
-import CartPanel from "../components/CartPanel";
-import DiscountModal from "../components/DiscountModal";
-import LineDiscountModal from "../components/LineDiscountModal";
-import PaymentModal from "../components/PaymentModal";
-import ReceiptPreview from "../components/ReceiptPreview";
-import ShiftModal from "../components/ShiftModal";
-import HoldModal from "../components/HoldModal";
-import RefundModal from "../components/RefundModal";
-import TodayReportModal from "../components/TodayReportModal";
-import CustomItemModal from "../components/CustomItemModal";
-import PriceInputModal from "../components/PriceInputModal";
-import CashEventModal from "../components/CashEventModal";
-import XReportModal from "../components/XReportModal";
-import HelpModal from "../components/HelpModal";
-import RecentSalesModal from "../components/RecentSalesModal";
-import WhatsAppQRModal from "../components/WhatsAppQRModal";
-import StickyNotesPanel from "../components/StickyNotesPanel";
-import DeliveriesTab from "../components/DeliveriesTab";
-import QuranToggle from "../components/QuranToggle";
-import SyncChip from "../components/SyncChip";
-
-// ── Modal state machine ───────────────────────────────────────────────────────
-// A discriminated union ensures only ONE blocking modal can be active at a time,
-// eliminating the class of bugs where two modal flags are simultaneously true.
-// Secondary overlays that don't block shortcuts (WaQR, Notes, Deliveries) remain
-// as separate booleans because they are intentionally non-exclusive.
-type ActiveModal =
-  | { kind: "none" }
-  | { kind: "payment"; method?: PaymentInput["method"]; split: boolean }
-  | { kind: "receipt"; isReprint: boolean; result: SaleResult }
-  | { kind: "shiftClose" }
-  | { kind: "hold" }
-  | { kind: "refund" }
-  | { kind: "report" }
-  | { kind: "discount" }
-  | { kind: "lineDiscount"; lineId: string }
-  | { kind: "customItem" }
-  | { kind: "cashEvent" }
-  | { kind: "xReport" }
-  | { kind: "clearConfirm" }
-  | { kind: "help" }
-  | { kind: "recent" }
-  // Price-input popup — shown when a zero-price item is scanned or a zero-price
-  // saved suggestion is tapped. Two modes:
-  //   setExisting – update the price of a line already in the cart
-  //   addNew      – add a new custom item once the user enters a price
-  | { kind: "priceInput"; mode: "setExisting"; lineId: string; productName: string }
-  | { kind: "priceInput"; mode: "addNew"; itemName: string; quantity: string };
+import { usePosAlerts } from "../hooks/usePosAlerts";
+import { useClockTime } from "../hooks/useClockTime";
+import { usePersistedToggle } from "../hooks/usePersistedToggle";
+import { usePosReceipt } from "../hooks/usePosReceipt";
+import { usePosCartRecovery } from "../hooks/usePosCartRecovery";
+import { usePosBarcode } from "../hooks/usePosBarcode";
+import { useWhatsAppHealth } from "../hooks/useWhatsAppHealth";
+import { usePosRecoveryActions } from "../hooks/usePosRecoveryActions";
+import { usePosPaymentActions } from "../hooks/usePosPaymentActions";
+import { usePosRegisterActions } from "../hooks/usePosRegisterActions";
+import { usePosConfiguration } from "../hooks/usePosConfiguration";
+import { usePosNumpad } from "../hooks/usePosNumpad";
+import { usePosShortcutBindings } from "../hooks/usePosShortcutBindings";
+import { type ReceiptConfidenceStatus } from "../utils/posConfidence";
+import { getExchangeBalance } from "../utils/posExchange";
 
 interface Props {
   sessionUser: SessionUser;
@@ -71,13 +41,15 @@ interface Props {
   onLogout: () => void;
   onLock?: () => void;
   onShiftClose: (closed: boolean) => void;
-  onOpenOfficeAI?: () => void;
+  onOpenOfficeAI?: (prefill?: ProductPrefill) => void;
+  /** Open OfficeAI's assistant and send this message (and image) to the AI. */
+  onAskOfficeAI?: (handoff: AiHandoff) => void;
   theme?: Theme;
   onToggleTheme?: () => void;
 }
 
 export default function PosPage({
-  sessionUser, shift, onLogout, onLock, onShiftClose, onOpenOfficeAI, theme, onToggleTheme,
+  sessionUser, shift, onLogout, onLock, onShiftClose, onOpenOfficeAI, onAskOfficeAI, theme, onToggleTheme,
 }: Props) {
   const session = useMemo(() => ({
     branch_id: DEVICE.branch_id,
@@ -86,55 +58,26 @@ export default function PosPage({
     cashier_user_id: sessionUser.user_id,
   }), [shift.shift_id, sessionUser.user_id]);
 
-  // Stale-closure fix: keep a ref to sessionUser.user_id so handleBarcode never
-  // closes over a stale user_id even if the prop is hot-swapped (BUG-POS-STALE).
-  const sessionUserIdRef = useRef(sessionUser.user_id);
-  useEffect(() => { sessionUserIdRef.current = sessionUser.user_id; });
+  const [showSidebar, toggleSidebar] = usePersistedToggle("zanpos_sidebar");
 
-  // ── Sidebar visibility — persisted across sessions ────────────────────────────
-  const [showSidebar, setShowSidebar] = useState<boolean>(() =>
-    localStorage.getItem("zanpos_sidebar") === "1"
-  );
-  const toggleSidebar = useCallback(() => {
-    setShowSidebar(v => {
-      const next = !v;
-      localStorage.setItem("zanpos_sidebar", next ? "1" : "0");
-      return next;
-    });
-  }, []);
-
-  // ── Modal state ───────────────────────────────────────────────────────────────
-  // Single blocking-modal slot — only one variant active at a time.
   const [activeModal, setActiveModal] = useState<ActiveModal>({ kind: "none" });
-  // Non-blocking post-sale banner (shown alongside the POS, not over it).
   const [bannerResult, setBannerResult] = useState<SaleResult | null>(null);
+  const [showSaleDetails, setShowSaleDetails] = useState(false);
   const [lastReceiptNumber, setLastReceiptNumber] = useState<string | null>(null);
-  // Secondary overlays — non-exclusive, do not block keyboard shortcuts.
+  const [receiptStatus, setReceiptStatus] = useState<ReceiptConfidenceStatus>("not_ready");
+  const [exchangeCredit, setExchangeCredit] = useState<ExchangeCredit | null>(null);
   const [showWaQR, setShowWaQR]             = useState(false);
+  const [showSyncDetails, setShowSyncDetails] = useState(false);
   const [showNotes, setShowNotes]           = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showOrders, setShowOrders] = useState(false);
   const [showDeliveries, setShowDeliveries] = useState(false);
-  const [payFastLoading, setPayFastLoading] = useState(false);
-  const [restockAlerts, setRestockAlerts]   = useState<LowStockAlert[]>([]);
-  const restockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [bizFlags, setBizFlags] = useState<BusinessFlags>({
-    allow_negative_stock: false,
-    require_discount_reason: true,
-    cashier_can_discount: false,
-    auto_print_receipt: false,
-  });
-  // Cached branch settings + thermal config — loaded once on mount,
-  // used to auto-print the receipt after every non-fast-cash checkout.
-  const [branchSettings, setBranchSettings] = useState<import("../types").BranchSettings | null>(null);
-  const [thermalEnabled, setThermalEnabled] = useState(false);
-
-  // FIX: guard against double-payment race (Enter key can fire before loading prop propagates)
-  const confirmingRef = useRef(false);
-
-  const [numpadValue, setNumpadValue] = useState("1");
-  const numpadRef = useRef(numpadValue);
-  useEffect(() => { numpadRef.current = numpadValue; }, [numpadValue]);
-
+  const {
+    businessFlags: bizFlags,
+    setBusinessFlags: setBizFlags,
+    commerceEnabled,
+  } = usePosConfiguration(sessionUser.user_id);
   // Saved custom-item suggestions — loaded from localStorage, refreshed after modal closes
   const [suggestions, setSuggestions] = useState<{ id: string; name: string; price: string }[]>(() => {
     try { return JSON.parse(localStorage.getItem("zanpos_custom_suggestions") || "[]"); } catch { return []; }
@@ -147,11 +90,37 @@ export default function PosPage({
   const canViewXReport    = canOpenBackOffice;
   const canRefund         = ["owner", "manager", "cashier"].includes(sessionUser.role_name);
 
+  // Sidebar badges: alerts bell + unfulfilled orders, one shared 8s poll.
+  const { notifCount, orderCount, refreshNotifications } = usePosAlerts({
+    userId: sessionUser.user_id,
+    canOpenBackOffice,
+    commerceEnabled,
+  });
+
   // M21: App.tsx already owns an idle timer (App-level, 60s warning → logout).
   // PosPage previously ran a second independent idle timer that called onLogout
   // directly, bypassing the warning. Removed here — App's timer handles logout.
 
   const syncStatus = useSyncStatus(15_000, sessionUser.user_id);
+
+  // Till strings. `dir` is applied to <html> by the hook, so RTL flips at the
+  // layout level rather than being re-implemented per component.
+  const { language, toggle: toggleLanguage } = useLanguage();
+  const t = useMemo(() => posTranslator(language), [language]);
+
+  // ── Training mode ───────────────────────────────────────────────────────────
+  // A rehearsal till for a cashier's first day. Sales built here are never sent
+  // to the backend, so they cannot reach reports, EOD, stock or the receipt
+  // sequence — a structural guarantee rather than a filter every future report
+  // query has to remember. Everything else, including the real print, is live.
+  const [trainingMode, setTrainingMode] = useState(false);
+  const buildTrainingResult = useMemo(
+    () => trainingMode
+      ? (cart: Cart, payments: PaymentInput[]) =>
+          buildTrainingSale(cart, payments, sessionUser, DEVICE.branch_name, DEVICE.currency)
+      : null,
+    [trainingMode, sessionUser],
+  );
 
   const {
     cart, loading, error, clearError, setError,
@@ -161,35 +130,50 @@ export default function PosPage({
     applyBillDiscount, applyLineDiscount, setLinePrice, setLineNote,
     finalizeSale, clearCart, replaceCart,
     netTotal, taxTotal, lineCount,
-  } = useCart(session);
+  } = useCart(session, buildTrainingResult);
 
+  const { numpadValue, setNumpadValue, handleNumpadKey } =
+    usePosNumpad(recentLineId, updateQuantity);
+
+  const exchangeBalance = useMemo(
+    () => exchangeCredit ? getExchangeBalance(exchangeCredit.creditMinor, netTotal) : null,
+    [exchangeCredit, netTotal],
+  );
+  const payableTotal = exchangeBalance ? exchangeBalance.amountDueMinor : netTotal;
   // ── Barcode input ref for programmatic focus ──────────────────────────────────
-  const barcodeRef  = useRef<BarcodeInputHandle>(null);
-  /** Serialises rapid USB scanner submissions — each scan awaits the previous. */
-  // Batch-scan buffer: collects rapid scanner bursts so visual feedback is instant.
-  // Items are dequeued and processed one-at-a-time by drainScanBuffer().
-  const scanBufferRef = useRef<Array<{ barcode: string; qty: number }>>([]);
-  const scanDrainingRef = useRef(false);
+  const { barcodeRef, focusBarcode, handleBarcode } = usePosBarcode({
+    userId: sessionUser.user_id,
+    numpadValue,
+    addByBarcode,
+    setError,
+    resetNumpad: () => setNumpadValue("1"),
+    refreshNotifications,
+  });
 
-  const drainScanBuffer = useCallback(async () => {
-    if (scanDrainingRef.current) return;
-    scanDrainingRef.current = true;
-    while (scanBufferRef.current.length > 0) {
-      const item = scanBufferRef.current.shift()!;
-      try {
-        await addByBarcode(item.barcode, item.qty);
-        setNumpadValue("1");
-      } catch {
-        barcodeRef.current?.flashError();
-        void ghostRecord(sessionUserIdRef.current, item.barcode);
-        setError(`Barcode "${item.barcode}" not found — flagged for your manager. Keep selling.`);
-      }
-    }
-    scanDrainingRef.current = false;
-    barcodeRef.current?.focus();
-  }, [addByBarcode, setError]);
+  // Recover a cart lost to a power cut. Training carts are excluded: a
+  // rehearsal must never come back as a real sale after a restart.
+  // WhatsApp liveness for the header pill. Polled on its own slow cadence —
+  // the sidecar check is a network call and must not ride the 8s badge poll
+  // that already runs on every till.
+  const { connected: waConnected, stale: waStale } =
+    useWhatsAppHealth(commerceEnabled, sessionUser.user_id);
 
-  const focusBarcode = useCallback(() => barcodeRef.current?.focus(), []);
+  const { recoverable, dismissRecovery, recoverCart } = usePosCartRecovery({
+    cart,
+    trainingMode,
+    shiftId: shift.shift_id,
+    userId: sessionUser.user_id,
+    replaceCart,
+    focusBarcode,
+  });
+
+  const { printSaleNow } = usePosReceipt({
+    userId: sessionUser.user_id,
+    setBizFlags,
+    setReceiptStatus,
+    setError,
+    focusBarcode,
+  });
 
   // ── noModalOpen — stable boolean for shortcut guard ───────────────────────────
   // Because only one ActiveModal variant can be active at a time, this is now
@@ -197,455 +181,79 @@ export default function PosPage({
   // variant to the ActiveModal union — no need to update this expression.
   const noModalOpen = activeModal.kind === "none";
 
-  // ── Pay Fast ─────────────────────────────────────────────────────────────────
-  const handlePayFast = useCallback(async () => {
-    if (lineCount === 0 || payFastLoading || !noModalOpen) return;
-    setPayFastLoading(true);
-    try {
-      const payment: PaymentInput = {
-        method: "cash",
-        amount_minor: netTotal,
-        tendered_minor: netTotal,
-      };
-      const result = await finalizeSale([payment]);
-      setLastReceiptNumber(result.receipt_number);
-      // Open cash drawer — best-effort, non-fatal
-      openCashDrawer(sessionUser.user_id).catch((e: unknown) => console.warn("Cash drawer open failed:", e));
-      // Auto-print thermal receipt — same fire-and-forget as regular checkout
-      if (thermalEnabled && branchSettings) {
-        printReceiptRaw(
-          sessionUser.user_id,
-          branchSettings.name,
-          buildReceiptLines(result, branchSettings, false),
-        ).catch((e: unknown) => console.warn("Receipt print failed:", e));
-      }
-      // No ReceiptPreview — cart already cleared in finalizeSale
-      focusBarcode();
-      if (result.low_stock_alerts.length > 0) {
-        if (restockTimerRef.current) clearTimeout(restockTimerRef.current);
-        setRestockAlerts(result.low_stock_alerts);
-        restockTimerRef.current = setTimeout(() => setRestockAlerts([]), 6000);
-      }
-    } catch {
-      // error is set in useCart; cart remains intact
-    } finally {
-      setPayFastLoading(false);
-    }
-  }, [lineCount, payFastLoading, noModalOpen, netTotal, finalizeSale, focusBarcode, sessionUser.user_id, thermalEnabled, branchSettings]);
+  const {
+    payFastLoading, restockAlerts, dismissRestockAlerts, handlePayFast,
+    openPayDirect, openPaySplit, openPay, handleConfirmPayment,
+    handleCompleteCoveredExchange,
+  } = usePosPaymentActions({
+    cart,
+    exchangeCredit,
+    exchangeBalance,
+    netTotal,
+    payableTotal,
+    lineCount,
+    noModalOpen,
+    sessionUser,
+    finalizeSale,
+    printSaleNow,
+    setActiveModal,
+    setBannerResult,
+    setLastReceiptNumber,
+    setReceiptStatus,
+    setExchangeCredit,
+    focusBarcode,
+    openWhatsAppQr: () => setShowWaQR(true),
+  });
 
-  // ── Direct payment (opens modal pre-configured to method) ─────────────────────
-  const openPayDirect = useCallback((method: PaymentInput["method"]) => {
-    if (lineCount === 0) return;
-    setActiveModal({ kind: "payment", method, split: false });
-  }, [lineCount]);
+  const {
+    reprintReceiptNow, handleReprintLast, handleNoSale, handleEditSale,
+    handleClearCartRequest,
+  } = usePosRegisterActions({
+    shift,
+    userId: sessionUser.user_id,
+    lineCount,
+    lastReceiptNumber,
+    printSaleNow,
+    clearCart,
+    replaceCart,
+    setError,
+    setReceiptStatus,
+    setLastReceiptNumber,
+    setActiveModal,
+    focusBarcode,
+  });
 
-  const openPaySplit = useCallback(() => {
-    if (lineCount === 0) return;
-    setActiveModal({ kind: "payment", method: undefined, split: true });
-  }, [lineCount]);
-
-  // openPay — generic payment modal (no pre-selected method, no split).
-  // Not shown as a visible button; invoked via the F9 keyboard shortcut in
-  // usePosShortcuts. Kept separate from openPayDirect / openPaySplit so the
-  // shortcut remains available even after the footer buttons were removed.
-  const openPay = useCallback(() => {
-    if (lineCount === 0) return;
-    setActiveModal({ kind: "payment", method: undefined, split: false });
-  }, [lineCount]);
-
-  // ── Confirm payment ───────────────────────────────────────────────────────────
-  const handleConfirmPayment = async (payments: PaymentInput[], customerId?: string, deliveryInput?: import("../types").DeliveryInput, selectedCustomer?: CustomerRow) => {
-    // FIX: guard against double-invocation (Enter key can fire before loading prop propagates)
-    if (confirmingRef.current) return;
-    confirmingRef.current = true;
-    try {
-      const result = await finalizeSale(payments, customerId, deliveryInput);
-      setActiveModal({ kind: "none" });
-      setBannerResult(result);
-      setLastReceiptNumber(result.receipt_number);
-      // Open cash drawer if any payment was cash — best-effort, non-fatal
-      if (payments.some(p => p.method === "cash")) {
-      openCashDrawer(sessionUser.user_id).catch((e: unknown) => console.warn("Cash drawer open failed:", e));
-      }
-      // ── Auto-print receipt to thermal printer ────────────────────────────────
-      // Fires for every checkout path EXCEPT Fast Cash (handlePayFast is
-      // separate and intentionally skips printing for maximum speed).
-      // Non-fatal: a printer error never rolls back the sale.
-      if (thermalEnabled) {
-        printReceiptRaw(
-          sessionUser.user_id,
-          result.branch_name,
-          buildReceiptLines(result, branchSettings, false),
-        ).catch((e: unknown) => console.warn("Receipt print failed:", e)); // fire-and-forget
-      }
-      focusBarcode();               // cart is clear — cashier can scan immediately
-      if (result.low_stock_alerts.length > 0) {
-        if (restockTimerRef.current) clearTimeout(restockTimerRef.current);
-        setRestockAlerts(result.low_stock_alerts);
-        restockTimerRef.current = setTimeout(() => setRestockAlerts([]), 6000);
-      }
-      // ── WhatsApp delivery message ────────────────────────────────────────────
-      if (result.delivery && result.delivery.contact_number) {
-        const d = result.delivery;
-        const sendWA = async () => {
-          try {
-            const waStatus = await whatsappStatus(sessionUser.user_id);
-            if (waStatus.connected) {
-              // Build message from custom template (falls back to Rust builder if not set)
-              let messageOverride: string | undefined;
-              try {
-                const fmt = loadWaFormat();
-                const cfg = await appConfigLoad();
-                const activeLines = fmt.language === "ar" ? fmt.ar_lines : fmt.en_lines;
-                const now = new Date();
-                const dateStr = now.toLocaleDateString(fmt.language === "ar" ? "ar-BH" : "en-GB", {
-                  day: "numeric", month: "long", year: "numeric",
-                }) + ", " + now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-                const method = result.payments[0]?.method ?? "cash";
-                const methodLabel = method === "wallet" ? "BenefitPay" : method.charAt(0).toUpperCase() + method.slice(1);
-                const vars = {
-                  customer_name:  d.customer_name ?? "",
-                  receipt_number: result.receipt_number,
-                  date:           dateStr,
-                  amount:         `${DEVICE.currency} ${formatMoney(result.net_total_minor, DEVICE.currency_exponent)}`,
-                  address:        d.address_text,
-                  house_number:   d.house_number ?? "",
-                  area:           d.area ?? "",
-                  delivery_note:  d.delivery_note ?? "",
-                  method:         methodLabel,
-                  benefit_number: cfg.whatsapp_benefit_number ?? "",
-                  store_name:     DEVICE.branch_name,
-                  store_phone:    "",
-                };
-                messageOverride = buildDeliveryMessage(activeLines, vars, result.items, DEVICE.currency_exponent);
-              } catch { /* if template build fails, fall through to Rust builder */ }
-
-              // Same normalisation as the customer path — a local delivery number
-              // (e.g. "33050666" with no country code) otherwise builds an invalid JID.
-              const dDigits = (d.contact_number || "").replace(/\D/g, "");
-              const dTo = dDigits.startsWith("973") ? dDigits : `973${dDigits}`;
-              // Try PDF + caption first; fall back to text-only if PDF fails.
-              let pdfSent = false;
-              try {
-                pdfSent = await whatsappSendReceiptPdf(sessionUser.user_id, {
-                  to:                     dTo,
-                  receipt_number:         result.receipt_number,
-                  branch_name:            result.branch_name,
-                  cashier_name:           result.cashier_name,
-                  sold_at:                result.sold_at,
-                  currency:               DEVICE.currency,
-                  currency_exponent:      DEVICE.currency_exponent,
-                  items:                  result.items.map(i => ({
-                    product_name:   i.product_name,
-                    quantity:       i.quantity,
-                    unit_price_minor: i.unit_price_minor,
-                    line_total_minor: i.line_total_minor,
-                  })),
-                  net_total_minor:        result.net_total_minor,
-                  tax_total_minor:        result.tax_total_minor,
-                  discount_total_minor:   result.discount_total_minor,
-                  payments:               result.payments.map(p => ({
-                    method:       p.method,
-                    amount_minor: p.amount_minor,
-                    change_minor: p.change_minor,
-                  })),
-                  caption:                messageOverride,
-                  address_text:           d.address_text,
-                  house_number:           d.house_number ?? undefined,
-                  area:                   d.area ?? undefined,
-                });
-              } catch { /* fall through to text-only */ }
-              if (!pdfSent) {
-                await whatsappSendDelivery(sessionUser.user_id, {
-                  to:                dTo,
-                  receipt_number:    result.receipt_number,
-                  net_total_minor:   result.net_total_minor,
-                  currency_exponent: DEVICE.currency_exponent,
-                  address_text:      d.address_text,
-                  house_number:      d.house_number ?? undefined,
-                  area:              d.area ?? undefined,
-                  message_override:  messageOverride,
-                });
-              }
-            } else if (sessionUser.role_name === "owner" || sessionUser.role_name === "manager") {
-              setShowWaQR(true);
-            }
-            // cashier + disconnected: silent skip
-          } catch { /* never block the sale */ }
-        };
-        sendWA(); // fire-and-forget — never block the receipt flow
-      }
-
-      // ── WhatsApp receipt confirmation to selected customer ───────────────────
-      // Only fires when a customer with a phone number is selected at checkout
-      // AND the sale is NOT a delivery (delivery already gets its own WA message).
-      if (selectedCustomer?.phone && !deliveryInput) {
-        const sendCustomerWA = async () => {
-          try {
-            const waStatus = await whatsappStatus(sessionUser.user_id);
-            if (!waStatus.connected) return; // silent skip
-            const cfg = await appConfigLoad();
-            const phone = selectedCustomer.phone!;
-            // Normalise to a bare Bahrain international number: strip '+'/spaces,
-            // then ensure the 973 country code. Fixes "+973…" → "973+973…" mangling
-            // (the old /^97[0-9]/ test failed on a leading '+', double-prefixing).
-            const digits = phone.replace(/\D/g, "");
-            const to = digits.startsWith("973") ? digits : `973${digits}`;
-            // Build from the editable Customer-Receipt template
-            // (Settings → WhatsApp → Customer Receipt). Mirrors the delivery path.
-            const fmt = loadWaCustomerFormat();
-            const activeLines = fmt.language === "ar" ? fmt.ar_lines : fmt.en_lines;
-            const now = new Date();
-            const dateStr = now.toLocaleDateString(fmt.language === "ar" ? "ar-BH" : "en-GB", {
-              day: "numeric", month: "long", year: "numeric",
-            }) + ", " + now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-            const method = result.payments[0]?.method ?? "cash";
-            const methodLabel = method === "wallet" ? "BenefitPay" : method.charAt(0).toUpperCase() + method.slice(1);
-            const amtStr = `${DEVICE.currency} ${formatMoney(result.net_total_minor, DEVICE.currency_exponent)}`;
-            const vars = {
-              customer_name:  selectedCustomer.name ?? "",
-              receipt_number: result.receipt_number,
-              date:           dateStr,
-              amount:         amtStr,
-              address:        "",
-              house_number:   "",
-              area:           "",
-              delivery_note:  "",
-              method:         methodLabel,
-              // Only surface BenefitPay on wallet sales (an empty value auto-strips
-              // the line) — preserves the previous cash-vs-wallet behaviour.
-              benefit_number: method === "wallet" ? (cfg.whatsapp_benefit_number ?? "") : "",
-              store_name:     DEVICE.branch_name,
-              store_phone:    "",
-            };
-            const built = buildCustomerMessage(activeLines, vars, result.items, DEVICE.currency_exponent);
-            // Fallback to a minimal built-in message if the template builds empty.
-            const message = built.trim().length > 0
-              ? built
-              : `✅ Thank you, ${selectedCustomer.name}!\n` +
-                `Receipt #${result.receipt_number}\n` +
-                `Date: ${dateStr}\n` +
-                `Amount: ${amtStr}\n` +
-                `Paid by: ${methodLabel}`;
-            // Try PDF + caption; fall back to text-only if PDF fails.
-            let custPdfSent = false;
-            try {
-              custPdfSent = await whatsappSendReceiptPdf(sessionUser.user_id, {
-                to,
-                receipt_number:       result.receipt_number,
-                branch_name:          result.branch_name,
-                cashier_name:         result.cashier_name,
-                sold_at:              result.sold_at,
-                currency:             DEVICE.currency,
-                currency_exponent:    DEVICE.currency_exponent,
-                items:                result.items.map(i => ({
-                  product_name:   i.product_name,
-                  quantity:       i.quantity,
-                  unit_price_minor: i.unit_price_minor,
-                  line_total_minor: i.line_total_minor,
-                })),
-                net_total_minor:      result.net_total_minor,
-                tax_total_minor:      result.tax_total_minor,
-                discount_total_minor: result.discount_total_minor,
-                payments:             result.payments.map(p => ({
-                  method:       p.method,
-                  amount_minor: p.amount_minor,
-                  change_minor: p.change_minor,
-                })),
-                caption: message,
-              });
-            } catch { /* fall through to text-only */ }
-            if (!custPdfSent) {
-              await whatsappSendDelivery(sessionUser.user_id, {
-                to,
-                receipt_number:    result.receipt_number,
-                net_total_minor:   result.net_total_minor,
-                currency_exponent: DEVICE.currency_exponent,
-                address_text:      "",
-                message_override:  message,
-              });
-            }
-          } catch { /* never block the receipt flow */ }
-        };
-        sendCustomerWA(); // fire-and-forget
-      }
-    } catch {
-      // error is set in useCart; modal stays open
-    } finally {
-      confirmingRef.current = false;
-    }
-  };
-
-  const handleNewSale = useCallback(() => {
-    setBannerResult(null);
-    setActiveModal({ kind: "none" });
-    clearCart();   // no-op after finalize (cart already empty), handles reprint path
-    focusBarcode();
-  }, [clearCart, focusBarcode]);
-
-  // Auto-dismiss the post-sale banner after 5 seconds
-  useEffect(() => {
-    if (!bannerResult) return;
-    const t = setTimeout(() => setBannerResult(null), 5000);
-    return () => clearTimeout(t);
-  }, [bannerResult]);
-
-  const handleReprintLast = useCallback(async () => {
-    if (!lastReceiptNumber) return;
-    try {
-      const reprinted = await receiptReprint(lastReceiptNumber, sessionUser.user_id);
-      setActiveModal({ kind: "receipt", isReprint: true, result: reprinted });
-    } catch (e: unknown) {
-      setError(typeof e === "string" ? e : "Reprint failed — check receipt number");
-    }
-  }, [lastReceiptNumber, sessionUser.user_id, setError]);
-
-  const handleNoSale = useCallback(async () => {
-    try { await cashNoSale(shift.shift_id, sessionUser.user_id); }
-    catch (e) { setError(typeof e === "string" ? e : "No-sale open failed"); }
-    // Open cash drawer — best-effort
-    openCashDrawer(sessionUser.user_id).catch((e: unknown) => console.warn("Cash drawer open failed (no-sale):", e));
-  }, [shift.shift_id, sessionUser.user_id, setError]);
-
-  // ── Edit a past sale (load items back into cart as custom items) ──────────────
-  // Items are added sequentially — addCustomItem writes to shared SQLite cart
-  // state and parallel calls race on the same row, causing only one item to win.
-  const handleEditSale = useCallback(async (sale: SaleListRow) => {
-    try {
-      const cart = await posLoadSaleForEdit(
-        sale.receipt_number,
-        DEVICE.branch_id,
-        shift.device_id,
-        shift.shift_id,
-        sessionUser.user_id,
-      );
-      clearCart();
-      replaceCart(cart);
-      setActiveModal({ kind: "none" });
-      focusBarcode();
-    } catch (e) {
-      setError(typeof e === "string" ? e : "Failed to load sale for edit");
-    }
-  }, [clearCart, replaceCart, focusBarcode, shift, sessionUser.user_id, setError]);
-
-  // ── Clear cart with confirmation ──────────────────────────────────────────────
-  const handleClearCartRequest = useCallback(() => {
-    if (lineCount === 0) return;
-    setActiveModal({ kind: "clearConfirm" });
-  }, [lineCount]);
-
-  const handleClearConfirmed = useCallback(() => {
-    clearCart();
-    setActiveModal({ kind: "none" });
-    focusBarcode();
-  }, [clearCart, focusBarcode]);
-
-  // ── Recent item controls ──────────────────────────────────────────────────────
-  const handleIncrementRecent = useCallback(() => bumpRecentQty(1),  [bumpRecentQty]);
-  const handleDecrementRecent = useCallback(() => bumpRecentQty(-1), [bumpRecentQty]);
 
   // ── Hold / Resume ─────────────────────────────────────────────────────────────
   const handleOpenHold = useCallback(() => setActiveModal({ kind: "hold" }), []);
 
-  // ── Barcode scan handler ──────────────────────────────────────────────────────
-  const handleBarcode = useCallback((barcode: string, qty?: number) => {
-    const _parsedNumpad = parseInt(numpadRef.current);
-    const effectiveQty = qty ?? (Number.isFinite(_parsedNumpad) && _parsedNumpad > 0 ? _parsedNumpad : 1);
-    // Instant visual feedback — green flash fires immediately, before the scan
-    // reaches the cart backend. The item enqueues into the buffer for serial
-    // processing so cart state never races.
-    barcodeRef.current?.flashSuccess();
-    scanBufferRef.current.push({ barcode, qty: effectiveQty });
-    drainScanBuffer();
-  }, [drainScanBuffer]);
-
-  // ── Shortcut manager ─────────────────────────────────────────────────────────
-  const shortcutHandlers = useMemo(() => ({
+  usePosShortcutBindings({
     noModalOpen,
     lineCount,
-    hasRecentLine: recentLineId !== null,
+    recentLineId,
     lastReceiptNumber,
-    onFocusBarcode:      focusBarcode,
-    onHold:              handleOpenHold,
-    onResumeHeld:        handleOpenHold,
-    onPay:               openPay,
-    onPayFast:           handlePayFast,
-    onDiscount:          () => setActiveModal({ kind: "discount" }),
-    onLineDiscount:      () => { if (recentLineId) setActiveModal({ kind: "lineDiscount", lineId: recentLineId }); },
-    onRefund:            () => canRefund && setActiveModal({ kind: "refund" }),
-    onClearCart:         handleClearCartRequest,
-    onReprintLast:       handleReprintLast,
-    onNoSale:            handleNoSale,
-    onXReport:           canViewXReport ? () => setActiveModal({ kind: "xReport" }) : undefined,
-    onIncrementRecent:   handleIncrementRecent,
-    onDecrementRecent:   handleDecrementRecent,
-    onRemoveRecent:      removeRecentLine,
-    // FIX: onLock should lock the session (show LockScreen), NOT log out.
-    // Ctrl+L was destroying the session and clearing the shift — wrong behaviour.
-    onLock:              onLock ?? onLogout,
-    onReport:            () => setActiveModal({ kind: "report" }),
-    onCustomItem:        () => setActiveModal({ kind: "customItem" }),
-    onHelp:              () => setActiveModal({ kind: "help" }),
-  }), [noModalOpen, lineCount, recentLineId, lastReceiptNumber, canRefund, canViewXReport,
-       focusBarcode, handleOpenHold, openPay, handlePayFast, handleClearCartRequest,
-       handleReprintLast, handleNoSale, handleIncrementRecent, handleDecrementRecent,
-       removeRecentLine, onLock, onLogout]);
-  usePosShortcuts(shortcutHandlers);
+    canRefund,
+    canViewXReport,
+    setActiveModal,
+    focusBarcode,
+    openHold: handleOpenHold,
+    openPay,
+    payFast: handlePayFast,
+    clearCart: handleClearCartRequest,
+    reprintLast: handleReprintLast,
+    noSale: handleNoSale,
+    bumpRecentQty,
+    removeRecentLine,
+    onLock,
+    onLogout,
+  });
 
   // ── Focus barcode after any modal closes ──────────────────────────────────────
   useEffect(() => {
     if (noModalOpen) focusBarcode();
   }, [noModalOpen, focusBarcode]);
 
-  // ── Cleanup restock alert timer on unmount ───────────────────────────────────
-  useEffect(() => {
-    return () => {
-      if (restockTimerRef.current) clearTimeout(restockTimerRef.current);
-    };
-  }, []);
-
-  // ── Load business flags, branch settings, and thermal config on mount ────────
-  // R-13: guard against setState after unmount (component can unmount during the
-  // async IPC round-trip, e.g. on fast logout).
-  useEffect(() => {
-    let cancelled = false;
-    businessFlagsLoad().then(v => { if (!cancelled) setBizFlags(v); })
-      .catch((e: unknown) => console.warn("businessFlagsLoad failed:", e));
-    settingsGetBranch(sessionUser.user_id).then(v => { if (!cancelled) setBranchSettings(v); })
-      .catch((e: unknown) => console.warn("settingsGetBranch failed:", e));
-    thermalGetConfig(sessionUser.user_id).then(c => { if (!cancelled) setThermalEnabled(c.enabled); })
-      .catch((e: unknown) => console.warn("thermalGetConfig failed:", e));
-    return () => { cancelled = true; };
-  }, [sessionUser.user_id]);
-
-  // ── Clock ─────────────────────────────────────────────────────────────────────
-  const [clockTime, setClockTime] = useState(() =>
-    new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-  );
-  useEffect(() => {
-    const t = setInterval(() =>
-      setClockTime(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })),
-      10_000
-    );
-    return () => clearInterval(t);
-  }, []);
-
-  // ── Numpad key handler ────────────────────────────────────────────────────────
-  const handleNumpadKey = useCallback((key: string) => {
-    // "C" clears back to "1"
-    if (key === "C") {
-      setNumpadValue("1");
-      return;
-    }
-    const next = applyDialpadKey(numpadRef.current === "1" && key !== "⌫" ? "" : numpadRef.current, key);
-    // Keep value at minimum "1" visually, but store "" as "1" on confirm
-    const clamped = next === "" ? "1" : next;
-    setNumpadValue(clamped);
-    // Live-update recent cart line qty
-    if (recentLineId && next !== "" && next !== "0") {
-      updateQuantity(recentLineId, next);
-    }
-  }, [recentLineId, updateQuantity]);
+  const clockTime = useClockTime();
 
   // ── Sync status helpers ───────────────────────────────────────────────────────
   const isOnline      = syncStatus?.online ?? false;
@@ -656,551 +264,236 @@ export default function PosPage({
     ? cart.lines.find(l => l.cart_line_id === activeModal.lineId && !l.voided)
     : undefined;
 
+  const { recoveryActions, handleRecoveryAction } = usePosRecoveryActions({
+    error,
+    bannerResult,
+    receiptStatus,
+    syncStatus,
+    lineCount,
+    canOpenBackOffice,
+    userId: sessionUser.user_id,
+    printSaleNow,
+    setReceiptStatus,
+    setError,
+    clearError,
+    focusBarcode,
+    openHold: handleOpenHold,
+    openSyncDetails: () => setShowSyncDetails(true),
+    openWhatsAppQr: () => setShowWaQR(true),
+    onAskOfficeAI,
+    onOpenOfficeAI,
+  });
+
   return (
     <div className={`pos-layout ${lineCount > 0 ? "pos-has-cart" : "pos-idle"} ${activeModal.kind === "payment" || payFastLoading ? "pos-payment-started" : ""} ${!isOnline ? "pos-offline" : "pos-online"}`}>
-      {/* ── Top bar ── */}
-      <div className="top-bar" data-tauri-drag-region="true">
-        {/* Left: sidebar toggle + brand + store stack + theme */}
-        <div className="top-bar-left" data-tauri-drag-region="true">
-          <button
-            className="top-bar-sidebar-toggle"
-            onClick={toggleSidebar}
-            title={showSidebar ? "Hide sidebar" : "Show sidebar"}
-            aria-label={showSidebar ? "Hide sidebar" : "Show sidebar"}
-            data-tauri-drag-region="false"
-          >☰</button>
-          <button
-            className="top-bar-logo top-bar-logo-btn"
-            onClick={() => { setActiveModal({ kind: "none" }); setBannerResult(null); focusBarcode(); }}
-            title="Back to POS"
-            data-tauri-drag-region="false"
-          >ZAN<span>POS</span></button>
-          {/* Store name + cashier stacked vertically */}
-          <div className="top-bar-store-stack" data-tauri-drag-region="true">
-            <span className="top-bar-store-name">{DEVICE.branch_name}</span>
-            <span className="top-bar-cashier-sub">{sessionUser.display_name}</span>
-          </div>
-          {/* Theme toggle — moved next to the store name */}
-          {onToggleTheme && theme && (() => {
-            const meta   = THEMES.find(t => t.id === theme)!;
-            const idx    = THEMES.findIndex(t => t.id === theme);
-            const next   = THEMES[(idx + 1) % THEMES.length];
-            return (
-              <button
-                className="top-bar-btn top-bar-theme"
-                onClick={onToggleTheme}
-                title={`Theme: ${meta.label} — click for ${next.label}`}
-                data-tauri-drag-region="false"
-              >
-                {meta.icon} {meta.label}
-              </button>
-            );
-          })()}
-        </div>
+      <PosTopBar
+        showSidebar={showSidebar}
+        cashierName={sessionUser.display_name}
+        theme={theme}
+        language={language}
+        clockTime={clockTime}
+        syncStatus={syncStatus}
+        userId={sessionUser.user_id}
+        commerceEnabled={commerceEnabled}
+        waConnected={waConnected}
+        waStale={waStale}
+        lastReceiptNumber={lastReceiptNumber}
+        onToggleSidebar={toggleSidebar}
+        onHome={() => { setActiveModal({ kind: "none" }); setBannerResult(null); focusBarcode(); }}
+        onToggleTheme={onToggleTheme}
+        onToggleLanguage={toggleLanguage}
+        onOpenSyncDetails={() => setShowSyncDetails(true)}
+        onReprintLast={handleReprintLast}
+      />
 
-        {/* Centre: clock + Quran audio toggle */}
-        <div className="top-bar-center" data-tauri-drag-region="true">
-          <span className="top-bar-time" data-tauri-drag-region="true">{clockTime}</span>
-          <QuranToggle />
-        </div>
-
-        {/* Right: sync status + reprint + close shift + logout */}
-        <div className="top-bar-right" data-tauri-drag-region="true">
-          <SyncChip status={syncStatus} userId={sessionUser.user_id} />
-          {lastReceiptNumber && (
-            <button className="top-bar-btn" onClick={handleReprintLast} title={`Reprint #${lastReceiptNumber} (Ctrl+P)`} data-tauri-drag-region="false">
-              Reprint
-            </button>
-          )}
-          <button className="top-bar-btn top-bar-btn-danger top-bar-close-shift-btn" onClick={() => setActiveModal({ kind: "shiftClose" })} data-tauri-drag-region="false">
-            Close Shift
-          </button>
-          <button className="top-bar-btn top-bar-logout" onClick={onLogout} title="Ctrl+L" data-tauri-drag-region="false">
-            Logout
-          </button>
-        </div>
-      </div>
-
-      {/* ── Error banner ── */}
-      {error && (
-        <div className="error-banner" onClick={clearError} role="alert">
-          ⚠ {error}
-          <button className="error-banner-action" onClick={(e) => { e.stopPropagation(); clearError(); focusBarcode(); }}>
-            Dismiss & focus scan
-          </button>
-          <span className="error-dismiss" onClick={clearError}>✕</span>
-        </div>
-      )}
+      <PosStatusBanners
+        trainingMode={trainingMode}
+        t={t}
+        recoverable={recoverable}
+        error={error}
+        recoveryActions={recoveryActions}
+        onExitTraining={() => { clearCart(); setTrainingMode(false); focusBarcode(); }}
+        onRecoverCart={recoverCart}
+        onDismissRecovery={dismissRecovery}
+        onRecoveryAction={handleRecoveryAction}
+        onDismissError={() => { clearError(); focusBarcode(); }}
+      />
 
       {/* ── Main area ── */}
-      <div className="pos-main" style={{ gridTemplateColumns: showSidebar ? "88px minmax(0, 1fr) 370px" : "0px minmax(0, 1fr) 370px" }}>
-        {/* Icon sidebar */}
-        <div className={`pos-sidebar${showSidebar ? "" : " pos-sidebar-hidden"}`}>
-          <button className="pos-sidebar-item active" aria-label="Quick Sale">
-            <ShoppingBag size={18} strokeWidth={1.75} aria-hidden="true" />
-            <span>Sale</span>
-          </button>
-          <div className="pos-sidebar-divider" />
-          <button className="pos-sidebar-item" aria-label="Today's Report" onClick={() => setActiveModal({ kind: "report" })}>
-            <BarChart2 size={18} strokeWidth={1.75} aria-hidden="true" />
-            <span>Reports</span>
-          </button>
-          {canViewXReport && (
-            <button className="pos-sidebar-item" aria-label="X-Report — mid-shift drawer check" onClick={() => setActiveModal({ kind: "xReport" })}>
-              <ClipboardList size={18} strokeWidth={1.75} aria-hidden="true" />
-              <span>X-Report</span>
-            </button>
-          )}
-          {canOpenBackOffice && (
-            <button className="pos-sidebar-item" aria-label="OfficeAI" onClick={() => {
-              if (lineCount > 0) {
-                setError("Hold or complete the current sale before opening OfficeAI");
-                return;
-              }
-              if (onOpenOfficeAI) onOpenOfficeAI();
-            }}>
-              <Building2 size={18} strokeWidth={1.75} aria-hidden="true" />
-              <span>OfficeAI</span>
-            </button>
-          )}
-          {canOpenBackOffice && (
-            <button className="pos-sidebar-item" aria-label="Notes (admin)" onClick={() => setShowNotes(true)}>
-              <StickyNote size={18} strokeWidth={1.75} aria-hidden="true" />
-              <span>Notes</span>
-            </button>
-          )}
-          <div className="pos-sidebar-spacer" />
-        </div>
+      <div className="pos-main" style={{ gridTemplateColumns: showSidebar ? "76px minmax(0, 1fr) 344px" : "0px minmax(0, 1fr) 344px" }}>
+        <PosSidebar
+          visible={showSidebar}
+          t={t}
+          trainingMode={trainingMode}
+          canViewXReport={canViewXReport}
+          canOpenBackOffice={canOpenBackOffice}
+          commerceEnabled={commerceEnabled}
+          notifCount={notifCount}
+          orderCount={orderCount}
+          onStartTraining={() => { clearCart(); setTrainingMode(true); focusBarcode(); }}
+          onOpenReport={() => setActiveModal({ kind: "report" })}
+          onOpenXReport={() => setActiveModal({ kind: "xReport" })}
+          onOpenOfficeAI={() => {
+            // Opening the back office mid-sale would strand the cart behind a
+            // full-screen surface, so the cashier is told to resolve it first.
+            if (lineCount > 0) {
+              setError("Hold or complete the current sale before opening OfficeAI");
+              return;
+            }
+            if (onOpenOfficeAI) onOpenOfficeAI();
+          }}
+          onOpenNotes={() => setShowNotes(true)}
+          onOpenOrders={() => setShowOrders(true)}
+          onOpenNotifications={() => setShowNotifications(true)}
+          onCloseShift={() => setActiveModal({ kind: "shiftClose" })}
+          onLogout={onLogout}
+        />
 
-        {/* Cart column — scan strip + custom item btn + full cart */}
-        <div className="pos-cart-col">
-          <BarcodeInput
-            ref={barcodeRef}
-            onBarcode={handleBarcode}
-            onSelectProduct={async (product) => {
-              const qty = parseInt(numpadValue) > 1 ? numpadValue : undefined;
-              try {
-                await addProduct(product, qty);
-                barcodeRef.current?.flashSuccess();
-                setNumpadValue("1");
-                // Zero-price items stay in cart with badge — set price via LineEditModal
-              } catch (e) {
-                barcodeRef.current?.flashError();
-                setError(e instanceof Error ? e.message : "Failed to add product — please try again");
-              }
-            }}
-            onSearch={() => {}}
-            onEscape={() => {}}
-            actorUserId={sessionUser.user_id}
-            disabled={loading || payFastLoading}
-          />
-          {/* Quick-add strip: Custom Item chip + saved suggestion chips */}
-          <div className="pos-quickadd-strip">
-            <button
-              className="pos-quickadd-custom"
-              onClick={() => setActiveModal({ kind: "customItem" })}
-              disabled={loading || payFastLoading}
-              title="Add a custom item"
-            >✦ Custom</button>
-            {suggestions.map(s => {
-              const hasPrice = s.price && parseFloat(s.price) > 0;
-              return (
-                <button
-                  key={s.id}
-                  className="pos-quickadd-chip"
-                  disabled={loading || payFastLoading}
-                  onClick={async () => {
-                    if (!hasPrice) {
-                      // Zero / no price saved — ask cashier to enter price now
-                      setActiveModal({ kind: "priceInput", mode: "addNew",
-                        itemName: s.name, quantity: numpadValue });
-                      return;
-                    }
-                    await addCustomItem(s.name, s.price, numpadValue);
-                    setNumpadValue("1");
-                    focusBarcode();
-                  }}
-                  title={hasPrice
-                    ? `${s.name} — ${DEVICE.currency} ${s.price}`
-                    : `${s.name} — price varies`}
-                >
-                  <span className="pqc-name">{s.name}</span>
-                  <span className="pqc-price">{hasPrice ? s.price : "—"}</span>
-                </button>
-              );
-            })}
-          </div>
-          <CartPanel
-            cart={cart}
-            netTotal={netTotal}
-            taxTotal={taxTotal}
-            onUpdateQty={updateQuantity}
-            onRemove={removeLine}
-            onApplyLineDiscount={applyLineDiscount}
-            onSetLineNote={setLineNote}
-            onPaySplit={openPaySplit}
-            onPayFast={handlePayFast}
-            onPayDirect={openPayDirect}
-            payFastLoading={payFastLoading}
-            paymentStarted={activeModal.kind === "payment"}
-            recentLineId={recentLineId}
-            onBumpLine={bumpLine}
-            compact={true}
-          />
-        </div>
+        <PosCartColumn
+          barcodeRef={barcodeRef}
+          actorUserId={sessionUser.user_id}
+          cart={cart}
+          netTotal={netTotal}
+          taxTotal={taxTotal}
+          numpadValue={numpadValue}
+          suggestions={suggestions}
+          loading={loading}
+          payFastLoading={payFastLoading}
+          paymentStarted={activeModal.kind === "payment"}
+          recentLineId={recentLineId}
+          setNumpadValue={setNumpadValue}
+          setActiveModal={setActiveModal}
+          setError={setError}
+          addProduct={addProduct}
+          addCustomItem={addCustomItem}
+          updateQuantity={updateQuantity}
+          removeLine={removeLine}
+          applyLineDiscount={applyLineDiscount}
+          setLineNote={setLineNote}
+          bumpLine={bumpLine}
+          onBarcode={handleBarcode}
+          onPaySplit={openPaySplit}
+          onPayFast={handlePayFast}
+          onPayDirect={openPayDirect}
+          focusBarcode={focusBarcode}
+        />
 
-        {/* Numpad panel */}
-        <div className="numpad-panel">
-          {/* Top: multiplier display + dialpad — pushed to top */}
-          <div className="numpad-top">
-            <div className="numpad-display">
-              <span className="numpad-multiplier">× {numpadValue}</span>
-              {recentLineId && (
-                <span className="numpad-recent-name">
-                  {cart.lines.find(l => l.cart_line_id === recentLineId && !l.voided)?.product_name}
-                </span>
-              )}
-            </div>
-            <Dialpad onKey={handleNumpadKey} />
-          </div>
-
-          {/* Totals + Payment — anchored to bottom */}
-          {(() => {
-            const activeLines = cart.lines.filter(l => !l.voided);
-            const grossTotal = activeLines.reduce((s, l) => s + l.line_total_minor, 0);
-            const totalDiscount = cart.bill_discount_minor + activeLines.reduce((s, l) => s + l.line_discount_minor, 0);
-            const fmt = (n: number) => `${DEVICE.currency} ${formatMoney(n, DEVICE.currency_exponent)}`;
-            const canPay = activeLines.length > 0 && netTotal > 0 && !(payFastLoading || activeModal.kind === "payment");
-            return (
-              <div className="np-pay-section">
-                {/* Totals */}
-                <div className="np-totals">
-                  <div className="np-total-row"><span>Subtotal</span><span>{fmt(grossTotal)}</span></div>
-                  {totalDiscount > 0
-                    ? <div className="np-total-row np-discount-active"><span>Discount</span><span>−{fmt(totalDiscount)}</span></div>
-                    : <div className="np-total-row np-discount-zero"><span>Discount</span><span>{fmt(0)}</span></div>
-                  }
-                  <div className="np-total-row"><span>Tax</span><span>{fmt(taxTotal)}</span></div>
-                  <div className="np-total-row np-grand"><span>TOTAL</span><span>{fmt(netTotal)}</span></div>
-                </div>
-                {/* Fast Cash full-width */}
-                <button
-                  className="np-fast-cash-btn"
-                  disabled={!canPay || payFastLoading}
-                  onClick={handlePayFast}
-                  title={!canPay ? "Add items to pay" : "Fast Cash · F12"}
-                >
-                  {payFastLoading ? "…" : <><span>Fast Cash <kbd>F12</kbd></span><span className="np-fast-total">{fmt(netTotal)}</span></>}
-                </button>
-                {/* Cash / Card / Wallet / Split */}
-                <div className="np-methods">
-                  <button className="np-method-btn" disabled={!canPay} onClick={() => openPayDirect("cash")}>Cash</button>
-                  <button className="np-method-btn" disabled={!canPay} onClick={() => openPayDirect("card")}>Card</button>
-                  <button className="np-method-btn" disabled={!canPay} onClick={() => openPayDirect("wallet")}>Wallet</button>
-                  <button className="np-method-btn np-split-btn" disabled={!canPay} onClick={openPaySplit}>Split</button>
-                </div>
-              </div>
-            );
-          })()}
-        </div>
+        <PosNumpadPanel
+          cart={cart}
+          numpadValue={numpadValue}
+          recentLineId={recentLineId}
+          taxTotal={taxTotal}
+          payableTotal={payableTotal}
+          exchangeCredit={exchangeCredit}
+          exchangeBalance={exchangeBalance}
+          payFastLoading={payFastLoading}
+          paymentStarted={activeModal.kind === "payment"}
+          onNumpadKey={handleNumpadKey}
+          onCancelExchange={() => setExchangeCredit(null)}
+          onCompleteCoveredExchange={handleCompleteCoveredExchange}
+          onPayFast={handlePayFast}
+          onPayDirect={openPayDirect}
+          onPaySplit={openPaySplit}
+        />
       </div>
 
       {/* ── Action bar ── */}
-      <div className="action-bar">
-        <div className="action-group action-group-transaction">
-          <button
-            className="action-btn action-btn-danger"
-            onClick={handleClearCartRequest}
-            disabled={lineCount === 0}
-            title="Clear cart — Ctrl+Delete"
-          >
-            Clear <kbd>Ctrl+⌫</kbd>
-          </button>
-          <button
-            className="action-btn"
-            onClick={handleOpenHold}
-            title="Hold current order or resume a held order — F6"
-          >
-            Hold / Resume <kbd>F6</kbd>
-          </button>
-        </div>
-        <div className="action-group action-group-modifiers">
-          {(canOpenBackOffice || bizFlags.cashier_can_discount) && (
-          <button
-            className="action-btn"
-            onClick={() => setActiveModal({ kind: "discount" })}
-            disabled={lineCount === 0}
-            title="Apply bill discount — F8"
-          >
-            Discount <span className="action-lock">🔒</span> <kbd>F8</kbd>
-          </button>
-          )}
-          {canRefund && (
-            <button
-              className="action-btn action-btn-danger"
-              onClick={() => setActiveModal({ kind: "refund" })}
-              title="Process a refund — Ctrl+R"
-            >
-              Refund <span className="action-lock">🔒</span> <kbd>F10</kbd>
-            </button>
-          )}
-        </div>
-        <div className="action-group action-group-operational">
-          <button
-            className="action-btn"
-            onClick={() => setActiveModal({ kind: "cashEvent" })}
-            title="Cash In / Out / Safe Drop"
-          >
-            Cash Event <span className="action-lock">🔒</span>
-          </button>
-          <button
-            className="action-btn"
-            onClick={() => setShowDeliveries(true)}
-            title="View deliveries"
-          >
-            🛵 Deliveries
-          </button>
-          <button
-            className="action-btn"
-            onClick={() => setActiveModal({ kind: "recent" })}
-            title="Recent sales — reprint or void"
-          >
-            <Clock size={15} strokeWidth={1.75} aria-hidden="true" /> Recent
-          </button>
-          <button
-            className="action-btn"
-            onClick={handleReprintLast}
-            disabled={!lastReceiptNumber}
-            title={lastReceiptNumber ? `Reprint receipt #${lastReceiptNumber}` : "No receipt to reprint yet"}
-          >
-            🖨 Reprint
-          </button>
-        </div>
-      </div>
+      <PosActionBar
+        lineCount={lineCount}
+        canDiscount={canOpenBackOffice || bizFlags.cashier_can_discount}
+        canRefund={canRefund}
+        lastReceiptNumber={lastReceiptNumber}
+        onClearCart={handleClearCartRequest}
+        onOpenHold={handleOpenHold}
+        onOpenDiscount={() => setActiveModal({ kind: "discount" })}
+        onOpenRefund={() => setActiveModal({ kind: "refund" })}
+        onOpenCashEvent={() => setActiveModal({ kind: "cashEvent" })}
+        onOpenDeliveries={() => setShowDeliveries(true)}
+        onOpenRecent={() => setActiveModal({ kind: "recent" })}
+        onReprintLast={handleReprintLast}
+      />
 
-      {/* ── Clear cart confirmation ── */}
-      {activeModal.kind === "clearConfirm" && (
-        <div className="modal-overlay" onClick={() => { setActiveModal({ kind: "none" }); focusBarcode(); }}>
-          <div className="modal clear-confirm-modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <span className="modal-title">Clear Cart?</span>
-            </div>
-            <p className="clear-confirm-body">
-              Remove all {lineCount} item{lineCount !== 1 ? "s" : ""} from the cart?
-              This will be recorded as a pre-tender void.
-            </p>
-            <div className="modal-actions">
-              <button className="btn-secondary" onClick={() => { setActiveModal({ kind: "none" }); focusBarcode(); }}>
-                Cancel
-              </button>
-              <button className="btn-danger" onClick={handleClearConfirmed}>
-                🗑 Clear Cart
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <PosCartModals
+        activeModal={activeModal}
+        setActiveModal={setActiveModal}
+        cart={cart}
+        lineCount={lineCount}
+        discountLine={discountLine}
+        addCustomItem={addCustomItem}
+        setLinePrice={setLinePrice}
+        applyBillDiscount={applyBillDiscount}
+        applyLineDiscount={applyLineDiscount}
+        clearCart={clearCart}
+        refreshSuggestions={refreshSuggestions}
+        resetNumpad={() => setNumpadValue("1")}
+        focusBarcode={focusBarcode}
+      />
 
-      {/* ── Modals ── */}
-      {activeModal.kind === "customItem" && (
-        <CustomItemModal
-          onAdd={async (name, price, qty) => {
-            await addCustomItem(name, price, qty);
-            setActiveModal({ kind: "none" });
-            refreshSuggestions();
-            focusBarcode();
-          }}
-          onCancel={() => { setActiveModal({ kind: "none" }); refreshSuggestions(); focusBarcode(); }}
-        />
-      )}
+      <PosTenderOverlays
+        activeModal={activeModal}
+        payableTotal={payableTotal}
+        loading={loading}
+        sessionUserId={sessionUser.user_id}
+        bannerResult={bannerResult}
+        receiptStatus={receiptStatus}
+        showSaleDetails={showSaleDetails}
+        onConfirmPayment={handleConfirmPayment}
+        onClosePayment={() => { setActiveModal({ kind: "none" }); focusBarcode(); }}
+        onPrint={sale => { void printSaleNow(sale, false, "manual"); }}
+        onNewSale={() => {
+          setBannerResult(null);
+          setShowSaleDetails(false);
+          focusBarcode();
+        }}
+        onViewDetails={() => setShowSaleDetails(true)}
+        onCloseDetails={() => {
+          setShowSaleDetails(false);
+          focusBarcode();
+        }}
+      />
 
-      {activeModal.kind === "priceInput" && (
-        <PriceInputModal
-          productName={activeModal.mode === "setExisting"
-            ? activeModal.productName
-            : activeModal.itemName}
-          onConfirm={async (priceMajor) => {
-            if (activeModal.mode === "setExisting") {
-              const priceMinor = parseMoney(priceMajor, DEVICE.currency_exponent);
-              await setLinePrice(activeModal.lineId, priceMinor);
-            } else {
-              await addCustomItem(activeModal.itemName, priceMajor, activeModal.quantity);
-              setNumpadValue("1");
-            }
-            setActiveModal({ kind: "none" });
-            focusBarcode();
-          }}
-          onCancel={() => { setActiveModal({ kind: "none" }); focusBarcode(); }}
-        />
-      )}
+      <PosOperationsModals
+        activeModal={activeModal}
+        setActiveModal={setActiveModal}
+        sessionUser={sessionUser}
+        shift={shift}
+        cart={cart}
+        lineCount={lineCount}
+        netTotal={netTotal}
+        clearCart={clearCart}
+        replaceCart={replaceCart}
+        setExchangeCredit={setExchangeCredit}
+        onShiftClose={onShiftClose}
+        onReprintReceipt={reprintReceiptNow}
+        onEditSale={handleEditSale}
+        focusBarcode={focusBarcode}
+      />
 
-      {activeModal.kind === "cashEvent" && (
-        <CashEventModal
-          shiftId={shift.shift_id}
-          userId={sessionUser.user_id}
-          cashierName={sessionUser.display_name}
-          onDone={() => { setActiveModal({ kind: "none" }); focusBarcode(); }}
-          onCancel={() => { setActiveModal({ kind: "none" }); focusBarcode(); }}
-        />
-      )}
-
-      {activeModal.kind === "discount" && (
-        <DiscountModal
-          grossMinor={cart.lines.filter(l => !l.voided).reduce((s, l) => s + l.line_total_minor, 0)}
-          currentDiscountMinor={cart.bill_discount_minor}
-          onApply={async (discount_minor, reason) => {
-            await applyBillDiscount(discount_minor, reason);
-            setActiveModal({ kind: "none" });
-            focusBarcode();
-          }}
-          onCancel={() => { setActiveModal({ kind: "none" }); focusBarcode(); }}
-        />
-      )}
-
-      {discountLine && (
-        <LineDiscountModal
-          line={discountLine}
-          onApply={async (discount_minor, reason) => {
-            await applyLineDiscount(discountLine.cart_line_id, discount_minor, reason);
-            setActiveModal({ kind: "none" });
-            focusBarcode();
-          }}
-          onCancel={() => { setActiveModal({ kind: "none" }); focusBarcode(); }}
-        />
-      )}
-
-      {activeModal.kind === "payment" && (
-        <PaymentModal
-          netTotal={netTotal}
-          initialMethod={activeModal.method}
-          splitMode={activeModal.split}
-          onConfirm={handleConfirmPayment}
-          onCancel={() => { setActiveModal({ kind: "none" }); focusBarcode(); }}
-          loading={loading}
-          sessionUserId={sessionUser.user_id}
-        />
-      )}
-
-      {/* ── Post-sale success banner (non-blocking) ── */}
-      {bannerResult && activeModal.kind !== "receipt" && (
-        <div className="sale-banner">
-          <span className="sale-banner-icon">✓</span>
-          <span className="sale-banner-text">Sale #{bannerResult.receipt_number}</span>
-          <button className="sale-banner-print" onClick={() => setActiveModal({ kind: "receipt", isReprint: false, result: bannerResult! })}>
-            🖨 Print Receipt
-          </button>
-          <button className="sale-banner-dismiss" onClick={handleNewSale} title="Dismiss">×</button>
-        </div>
-      )}
-
-      {/* ── Full receipt modal (explicit print or reprint) ── */}
-      {activeModal.kind === "receipt" && (
-        <ReceiptPreview
-          sale={activeModal.result}
-          isReprint={activeModal.isReprint}
-          userId={sessionUser.user_id}
-          onNewSale={() => { setActiveModal({ kind: "none" }); handleNewSale(); }}
-        />
-      )}
-
-      {activeModal.kind === "shiftClose" && (
-        <ShiftModal
-          mode="close"
-          user={sessionUser}
-          shift={shift}
-          onShiftOpened={() => {}}
-          onShiftClosed={() => { setActiveModal({ kind: "none" }); onShiftClose(true); }}
-          onCancel={() => { setActiveModal({ kind: "none" }); focusBarcode(); }}
-        />
-      )}
-
-      {activeModal.kind === "hold" && (
-        <HoldModal
-          cart={cart}
-          lineCount={lineCount}
-          netTotal={netTotal}
-          actorUserId={sessionUser.user_id}
-          onHeld={() => { setActiveModal({ kind: "none" }); clearCart(); focusBarcode(); }}
-          onResume={(resumed) => { setActiveModal({ kind: "none" }); replaceCart(resumed); focusBarcode(); }}
-          onClose={() => { setActiveModal({ kind: "none" }); focusBarcode(); }}
-        />
-      )}
-
-      {activeModal.kind === "refund" && (
-        <RefundModal
-          cashierUserId={sessionUser.user_id}
-          onClose={() => { setActiveModal({ kind: "none" }); focusBarcode(); }}
-        />
-      )}
-
-      {activeModal.kind === "report" && (
-        <TodayReportModal sessionUserId={sessionUser.user_id} onClose={() => { setActiveModal({ kind: "none" }); focusBarcode(); }} />
-      )}
-
-      {activeModal.kind === "xReport" && (
-        <XReportModal
-          shiftId={shift.shift_id}
-          actorUserId={sessionUser.user_id}
-          onClose={() => { setActiveModal({ kind: "none" }); focusBarcode(); }}
-        />
-      )}
-
-      {activeModal.kind === "help" && (
-        <HelpModal onClose={() => { setActiveModal({ kind: "none" }); focusBarcode(); }} />
-      )}
-
-      {activeModal.kind === "recent" && (
-        <RecentSalesModal
-          sessionUserId={sessionUser.user_id}
-          onReprint={async (receiptNumber) => {
-            try {
-              const reprinted = await receiptReprint(receiptNumber, sessionUser.user_id);
-              setActiveModal({ kind: "receipt", isReprint: true, result: reprinted });
-            } catch (e) { setError(typeof e === "string" ? e : "Reprint failed"); }
-          }}
-          onEdit={handleEditSale}
-          onClose={() => { setActiveModal({ kind: "none" }); focusBarcode(); }}
-        />
-      )}
-
-      {showWaQR && (
-        <WhatsAppQRModal onClose={() => setShowWaQR(false)} />
-      )}
-
-      {showNotes && (
-        <StickyNotesPanel onClose={() => setShowNotes(false)} />
-      )}
-
-      {showDeliveries && (
-        <div className="dlv-modal-overlay">
-          <div className="dlv-modal-shell" role="dialog" aria-modal="true" aria-labelledby="dlv-title">
-            <div className="dlv-modal-header">
-              <button className="dlv-modal-close" onClick={() => { setShowDeliveries(false); focusBarcode(); }}>← Close</button>
-              <span className="dlv-modal-title" id="dlv-title">🛵 Deliveries</span>
-            </div>
-            <div className="dlv-modal-body">
-              <DeliveriesTab sessionUser={sessionUser} />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Restock alerts toast ── */}
-      {restockAlerts.length > 0 && (
-        <div
-          className="restock-toast-overlay"
-          onClick={() => { if (restockTimerRef.current) clearTimeout(restockTimerRef.current); setRestockAlerts([]); }}
-        >
-          {restockAlerts.map(alert => (
-            <div key={alert.product_id} className="restock-toast">
-              <span className="restock-toast-title">⚠ Low Stock</span>
-              <span className="restock-toast-body">
-                {alert.product_name}: {alert.quantity_on_hand} left (reorder at {alert.reorder_point})
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
+      <PosSecondaryOverlays
+        sessionUser={sessionUser}
+        showWaQr={showWaQR}
+        showNotifications={showNotifications}
+        showOrders={showOrders}
+        showDeliveries={showDeliveries}
+        showNotes={showNotes}
+        showSyncDetails={showSyncDetails}
+        syncStatus={syncStatus}
+        restockAlerts={restockAlerts}
+        lineCount={lineCount}
+        setError={setError}
+        addByBarcode={addByBarcode}
+        refreshNotifications={refreshNotifications}
+        focusBarcode={focusBarcode}
+        onCloseWaQr={() => setShowWaQR(false)}
+        onCloseNotifications={() => setShowNotifications(false)}
+        onCloseOrders={() => { setShowOrders(false); focusBarcode(); }}
+        onCloseDeliveries={() => { setShowDeliveries(false); focusBarcode(); }}
+        onCloseNotes={() => setShowNotes(false)}
+        onCloseSyncDetails={() => { setShowSyncDetails(false); focusBarcode(); }}
+        onDismissRestockAlerts={dismissRestockAlerts}
+        onOpenOfficeAI={onOpenOfficeAI}
+        onAskOfficeAI={onAskOfficeAI}
+      />
     </div>
   );
 }

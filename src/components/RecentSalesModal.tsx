@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { SaleListRow } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney } from "../money";
 import * as cmd from "../tauri/commands";
+import { useLanguage } from "../hooks/useLanguage";
+import { modalTranslator, ownedModalLabel } from "../i18n/modalStrings";
 
 interface Props {
   onReprint: (receiptNumber: string) => Promise<void>;
@@ -16,6 +18,8 @@ function todayStr() {
 }
 
 export default function RecentSalesModal({ onReprint, onEdit, onClose, sessionUserId }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => modalTranslator(language), [language]);
   const [date, setDate]         = useState(todayStr());
   const [sales, setSales]       = useState<SaleListRow[]>([]);
   const [loading, setLoading]   = useState(false);
@@ -35,17 +39,17 @@ export default function RecentSalesModal({ onReprint, onEdit, onClose, sessionUs
     cmd.reportSalesList(sessionUserId, DEVICE.branch_id, date, date)
       .then(page => { if (!cancelled) setSales(page.items); })
       .catch((e: unknown) => {
-        if (!cancelled) setError(typeof e === "string" ? e : "Failed to load sales");
+        if (!cancelled) setError(typeof e === "string" ? e : t("failed"));
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [date, sessionUserId]);
+  }, [date, sessionUserId, t]);
 
   async function handleReprint() {
     if (!selected || working) return;
     setWorking(true);
     try { await onReprint(selected.receipt_number); }
-    catch (e: unknown) { setError(typeof e === "string" ? e : "Reprint failed"); }
+    catch (e: unknown) { setError(typeof e === "string" ? e : t("failed")); }
     finally { setWorking(false); }
   }
 
@@ -53,7 +57,7 @@ export default function RecentSalesModal({ onReprint, onEdit, onClose, sessionUs
     if (!selected || working) return;
     setWorking(true);
     try { await onEdit(selected); }
-    catch (e: unknown) { setError(typeof e === "string" ? e : "Edit failed"); }
+    catch (e: unknown) { setError(typeof e === "string" ? e : t("failed")); }
     finally { setWorking(false); }
   }
 
@@ -61,7 +65,7 @@ export default function RecentSalesModal({ onReprint, onEdit, onClose, sessionUs
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal recent-sales-modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <span className="modal-title">Recent Sales</span>
+          <span className="modal-title">{t("recentSales")}</span>
           <input
             className="recent-date-input"
             type="date"
@@ -74,9 +78,9 @@ export default function RecentSalesModal({ onReprint, onEdit, onClose, sessionUs
         {error && <div className="modal-error">{error}</div>}
 
         <div className="recent-sales-list">
-          {loading && <div className="recent-loading">Loading…</div>}
+          {loading && <div className="recent-loading">{t("loading")}</div>}
           {!loading && sales.length === 0 && (
-            <div className="recent-empty">No sales for {date}</div>
+            <div className="recent-empty">{t("noSalesFor")} {date}</div>
           )}
           {sales.map(s => (
             <button
@@ -91,7 +95,7 @@ export default function RecentSalesModal({ onReprint, onEdit, onClose, sessionUs
               <span className="recent-sale-cashier">{s.cashier_name}</span>
               <span className="recent-sale-methods">{s.payment_methods}</span>
               <span className="recent-sale-total">{fmt(s.net_total_minor)}</span>
-              <span className={`recent-sale-status recent-sale-status-${s.status}`}>{s.status}</span>
+              <span className={`recent-sale-status recent-sale-status-${s.status}`}>{ownedModalLabel(language, s.status)}</span>
             </button>
           ))}
         </div>
@@ -104,23 +108,23 @@ export default function RecentSalesModal({ onReprint, onEdit, onClose, sessionUs
               onClick={handleReprint}
               disabled={working}
             >
-              🖨 Reprint
+              🖨 {t("reprint")}
             </button>
             {selected.status !== "voided" && (
               <button
                 className="btn-primary"
                 onClick={handleEdit}
                 disabled={working}
-                title="Load items back into cart for editing"
+                title={t("edit")}
               >
-                {working ? "Loading…" : "✏ Edit"}
+                {working ? t("loading") : `✏ ${t("edit")}`}
               </button>
             )}
           </div>
         )}
 
         <div className="modal-actions">
-          <button className="btn-secondary" onClick={onClose}>Close</button>
+          <button className="btn-secondary" onClick={onClose}>{t("close")}</button>
         </div>
       </div>
     </div>

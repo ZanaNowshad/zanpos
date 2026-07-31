@@ -2,6 +2,9 @@
 //! bulk_assign_supplier, force_close_shift.
 
 pub use crate::ai::tools::MutationResult;
+use crate::commands::purchasing_commands::{
+    po_receive_inner, ReceivePurchaseOrderInput, ReceivePurchaseOrderLineInput,
+};
 use crate::domain::ai_admin::{ToolPreview, ToolPreviewField};
 use crate::errors::{AppError, AppResult};
 use sqlx::{Row, SqlitePool};
@@ -52,11 +55,12 @@ async fn audit3(pool: &SqlitePool, event: &str, entity_id: &str, after: &str) {
     let _ = sqlx::query(
         "INSERT INTO audit_logs (audit_log_id, event_type, entity_type, entity_id,
          actor_user_id, actor_type, after_json, created_at, hash)
-         VALUES (?, ?, 'ai_mutation', ?, 'AI_ADMIN', 'ai_agent', ?, ?, 'ai')",
+         VALUES (?, ?, 'ai_mutation', ?, ?, 'ai_agent', ?, ?, 'ai')",
     )
     .bind(&id)
     .bind(event)
     .bind(entity_id)
+    .bind(crate::ai::tool_policy::current_actor_id().unwrap_or_else(|| "unknown".into()))
     .bind(after)
     .bind(&now)
     .execute(pool)
@@ -80,36 +84,139 @@ pub async fn dry_run(
                     .fetch_optional(pool)
                     .await?
                     .flatten();
-            Ok(prev(tool_name, "Delete a supplier", vec![
-                ("Supplier", name.unwrap_or_else(|| id.clone())),
-                ("⚠ Warning", "Blocked if linked to POs or products".into()),
-            ]))
+            Ok(prev(
+                tool_name,
+                "Delete a supplier",
+                vec![
+                    ("Supplier", name.unwrap_or_else(|| id.clone())),
+                    ("⚠ Warning", "Blocked if linked to POs or products".into()),
+                ],
+            ))
         }
         "receive_purchase_order" => {
             let po_id = rv(input, "po_id")?;
-            let line_count = input.get("lines").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-            Ok(prev(tool_name, "Mark PO lines as received", vec![
-                ("PO ID", po_id),
-                ("Lines", if line_count == 0 { "All lines (full receipt)".into() } else { format!("{line_count} line(s)") }),
-                ("Effect", "Stock will be incremented for each received line".into()),
-            ]))
+            let line_count = input
+                .get("lines")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            Ok(prev(
+                tool_name,
+                "Mark PO lines as received",
+                vec![
+                    ("PO ID", po_id),
+                    (
+                        "Lines",
+                        if line_count == 0 {
+                            "All lines (full receipt)".into()
+                        } else {
+                            format!("{line_count} line(s)")
+                        },
+                    ),
+                    (
+                        "Effect",
+                        "Stock will be incremented for each received line".into(),
+                    ),
+                ],
+            ))
         }
-        "delete_purchase_order" => Ok(prev(tool_name, "Cancel and delete a purchase order", vec![
-            ("PO ID", rv(input, "po_id")?),
-            ("⚠ Warning", "Blocked if PO has already been received".into()),
-        ])),
-        "bulk_assign_supplier" => Ok(prev(tool_name, "Assign supplier to all products in category", vec![
-            ("Category ID", rv(input, "category_id")?),
-            ("Supplier ID", rv(input, "supplier_id")?),
-        ])),
+        "delete_purchase_order" => Ok(prev(
+            tool_name,
+            "Cancel and delete a purchase order",
+            vec![
+                ("PO ID", rv(input, "po_id")?),
+                (
+                    "⚠ Warning",
+                    "Blocked if PO has already been received".into(),
+                ),
+            ],
+        )),
+        "bulk_assign_supplier" => Ok(prev(
+            tool_name,
+            "Assign supplier to all products in category",
+            vec![
+                ("Category ID", rv(input, "category_id")?),
+                ("Supplier ID", rv(input, "supplier_id")?),
+            ],
+        )),
         "force_close_shift" => {
             let shift_id = rv(input, "shift_id")?;
-            Ok(prev(tool_name, "Force-close a stuck open shift", vec![
-                ("Shift ID", shift_id),
-                ("Effect", "Closes the shift with current timestamp. Logged in audit trail.".into()),
-            ]))
+            Ok(prev(
+                tool_name,
+                "Force-close a stuck open shift",
+                vec![
+                    ("Shift ID", shift_id),
+                    (
+                        "Effect",
+                        "Closes the shift with current timestamp. Logged in audit trail.".into(),
+                    ),
+                ],
+            ))
         }
-        other => Err(AppError::Validation(format!("Unknown mutation tool: {other}"))),
+        "merge_products" => {
+            let source_id = rv(input, "source_product_id")?;
+            let target_id = rv(input, "target_product_id")?;
+            if source_id == target_id {
+                return Err(AppError::Validation(
+                    "source and target product must be different".into(),
+                ));
+            }
+
+            let source_name: Option<String> = sqlx::query_scalar(
+                "SELECT name FROM products WHERE product_id = ? AND deleted_at IS NULL",
+            )
+            .bind(&source_id)
+            .fetch_optional(pool)
+            .await?
+            .flatten();
+            let source_name = source_name.ok_or_else(|| {
+                AppError::Validation(format!(
+                    "Source product {source_id} not found or already deleted"
+                ))
+            })?;
+
+            let target_name: Option<String> = sqlx::query_scalar(
+                "SELECT name FROM products WHERE product_id = ? AND deleted_at IS NULL",
+            )
+            .bind(&target_id)
+            .fetch_optional(pool)
+            .await?
+            .flatten();
+            let target_name = target_name.ok_or_else(|| {
+                AppError::Validation(format!(
+                    "Target product {target_id} not found or already deleted"
+                ))
+            })?;
+
+            let transfer_history = input
+                .get("transfer_history")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            Ok(prev(
+                tool_name,
+                &format!("Merge '{source_name}' into '{target_name}'"),
+                vec![
+                    ("Source", format!("{source_name} ({source_id})")),
+                    ("Target", format!("{target_name} ({target_id})")),
+                    ("Stock", "Source stock will be combined into target".into()),
+                    (
+                        "Sale History",
+                        if transfer_history {
+                            "Historical sale items will be reassigned to target".into()
+                        } else {
+                            "Historical sale items will remain linked to source".into()
+                        },
+                    ),
+                    (
+                        "Warning",
+                        "Source product will be archived; this merge is irreversible".into(),
+                    ),
+                ],
+            ))
+        }
+        other => Err(AppError::Validation(format!(
+            "Unknown mutation tool: {other}"
+        ))),
     }
 }
 
@@ -121,12 +228,16 @@ pub async fn execute(
     input: &serde_json::Value,
     _currency_exp: u32,
 ) -> AppResult<MutationResult> {
+    let actor_id = crate::ai::tool_policy::current_actor_id()
+        .ok_or_else(|| AppError::Permission("Mutation actor context is missing".into()))?;
     match tool_name {
         "delete_supplier" => {
             let id = rv(input, "supplier_id")?;
             let po_count: i64 =
                 sqlx::query_scalar("SELECT COUNT(*) FROM purchase_orders WHERE supplier_id = ?")
-                    .bind(&id).fetch_one(pool).await?;
+                    .bind(&id)
+                    .fetch_one(pool)
+                    .await?;
             if po_count > 0 {
                 return Err(AppError::Validation(format!(
                     "Supplier has {po_count} purchase order(s). Cancel them before deleting the supplier."
@@ -134,114 +245,76 @@ pub async fn execute(
             }
             let product_count: i64 =
                 sqlx::query_scalar("SELECT COUNT(*) FROM products WHERE default_supplier_id = ?")
-                    .bind(&id).fetch_one(pool).await?;
+                    .bind(&id)
+                    .fetch_one(pool)
+                    .await?;
             if product_count > 0 {
                 return Err(AppError::Validation(format!(
                     "Supplier is linked to {product_count} product(s). Reassign them first."
                 )));
             }
             sqlx::query("DELETE FROM suppliers WHERE supplier_id = ?")
-                .bind(&id).execute(pool).await?;
+                .bind(&id)
+                .execute(pool)
+                .await?;
             audit3(pool, "supplier_deleted", &id, "{}").await;
             ok_mut(&format!("Supplier {id} deleted."), "supplier", &id)
         }
 
         "receive_purchase_order" => {
             let po_id = rv(input, "po_id")?;
-            let now = chrono::Utc::now().to_rfc3339();
-
-            // Check PO exists and isn't already fully received
-            let status: Option<String> =
-                sqlx::query_scalar("SELECT status FROM purchase_orders WHERE po_id = ?")
-                    .bind(&po_id).fetch_optional(pool).await?.flatten();
-            match status.as_deref() {
-                None => return Err(AppError::NotFound(format!("PO {po_id} not found"))),
-                Some("cancelled") => return Err(AppError::Validation("Cannot receive a cancelled PO.".into())),
-                Some("received") => return Err(AppError::Validation("PO is already fully received.".into())),
-                _ => {}
-            }
-
-            let explicit_lines = input.get("lines").and_then(|v| v.as_array());
-
-            // Load all PO lines
-            let po_lines = sqlx::query(
-                "SELECT po_line_id, product_id, ordered_qty, received_qty, unit_cost_minor
-                 FROM purchase_order_lines WHERE po_id = ?",
+            let lines = input.get("lines").and_then(|v| v.as_array()).map(|items| {
+                items
+                    .iter()
+                    .filter_map(|line| {
+                        let po_line_id = line.get("po_line_id")?.as_str()?.to_string();
+                        let received_qty = line
+                            .get("received_qty")
+                            .map(|v| {
+                                v.as_str()
+                                    .map(ToString::to_string)
+                                    .unwrap_or_else(|| v.to_string())
+                            })
+                            .unwrap_or_else(|| "0".to_string());
+                        Some(ReceivePurchaseOrderLineInput {
+                            po_line_id,
+                            received_qty,
+                            expiry_date: line
+                                .get("expiry_date")
+                                .and_then(|value| value.as_str())
+                                .map(ToString::to_string),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            });
+            let (device_id, branch_id) = crate::ai::tools::active_device_branch(pool).await?;
+            let result = po_receive_inner(
+                pool,
+                ReceivePurchaseOrderInput {
+                    po_id: po_id.clone(),
+                    actor_user_id: actor_id.clone(),
+                    lines,
+                },
+                &branch_id,
+                &device_id,
             )
-            .bind(&po_id)
-            .fetch_all(pool).await?;
+            .await?;
 
-            let mut received_count = 0u32;
-            for line in &po_lines {
-                let line_id: String = line.get("po_line_id");
-                let product_id: Option<String> = line.try_get("product_id").ok();
-                let ordered: f64 = line.try_get::<f64, _>("ordered_qty").unwrap_or(0.0);
-                let already_received: f64 = line.try_get::<f64, _>("received_qty").unwrap_or(0.0);
-                let unit_cost: i64 = line.try_get::<i64, _>("unit_cost_minor").unwrap_or(0);
-
-                let recv_qty = if let Some(lines) = explicit_lines {
-                    // Only process lines that appear in the explicit list
-                    let found = lines.iter().find(|l| {
-                        l.get("po_line_id").and_then(|v| v.as_str()) == Some(&line_id)
-                    });
-                    match found {
-                        None => continue,
-                        Some(l) => l.get("received_qty").and_then(|v| v.as_f64()).unwrap_or(0.0),
-                    }
-                } else {
-                    // Receive all remaining
-                    ordered - already_received
-                };
-
-                if recv_qty <= 0.0 { continue; }
-
-                // Update received qty on the line
-                sqlx::query(
-                    "UPDATE purchase_order_lines SET received_qty = received_qty + ? WHERE po_line_id = ?",
-                )
-                .bind(recv_qty).bind(&line_id).execute(pool).await?;
-
-                // Increment product stock if product is linked
-                if let Some(pid) = &product_id {
-                    sqlx::query(
-                        "UPDATE products SET stock_quantity = COALESCE(stock_quantity,0) + ?,
-                         cost_minor = CASE WHEN ? > 0 THEN ? ELSE cost_minor END,
-                         updated_at = ?
-                         WHERE product_id = ?",
-                    )
-                    .bind(recv_qty)
-                    .bind(unit_cost)
-                    .bind(unit_cost)
-                    .bind(&now)
-                    .bind(pid)
-                    .execute(pool).await?;
-                }
-                received_count += 1;
-            }
-
-            // Update PO status: check if fully received
-            let (total_ordered, total_received): (f64, f64) = sqlx::query_as(
-                "SELECT COALESCE(SUM(ordered_qty),0), COALESCE(SUM(received_qty),0)
-                 FROM purchase_order_lines WHERE po_id = ?",
+            audit3(
+                pool,
+                "po_received",
+                &po_id,
+                &format!(
+                    "{{\"lines_received\":{},\"status\":\"{}\",\"cost_updates\":{}}}",
+                    result.lines_received, result.status, result.cost_updates
+                ),
             )
-            .bind(&po_id)
-            .fetch_one(pool).await.unwrap_or((0.0, 0.0));
-
-            let new_status = if total_received >= total_ordered && total_ordered > 0.0 {
-                "received"
-            } else if total_received > 0.0 {
-                "partial"
-            } else {
-                "ordered"
-            };
-
-            sqlx::query("UPDATE purchase_orders SET status = ?, received_date = ?, updated_at = ? WHERE po_id = ?")
-                .bind(new_status).bind(&now).bind(&now).bind(&po_id)
-                .execute(pool).await?;
-
-            audit3(pool, "po_received", &po_id, &format!("{{\"lines_received\":{received_count},\"status\":\"{new_status}\"}}")).await;
+            .await;
             ok_mut(
-                &format!("PO {po_id}: {received_count} line(s) received, status → {new_status}."),
+                &format!(
+                    "PO {po_id}: {} line(s), {} unit(s) received, status → {}.",
+                    result.lines_received, result.units_received, result.status
+                ),
                 "purchase_order",
                 &po_id,
             )
@@ -251,7 +324,10 @@ pub async fn execute(
             let po_id = rv(input, "po_id")?;
             let status: Option<String> =
                 sqlx::query_scalar("SELECT status FROM purchase_orders WHERE po_id = ?")
-                    .bind(&po_id).fetch_optional(pool).await?.flatten();
+                    .bind(&po_id)
+                    .fetch_optional(pool)
+                    .await?
+                    .flatten();
             match status.as_deref() {
                 None => return Err(AppError::NotFound(format!("PO {po_id} not found"))),
                 Some("received") | Some("partial") => {
@@ -262,11 +338,19 @@ pub async fn execute(
                 _ => {}
             }
             sqlx::query("DELETE FROM purchase_order_lines WHERE po_id = ?")
-                .bind(&po_id).execute(pool).await?;
+                .bind(&po_id)
+                .execute(pool)
+                .await?;
             sqlx::query("DELETE FROM purchase_orders WHERE po_id = ?")
-                .bind(&po_id).execute(pool).await?;
+                .bind(&po_id)
+                .execute(pool)
+                .await?;
             audit3(pool, "purchase_order_deleted", &po_id, "{}").await;
-            ok_mut(&format!("Purchase order {po_id} deleted."), "purchase_order", &po_id)
+            ok_mut(
+                &format!("Purchase order {po_id} deleted."),
+                "purchase_order",
+                &po_id,
+            )
         }
 
         "bulk_assign_supplier" => {
@@ -274,11 +358,21 @@ pub async fn execute(
             let sid = rv(input, "supplier_id")?;
             let now = chrono::Utc::now().to_rfc3339();
             let count = sqlx::query(
-                "UPDATE products SET default_supplier_id = ?, updated_at = ? WHERE category_id = ?",
+                "UPDATE products SET default_supplier_id = ?, updated_at = ?, sync_status = 'pending' WHERE category_id = ?",
             )
-            .bind(&sid).bind(&now).bind(&cid)
-            .execute(pool).await?.rows_affected();
-            audit3(pool, "bulk_assign_supplier", &cid, &format!("{{\"supplier_id\":\"{sid}\",\"count\":{count}}}")).await;
+            .bind(&sid)
+            .bind(&now)
+            .bind(&cid)
+            .execute(pool)
+            .await?
+            .rows_affected();
+            audit3(
+                pool,
+                "bulk_assign_supplier",
+                &cid,
+                &format!("{{\"supplier_id\":\"{sid}\",\"count\":{count}}}"),
+            )
+            .await;
             ok_mut(
                 &format!("{count} product(s) in category {cid} assigned to supplier {sid}."),
                 "category",
@@ -288,12 +382,11 @@ pub async fn execute(
 
         "force_close_shift" => {
             let shift_id = rv(input, "shift_id")?;
-            let existing = sqlx::query(
-                "SELECT closed_at FROM shifts WHERE shift_id = ?",
-            )
-            .bind(&shift_id)
-            .fetch_optional(pool).await?
-            .ok_or_else(|| AppError::NotFound(format!("Shift {shift_id} not found")))?;
+            let existing = sqlx::query("SELECT closed_at FROM shifts WHERE shift_id = ?")
+                .bind(&shift_id)
+                .fetch_optional(pool)
+                .await?
+                .ok_or_else(|| AppError::NotFound(format!("Shift {shift_id} not found")))?;
             let closed_at: Option<String> = existing.try_get("closed_at").ok().flatten();
             if closed_at.as_deref().map(|s| !s.is_empty()).unwrap_or(false) {
                 return Err(AppError::Validation(format!(
@@ -301,11 +394,12 @@ pub async fn execute(
                 )));
             }
             let now = chrono::Utc::now().to_rfc3339();
-            sqlx::query(
-                "UPDATE shifts SET closed_at = ?, updated_at = ? WHERE shift_id = ?",
-            )
-            .bind(&now).bind(&now).bind(&shift_id)
-            .execute(pool).await?;
+            sqlx::query("UPDATE shifts SET closed_at = ?, updated_at = ? WHERE shift_id = ?")
+                .bind(&now)
+                .bind(&now)
+                .bind(&shift_id)
+                .execute(pool)
+                .await?;
             audit3(pool, "shift_force_closed", &shift_id, "{}").await;
             ok_mut(
                 &format!("Shift {shift_id} force-closed at {now}."),
@@ -314,6 +408,120 @@ pub async fn execute(
             )
         }
 
-        other => Err(AppError::Validation(format!("Unknown mutation tool: {other}"))),
+        "merge_products" => {
+            let source_id = rv(input, "source_product_id")?;
+            let target_id = rv(input, "target_product_id")?;
+            let transfer_history = input
+                .get("transfer_history")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            let outcome = crate::db::repositories::product_dedup_repo::merge_products(
+                pool,
+                &source_id,
+                &target_id,
+                transfer_history,
+            )
+            .await?;
+
+            audit3(
+                pool,
+                "product_merged",
+                &source_id,
+                &format!(
+                    r#"{{"merged_into":"{}","transfer_history":{}}}"#,
+                    target_id, transfer_history
+                ),
+            )
+            .await;
+
+            let history_note = if transfer_history {
+                "Sale history reassigned to target."
+            } else {
+                "Historical sale records left on source (archived)."
+            };
+
+            ok_mut(
+                &format!(
+                    "Merged \"{}\" into \"{}\". Stock combined. {history_note} Source archived.",
+                    outcome.source_name, outcome.target_name
+                ),
+                "product",
+                &source_id,
+            )
+        }
+
+        other => Err(AppError::Validation(format!(
+            "Unknown mutation tool: {other}"
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[tokio::test]
+    async fn merge_products_preview_names_both_products_without_mutating_them() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory pool");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("migrations");
+        sqlx::query(
+            "INSERT INTO categories
+             (category_id, name, sort_order, is_active, created_at, updated_at, version)
+             VALUES ('CAT-MERGE-PREVIEW', 'Merge Preview', 1, 1, datetime('now'), datetime('now'), 1)",
+        )
+        .execute(&pool)
+        .await
+        .expect("seed category");
+        for (id, name) in [("P-SOURCE", "Duplicate Cola"), ("P-TARGET", "Cola")] {
+            sqlx::query(
+                "INSERT INTO products
+                 (product_id, category_id, name, track_inventory, is_active, currency,
+                  created_at, updated_at, version)
+                 VALUES (?, 'CAT-MERGE-PREVIEW', ?, 1, 1, 'BHD', datetime('now'), datetime('now'), 1)",
+            )
+            .bind(id)
+            .bind(name)
+            .execute(&pool)
+            .await
+            .expect("seed product");
+        }
+
+        let preview = dry_run(
+            &pool,
+            "merge_products",
+            &serde_json::json!({
+                "source_product_id": "P-SOURCE",
+                "target_product_id": "P-TARGET",
+                "transfer_history": true
+            }),
+            3,
+        )
+        .await
+        .expect("merge preview");
+
+        assert_eq!(preview.tool_name, "merge_products");
+        assert!(preview.description.contains("Duplicate Cola"));
+        assert!(preview.description.contains("Cola"));
+        assert!(preview
+            .fields
+            .iter()
+            .any(|field| field.label == "Sale History" && field.value.contains("reassigned")));
+
+        let source_state: (i64, Option<String>) = sqlx::query_as(
+            "SELECT is_active, deleted_at FROM products WHERE product_id = 'P-SOURCE'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("source state");
+        assert_eq!(source_state, (1, None));
     }
 }

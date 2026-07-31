@@ -106,10 +106,22 @@ export function parseMarkdown(text: string): React.ReactNode[] {
     if (/^---+$/.test(line.trim())) { result.push(<hr key={key++} className="md-hr" />); i++; continue; }
 
     const paraLines: string[] = [];
-    while (i < lines.length && lines[i].trim() !== "" && !lines[i].trimStart().startsWith("```") && !lines[i].includes("|") && !/^(#{1,4})\s/.test(lines[i]) && !/^[-*+]\s/.test(lines[i]) && !/^\d+\.\s/.test(lines[i])) {
+    // NOTE: a line is only a table row if it STARTS with "|" — a mid-line "|"
+    // (e.g. "sales | BHD 0.500") must be consumed as paragraph text. The old
+    // `!lines[i].includes("|")` guard rejected such lines here while the table
+    // branch above also rejected them, so `i` never advanced and the outer
+    // while-loop spun forever, freezing the whole webview (F-BUG: Ask AI hang).
+    while (i < lines.length && lines[i].trim() !== "" && !lines[i].trimStart().startsWith("```") && !(lines[i].includes("|") && lines[i].trim().startsWith("|")) && !/^(#{1,4})\s/.test(lines[i]) && !/^[-*+]\s/.test(lines[i]) && !/^\d+\.\s/.test(lines[i])) {
       paraLines.push(lines[i]); i++;
     }
-    if (paraLines.length > 0) result.push(<p key={key++} className="md-p">{inlineMarkdown(paraLines.join("\n"))}</p>);
+    if (paraLines.length > 0) {
+      result.push(<p key={key++} className="md-p">{inlineMarkdown(paraLines.join("\n"))}</p>);
+    } else {
+      // Safety net: guarantee forward progress even if no branch consumed the
+      // line — render it verbatim rather than looping forever.
+      result.push(<p key={key++} className="md-p">{inlineMarkdown(line)}</p>);
+      i++;
+    }
   }
   return result;
 }

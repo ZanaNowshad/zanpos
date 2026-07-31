@@ -15,7 +15,7 @@ npm run coverage      # Vitest + v8 coverage (thresholds 80/80/80, informational
 # Rust (run from src-tauri/)
 cargo fmt --all -- --check
 cargo clippy --all-targets -- -D warnings
-cargo test --lib      # ~50 unit + integration tests
+cargo test --lib      # 113 unit + integration tests
 cargo audit --file Cargo.lock
 ```
 

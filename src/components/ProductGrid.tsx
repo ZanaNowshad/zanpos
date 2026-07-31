@@ -42,9 +42,9 @@ const ProductGrid = memo(function ProductGrid({ products, onSelect, loading, car
   if (!products.length) return (
     <div className="product-grid-msg" role="status" aria-live="polite">
       <PackageSearch size={48} />
-      <p className="product-grid-empty-heading">No products set up yet</p>
+      <p className="product-grid-empty-heading">Ready to start selling?</p>
       <p className="product-grid-empty-hint">
-        Ask your manager to add products in Back&nbsp;Office → Products
+        Ask your manager to add products in Back Office → Products.
       </p>
     </div>
   );

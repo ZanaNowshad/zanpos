@@ -5,6 +5,7 @@
 //!   - Google OAuth2 (Gemini via AI Studio) — standard web flow
 //!   - Anthropic — API key only (no public OAuth as of 2026)
 
+#![allow(dead_code)]
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -7,8 +7,8 @@ describe("clearAdminChat", () => {
     const clearHistory = vi.fn(() => Promise.resolve());
 
     clearAdminChat({
+      sessionToken: "session-secret",
       branchId: "branch-1",
-      userId: "user-1",
       newSessionId: () => "next-session",
       clearHistory,
       setMessages: () => calls.push("messages"),
@@ -17,7 +17,7 @@ describe("clearAdminChat", () => {
     });
 
     await vi.waitFor(() => {
-      expect(clearHistory).toHaveBeenCalledWith("branch-1", "user-1");
+      expect(clearHistory).toHaveBeenCalledWith("session-secret", "branch-1");
     });
     expect(calls).toEqual([
       "messages",
@@ -30,8 +30,8 @@ describe("clearAdminChat", () => {
     const clearHistory = vi.fn(() => Promise.reject(new Error("offline")));
 
     clearAdminChat({
+      sessionToken: "session-secret",
       branchId: "branch-1",
-      userId: "user-1",
       newSessionId: () => "next-session",
       clearHistory,
       setMessages: () => {},

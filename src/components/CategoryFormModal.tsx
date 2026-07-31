@@ -1,7 +1,9 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { CategoryRow } from "../types";
 import * as cmd from "../tauri/commands";
 import { useFocusTrap } from "../hooks/useFocusTrap";
+import { useLanguage } from "../hooks/useLanguage";
+import { modalTranslator } from "../i18n/modalStrings";
 
 interface Props {
   mode: "create" | "edit";
@@ -13,6 +15,8 @@ interface Props {
 }
 
 export default function CategoryFormModal({ mode, category, nextOrder, sessionUserId, onClose, onSaved }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => modalTranslator(language), [language]);
   const modalRef = useRef<HTMLDivElement>(null);
   useFocusTrap(modalRef, onClose);
 
@@ -24,7 +28,7 @@ export default function CategoryFormModal({ mode, category, nextOrder, sessionUs
   const [error, setError] = useState<string | null>(null);
 
   async function save() {
-    if (!name.trim()) { setError("Name is required"); return; }
+    if (!name.trim()) { setError(t("nameRequired")); return; }
     setSaving(true); setError(null);
     try {
       await cmd.adminSaveCategory({
@@ -36,44 +40,44 @@ export default function CategoryFormModal({ mode, category, nextOrder, sessionUs
         actor_user_id: sessionUserId,
       });
       onSaved();
-    } catch (e: unknown) { setError(typeof e === "string" ? e : "Save failed"); }
+    } catch (e: unknown) { setError(typeof e === "string" ? e : t("saveFailed")); }
     finally { setSaving(false); }
   }
 
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div ref={modalRef} className="modal bo-form-modal" role="dialog" aria-modal="true"
-        aria-label={mode === "create" ? "New Category" : "Edit Category"}
+        aria-label={mode === "create" ? t("newCategory") : t("editCategory")}
         onClick={e => e.stopPropagation()}>
         <div className="bo-form-modal-header">
-          <h2>{mode === "create" ? "New Category" : "Edit Category"}</h2>
+          <h2>{mode === "create" ? t("newCategory") : t("editCategory")}</h2>
           <button className="bo-form-modal-close" onClick={onClose}>✕</button>
         </div>
         <div className="bo-form-modal-body">
           {error && <div className="bo-form-error">{error}</div>}
           <div className="bo-form-field">
-            <label className="bo-label">Name *</label>
-            <input className="bo-input" value={name} onChange={e => setName(e.target.value)} placeholder="Category name" autoFocus />
+            <label className="bo-label">{t("name")} *</label>
+            <input className="bo-input" value={name} onChange={e => setName(e.target.value)} placeholder={t("categoryName")} autoFocus />
           </div>
           <div className="bo-row-two">
             <div className="bo-form-field">
-              <label className="bo-label">Sort Order</label>
+              <label className="bo-label">{t("sortOrder")}</label>
               <input className="bo-input" type="number" min="0" step="1" value={sortOrder} onChange={e => setSortOrder(parseInt(e.target.value) || 0)} />
             </div>
             <div className="bo-form-field">
-              <label className="bo-label">Parent Category</label>
-              <input className="bo-input" value={parentId} onChange={e => setParentId(e.target.value)} placeholder="None" />
+              <label className="bo-label">{t("parentCategory")}</label>
+              <input className="bo-input" value={parentId} onChange={e => setParentId(e.target.value)} placeholder={t("none")} />
             </div>
           </div>
           {mode === "edit" && (
             <label className="bo-checkbox-label" style={{marginTop: 10}}>
-              <input type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} />Active
+              <input type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} />{t("active")}
             </label>
           )}
         </div>
         <div className="bo-form-modal-footer">
-          <button className="btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save Category"}</button>
+          <button className="btn-secondary" onClick={onClose}>{t("cancel")}</button>
+          <button className="btn-primary" onClick={save} disabled={saving}>{saving ? t("saving") : t("saveCategory")}</button>
         </div>
       </div>
     </div>

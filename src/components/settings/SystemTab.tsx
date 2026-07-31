@@ -1,3 +1,6 @@
+import { useState } from "react";
+import { flushDiagnosticsNow } from "../../tauri/diagnostics";
+
 interface SystemTabProps {
   appVersion: string;
   backingUp: boolean; backupMsg: string | null;
@@ -7,6 +10,21 @@ interface SystemTabProps {
 
 export default function SystemTab(props: SystemTabProps) {
   const { appVersion, backingUp, backupMsg, checkingUpdate, updateMsg, handleBackup, handleCheckUpdate } = props;
+  const [sendingDiagnostics, setSendingDiagnostics] = useState(false);
+  const [diagnosticsMsg, setDiagnosticsMsg] = useState<string | null>(null);
+
+  const handleSendDiagnostics = async () => {
+    setSendingDiagnostics(true);
+    setDiagnosticsMsg(null);
+    try {
+      const result = await flushDiagnosticsNow();
+      setDiagnosticsMsg(result.message);
+    } catch {
+      setDiagnosticsMsg("Could not send diagnostics — will retry automatically.");
+    } finally {
+      setSendingDiagnostics(false);
+    }
+  };
 
   return (
     <div className="settings-page">
@@ -44,6 +62,20 @@ export default function SystemTab(props: SystemTabProps) {
         {updateMsg && (
           <div className={`update-msg ${updateMsg.includes("available") ? "update-msg-available" : "update-msg-ok"}`} role="status" aria-live="polite">
             {updateMsg}
+          </div>
+        )}
+        <div className="update-row" style={{ marginTop: 12 }}>
+          <div>
+            <div className="update-version-label">Diagnostics</div>
+            <div className="update-version-value">Send any queued crash and error reports now.</div>
+          </div>
+          <button className="btn-secondary" onClick={handleSendDiagnostics} disabled={sendingDiagnostics}>
+            {sendingDiagnostics ? "Sending…" : "Send Diagnostics"}
+          </button>
+        </div>
+        {diagnosticsMsg && (
+          <div className="update-msg update-msg-ok" role="status" aria-live="polite">
+            {diagnosticsMsg}
           </div>
         )}
       </section>

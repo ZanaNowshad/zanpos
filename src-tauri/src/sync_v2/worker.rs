@@ -6,6 +6,7 @@ use crate::sync_v2::apply::{
     ALLOWED_CONFIG_KEYS,
 };
 use crate::sync_v2::client::HttpSyncClient;
+use crate::sync_v2::consistency;
 use serde_json::Value;
 use sqlx::Column;
 use sqlx::{Row, SqlitePool};
@@ -15,14 +16,89 @@ use tokio::time::Duration;
 
 pub const TRANSIENT_TAG: &str = "[TRANSIENT]";
 const BATCH_SIZE: i64 = 50;
-/// Terminal→hub cycle. LAN traffic is free; 10 s gives near-real-time stock.
-const INTERVAL_SECS: u64 = 10;
-/// Hub housekeeping cadence (mark-synced + daily-prune check).
-const HUB_INTERVAL_SECS: u64 = 300;
-const MAX_ATTEMPTS: i64 = 10;
+/// Terminal→hub cycle default. LAN traffic is free; 10 s gives near-real-time stock.
+const DEFAULT_INTERVAL_SECS: u64 = 10;
+/// Hub housekeeping cadence default (mark-synced + daily-prune check).
+const DEFAULT_HUB_INTERVAL_SECS: u64 = 300;
 /// Rows per hub REST call during pull. At 28k products this reduces
 /// API round-trips from 280 → 56 (5×).
 const PULL_PAGE_LIMIT: usize = 500;
+
+const PUSH_ORDER: &[&str] = &[
+    "branches",
+    "categories",
+    "tax_rules",
+    "products",
+    "product_barcodes",
+    "suppliers",
+    "purchase_orders",
+    "purchase_order_lines",
+    "devices",
+    "roles",
+    "users",
+    "customers",
+    "shifts",
+    "sales",
+    "sale_items",
+    "payments",
+    "refunds",
+    "refund_items",
+    "stock_levels",
+    "stock_movements",
+    "audit_logs",
+    "delivery_orders",
+    "product_prices",
+    "product_cost_history",
+    "cash_events",
+];
+
+const PULL_ORDER: &[&str] = &[
+    "branches",
+    "categories",
+    "tax_rules",
+    "products",
+    "product_barcodes",
+    "suppliers",
+    "purchase_orders",
+    "purchase_order_lines",
+    "devices",
+    "roles",
+    "users",
+    "customers",
+    "shifts",
+    "sales",
+    "sale_items",
+    "payments",
+    "refunds",
+    "refund_items",
+    "stock_levels",
+    "stock_movements",
+    "audit_logs",
+    "delivery_orders",
+    "product_prices",
+    "product_cost_history",
+    "cash_events",
+    "app_config",
+];
+
+fn next_pull_offset(current: usize, batch_count: usize, page_limit: usize) -> Option<usize> {
+    (batch_count == page_limit).then(|| current.saturating_add(batch_count))
+}
+
+fn finish_pull(total_pulled: u32, errors: Vec<String>) -> AppResult<u32> {
+    if errors.is_empty() {
+        Ok(total_pulled)
+    } else {
+        Err(AppError::Internal(errors.join("; ")))
+    }
+}
+
+pub(crate) fn pending_push_sql(table: &str) -> String {
+    format!(
+        "SELECT * FROM {} WHERE sync_status = 'pending' ORDER BY sync_attempts ASC, rowid ASC LIMIT {}",
+        table, BATCH_SIZE
+    )
+}
 
 // ── Shared online state ────────────────────────────────────────────────────────
 
@@ -60,6 +136,39 @@ impl SyncWorker {
     /// Spawn background loop with supervisor restart on panic.
     /// Uses adaptive backoff: 3+ consecutive failures → 2× interval, 6+ → 5× interval.
     pub fn spawn(worker: Arc<Self>) {
+        let live_worker = worker.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                let Some(client) = live_worker.load_client().await else {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    continue;
+                };
+                let own_device = live_worker.active_device_id().await.unwrap_or_default();
+                let callback_worker = live_worker.clone();
+                let result = client
+                    .listen_hub_changes(move |event| {
+                        let worker = callback_worker.clone();
+                        let own_device = own_device.clone();
+                        async move {
+                            if event.origin_device_id != own_device {
+                                tracing::debug!(
+                                    "Hub event {} from {} changed {}; syncing now",
+                                    event.event_id,
+                                    event.origin_device_id,
+                                    event.table
+                                );
+                                worker.run_once().await;
+                            }
+                        }
+                    })
+                    .await;
+                if let Err(e) = result {
+                    tracing::debug!("Hub live event stream disconnected: {e}");
+                }
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        });
+
         let worker_outer = worker.clone();
         tauri::async_runtime::spawn(async move {
             loop {
@@ -80,11 +189,25 @@ impl SyncWorker {
                         .flatten()
                         .map(|v| v == "1")
                         .unwrap_or(false);
-                        let base = if hub_mode {
-                            HUB_INTERVAL_SECS
+                        let interval_key = if hub_mode {
+                            "sync_interval_hub_secs"
                         } else {
-                            INTERVAL_SECS
+                            "sync_interval_terminal_secs"
                         };
+                        let base: u64 = sqlx::query_scalar(
+                            "SELECT CAST(value AS INTEGER) FROM app_config WHERE key = ?",
+                        )
+                        .bind(interval_key)
+                        .fetch_optional(worker_inner.pool())
+                        .await
+                        .ok()
+                        .flatten()
+                        .flatten()
+                        .unwrap_or(if hub_mode {
+                            DEFAULT_HUB_INTERVAL_SECS
+                        } else {
+                            DEFAULT_INTERVAL_SECS
+                        }) as u64;
                         let wait_secs = if consecutive_failures >= 6 {
                             base * 5
                         } else if consecutive_failures >= 3 {
@@ -128,6 +251,37 @@ impl SyncWorker {
             }
         };
 
+        self.run_once_locked().await;
+    }
+
+    /// Run one full cycle after waiting for any active cycle to finish.
+    /// Initial terminal join uses this path so the post-join checklist is based
+    /// on an actual completed sync, not a skipped concurrent invocation.
+    pub async fn run_once_wait(&self) {
+        let _run_guard = self.running.lock().await;
+        self.run_once_locked().await;
+    }
+
+    /// Initial join path: pull the hub snapshot without pushing local seed rows.
+    pub async fn pull_only_wait(&self) -> AppResult<u32> {
+        let _run_guard = self.running.lock().await;
+        let device_id = self.active_device_id().await?;
+        let client = self
+            .load_client()
+            .await
+            .ok_or_else(|| AppError::Validation("Hub connection is not configured".into()))?;
+        let result = self.pull_changes(&client, &device_id).await;
+        let mut state = self.state.lock().await;
+        state.online = result.is_ok();
+        state.last_error = result.as_ref().err().map(ToString::to_string);
+        if result.is_ok() {
+            state.consecutive_failures = 0;
+        }
+        drop(state);
+        result
+    }
+
+    async fn run_once_locked(&self) {
         // Guard: do not sync while first-run wizard is still in progress.
         // The wizard's Cloud step spawns run_once() to test connectivity, but
         // the subsequent pull can deactivate the local seed device (device_code
@@ -161,9 +315,36 @@ impl SyncWorker {
                 .unwrap_or(false);
         if hub_mode {
             for table in apply::SYNC_TABLES.iter().filter(|t| **t != "app_config") {
-                let sql =
-                    format!("UPDATE {table} SET sync_status='synced' WHERE sync_status='pending'");
-                let _ = sqlx::query(&sql).execute(&self.pool).await;
+                let exists_sql =
+                    format!("SELECT 1 FROM {table} WHERE sync_status='pending' LIMIT 1");
+                let has_pending = sqlx::query_scalar::<_, i64>(&exists_sql)
+                    .fetch_optional(&self.pool)
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_some();
+                if !has_pending {
+                    continue;
+                }
+                loop {
+                    let sql = format!(
+                        "UPDATE {table}
+                         SET sync_status='synced'
+                         WHERE rowid IN (
+                           SELECT rowid FROM {table}
+                           WHERE sync_status='pending'
+                           LIMIT 500
+                         )"
+                    );
+                    let affected = sqlx::query(&sql)
+                        .execute(&self.pool)
+                        .await
+                        .map(|r| r.rows_affected())
+                        .unwrap_or(0);
+                    if affected < 500 {
+                        break;
+                    }
+                }
             }
             {
                 let mut st = self.state.lock().await;
@@ -282,36 +463,11 @@ impl SyncWorker {
         // 1. Master data (no transaction FKs): categories, tax_rules, products, devices, customers
         // 2. Transactions: shifts, sales, sale_items, payments, refunds, refund_items,
         //    stock_movements, audit_logs, delivery_orders, product_prices
-        let push_order: &[&str] = &[
-            "branches", // Bug-Push-B: was missing — local branch edits never reached the hub
-            "categories",
-            "tax_rules",
-            "products",
-            "devices",
-            "users",
-            "customers",
-            "shifts",
-            "sales",
-            "sale_items",
-            "payments",
-            "refunds",
-            "refund_items",
-            "stock_movements",
-            "stock_levels", // Bug-Push-SL: was missing — stock_levels has sync_status but was never pushed
-            "audit_logs",
-            "delivery_orders",
-            "product_prices",
-            "cash_events", // Bug-Push-CE: was missing — cash_events has sync_status but was never pushed
-        ];
-
         let mut total_pushed = 0u32;
 
-        for table in push_order {
+        for table in PUSH_ORDER {
             loop {
-                let sql = format!(
-                    "SELECT * FROM {} WHERE sync_status = 'pending' AND sync_attempts < {} LIMIT {}",
-                    table, MAX_ATTEMPTS, BATCH_SIZE
-                );
+                let sql = pending_push_sql(table);
                 let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
                 if rows.is_empty() {
                     break;
@@ -355,48 +511,82 @@ impl SyncWorker {
 
                 match client.upsert_rows(table, &json_rows).await {
                     Ok(()) => {
-                        // Mark all rows synced atomically in one UPDATE … IN (…) statement.
-                        // A single statement is crash-safe: either all are marked or none are,
-                        // preventing a partial-mark state that would cause redundant re-pushes.
-                        let placeholders =
-                            row_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-                        let sql = format!(
-                            "UPDATE {} SET sync_status = 'synced' WHERE {} IN ({})",
-                            table, id_col, placeholders
-                        );
-                        let mut q = sqlx::query(&sql);
-                        for id in &row_ids {
-                            q = q.bind(id);
-                        }
-                        if let Err(e) = q.execute(&self.pool).await {
-                            tracing::warn!("Sync v2: failed to mark {table} batch as synced: {e}");
-                        }
+                        self.mark_rows_synced(table, id_col, &row_ids).await;
+                        self.record_table_health(table, "push", true, None, None)
+                            .await;
                         total_pushed += row_ids.len() as u32;
                     }
                     Err(e) => {
                         let transient = e.to_string().contains(TRANSIENT_TAG);
-                        // Increment attempt count
-                        for id in &row_ids {
-                            let sql = format!(
-                                "UPDATE {} SET sync_attempts = sync_attempts + 1 WHERE {} = ?",
-                                table, id_col
-                            );
-                            let _ = sqlx::query(&sql).bind(id).execute(&self.pool).await;
-                        }
-
                         if transient {
+                            self.increment_attempts(table, id_col, &row_ids).await;
+                            self.record_table_health(
+                                table,
+                                "push",
+                                false,
+                                row_ids.first().map(String::as_str),
+                                Some(&e.to_string()),
+                            )
+                            .await;
                             tracing::warn!(
                                 "Sync v2: transient error on {table}, skipping to next table: {e}"
                             );
+                            // Keep network/service failures at batch level so one outage does
+                            // not fan out into 50 full HTTP retry loops.
+                            break;
                         } else {
                             tracing::warn!(
-                                "Sync v2: permanent error on {table}, skipping to next table: {e}"
+                                "Sync v2: permanent batch error on {table}, isolating rows: {e}"
                             );
+                            let mut recovered = 0u32;
+                            let mut failed_ids: Vec<String> = Vec::new();
+                            for (idx, id) in row_ids.iter().enumerate() {
+                                match client.upsert_rows(table, &json_rows[idx..=idx]).await {
+                                    Ok(()) => {
+                                        self.mark_rows_synced(
+                                            table,
+                                            id_col,
+                                            std::slice::from_ref(id),
+                                        )
+                                        .await;
+                                        recovered += 1;
+                                    }
+                                    Err(row_err) => {
+                                        failed_ids.push(id.clone());
+                                        self.record_sync_conflict(
+                                            "sync_push_failed",
+                                            table,
+                                            Some(id),
+                                            "warning",
+                                            "Sync push row failed",
+                                            &row_err.to_string(),
+                                        )
+                                        .await;
+                                        tracing::warn!(
+                                            "Sync v2: row-level push failed for {table}:{id}: {row_err}"
+                                        );
+                                    }
+                                }
+                            }
+                            if !failed_ids.is_empty() {
+                                self.increment_attempts(table, id_col, &failed_ids).await;
+                                self.record_table_health(
+                                    table,
+                                    "push",
+                                    false,
+                                    failed_ids.first().map(String::as_str),
+                                    Some(&e.to_string()),
+                                )
+                                .await;
+                            }
+                            total_pushed += recovered;
+                            // Continue the table after isolating this batch; ordering by
+                            // sync_attempts pushes repeatedly failing rows behind fresher work.
+                            if recovered == 0 && failed_ids.len() == row_ids.len() {
+                                break;
+                            }
+                            continue;
                         }
-                        // Always break inner loop and continue to next table.
-                        // Never abort the entire push — one stuck table must not
-                        // block the remaining tables.
-                        break;
                     }
                 }
             }
@@ -411,6 +601,128 @@ impl SyncWorker {
         }
 
         Ok(total_pushed)
+    }
+
+    async fn mark_rows_synced(&self, table: &str, id_col: &str, row_ids: &[String]) {
+        if row_ids.is_empty() {
+            return;
+        }
+        let placeholders = row_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "UPDATE {} SET sync_status = 'synced' WHERE {} IN ({})",
+            table, id_col, placeholders
+        );
+        let mut q = sqlx::query(&sql);
+        for id in row_ids {
+            q = q.bind(id);
+        }
+        if let Err(e) = q.execute(&self.pool).await {
+            tracing::warn!("Sync v2: failed to mark {table} rows as synced: {e}");
+        }
+    }
+
+    async fn increment_attempts(&self, table: &str, id_col: &str, row_ids: &[String]) {
+        for id in row_ids {
+            let sql = format!(
+                "UPDATE {} SET sync_attempts = sync_attempts + 1 WHERE {} = ?",
+                table, id_col
+            );
+            let _ = sqlx::query(&sql).bind(id).execute(&self.pool).await;
+        }
+    }
+
+    async fn record_table_health(
+        &self,
+        table: &str,
+        direction: &str,
+        ok: bool,
+        row_id: Option<&str>,
+        error: Option<&str>,
+    ) {
+        let now = chrono::Utc::now().to_rfc3339();
+        let checksum = consistency::table_snapshot(&self.pool, table)
+            .await
+            .ok()
+            .map(|s| s.checksum);
+        let (push_at, pull_at) = match (direction, ok) {
+            ("push", true) => (Some(now.as_str()), None),
+            ("pull", true) => (None, Some(now.as_str())),
+            _ => (None, None),
+        };
+
+        let result = sqlx::query(
+            "INSERT INTO sync_table_health
+               (table_name, last_push_success_at, last_pull_success_at, last_error_at,
+                last_error, last_failed_row_id, retry_count, table_checksum, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(table_name) DO UPDATE SET
+               last_push_success_at = COALESCE(excluded.last_push_success_at, sync_table_health.last_push_success_at),
+               last_pull_success_at = COALESCE(excluded.last_pull_success_at, sync_table_health.last_pull_success_at),
+               last_error_at = excluded.last_error_at,
+               last_error = excluded.last_error,
+               last_failed_row_id = excluded.last_failed_row_id,
+               retry_count = CASE WHEN excluded.last_error IS NULL THEN 0 ELSE sync_table_health.retry_count + 1 END,
+               table_checksum = COALESCE(excluded.table_checksum, sync_table_health.table_checksum),
+               updated_at = excluded.updated_at",
+        )
+        .bind(table)
+        .bind(push_at)
+        .bind(pull_at)
+        .bind(if ok { None } else { Some(now.as_str()) })
+        .bind(if ok { None } else { error })
+        .bind(if ok { None } else { row_id })
+        .bind(if ok { 0 } else { 1 })
+        .bind(checksum)
+        .bind(&now)
+        .execute(&self.pool)
+        .await;
+        if let Err(e) = result {
+            tracing::debug!("Sync v2: sync_table_health update failed for {table}: {e}");
+        }
+    }
+
+    async fn record_sync_conflict(
+        &self,
+        conflict_type: &str,
+        table: &str,
+        entity_id: Option<&str>,
+        severity: &str,
+        title: &str,
+        detail: &str,
+    ) {
+        let now = chrono::Utc::now().to_rfc3339();
+        let id_seed = format!(
+            "{conflict_type}:{table}:{}:{detail}",
+            entity_id.unwrap_or("")
+        );
+        let conflict_id = {
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(id_seed.as_bytes());
+            hex::encode(h.finalize())
+        };
+        let result = sqlx::query(
+            "INSERT INTO sync_conflicts
+               (conflict_id, conflict_type, table_name, entity_id, severity, title, detail, status, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)
+             ON CONFLICT(conflict_id) DO UPDATE SET
+               detail = excluded.detail,
+               severity = excluded.severity,
+               status = 'open'",
+        )
+        .bind(conflict_id)
+        .bind(conflict_type)
+        .bind(table)
+        .bind(entity_id)
+        .bind(severity)
+        .bind(title)
+        .bind(detail)
+        .bind(now)
+        .execute(&self.pool)
+        .await;
+        if let Err(e) = result {
+            tracing::debug!("Sync v2: sync_conflicts insert failed for {table}: {e}");
+        }
     }
 
     /// Upsert app_config rows to the hub (key-value pairs).
@@ -450,31 +762,9 @@ impl SyncWorker {
     /// Bulk push ALL data from all tables during initial setup.
     /// Not batch-limited — designed for first-time sync to the hub.
     pub async fn push_all_bulk(&self, client: &HttpSyncClient) -> AppResult<u32> {
-        let push_order: &[&str] = &[
-            "branches", // Bug-Push-C: was missing from bulk push — Terminal 2 never pushed branch to hub
-            "categories",
-            "tax_rules",
-            "products",
-            "devices",
-            "users",
-            "customers",
-            "shifts",
-            "sales",
-            "sale_items",
-            "payments",
-            "refunds",
-            "refund_items",
-            "stock_movements",
-            "stock_levels", // Bug-Push-SL: stock_levels was missing from bulk push
-            "audit_logs",
-            "delivery_orders",
-            "product_prices",
-            "cash_events", // Bug-Push-CE: was missing from bulk push — cash events never reached hub
-        ];
-
         let mut total_pushed = 0u32;
 
-        for table in push_order {
+        for table in PUSH_ORDER {
             let sql = format!("SELECT * FROM {table}");
             let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
             if rows.is_empty() {
@@ -531,40 +821,21 @@ impl SyncWorker {
 
     async fn pull_changes(&self, client: &HttpSyncClient, device_id: &str) -> AppResult<u32> {
         // Tables to pull from central (same set as push, but orderly)
-        let pull_tables: &[&str] = &[
-            "branches",
-            "categories",
-            "tax_rules",
-            "products",
-            "devices",
-            "users",
-            "customers",
-            "shifts",
-            "sales",
-            "sale_items",
-            "payments",
-            "refunds",
-            "refund_items",
-            "stock_movements",
-            "stock_levels", // Fix-Pull-SL: was missing from pull_tables — remote stock changes were never applied locally
-            "audit_logs",
-            "delivery_orders",
-            "product_prices",
-            "cash_events", // Fix-Pull-CE: was missing from pull_tables — remote cash events were never applied locally
-            "app_config",
-        ];
-
         let mut total_pulled = 0u32;
         // Collect transient pull errors per-table so ALL tables are attempted even
         // when one fails (Bug-Pull-A: old code did `return Err(e)` on first TRANSIENT,
         // which aborted every subsequent table in the same cycle).
-        let mut transient_errors: Vec<String> = Vec::new();
+        let mut pull_errors: Vec<String> = Vec::new();
 
-        for table in pull_tables {
-            let mut watermark = self.get_watermark(table).await.unwrap_or_default();
-            if watermark.is_empty() {
-                watermark = "1970-01-01T00:00:00Z".to_string();
+        for table in PULL_ORDER {
+            let mut table_error: Option<String> = None;
+            let mut table_failed_row: Option<String> = None;
+            let mut query_watermark = self.get_watermark(table).await.unwrap_or_default();
+            if query_watermark.is_empty() {
+                query_watermark = "1970-01-01T00:00:00Z".to_string();
             }
+            let mut max_applied_ts = query_watermark.clone();
+            let mut table_completed = false;
 
             // Offset tracking for pagination within same-timestamp rows.
             // When watermark advances (new updated_at), offset resets to 0.
@@ -579,7 +850,7 @@ impl SyncWorker {
                 let rows = match client
                     .pull_rows(
                         table,
-                        &watermark,
+                        &query_watermark,
                         if has_origin_device_id(table) {
                             Some(device_id)
                         } else {
@@ -593,23 +864,23 @@ impl SyncWorker {
                 {
                     Ok(r) => r,
                     Err(e) => {
+                        table_error = Some(e.to_string());
                         // BOTH transient and permanent errors skip this table and move on.
                         // Transient errors are accumulated and returned after all tables
                         // are processed — never abort the remaining tables mid-cycle.
                         if e.to_string().contains(TRANSIENT_TAG) {
                             tracing::warn!("Sync v2: transient pull error on {table}, continuing other tables: {e}");
-                            transient_errors.push(e.to_string());
                         }
                         break;
                     }
                 };
 
                 if rows.is_empty() {
+                    table_completed = true;
                     break;
                 }
 
                 let batch_count = rows.len();
-                let mut max_ts = watermark.clone();
                 let mut applied = 0usize;
                 let mut hit_failure = false;
 
@@ -619,24 +890,33 @@ impl SyncWorker {
                             // BUG-SYNC-4: Only advance watermark past rows that were
                             // successfully applied — never skip past a failed row.
                             if let Some(ts) = row.get("updated_at").and_then(|v| v.as_str()) {
-                                if ts > max_ts.as_str() {
-                                    max_ts = ts.to_string();
+                                if ts > max_applied_ts.as_str() {
+                                    max_applied_ts = ts.to_string();
                                 }
                             }
                             applied += 1;
                         }
                         Err(e) => {
-                            // FOREIGN KEY constraint (code 787): referenced row hasn't
-                            // arrived yet — skip without halting the watermark. The row
-                            // will be retried on the next cycle when dependencies arrive.
-                            if e.to_string().contains("FOREIGN KEY") {
-                                tracing::info!(
-                                    "Sync v2: FK skip on {table} — dependency not yet synced"
+                            let row_id =
+                                row.get(pk_col).and_then(|v| v.as_str()).map(str::to_string);
+                            if *table == "products" && e.is_duplicate_barcode_constraint() {
+                                let detail = e.internal_database_detail();
+                                self.record_sync_conflict(
+                                    "duplicate_barcode",
+                                    table,
+                                    row_id.as_deref(),
+                                    "warning",
+                                    "Duplicate product barcode skipped",
+                                    &detail,
+                                )
+                                .await;
+                                tracing::warn!(
+                                    "Sync v2: skipped duplicate product barcode from hub; use Duplicate Products to merge catalog rows"
                                 );
-                                applied += 1; // advance watermark past this row
+                                applied += 1;
                                 if let Some(ts) = row.get("updated_at").and_then(|v| v.as_str()) {
-                                    if ts > max_ts.as_str() {
-                                        max_ts = ts.to_string();
+                                    if ts > max_applied_ts.as_str() {
+                                        max_applied_ts = ts.to_string();
                                     }
                                 }
                                 continue;
@@ -644,7 +924,7 @@ impl SyncWorker {
                             // DB busy (SQLITE_BUSY code 5): happens during initial bulk data
                             // load when app writes and pull writes compete for the write lock.
                             // Retry once after a short delay before halting the watermark.
-                            if e.to_string().contains("database is locked") {
+                            if e.is_database_busy() {
                                 tracing::debug!(
                                     "Sync v2: DB busy on {table} apply_row, retrying in 4 s"
                                 );
@@ -654,21 +934,33 @@ impl SyncWorker {
                                         if let Some(ts) =
                                             row.get("updated_at").and_then(|v| v.as_str())
                                         {
-                                            if ts > max_ts.as_str() {
-                                                max_ts = ts.to_string();
+                                            if ts > max_applied_ts.as_str() {
+                                                max_applied_ts = ts.to_string();
                                             }
                                         }
                                         applied += 1;
                                         continue;
                                     }
                                     Err(e2) => {
-                                        if e2.to_string().contains("FOREIGN KEY") {
-                                            tracing::info!("Sync v2: FK skip on {table} (retry) — dependency not yet synced");
+                                        let retry_error = e2.internal_database_detail();
+                                        if *table == "products"
+                                            && e2.is_duplicate_barcode_constraint()
+                                        {
+                                            self.record_sync_conflict(
+                                                "duplicate_barcode",
+                                                table,
+                                                row_id.as_deref(),
+                                                "warning",
+                                                "Duplicate product barcode skipped",
+                                                &retry_error,
+                                            )
+                                            .await;
+                                            tracing::warn!("Sync v2: skipped duplicate product barcode from hub after retry");
                                             if let Some(ts) =
                                                 row.get("updated_at").and_then(|v| v.as_str())
                                             {
-                                                if ts > max_ts.as_str() {
-                                                    max_ts = ts.to_string();
+                                                if ts > max_applied_ts.as_str() {
+                                                    max_applied_ts = ts.to_string();
                                                 }
                                             }
                                             applied += 1;
@@ -677,14 +969,43 @@ impl SyncWorker {
                                         tracing::warn!(
                                             "Sync v2: apply_row error for {table} (retry): {e2:?} — halting watermark here"
                                         );
+                                        table_error = Some(retry_error);
+                                        table_failed_row = row_id.clone();
+                                        self.record_sync_conflict(
+                                            "sync_pull_failed",
+                                            table,
+                                            row_id.as_deref(),
+                                            "warning",
+                                            "Sync pull row failed",
+                                            table_error.as_deref().unwrap_or("pull failed"),
+                                        )
+                                        .await;
                                         hit_failure = true;
                                         break;
                                     }
                                 }
                             } else {
+                                let internal_error = e.internal_database_detail();
+                                let (conflict_type, conflict_title) =
+                                    if e.is_foreign_key_constraint() {
+                                        ("missing_dependency", "Missing synced dependency")
+                                    } else {
+                                        ("sync_pull_failed", "Sync pull row failed")
+                                    };
                                 tracing::warn!(
                                     "Sync v2: apply_row error for {table}: {e:?} — halting watermark here"
                                 );
+                                table_error = Some(internal_error);
+                                table_failed_row = row_id.clone();
+                                self.record_sync_conflict(
+                                    conflict_type,
+                                    table,
+                                    row_id.as_deref(),
+                                    "warning",
+                                    conflict_title,
+                                    table_error.as_deref().unwrap_or("pull failed"),
+                                )
+                                .await;
                                 hit_failure = true;
                                 break;
                             }
@@ -694,37 +1015,37 @@ impl SyncWorker {
 
                 total_pulled += applied as u32;
 
-                // Advance offset: if watermark changed, reset to 0; otherwise
-                // skip already-processed rows via offset pagination (avoids
-                // the gt-based boundary bug when >PULL_PAGE_LIMIT rows share
-                // the same updated_at timestamp).
-                let watermark_advanced = max_ts != watermark;
-                watermark = max_ts;
-                if watermark_advanced {
-                    offset = 0;
-                } else {
-                    offset = offset.saturating_add(batch_count);
-                }
-
-                // Persist watermark
-                if let Err(e) = self.set_watermark(table, &watermark).await {
-                    tracing::warn!("Sync v2: failed to set watermark for {table}: {e}");
-                }
-
-                // Stop this table if we hit a failure or got a partial page
-                if hit_failure || batch_count < PULL_PAGE_LIMIT {
+                if hit_failure {
                     break;
                 }
+                match next_pull_offset(offset, batch_count, PULL_PAGE_LIMIT) {
+                    Some(next) => offset = next,
+                    None => {
+                        table_completed = true;
+                        break;
+                    }
+                }
+            }
+            if table_completed && table_error.is_none() {
+                if let Err(e) = self.set_watermark(table, &max_applied_ts).await {
+                    tracing::warn!("Sync v2: failed to set watermark for {table}: {e}");
+                    table_error = Some(e.internal_database_detail());
+                }
+            }
+            self.record_table_health(
+                table,
+                "pull",
+                table_error.is_none(),
+                table_failed_row.as_deref(),
+                table_error.as_deref(),
+            )
+            .await;
+            if let Some(error) = table_error {
+                pull_errors.push(format!("{table}: {error}"));
             }
         }
 
-        // Return accumulated transient errors after ALL tables have been attempted.
-        // This surfaces the error in the UI status while ensuring no table was skipped.
-        if !transient_errors.is_empty() {
-            return Err(AppError::Internal(transient_errors.join("; ")));
-        }
-
-        Ok(total_pulled)
+        finish_pull(total_pulled, pull_errors)
     }
 
     // ── Watermark helpers ─────────────────────────────────────────────────────
@@ -886,5 +1207,61 @@ impl SyncWorker {
         tracing::info!(
             "DB prune v2 complete — sales cutoff: {sales_cutoff}, log cutoff: {log_cutoff}"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{finish_pull, next_pull_offset, pending_push_sql, PULL_ORDER, PUSH_ORDER};
+
+    #[test]
+    fn pending_push_query_keeps_retrying_high_attempt_rows() {
+        let sql = pending_push_sql("sales");
+        assert!(sql.contains("sync_status = 'pending'"));
+        assert!(
+            !sql.contains("sync_attempts <"),
+            "high-attempt rows must remain eligible after the root cause is fixed"
+        );
+    }
+
+    #[test]
+    fn role_rows_are_covered_by_sync_v2_tables() {
+        assert!(crate::sync_v2::apply::SYNC_TABLES.contains(&"roles"));
+        assert_eq!(crate::sync_v2::apply::pk_for_table("roles"), "role_id");
+    }
+
+    #[test]
+    fn full_pull_page_keeps_paging_even_when_watermark_timestamp_changes() {
+        assert_eq!(next_pull_offset(0, 500, 500), Some(500));
+        assert_eq!(next_pull_offset(500, 500, 500), Some(1000));
+        assert_eq!(next_pull_offset(1000, 37, 500), None);
+    }
+
+    #[test]
+    fn product_barcodes_are_transferred_with_the_catalog() {
+        assert!(PUSH_ORDER.contains(&"product_barcodes"));
+        assert!(PULL_ORDER.contains(&"product_barcodes"));
+        assert!(
+            PULL_ORDER
+                .iter()
+                .position(|table| *table == "product_barcodes")
+                > PULL_ORDER.iter().position(|table| *table == "products")
+        );
+        assert!(
+            PULL_ORDER.iter().position(|table| *table == "stock_levels")
+                < PULL_ORDER
+                    .iter()
+                    .position(|table| *table == "stock_movements"),
+            "the canonical stock row must exist before movement replay updates it"
+        );
+    }
+
+    #[test]
+    fn any_table_apply_failure_fails_the_pull_cycle() {
+        assert_eq!(finish_pull(42, Vec::new()).unwrap(), 42);
+        let error = finish_pull(42, vec!["products: missing category".to_string()])
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("products: missing category"));
     }
 }

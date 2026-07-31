@@ -96,7 +96,7 @@ fn parse_price_string(s: &str, exp: u32) -> Option<i64> {
 
 /// Returns true if the path is within an approved root for the migration agent.
 /// Rejects sensitive Windows directories even if they are children of approved roots.
-fn is_safe_read_path(path: &str) -> bool {
+pub(super) fn is_safe_read_path(path: &str) -> bool {
     let p = match std::fs::canonicalize(path) {
         Ok(p) => p,
         Err(_) => return false,
@@ -856,8 +856,18 @@ Only return the raw JSON — no markdown, no explanation."#,
     );
 
     let system = "You are a database schema mapping assistant for ZANPOS POS system.\nAnalyze the source schema and produce a column mapping to ZANPOS target tables.\nRespond with ONLY a valid JSON object — no explanation, no markdown fences, just the raw JSON.";
+    let params = crate::ai::config::load_ai_params(&state.db).await;
 
-    let result = provider.send_chat(system, &[], &user_message, &[]).await?;
+    let result = provider
+        .send_chat(
+            system,
+            &[],
+            &user_message,
+            &[],
+            params.context_window_chars,
+            None,
+        )
+        .await?;
 
     let json_str = extract_json_from_text(&result.text);
 
@@ -1336,8 +1346,6 @@ fn apply_transform(value: &str, transform: &str, currency_exponent: u32) -> Opti
             }
             let phone = if digits.len() == 8 {
                 format!("+973{}", digits)
-            } else if digits.starts_with("973") {
-                format!("+{}", digits)
             } else {
                 format!("+{}", digits)
             };
@@ -1811,7 +1819,7 @@ pub async fn migration_list_tables(
                 // Finding 5: reject table names containing SQL-injection characters
                 if !is_safe_sql_identifier(table) {
                     result.push(RemoteTableInfo {
-                        name: format!("[table name contains unsafe characters, skipped]"),
+                        name: "[table name contains unsafe characters, skipped]".to_string(),
                         row_count: 0,
                         columns: vec![],
                     });
@@ -2089,8 +2097,8 @@ pub async fn migration_query_remote(
             let mssql_query = if q_upper.starts_with("SELECT") && !q_upper.contains(" TOP ") {
                 let rest = query
                     .trim()
-                    .splitn(2, char::is_whitespace)
-                    .nth(1)
+                    .split_once(char::is_whitespace)
+                    .map(|x| x.1)
                     .unwrap_or("");
                 format!("SELECT TOP {} {}", limit, rest)
             } else {
@@ -2231,7 +2239,7 @@ pub async fn migration_find_db_files(
             walk_for_db_files(root, &db_exts, 0, 4, &mut results);
         }
         // Sort by size descending
-        results.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+        results.sort_by_key(|r| std::cmp::Reverse(r.size_bytes));
         results.truncate(200);
         Ok(results)
     })
@@ -2927,11 +2935,11 @@ fn migration_agent_tool_definitions() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "mg_shell".into(),
-            description: "Run a safe read-only shell command on this Windows machine. Useful for exploring the filesystem, querying registry, checking file contents, or running sqlite3 commands. Only safe read-only commands are permitted.".into(),
+            description: "Run a typed read-only diagnostic command on this Windows machine. Useful for listing directories, querying registry keys, checking file contents, or listing processes. Free-form shell and PowerShell commands are not permitted.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "command": { "type": "string", "description": "Shell command to run. Permitted: dir, type, where, tasklist, reg query, wmic process, sqlite3, powershell Get-*, powershell Select-String. Example: 'dir C:\\Program Files /s /b | findstr .db'" }
+                    "command": { "type": "string", "description": "Typed read-only command. Permitted verbs: dir <path>, type <file>, more <file>, where <name>, tasklist, reg query <key>, wmic process. Shell metacharacters, pipelines, wildcards, echo, and PowerShell are rejected." }
                 },
                 "required": ["command"]
             }),
@@ -3368,7 +3376,7 @@ async fn execute_migration_agent_tool(
                 .take(15)
                 .collect();
             if !inserts.is_empty() {
-                out += &format!("\nSample INSERT statements:\n");
+                out += "\nSample INSERT statements:\n";
                 for ins in &inserts {
                     out += &format!("  {}\n", &ins[..ins.len().min(200)]);
                 }
@@ -3615,104 +3623,23 @@ try {{
         )
     };
 
-    // Run via PowerShell
-    let cmd = format!(
-        "powershell -NoProfile -Command \"{}\"",
-        ps_script.replace('"', "\\\"")
-    );
-    exec_safe_shell(cmd).await
+    run_generated_powershell(ps_script).await
 }
 
-// ── Safe shell executor ────────────────────────────────────────────────────────
-
-async fn exec_safe_shell(command: String) -> AppResult<String> {
-    // Reject shell metacharacters that cmd.exe interprets as command separators,
-    // redirectors, or code-execution operators regardless of the allowlist.
-    let dangerous_chars = ['&', '|', '>', '<', '^', ';', '`'];
-    if command.chars().any(|c| dangerous_chars.contains(&c))
-        || command.contains("$(")
-        || command.contains('\n')
-        || command.contains('\r')
-    {
-        return Ok("Command rejected: shell metacharacters are not permitted.".to_string());
-    }
-
-    // Whitelist: only safe read-only commands allowed
-    let lower = command.trim().to_lowercase();
-    let allowed_prefixes = [
-        "dir ",
-        "dir\n",
-        "type ",
-        "where ",
-        "tasklist",
-        "reg query",
-        "wmic process",
-        "sqlite3 ",
-        "powershell get-",
-        "powershell -command \"get-",
-        "powershell -command \"select-",
-        "powershell -noprofile",
-        "findstr ",
-        "find ",
-        "echo ",
-        "more ",
-        "sort ",
-        "attrib ",
-    ];
-    let allowed_exact = ["dir", "tasklist", "where"];
-
-    let dangerous = lower.contains("remove-item")
-        || lower.contains("del ")
-        || lower.contains("rd ")
-        || lower.contains("invoke-expression")
-        || lower.contains("iex ")
-        || lower.contains(" | iex")
-        || lower.contains("net user")
-        || lower.contains("format-disk")
-        || lower.contains("clear-disk")
-        || lower.contains("set-acl")
-        || lower.contains("start-process cmd");
-
-    let is_allowed = !dangerous
-        && (allowed_prefixes.iter().any(|p| lower.starts_with(p))
-            || allowed_exact.iter().any(|e| lower == *e)
-            || lower.starts_with("dir ")
-            || lower.starts_with("sqlite3 ")
-            || (lower.starts_with("powershell")
-                && !lower.contains("remove")
-                && !lower.contains("delete")
-                && !lower.contains("write-")
-                && !lower.contains("set-content")
-                && !lower.contains("new-item")
-                && !lower.contains("invoke-expression")
-                && !lower.contains("iex ")));
-
-    if !is_allowed {
-        return Ok(format!(
-            "Command not permitted for safety reasons: '{}'\n\nAllowed commands: dir, type, where, tasklist, reg query, wmic process, sqlite3, powershell Get-* / Select-String, findstr, echo, attrib",
-            command
-        ));
-    }
-
+async fn run_generated_powershell(script: String) -> AppResult<String> {
     tokio::task::spawn_blocking(move || {
-        let output = std::process::Command::new("cmd")
-            .args(["/C", &command])
+        let output = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", &script])
             .output()
-            .map_err(|e| AppError::Internal(format!("Shell exec failed: {}", e)))?;
+            .map_err(|e| AppError::Internal(format!("PowerShell execution failed: {e}")))?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-        let mut result = String::new();
-        if !stdout.is_empty() {
-            // Cap at 6000 chars
-            let trimmed = if stdout.len() > 6000 {
-                format!("{}\n...(output truncated to 6000 chars)", &stdout[..6000])
-            } else {
-                stdout
-            };
-            result += &trimmed;
-        }
+        let mut result = if stdout.len() > 6000 {
+            format!("{}\n...(output truncated to 6000 chars)", &stdout[..6000])
+        } else {
+            stdout
+        };
         if !stderr.is_empty() {
             result += &format!("\nSTDERR: {}", &stderr[..stderr.len().min(500)]);
         }
@@ -3722,7 +3649,13 @@ async fn exec_safe_shell(command: String) -> AppResult<String> {
         Ok(result)
     })
     .await
-    .map_err(|e| AppError::Internal(format!("Shell task failed: {}", e)))?
+    .map_err(|e| AppError::Internal(format!("PowerShell task failed: {e}")))?
+}
+
+// ── Typed read-only command executor ──────────────────────────────────────────
+
+async fn exec_safe_shell(command: String) -> AppResult<String> {
+    super::migration_shell::exec_typed_command(command).await
 }
 
 // ── System prompt ──────────────────────────────────────────────────────────────
@@ -3754,7 +3687,7 @@ You have access to powerful tools that let you read and migrate ALL common datab
 - `mg_find_db_files` — Scan filesystem for .db .sqlite .mdf .mdb .accdb .sql .json etc.
 - `mg_list_processes` — Detect what POS software is running (find data directory clues)
 - `mg_read_file` — Read a config/ini/xml file to find connection strings
-- `mg_shell` — Run safe read-only shell commands (dir, tasklist, sqlite3, powershell Get-*)
+- `mg_shell` — Run typed read-only diagnostics (`dir <path>`, `type <file>`, `tasklist`, `where <name>`, `reg query <key>`, `wmic process`); no free-form shell or PowerShell
 - `mg_extract_zip` — Extract a ZIP backup archive and find databases inside
 - `mg_attach_mdf` — Attach a SQL Server .mdf file to local SQL Server Express instance
 - `mg_access_query` — Query a Microsoft Access .accdb or .mdb database via Windows OleDb
@@ -4114,20 +4047,29 @@ pub async fn migration_agent_chat(
         ));
     };
 
+    let params = crate::ai::config::load_ai_params(&state.db).await;
     let system = migration_agent_system_prompt();
     let tool_defs = migration_agent_tool_definitions();
 
     let mut current = provider
-        .send_chat(&system, &input.history, &input.message, &tool_defs)
+        .send_chat(
+            &system,
+            &input.history,
+            &input.message,
+            &tool_defs,
+            params.context_window_chars,
+            None,
+        )
         .await?;
 
     // Tool execution loop — up to 12 autonomous steps
     let mut last_tool_names: Vec<String> = Vec::new();
     for _turn in 0..12 {
-        let Some(tc) = current.tool_call else {
+        if current.tool_calls.is_empty() {
             // No more tool calls — return the final text
             return Ok(current.text);
         };
+        let tc = current.tool_calls.remove(0);
 
         // Repetition guard: abort if the same tool is called 3 times in a row
         last_tool_names.push(tc.name.clone());
@@ -4161,6 +4103,7 @@ pub async fn migration_agent_chat(
                 tool_result,
                 &tool_defs,
                 prev_reasoning,
+                params.context_window_chars,
             )
             .await?;
     }

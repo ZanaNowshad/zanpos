@@ -9,7 +9,12 @@ pub const SYNC_TABLES: &[&str] = &[
     "categories",
     "tax_rules",
     "products",
+    "product_barcodes",
+    "suppliers",
+    "purchase_orders",
+    "purchase_order_lines",
     "devices",
+    "roles",
     "users",
     "customers",
     "shifts",
@@ -23,19 +28,64 @@ pub const SYNC_TABLES: &[&str] = &[
     "audit_logs",
     "delivery_orders",
     "product_prices",
+    "product_cost_history",
     "cash_events",
     "app_config",
 ];
 
 /// app_config keys that are allowed to sync across devices.
 pub const ALLOWED_CONFIG_KEYS: &[&str] = &[
+    "ai_action_expiry_minutes",
+    "ai_anthropic_max_tokens",
+    "ai_anthropic_model",
+    "ai_bulk_batch_size",
+    "ai_connect_timeout_secs",
+    "ai_context_window_chars",
+    "ai_enabled",
+    "ai_max_turns",
+    "ai_openai_max_tokens",
+    "ai_provider",
+    "ai_stream_timeout_secs",
+    "ai_temperature",
+    "feature_compare_prices",
+    "feature_customer_insights",
+    "feature_insights_engine",
+    "feature_inventory_ops",
+    "feature_market_price",
+    "feature_proactive",
+    "feature_smart_analytics",
+    "feature_web_fetch",
+    "feature_web_search",
     "flag_allow_negative_stock",
-    "flag_require_discount_reason",
-    "flag_cashier_can_discount",
     "flag_auto_print_receipt",
-    "whatsapp_benefit_number",
+    "flag_cashier_can_discount",
+    "flag_require_discount_reason",
+    "gemini_model",
+    "idle_timeout_minutes",
+    "loyalty_points_per_bhd",
+    "openai_base_url",
+    "openai_model",
     "reports_device_scope",
+    "retention_days_logs",
+    "retention_days_sales",
+    "storefront_auto_publish",
+    "storefront_enabled",
+    "storefront_locale",
+    "storefront_public_url",
+    "storefront_whatsapp_number",
+    "sync_interval_hub_secs",
+    "sync_interval_terminal_secs",
+    "whatsapp_benefit_number",
+    "whatsapp_commerce_enabled",
+    "whatsapp_group_jid",
+    "whatsapp_group_name",
+    "whatsapp_owner_jid",
+    "whatsapp_owner_name",
 ];
+
+pub fn is_allowed_config_key(key: &str) -> bool {
+    ALLOWED_CONFIG_KEYS.contains(&key)
+}
 
 pub(crate) const STOCK_DRIFT_TOLERANCE: f64 = 0.001;
 
@@ -49,6 +99,12 @@ pub async fn apply_row(pool: &SqlitePool, table: &str, row: &Value) -> AppResult
         "categories" => apply_lww(pool, "categories", "category_id", obj, &[]).await,
         "tax_rules" => apply_lww(pool, "tax_rules", "tax_rule_id", obj, &[]).await,
         "products" => apply_lww(pool, "products", "product_id", obj, &[]).await,
+        "product_barcodes" => apply_lww(pool, "product_barcodes", "barcode", obj, &[]).await,
+        "suppliers" => apply_lww(pool, "suppliers", "supplier_id", obj, &[]).await,
+        "purchase_orders" => apply_lww(pool, "purchase_orders", "po_id", obj, &[]).await,
+        "purchase_order_lines" => {
+            apply_lww(pool, "purchase_order_lines", "po_line_id", obj, &[]).await
+        }
         "devices" => {
             if let (Some(device_id), Some(branch_id), Some(device_code)) = (
                 obj.get("device_id").and_then(|v| v.as_str()),
@@ -57,8 +113,14 @@ pub async fn apply_row(pool: &SqlitePool, table: &str, row: &Value) -> AppResult
             ) {
                 let now = chrono::Utc::now().to_rfc3339();
                 let _ = sqlx::query(
-                    "UPDATE devices SET is_active = 0, deleted_at = ? WHERE branch_id = ? AND device_code = ? AND device_id <> ?",
+                    "UPDATE devices
+                     SET is_active = 0,
+                         deleted_at = ?,
+                         device_code = device_code || '-RETIRED-' || substr(device_id, -6),
+                         updated_at = ?
+                     WHERE branch_id = ? AND device_code = ? AND device_id <> ?",
                 )
+                .bind(&now)
                 .bind(&now)
                 .bind(branch_id)
                 .bind(device_code)
@@ -79,6 +141,7 @@ pub async fn apply_row(pool: &SqlitePool, table: &str, row: &Value) -> AppResult
             }
             apply_lww(pool, "devices", "device_id", &obj_norm, &[]).await
         }
+        "roles" => apply_lww(pool, "roles", "role_id", obj, &[]).await,
         "branches" => apply_lww(pool, "branches", "branch_id", obj, &[]).await,
         "shifts" => {
             if obj.get("status").and_then(|v| v.as_str()) == Some("open") {
@@ -120,10 +183,8 @@ pub async fn apply_row(pool: &SqlitePool, table: &str, row: &Value) -> AppResult
         "delivery_orders" => apply_lww(pool, "delivery_orders", "delivery_id", obj, &[]).await,
         "stock_levels" => apply_lww(pool, "stock_levels", "stock_level_id", obj, &[]).await,
         "users" => {
-            if let (Some(user_id), Some(username)) = (
-                obj.get("user_id").and_then(|v| v.as_str()),
-                obj.get("username").and_then(|v| v.as_str()),
-            ) {
+            let user_id = obj.get("user_id").and_then(|v| v.as_str()).unwrap_or("");
+            if let Some(username) = obj.get("username").and_then(|v| v.as_str()) {
                 let now = chrono::Utc::now().to_rfc3339();
                 let _ = sqlx::query(
                     "UPDATE users SET is_active = 0, deleted_at = ? WHERE username = ? AND user_id <> ?",
@@ -149,8 +210,19 @@ pub async fn apply_row(pool: &SqlitePool, table: &str, row: &Value) -> AppResult
                 obj_norm.insert("branch_id".to_string(), Value::String(branch));
             }
 
-            if !obj_norm.contains_key("pin_hash") || obj_norm.get("pin_hash") == Some(&Value::Null)
-            {
+            let has_remote_pin_hash = obj_norm
+                .get("pin_hash")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| !s.trim().is_empty());
+            let existing_user =
+                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users WHERE user_id = ?")
+                    .bind(user_id)
+                    .fetch_one(pool)
+                    .await
+                    .map(|n| n > 0)
+                    .unwrap_or(false);
+
+            if !has_remote_pin_hash {
                 obj_norm.insert(
                     "pin_hash".to_string(),
                     Value::String("*REMOTE-ONLY*".to_string()),
@@ -180,16 +252,26 @@ pub async fn apply_row(pool: &SqlitePool, table: &str, row: &Value) -> AppResult
                 }
             }
 
-            apply_lww(pool, "users", "user_id", &obj_norm, &["pin_hash"]).await
+            if has_remote_pin_hash || !existing_user {
+                apply_lww(pool, "users", "user_id", &obj_norm, &[]).await
+            } else {
+                apply_lww(pool, "users", "user_id", &obj_norm, &["pin_hash"]).await
+            }
         }
         "customers" => apply_customer(pool, obj).await,
-        "sales" | "sale_items" | "payments" | "refunds" | "refund_items" | "stock_movements"
-        | "audit_logs" | "product_prices" | "cash_events" => {
-            apply_append_only(pool, table, obj).await
-        }
+        "sales"
+        | "sale_items"
+        | "payments"
+        | "refunds"
+        | "refund_items"
+        | "stock_movements"
+        | "audit_logs"
+        | "product_prices"
+        | "product_cost_history"
+        | "cash_events" => apply_append_only(pool, table, obj).await,
         "app_config" => {
             let key = obj.get("key").and_then(|v| v.as_str()).unwrap_or("");
-            if ALLOWED_CONFIG_KEYS.contains(&key) {
+            if is_allowed_config_key(key) {
                 let value = obj.get("value").and_then(|v| v.as_str()).unwrap_or("");
                 let remote_ts = obj
                     .get("updated_at")
@@ -302,6 +384,54 @@ pub(crate) async fn apply_lww(
 }
 
 pub(crate) async fn apply_customer(pool: &SqlitePool, obj: &Map<String, Value>) -> AppResult<()> {
+    let _ = sqlx::query(
+        "UPDATE customers SET phone = NULL WHERE phone IS NOT NULL AND TRIM(phone) = ''",
+    )
+    .execute(pool)
+    .await;
+    let mut normalized_obj = obj.clone();
+    if normalized_obj
+        .get("phone")
+        .and_then(|v| v.as_str())
+        .is_some_and(|phone| phone.trim().is_empty())
+    {
+        normalized_obj.insert("phone".to_string(), Value::Null);
+    }
+
+    if let (Some(incoming_id), Some(phone)) = (
+        normalized_obj.get("customer_id").and_then(|v| v.as_str()),
+        normalized_obj
+            .get("phone")
+            .and_then(|v| v.as_str())
+            .map(str::trim),
+    ) {
+        if !phone.is_empty() {
+            let existing_id: Option<String> = sqlx::query_scalar(
+                "SELECT customer_id FROM customers
+                 WHERE phone = ? AND customer_id <> ?
+                 LIMIT 1",
+            )
+            .bind(phone)
+            .bind(incoming_id)
+            .fetch_optional(pool)
+            .await?
+            .flatten();
+
+            if let Some(existing_id) = existing_id {
+                let mut merged = normalized_obj.clone();
+                merged.insert("customer_id".to_string(), Value::String(existing_id));
+                return apply_customer_by_primary_key(pool, &merged).await;
+            }
+        }
+    }
+
+    apply_customer_by_primary_key(pool, &normalized_obj).await
+}
+
+async fn apply_customer_by_primary_key(
+    pool: &SqlitePool,
+    obj: &Map<String, Value>,
+) -> AppResult<()> {
     let cols: Vec<&String> = obj
         .keys()
         .filter(|k| {
@@ -444,7 +574,12 @@ pub fn pk_for_table(table: &str) -> &str {
         "categories" => "category_id",
         "tax_rules" => "tax_rule_id",
         "products" => "product_id",
+        "product_barcodes" => "barcode",
+        "suppliers" => "supplier_id",
+        "purchase_orders" => "po_id",
+        "purchase_order_lines" => "po_line_id",
         "devices" => "device_id",
+        "roles" => "role_id",
         "customers" => "customer_id",
         "shifts" => "shift_id",
         "sales" => "sale_id",
@@ -456,6 +591,7 @@ pub fn pk_for_table(table: &str) -> &str {
         "audit_logs" => "audit_log_id",
         "delivery_orders" => "delivery_id",
         "product_prices" => "price_id",
+        "product_cost_history" => "cost_history_id",
         "users" => "user_id",
         "cash_events" => "cash_event_id",
         "app_config" => "key",
@@ -468,27 +604,28 @@ pub fn pk_for_table(table: &str) -> &str {
 pub fn should_skip_column(table: &str, col_name: &str) -> bool {
     if col_name == "sync_status"
         || col_name == "sync_attempts"
-        || col_name == "pin_hash"
         || col_name == "deleted_at"
         || col_name == "version"
     {
         return true;
     }
-    match (table, col_name) {
-        ("users", "failed_pin_attempts" | "locked_until" | "last_login_at") => true,
-        ("devices", "next_receipt_seq" | "last_seen_at" | "version") => true,
-        ("customers", "origin_device_id" | "version") => true,
+    matches!(
+        (table, col_name),
         (
-            "shifts",
-            "expected_cash_minor"
-            | "cash_difference_minor"
-            | "business_date"
-            | "created_at"
-            | "version",
-        ) => true,
-        ("audit_logs", "override_used") => true,
-        _ => false,
-    }
+            "users",
+            "failed_pin_attempts" | "locked_until" | "last_login_at"
+        ) | ("devices", "next_receipt_seq" | "last_seen_at" | "version")
+            | ("customers", "origin_device_id" | "version")
+            | (
+                "shifts",
+                "expected_cash_minor"
+                    | "cash_difference_minor"
+                    | "business_date"
+                    | "created_at"
+                    | "version"
+            )
+            | ("audit_logs", "override_used")
+    )
 }
 
 /// Extract a typed value from a sqlx Row column by name.
@@ -557,17 +694,19 @@ pub(crate) async fn recompute_stock_level(
     branch_id: &str,
     applied_at: &str,
 ) -> AppResult<()> {
-    let ledger_sum: Option<f64> = sqlx::query_scalar(
-        "SELECT CAST(COALESCE(SUM(CAST(quantity_delta AS REAL)), 0) AS REAL)
+    let ledger_balance: Option<f64> = sqlx::query_scalar(
+        "SELECT CAST(quantity_after AS REAL)
          FROM stock_movements
-         WHERE product_id = ? AND branch_id = ?",
+         WHERE product_id = ? AND branch_id = ?
+         ORDER BY datetime(created_at) DESC, rowid DESC
+         LIMIT 1",
     )
     .bind(product_id)
     .bind(branch_id)
     .fetch_one(pool)
     .await?;
 
-    let ledger = ledger_sum.unwrap_or(0.0);
+    let ledger = ledger_balance.unwrap_or(0.0);
 
     let stock_level_id = format!("SL-{}-{}", product_id, branch_id);
     let qty_str = format!("{:.3}", ledger)
@@ -714,7 +853,68 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn users_pin_hash_never_clobbered() {
+    async fn users_pin_hash_syncs_when_remote_sends_hash() {
+        let pool = test_pool().await;
+        let uid: String = sqlx::query_scalar("SELECT user_id FROM users LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let upd = json!({"user_id":uid,"display_name":"Renamed","username":"renamed-unique-x",
+            "pin_hash":"$argon2id$v=19$m=19456,t=2,p=1$remote$hash",
+            "role_id":"01JROLES000000000000000001","is_active":1,"created_at":"2026-01-01T00:00:00Z",
+            "updated_at":"2030-01-01T00:00:00Z"});
+        apply_row(&pool, "users", &upd).await.unwrap();
+        let after: String = sqlx::query_scalar("SELECT pin_hash FROM users WHERE user_id=?")
+            .bind(&uid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            after, "$argon2id$v=19$m=19456,t=2,p=1$remote$hash",
+            "remote hashed PIN should sync so credentials match across terminals"
+        );
+    }
+
+    #[tokio::test]
+    async fn device_pull_retires_a_local_code_collision_before_insert() {
+        let pool = test_pool().await;
+        let local = sqlx::query("SELECT device_id, branch_id, device_code FROM devices LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let local_id: String = local.get("device_id");
+        let branch_id: String = local.get("branch_id");
+        let device_code: String = local.get("device_code");
+        let remote = json!({
+            "device_id": "REMOTE-DEVICE",
+            "branch_id": branch_id,
+            "device_code": device_code,
+            "name": "Hub Canonical Device",
+            "status": "online",
+            "is_active": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2030-01-01T00:00:00Z"
+        });
+
+        apply_row(&pool, "devices", &remote).await.unwrap();
+
+        let remote_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE device_id='REMOTE-DEVICE'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let retired_code: String =
+            sqlx::query_scalar("SELECT device_code FROM devices WHERE device_id=?")
+                .bind(local_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(remote_count, 1);
+        assert_ne!(retired_code, device_code);
+    }
+
+    #[tokio::test]
+    async fn users_missing_remote_pin_hash_does_not_clobber_existing_hash() {
         let pool = test_pool().await;
         let uid: String = sqlx::query_scalar("SELECT user_id FROM users LIMIT 1")
             .fetch_one(&pool)
@@ -725,7 +925,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        let upd = json!({"user_id":uid,"display_name":"Renamed","username":"renamed-unique-x",
+        let upd = json!({"user_id":uid,"display_name":"Legacy Remote","username":"legacy-remote-x",
             "role_id":"01JROLES000000000000000001","is_active":1,"created_at":"2026-01-01T00:00:00Z",
             "updated_at":"2030-01-01T00:00:00Z"});
         apply_row(&pool, "users", &upd).await.unwrap();
@@ -734,7 +934,117 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(before, after, "pin_hash must survive remote user updates");
+        assert_eq!(
+            before, after,
+            "legacy remote user rows without a hash must not overwrite local credentials"
+        );
+    }
+
+    #[tokio::test]
+    async fn customer_pull_merges_duplicate_phone_instead_of_blocking_sync() {
+        let pool = test_pool().await;
+        let branch_id: String = sqlx::query_scalar("SELECT branch_id FROM branches LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "INSERT INTO customers
+             (customer_id, branch_id, origin_device_id, name, phone, loyalty_points,
+              created_at, updated_at, sync_status, sync_attempts)
+             VALUES ('LOCAL-CUSTOMER', ?, 'LOCAL', 'Local Name', '+97333112233', 4,
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'synced', 0)",
+        )
+        .bind(&branch_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let remote = json!({
+            "customer_id": "REMOTE-CUSTOMER",
+            "branch_id": branch_id,
+            "origin_device_id": "REMOTE",
+            "name": "Remote Name",
+            "phone": "+97333112233",
+            "email": "remote@example.com",
+            "loyalty_points": 9,
+            "created_at": "2026-01-02T00:00:00Z",
+            "updated_at": "2026-01-02T00:00:00Z"
+        });
+
+        apply_row(&pool, "customers", &remote).await.unwrap();
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM customers")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            count, 1,
+            "duplicate phone must merge, not create another row"
+        );
+
+        let row = sqlx::query("SELECT customer_id, name, email, loyalty_points FROM customers")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(row.get::<String, _>("customer_id"), "LOCAL-CUSTOMER");
+        assert_eq!(row.get::<String, _>("name"), "Remote Name");
+        assert_eq!(
+            row.get::<Option<String>, _>("email").as_deref(),
+            Some("remote@example.com")
+        );
+        assert_eq!(row.get::<i64, _>("loyalty_points"), 9);
+    }
+
+    #[tokio::test]
+    async fn customer_pull_treats_blank_phone_as_missing() {
+        let pool = test_pool().await;
+        let branch_id: String = sqlx::query_scalar("SELECT branch_id FROM branches LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        sqlx::query(
+            "INSERT INTO customers
+             (customer_id, branch_id, origin_device_id, name, phone, loyalty_points,
+              created_at, updated_at, sync_status, sync_attempts)
+             VALUES ('LOCAL-BLANK', ?, 'LOCAL', 'Local Blank', '', 0,
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'synced', 0)",
+        )
+        .bind(&branch_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let remote = json!({
+            "customer_id": "REMOTE-BLANK",
+            "branch_id": branch_id,
+            "origin_device_id": "REMOTE",
+            "name": "Remote Blank",
+            "phone": "",
+            "email": "blank@example.com",
+            "loyalty_points": 0,
+            "created_at": "2026-01-02T00:00:00Z",
+            "updated_at": "2026-01-02T00:00:00Z"
+        });
+
+        apply_row(&pool, "customers", &remote).await.unwrap();
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM customers")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 2, "blank phone customers must not block sync");
+
+        let blank_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM customers WHERE phone = ''")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            blank_count, 0,
+            "blank phones should be normalized to NULL so future rows do not collide"
+        );
     }
 
     #[tokio::test]
@@ -756,5 +1066,19 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(v, "1");
+    }
+
+    #[test]
+    fn config_key_allowlist_rejects_secret_like_names() {
+        for key in [
+            "anthropic_api_key",
+            "openai_api_key",
+            "gemini_api_key",
+            "hub_store_token",
+            "supabase_service_key",
+            "refresh_secret",
+        ] {
+            assert!(!is_allowed_config_key(key), "{key} must never sync");
+        }
     }
 }

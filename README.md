@@ -84,7 +84,7 @@ npm run tauri dev
 # Rust checks (run from src-tauri/)
 cargo fmt --all -- --check     # format check
 cargo clippy --all-targets -- -D warnings
-cargo test --lib               # 50 unit + integration tests
+cargo test --lib               # 113 unit + integration tests
 cargo audit --file Cargo.lock  # dependency CVE scan
 ```
 
@@ -159,20 +159,19 @@ The AI assistant can list and advance delivery statuses with the `list_deliverie
 ### Frontend (Vitest)
 ```bash
 npm test
-# 18 tests: BHD formatMoney, parseMoney round-trips
+# 24 tests across src/__tests__/:
+#   money.test.ts            — BHD formatMoney / parseMoney round-trips
+#   adminChatClear.test.ts   — clear-chat behaviour
+#   posProductFilters.test.ts — POS product filtering
 ```
 
 ### Rust (cargo test)
 ```bash
 cd src-tauri && cargo test --lib
-# 50 tests across:
-#   domain::cart       — 10 tests (tax, discounts, payments)
-#   domain::money      —  3 tests (format, tax, discount)
-#   inventory::movements — 8 tests (adjust, take, alerts)
-#   db::repositories::sale_repo  — 7 integration tests
-#   db::repositories::refund_repo — 6 integration tests
-#   commands::phase10a_commands — 5 backup/restore tests
-#   sync::supabase_client — 1 test (URL parsing)
+# 113 unit + integration tests spanning the domain (cart, money), inventory
+# movements, db repositories (sale, refund, shift, auth, audit-hash),
+# sync_v2, the AI engine, the LAN hub, and command modules (pos, cash,
+# rbac, refunds, reports, backup/restore, whatsapp).
 ```
 
 ---

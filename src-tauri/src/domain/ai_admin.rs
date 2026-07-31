@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -7,6 +8,7 @@ use serde_json::Value;
 pub struct AiAction {
     pub action_id: String,
     pub session_user_id: String,
+    pub branch_id: String,
     pub tool_name: String,
     pub tool_input_json: String,
     pub tool_input_hash: String,
@@ -59,12 +61,22 @@ pub struct ToolPreviewField {
     pub value: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchPendingAction {
+    pub action_id: String,
+    pub tool_name: String,
+    pub preview: ToolPreview,
+    pub expires_at: String,
+}
+
 // ── Command I/O types ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiChatInput {
+    pub request_id: String,
     pub history: Vec<ChatMessage>,
     pub message: String,
+    #[serde(default)]
     pub user_id: String,
     pub branch_id: String,
     pub currency_exponent: u32,
@@ -77,26 +89,12 @@ pub struct AiChatInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum AiChatResponse {
-    Message {
-        content: String,
-    },
-    PendingAction {
-        action_id: String,
-        tool_name: String,
-        preview: ToolPreview,
-        expires_at: String,
-        /// Partial assistant turn text shown before the confirmation card
-        assistant_text: String,
-    },
-    NoApiKey,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecuteActionInput {
     pub action_id: String,
+    #[serde(default)]
     pub user_id: String,
+    #[serde(default)]
+    pub actor_user_id: String,
     pub history: Vec<ChatMessage>,
     pub assistant_text: String,
     pub currency_exponent: u32,
@@ -115,11 +113,30 @@ pub struct UndoActionResult {
     pub followup: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecuteBatchInput {
+    pub action_ids: Vec<String>,
+    #[serde(default)]
+    pub user_id: String,
+    #[serde(default)]
+    pub actor_user_id: String,
+    pub history: Vec<ChatMessage>,
+    pub assistant_text: String,
+    pub currency_exponent: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecuteBatchResult {
+    pub followup: String,
+    pub undo_ids: Vec<String>,
+}
+
 // ── Persisted chat message ─────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiChatMessage {
     pub id: i64,
+    pub message_id: String,
     pub session_id: String,
     pub branch_id: String,
     pub user_id: String,
@@ -134,6 +151,7 @@ pub struct AiChatMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StreamEvent {
+    Started,
     Token {
         text: String,
     },
@@ -149,6 +167,16 @@ pub enum StreamEvent {
         preview: ToolPreview,
         expires_at: String,
         assistant_text: String,
+    },
+    MutationBatchPending {
+        actions: Vec<BatchPendingAction>,
+        assistant_text: String,
+    },
+    MutationExecuted {
+        action_id: String,
+        tool_name: String,
+        undo_id: String,
+        description: String,
     },
     Navigate {
         tab: String,
@@ -172,6 +200,11 @@ pub enum StreamEvent {
         run_id: String,
         error: String,
     },
+    MessagePersisted {
+        session_id: String,
+        message_id: String,
+    },
+    Cancelled,
     Done,
     Error {
         message: String,
@@ -185,6 +218,7 @@ pub struct ProviderConfig {
     /// "anthropic" | "openai" | "gemini" | ""
     pub provider: String,
     pub anthropic_key_set: bool,
+    pub anthropic_model: String,
     pub openai_base_url: String,
     pub openai_key_set: bool,
     pub openai_model: String,
@@ -203,4 +237,93 @@ pub struct ValidateProviderResult {
     pub success: bool,
     pub models: Vec<ModelInfo>,
     pub error: Option<String>,
+}
+
+/// Feature toggle flags exposed to the settings UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeatureToggles {
+    pub web_search: bool,
+    pub web_fetch: bool,
+    pub compare_prices: bool,
+    pub market_price: bool,
+    pub smart_analytics: bool,
+    pub proactive: bool,
+    pub inventory_ops: bool,
+    pub customer_insights: bool,
+    pub insights_engine: bool,
+}
+
+// ── Proactive intelligence alert ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ProactiveAlert {
+    pub alert_id: String,
+    pub branch_id: String,
+    pub alert_type: String,
+    pub severity: String,
+    pub title: String,
+    pub description: String,
+    pub detail_json: Option<String>,
+    pub detected_at: String,
+    pub dismissed_at: Option<String>,
+    pub dismissed_by_user_id: Option<String>,
+    pub created_at: String,
+}
+
+// ── Session & usage tracking ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiSession {
+    pub session_id: String,
+    pub branch_id: String,
+    pub user_id: String,
+    pub provider: String,
+    pub model: String,
+    pub status: String,
+    pub total_turns: i64,
+    pub tokens_in: i64,
+    pub tokens_out: i64,
+    pub cost_estimate_usd: f64,
+    pub total_latency_ms: i64,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiUsageRecord {
+    pub id: i64,
+    pub session_id: String,
+    pub turn: i32,
+    pub tokens_in: i32,
+    pub tokens_out: i32,
+    pub latency_ms: i32,
+    pub provider: String,
+    pub model: String,
+    pub logged_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiFeedback {
+    pub feedback_id: String,
+    pub session_id: String,
+    pub user_id: String,
+    pub message_id: String,
+    pub rating: String,
+    pub comment: Option<String>,
+    pub created_at: String,
+}
+
+/// All AI runtime parameters exposed to the settings UI.
+/// Mirrors `AiParams` but uses types that round-trip cleanly through JSON.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiConfigPayload {
+    pub anthropic_max_tokens: u32,
+    pub openai_max_tokens: u32,
+    pub temperature: f32,
+    pub max_turns: usize,
+    pub context_window_chars: usize,
+    pub connect_timeout_secs: u64,
+    pub stream_timeout_secs: u64,
+    pub action_expiry_minutes: i64,
+    pub bulk_batch_size: usize,
 }

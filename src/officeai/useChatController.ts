@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Channel } from "@tauri-apps/api/core";
-import type { ChatMessage, SessionUser, StreamEvent, StockLevel } from "../types";
+import { listen } from "@tauri-apps/api/event";
+import type { BatchPendingAction, ChatMessage, ProactiveAlert, SessionUser, StreamEvent, StockLevel } from "../types";
 import { DEVICE } from "../types";
 import {
-  aiChatStream, aiExecuteAction, aiCancelAction, aiUndoAction,
-  aiRunExecute, aiRunUndo,
-  aiSaveMessage, aiLoadHistory, aiClearHistory,
+  aiChatStream, aiCancelChat, aiExecuteAction, aiExecuteBatchActions, aiCancelAction, aiUndoAction,
+  aiRunExecute, aiRunUndo, aiRunCancel,
+  aiLoadHistory, aiGetTaskLedgerResume, aiClearHistory, aiSubmitFeedback,
   reportToday, inventoryGetLevels, syncStatus,
+  adminGetAlerts, adminDismissAlert,
 } from "../tauri/commands";
 import { clearAdminChat } from "../adminChatClear";
 import type { ChatState, DisplayMessage, KpiSnapshot, RunState, ToolCallEntry } from "./officeAiTypes";
+
+const MAX_HISTORY = 40;
 
 export interface ChatControllerOpts {
   sessionUser: SessionUser;
@@ -27,6 +31,12 @@ export interface ImageAttachment {
   previewUrl: string;
 }
 
+export interface BulkProgress {
+  tool: string;
+  done: number;
+  total: number;
+}
+
 export interface ChatController {
   messages: DisplayMessage[];
   input: string;
@@ -35,21 +45,53 @@ export interface ChatController {
   setImageAttachment: (a: ImageAttachment | null) => void;
   chatState: ChatState;
   pendingAction: DisplayMessage["pendingAction"] | null;
+  pendingBatchActions: BatchPendingAction[] | null;
   liveToolCalls: ToolCallEntry[];
   streamingMsgId: string | null;
   tokenCount: number;
   streamStartTime: number | null;
+  canStop: boolean;
   kpi: KpiSnapshot;
   runState: RunState | null;
+  bulkProgress: BulkProgress | null;
+  errorMessage: string | null;
+  dismissError: () => void;
   fetchKpi: () => Promise<void>;
+  dismissAlert: (alertId: string) => Promise<void>;
   handleSend: (overrideText?: string) => Promise<void>;
+  handleStop: () => Promise<void>;
   handleConfirm: () => Promise<void>;
   handleCancel: () => Promise<void>;
   handleUndo: (undoId: string, msgId: string) => Promise<void>;
+  handleFeedback: (messageId: string, rating: "up" | "down", aiSessionId?: string) => Promise<void>;
   handleClearChat: () => void;
   handleRunExecute: () => Promise<void>;
   handleRunCancel: () => void;
   handleRunUndo: () => Promise<void>;
+}
+
+/**
+ * Rewrite cryptic provider/transport errors into a clear, admin-friendly line.
+ * The most common confusing case: the active model (or its endpoint) can't accept
+ * images, which surfaces as low-level text like "no endpoint for images" or a
+ * provider vision/multimodal error. Anything we don't recognise passes through
+ * unchanged so we never hide a genuinely useful message.
+ */
+function friendlyError(raw: string): string {
+  const lower = raw.toLowerCase();
+  const looksLikeVision =
+    lower.includes("no endpoint for images") ||
+    lower.includes("no endpoints found that support image") ||
+    lower.includes("image input") ||
+    lower.includes("does not support image") ||
+    lower.includes("vision") ||
+    lower.includes("multimodal") ||
+    (lower.includes("image") && (lower.includes("unsupported") || lower.includes("not support")));
+  if (looksLikeVision) {
+    return "The selected AI model can't read images. Switch to a vision-capable model in " +
+      "Admin Settings, or describe the product (name and new price) in text and I'll handle it.";
+  }
+  return raw;
 }
 
 /**
@@ -64,8 +106,12 @@ export interface ChatController {
 export function useChatController(opts: ChatControllerOpts): ChatController {
   const { sessionUser, getUiContext, onNavigate, onMutationApplied } = opts;
 
-  // Session tracking for history persistence
-  const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID());
+  // Session tracking for history persistence.
+  // Start null so handleSend blocks until history loads — prevents the first
+  // message from being saved to a brand-new (wrong) session.
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const historyLoadedRef = useRef(false);
+  const ledgerResumeShownRef = useRef(false);
 
   // Chat state
   const [messages, setMessages]             = useState<DisplayMessage[]>([]);
@@ -74,6 +120,7 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
   const [runState, setRunState]             = useState<RunState | null>(null);
   const [history, setHistory]               = useState<ChatMessage[]>([]);
   const [pendingAction, setPendingAction]   = useState<DisplayMessage["pendingAction"] | null>(null);
+  const [pendingBatchActions, setPendingBatchActions] = useState<BatchPendingAction[] | null>(null);
   const [liveToolCalls, setLiveToolCalls]   = useState<ToolCallEntry[]>([]);
   const liveToolCallsRef                    = useRef<ToolCallEntry[]>([]);
   const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
@@ -81,9 +128,49 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
   const tokenCountRef                       = useRef(0);
   const [streamStartTime, setStreamStartTime] = useState<number | null>(null);
   const assistantMsgIdRef                   = useRef<string>("");
+  // Prevent React state updates after unmount (Tauri Channels outlive the
+  // component and fire callbacks into closed-over setters).
+  const isMountedRef                        = useRef(true);
+  const streamActiveRef                     = useRef(false);
+  const activeRequestIdRef                  = useRef<string | null>(null);
+  const [canStop, setCanStop]               = useState(false);
+  // Re-arm in the effect BODY (not just the useRef init) so StrictMode's dev
+  // mount→unmount→remount cycle restores the flag. Without this, the cleanup
+  // leaves isMountedRef.current === false for the live component and every
+  // Tauri Channel event is dropped by the guards below — the chat hangs on
+  // "thinking" forever even though the backend streams fine.
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
+
+  const alertsRef = useRef<ProactiveAlert[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const dismissError = useCallback(() => setErrorMessage(null), []);
+
+  // Expiry countdown for pending mutations — auto-cancel when the action expires.
+  const expiryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    if (pendingAction?.expires_at) {
+      expiryTimerRef.current = setInterval(() => {
+        const remaining = new Date(pendingAction.expires_at).getTime() - Date.now();
+        if (remaining <= 0) {
+          if (expiryTimerRef.current) { clearInterval(expiryTimerRef.current); expiryTimerRef.current = null; }
+          setPendingAction(null);
+          setStreamingMsgId(null);
+          setStreamStartTime(null);
+          setChatState("idle");
+          setMessages(prev => [...prev, { id: crypto.randomUUID(), role: "system" as const, text: "Action expired.", timestamp: new Date() }]);
+        }
+      }, 1000);
+    }
+    return () => {
+      if (expiryTimerRef.current) { clearInterval(expiryTimerRef.current); expiryTimerRef.current = null; }
+    };
+  }, [pendingAction?.expires_at]);
 
   const [kpi, setKpi] = useState<KpiSnapshot>({
-    loading: false, error: null, today: null, lowStockCount: 0, outOfStockCount: 0, sync: null,
+    loading: false, error: null, today: null, lowStockCount: 0, outOfStockCount: 0, sync: null, alerts: [],
   });
 
   const [imageAttachment, setImageAttachmentState] = useState<ImageAttachment | null>(null);
@@ -101,16 +188,25 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
 
   // ── Load persisted history on mount ─────────────────────────────────────────
   useEffect(() => {
-    aiLoadHistory(DEVICE.branch_id, sessionUser.user_id)
+    let cancelled = false;
+    aiLoadHistory(sessionUser.session_token, sessionUser.branch_id)
       .then(loaded => {
-        if (loaded.length === 0) return;
+        if (cancelled) return;
+        historyLoadedRef.current = true;
+        if (loaded.length === 0) {
+          // No history yet — seed sessionId so the first send works.
+          setSessionId(crypto.randomUUID());
+          return;
+        }
         setMessages(loaded
           .filter(m => m.role === "user" || m.role === "assistant")
           .map(m => ({
-            id: crypto.randomUUID(),
+            id: m.message_id,
             role: m.role as "user" | "assistant",
             text: m.content,
             timestamp: new Date(m.created_at.replace(" ", "T")),
+            feedbackReady: m.role === "assistant",
+            aiSessionId: m.session_id,
           }))
         );
         setHistory(loaded
@@ -120,8 +216,31 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
         const lastSessionId = loaded[loaded.length - 1]?.session_id;
         if (lastSessionId) setSessionId(lastSessionId);
       })
-      .catch(() => {});
-  }, [sessionUser.user_id]);
+      .catch(() => {
+        if (cancelled) return;
+        historyLoadedRef.current = true;
+        setSessionId(prev => prev || crypto.randomUUID());
+      })
+      .finally(() => {
+        if (cancelled) return;
+        void aiGetTaskLedgerResume(sessionUser.session_token, sessionUser.branch_id)
+          .then(ledger => {
+            if (cancelled || !ledger || ledgerResumeShownRef.current) return;
+            ledgerResumeShownRef.current = true;
+            addMessage({
+              role: "system",
+              text: `ZanAI was part-way through ${ledger.description} — resume?`,
+              suggestedLabel: "Resume task",
+              suggestedPrompt:
+                "Continue the saved task. Call get_task_ledger first, show me the saved progress, and wait for confirmation before any mutation.",
+            });
+          })
+          .catch(() => {
+            // Resume discovery is advisory; it must never block OfficeAI opening.
+          });
+      });
+    return () => { cancelled = true; };
+  }, [addMessage, sessionUser.branch_id, sessionUser.session_token]);
 
   // ── KPI snapshot ────────────────────────────────────────────────────────────
   // Sequential (not parallel) to avoid spiking Rust thread pool + SQLite
@@ -129,26 +248,34 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
   const hasShownStockAlertRef = useRef(false);
   const fetchKpi = useCallback(async () => {
     setKpi(prev => ({ ...prev, loading: true, error: null }));
-    try {
-      const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" });
-      const todaySummary = await reportToday(sessionUser.user_id, DEVICE.branch_id, today).catch(() => null);
-      const levels = await inventoryGetLevels(sessionUser.user_id).catch(() => [] as StockLevel[]);
-      const syncStat = await syncStatus(sessionUser.user_id).catch(() => null);
-      const lowStockCount   = levels.filter(l => l.is_low_stock && !l.is_out_of_stock).length;
-      const outOfStockCount = levels.filter(l => l.is_out_of_stock).length;
-      setKpi({ loading: false, error: null, today: todaySummary, lowStockCount, outOfStockCount, sync: syncStat });
-      // Proactive alert — fires once per session on initial KPI load
-      if (!hasShownStockAlertRef.current && (outOfStockCount > 0 || lowStockCount >= 3)) {
-        hasShownStockAlertRef.current = true;
-        const parts: string[] = [];
-        if (outOfStockCount > 0) parts.push(`**${outOfStockCount}** product${outOfStockCount > 1 ? "s" : ""} out of stock`);
-        if (lowStockCount > 0)   parts.push(`**${lowStockCount}** running low`);
-        addMessage({ role: "system", text: `⚠️ Stock alert: ${parts.join(" · ")}. Ask me to review or create a purchase order.` });
-      }
-    } catch (e) {
-      setKpi(prev => ({ ...prev, loading: false, error: String(e) }));
+    const failures: string[] = [];
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" });
+    const todaySummary = await reportToday(sessionUser.user_id, sessionUser.branch_id, today)
+      .catch(error => { failures.push(`sales: ${String(error)}`); return null; });
+    const levels = await inventoryGetLevels(sessionUser.user_id)
+      .catch(error => { failures.push(`inventory: ${String(error)}`); return [] as StockLevel[]; });
+    const syncStat = await syncStatus(sessionUser.user_id)
+      .catch(error => { failures.push(`sync: ${String(error)}`); return null; });
+    const lowStockCount   = levels.filter(l => l.is_low_stock && !l.is_out_of_stock).length;
+    const outOfStockCount = levels.filter(l => l.is_out_of_stock).length;
+    setKpi({
+      loading: false,
+      error: failures.length > 0 ? `Some live data is unavailable (${failures.join("; ")})` : null,
+      today: todaySummary,
+      lowStockCount,
+      outOfStockCount,
+      sync: syncStat,
+      alerts: alertsRef.current,
+    });
+    // Proactive alert — fires once per session on initial KPI load
+    if (!hasShownStockAlertRef.current && (outOfStockCount > 0 || lowStockCount >= 3)) {
+      hasShownStockAlertRef.current = true;
+      const parts: string[] = [];
+      if (outOfStockCount > 0) parts.push(`**${outOfStockCount}** product${outOfStockCount > 1 ? "s" : ""} out of stock`);
+      if (lowStockCount > 0)   parts.push(`**${lowStockCount}** running low`);
+      addMessage({ role: "system", text: `⚠️ Stock alert: ${parts.join(" · ")}. Ask me to review or create a purchase order.` });
     }
-  }, [sessionUser.user_id, addMessage]);
+  }, [sessionUser.branch_id, sessionUser.user_id, addMessage]);
 
   useEffect(() => {
     // Fetch KPI after a short delay to avoid spiking memory on page open.
@@ -156,30 +283,93 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
     return () => clearTimeout(t);
   }, [fetchKpi]);
 
+  // ── Proactive alerts — poll on mount + live SSE push from backend loop ──────
+  const fetchAlerts = useCallback(async () => {
+    let delay = 1000;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const a = await adminGetAlerts(sessionUser.session_token, sessionUser.branch_id);
+        alertsRef.current = a;
+        setKpi(prev => ({ ...prev, alerts: a }));
+        return;
+      } catch {
+        if (attempt < 2) {
+          await new Promise(r => setTimeout(r, delay));
+          delay *= 2;
+        }
+      }
+    }
+  }, [sessionUser.branch_id, sessionUser.session_token]);
+
+  useEffect(() => {
+    fetchAlerts();
+    const unlisten = listen<ProactiveAlert[]>("proactive-alerts", (event) => {
+      const a = event.payload;
+      alertsRef.current = a;
+      setKpi(prev => ({ ...prev, alerts: a }));
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, [fetchAlerts]);
+
+  // ── Bulk operation per-row progress (backend "bulk-progress" events) ────────
+  const [bulkProgress, setBulkProgress] = useState<BulkProgress | null>(null);
+  const bulkClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const unlisten = listen<BulkProgress>("bulk-progress", (event) => {
+      if (!isMountedRef.current) return;
+      const p = event.payload;
+      setBulkProgress(p);
+      if (bulkClearTimerRef.current) clearTimeout(bulkClearTimerRef.current);
+      // Hide the bar shortly after completion (or if events stop arriving).
+      bulkClearTimerRef.current = setTimeout(
+        () => setBulkProgress(null),
+        p.done >= p.total ? 1500 : 10_000
+      );
+    });
+    return () => {
+      unlisten.then(fn => fn());
+      if (bulkClearTimerRef.current) clearTimeout(bulkClearTimerRef.current);
+    };
+  }, []);
+
+  const dismissAlert = useCallback(async (alertId: string) => {
+    try {
+      await adminDismissAlert(sessionUser.session_token, alertId);
+      const next = alertsRef.current.filter(a => a.alert_id !== alertId);
+      alertsRef.current = next;
+      setKpi(k => ({ ...k, alerts: next }));
+    } catch { /* ignore */ }
+  }, [sessionUser.session_token]);
+
   const handleClearChat = useCallback(() => {
     clearAdminChat({
-      branchId: DEVICE.branch_id,
-      userId: sessionUser.user_id,
+      sessionToken: sessionUser.session_token,
+      branchId: sessionUser.branch_id,
       newSessionId: () => crypto.randomUUID(),
       clearHistory: aiClearHistory,
       setMessages: () => setMessages([]),
       setHistory: () => setHistory([]),
       setSessionId,
     });
-  }, [sessionUser.user_id]);
+  }, [sessionUser.branch_id, sessionUser.session_token]);
 
   // ── Send ────────────────────────────────────────────────────────────────────
   const handleSend = useCallback(async (overrideText?: string) => {
+    // Block until history loads so we never save the first message to a
+    // brand-new session that hasn't been seeded with the historical sessionId.
+    if (!sessionId) return;
     const text = (overrideText ?? input).trim();
     const attachment = imageAttachmentRef.current;
     if ((!text && !attachment) || chatState !== "idle") return;
     setInput("");
     setImageAttachment(null);
     addMessage({ role: "user", text, imagePreviewUrl: attachment?.previewUrl });
-    aiSaveMessage(sessionId, DEVICE.branch_id, sessionUser.user_id, "user", text, "text").catch(() => {});
     const rawHistory: ChatMessage[] = [...history, { role: "user", content: text }];
-    // Keep bounded — 60 entries max
-    const newHistory: ChatMessage[] = rawHistory.length > 60 ? rawHistory.slice(rawHistory.length - 60) : rawHistory;
+    // Kept bounded — history is the API context (role-only, no UI metadata).
+    // messages[] is the display array. They share user+assistant entries but
+    // history gets extra synthetic turns during confirmations to preserve
+    // alternating role sequences required by Anthropic.
+    const newHistory = rawHistory.length > MAX_HISTORY ? rawHistory.slice(rawHistory.length - MAX_HISTORY) : rawHistory;
     setHistory(newHistory);
     setChatState("thinking");
     // Reset live tool calls + streaming metrics for this new response
@@ -199,7 +389,10 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
       let finalText = "";
 
       onEvent.onmessage = (event: StreamEvent) => {
-        if (event.type === "token") {
+        if (!isMountedRef.current || !streamActiveRef.current) return;
+        if (event.type === "started") {
+          setCanStop(true);
+        } else if (event.type === "token") {
           finalText += event.text;
           tokenCountRef.current += 1;
           setTokenCount(tokenCountRef.current);
@@ -261,11 +454,28 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
           );
           setPendingAction(actionData);
           setChatState("confirm");
+        } else if (event.type === "mutation_batch_pending") {
+          const currentId = assistantMsgIdRef.current;
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === currentId
+                ? { ...m, text: event.assistant_text || "I'd like to make the following changes:", pendingBatchActions: event.actions }
+                : m
+            )
+          );
+          setPendingBatchActions(event.actions);
+          setChatState("confirm");
+        } else if (event.type === "mutation_executed") {
+          const currentId = assistantMsgIdRef.current;
+          setMessages(prev => prev.map(message => message.id === currentId
+            ? { ...message, undoId: event.undo_id }
+            : message));
+          setTimeout(() => { fetchKpi(); onMutationApplied(); }, 500);
         } else if (event.type === "done") {
           // Stamp stored tool calls into the assistant message, reset live state
           const storedCalls = [...liveToolCallsRef.current];
+          const currentId = assistantMsgIdRef.current;
           if (storedCalls.length > 0) {
-            const currentId = assistantMsgIdRef.current;
             setMessages(prev =>
               prev.map(m => m.id === currentId ? { ...m, toolCalls: storedCalls } : m)
             );
@@ -274,6 +484,9 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
           setLiveToolCalls([]);
           setStreamingMsgId(null);
           setStreamStartTime(null);
+          streamActiveRef.current = false;
+          activeRequestIdRef.current = null;
+          setCanStop(false);
           // Do NOT override "confirm" state — a mutation_pending event may have set it
           // just before the stream ended. Resetting to "idle" would hide the ConfirmActionModal
           // before the user can approve or deny the pending action.
@@ -282,16 +495,34 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
             // Keep in-memory context bounded at 60 entries (30 exchanges)
             setHistory(prev => {
               const next = [...prev, { role: "assistant" as const, content: finalText }];
-              return next.length > 60 ? next.slice(next.length - 60) : next;
+              return next.length > MAX_HISTORY ? next.slice(next.length - MAX_HISTORY) : next;
             });
-            aiSaveMessage(sessionId, DEVICE.branch_id, sessionUser.user_id, "assistant", finalText, "text").catch(() => {});
           }
+        } else if (event.type === "message_persisted") {
+          const currentId = assistantMsgIdRef.current;
+          setMessages(prev => prev.map(message => message.id === currentId
+            ? { ...message, id: event.message_id, aiSessionId: event.session_id, feedbackReady: true }
+            : message));
+        } else if (event.type === "cancelled") {
+          const currentId = assistantMsgIdRef.current;
+          setMessages(prev => prev.map(message => message.id === currentId
+            ? { ...message, text: finalText || "Response stopped." }
+            : message));
+          liveToolCallsRef.current = [];
+          setLiveToolCalls([]);
+          setStreamingMsgId(null);
+          setStreamStartTime(null);
+          streamActiveRef.current = false;
+          activeRequestIdRef.current = null;
+          setCanStop(false);
+          setChatState("idle");
         } else if (event.type === "error") {
           const currentId = assistantMsgIdRef.current;
+          const friendly = friendlyError(event.message);
           setMessages(prev =>
             prev.map(m =>
               m.id === currentId
-                ? { ...m, role: "system" as const, text: `Error: ${event.message}` }
+                ? { ...m, role: "system" as const, text: `Error: ${friendly}` }
                 : m
             )
           );
@@ -299,20 +530,29 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
           setLiveToolCalls([]);
           setStreamingMsgId(null);
           setStreamStartTime(null);
-          setPendingAction(null);  // FIX: clear stale pending action on error
+          streamActiveRef.current = false;
+          activeRequestIdRef.current = null;
+          setCanStop(false);
+          setPendingAction(null);
+          setPendingBatchActions(null);
           setChatState("idle");
+          setErrorMessage(friendly);
         }
       };
 
-      // Cap history to last 40 messages to avoid unbounded IPC payload growth
-      // FIX: use newHistory (includes the user's current message) not stale `history`
-      const cappedHistory = newHistory.length > 40 ? newHistory.slice(newHistory.length - 40) : newHistory;
+      // Cap history before sending to API (one cap, applied here)
+      const cappedHistory = newHistory;
+      const requestId = crypto.randomUUID();
+      activeRequestIdRef.current = requestId;
+      streamActiveRef.current = true;
+      setCanStop(false);
       await aiChatStream(
+        sessionUser.session_token,
         {
+          request_id: requestId,
           history: cappedHistory,
           message: text,
-          user_id: sessionUser.user_id,
-          branch_id: DEVICE.branch_id,
+          branch_id: sessionUser.branch_id,
           currency_exponent: DEVICE.currency_exponent,
           ui_context: getUiContext(),
           ...(attachment ? { image_base64: attachment.base64, image_media_type: attachment.mediaType } : {}),
@@ -320,11 +560,16 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
         onEvent
       );
     } catch (e) {
+      if (!isMountedRef.current) return;
+      streamActiveRef.current = false;
+      activeRequestIdRef.current = null;
+      setCanStop(false);
       const currentId = assistantMsgIdRef.current;
+      const friendly = friendlyError(String(e));
       setMessages(prev =>
         prev.map(m =>
           m.id === currentId
-            ? { ...m, role: "system" as const, text: `Error: ${String(e)}` }
+            ? { ...m, role: "system" as const, text: `Error: ${friendly}` }
             : m
         )
       );
@@ -333,13 +578,53 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
       setStreamingMsgId(null);
       setStreamStartTime(null);
       setChatState("idle");
+      setErrorMessage(friendly);
     }
-  }, [input, chatState, history, sessionId, sessionUser.user_id, addMessage, getUiContext, onNavigate, fetchKpi, onMutationApplied, setImageAttachment]);
+  }, [input, chatState, history, sessionId, sessionUser.branch_id, sessionUser.session_token, addMessage, getUiContext, onNavigate, fetchKpi, onMutationApplied, setImageAttachment]);
+
+  const handleStop = useCallback(async () => {
+    const requestId = activeRequestIdRef.current;
+    if (!requestId || !streamActiveRef.current || !canStop) return;
+    try {
+      await aiCancelChat(sessionUser.session_token, requestId);
+    } catch (error) {
+      setErrorMessage(friendlyError(String(error)));
+    }
+  }, [canStop, sessionUser.session_token]);
 
   // ── Confirm / Cancel / Undo ─────────────────────────────────────────────────
   const handleConfirm = useCallback(async () => {
+    // ── Batch path ───────────────────────────────────────────────────────────
+    if (pendingBatchActions) {
+      const capturedBatch = pendingBatchActions;
+      setChatState("thinking");
+      setPendingBatchActions(null);
+      setStreamingMsgId(null);
+      setStreamStartTime(null);
+      try {
+        const result = await aiExecuteBatchActions(sessionUser.session_token, {
+          action_ids: capturedBatch.map(a => a.action_id),
+          history,
+          assistant_text: "",
+          currency_exponent: DEVICE.currency_exponent,
+        });
+        addMessage({ role: "assistant", text: result.followup });
+        setHistory(prev => [
+          ...prev,
+          { role: "user", content: "Yes, please proceed with all changes." },
+          { role: "assistant", content: result.followup },
+        ]);
+        setChatState("idle");
+        setTimeout(() => { fetchKpi(); onMutationApplied(); }, 500);
+      } catch (e) {
+        addMessage({ role: "system", text: `Batch execution failed: ${String(e)}` });
+        setChatState("idle");
+      }
+      return;
+    }
+
+    // ── Single-action path ───────────────────────────────────────────────────
     if (!pendingAction) return;
-    // Capture pendingAction before clearing it (state is async, pendingAction still valid here)
     const captured = pendingAction;
     setChatState("thinking");
     setPendingAction(null);
@@ -347,9 +632,8 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
     setStreamingMsgId(null);
     setStreamStartTime(null);
     try {
-      const result = await aiExecuteAction({
+      const result = await aiExecuteAction(sessionUser.session_token, {
         action_id: captured.action_id,
-        user_id: sessionUser.user_id,
         history,
         assistant_text: captured.assistant_text,
         currency_exponent: DEVICE.currency_exponent,
@@ -368,36 +652,51 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
         { role: "assistant", content: result.followup },
       ]);
       setChatState("idle");
-      // Refresh KPI + visible tab after a mutation
       setTimeout(() => { fetchKpi(); onMutationApplied(); }, 500);
     } catch (e) {
       addMessage({ role: "system", text: `Execution failed: ${String(e)}` });
       setChatState("idle");
     }
-  }, [pendingAction, history, sessionUser.user_id, addMessage, fetchKpi, onMutationApplied]);
+  }, [pendingBatchActions, pendingAction, history, sessionUser.session_token, addMessage, fetchKpi, onMutationApplied]);
 
   const handleCancel = useCallback(async () => {
+    if (pendingBatchActions) {
+      await Promise.all(
+        pendingBatchActions.map(a => aiCancelAction(sessionUser.session_token, a.action_id).catch(() => {}))
+      );
+      addMessage({ role: "system", text: "Changes cancelled." });
+      setPendingBatchActions(null);
+      setStreamingMsgId(null);
+      setStreamStartTime(null);
+      setChatState("idle");
+      return;
+    }
     if (!pendingAction) return;
     const capturedCancel = pendingAction;
-    await aiCancelAction(capturedCancel.action_id, sessionUser.user_id).catch(() => {});
+    await aiCancelAction(sessionUser.session_token, capturedCancel.action_id).catch(() => {});
     addMessage({ role: "system", text: "Action cancelled." });
     setPendingAction(null);
     // FIX: clear streaming state that OpenAI/Gemini never clears via Done event
     setStreamingMsgId(null);
     setStreamStartTime(null);
     setChatState("idle");
-  }, [pendingAction, sessionUser.user_id, addMessage]);
+  }, [pendingBatchActions, pendingAction, sessionUser.session_token, addMessage]);
+
+  const handleFeedback = useCallback(async (messageId: string, rating: "up" | "down", aiSessionId?: string) => {
+    if (!aiSessionId) throw new Error("Message is not yet persisted");
+    await aiSubmitFeedback(sessionUser.session_token, aiSessionId, messageId, rating);
+  }, [sessionUser.session_token]);
 
   const handleUndo = useCallback(async (undoId: string, msgId: string) => {
     try {
-      const result = await aiUndoAction(undoId, sessionUser.user_id, DEVICE.currency_exponent, sessionUser.user_id);
+      const result = await aiUndoAction(sessionUser.session_token, undoId, DEVICE.currency_exponent);
       setMessages(prev => prev.map(m => m.id === msgId ? { ...m, undoId: undefined } : m));
       addMessage({ role: "system", text: result.followup });
       setTimeout(() => { fetchKpi(); onMutationApplied(); }, 500);
     } catch (e) {
       addMessage({ role: "system", text: `Undo failed: ${String(e)}` });
     }
-  }, [sessionUser.user_id, addMessage, fetchKpi, onMutationApplied]);
+  }, [sessionUser.session_token, addMessage, fetchKpi, onMutationApplied]);
 
   // ── Run handlers ────────────────────────────────────────────────────────────
   const handleRunExecute = useCallback(async () => {
@@ -406,6 +705,7 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
     setChatState("run_executing");
     const onEvent = new Channel<StreamEvent>();
     onEvent.onmessage = (event: StreamEvent) => {
+      if (!isMountedRef.current) return;
       if (event.type === "run_progress") {
         setRunState(prev => prev ? { ...prev, done: event.done, phase: "executing" } : prev);
       } else if (event.type === "run_done") {
@@ -418,36 +718,40 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
       }
     };
     try {
-      await aiRunExecute(runState.runId, sessionUser.user_id, onEvent);
+      await aiRunExecute(sessionUser.session_token, runState.runId, onEvent);
     } catch (e) {
       setRunState(prev => prev ? { ...prev, phase: "failed", error: String(e) } : prev);
       setChatState("idle");
     }
-  }, [runState, sessionUser.user_id, fetchKpi, onMutationApplied]);
+  }, [runState, sessionUser.session_token, fetchKpi, onMutationApplied]);
 
-  const handleRunCancel = useCallback(() => {
+  const handleRunCancel = useCallback(async () => {
+    if (!runState || runState.phase === "executing") return;
+    try {
+      await aiRunCancel(sessionUser.session_token, runState.runId);
+    } catch { /* best-effort; clear local state regardless */ }
     setRunState(null);
     setChatState("idle");
-  }, []);
+  }, [runState, sessionUser.session_token]);
 
   const handleRunUndo = useCallback(async () => {
-    if (!runState || runState.phase !== "done") return;
+    if (!runState || runState.phase !== "done" || runState.opId !== "bulk_price_adjust") return;
     try {
-      const result = await aiRunUndo(runState.runId, sessionUser.user_id);
+      const result = await aiRunUndo(sessionUser.session_token, runState.runId);
       setRunState(null);
       addMessage({ role: "system", text: result.followup });
       setTimeout(() => { fetchKpi(); onMutationApplied(); }, 500);
     } catch (e) {
       addMessage({ role: "system", text: `Run undo failed: ${String(e)}` });
     }
-  }, [runState, sessionUser.user_id, addMessage, fetchKpi, onMutationApplied]);
+  }, [runState, sessionUser.session_token, addMessage, fetchKpi, onMutationApplied]);
 
   return {
     messages, input, setInput, imageAttachment, setImageAttachment,
-    chatState, pendingAction, liveToolCalls,
-    streamingMsgId, tokenCount, streamStartTime,
-    kpi, runState, fetchKpi,
-    handleSend, handleConfirm, handleCancel, handleUndo, handleClearChat,
+    chatState, pendingAction, pendingBatchActions, liveToolCalls,
+    streamingMsgId, tokenCount, streamStartTime, canStop,
+    kpi, runState, bulkProgress, errorMessage, dismissError, fetchKpi, dismissAlert,
+    handleSend, handleStop, handleConfirm, handleCancel, handleUndo, handleFeedback, handleClearChat,
     handleRunExecute, handleRunCancel, handleRunUndo,
   };
 }

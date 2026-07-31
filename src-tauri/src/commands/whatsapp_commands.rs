@@ -1,11 +1,11 @@
-use crate::commands::rbac;
+use crate::commands::{rbac, sync_commands};
 use crate::errors::{AppError, AppResult};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use ulid::Ulid;
 
-const SIDECAR_URL: &str = "http://127.0.0.1:3131";
+pub(crate) const SIDECAR_URL: &str = "http://127.0.0.1:3131";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ pub struct SendDeliveryInput {
 /// Read the shared-secret token the Node sidecar writes to
 /// `<wa_session_dir>/.sidecar_token` on startup.  Returns an empty string
 /// if the file is not found (sidecar not yet started).
-fn read_sidecar_token(state: &AppState) -> String {
+pub(crate) fn read_sidecar_token(state: &AppState) -> String {
     std::fs::read_to_string(&state.wa_token_file)
         .unwrap_or_default()
         .trim()
@@ -53,11 +53,9 @@ fn read_sidecar_token(state: &AppState) -> String {
 /// remove any doubled country code (e.g. +973973... → +973...).
 /// Returns an empty string if the input has no digits (e.g. empty or all symbols).
 fn normalize_phone(raw: &str) -> String {
-    let stripped: String = raw
-        .chars()
-        .filter(|c| c.is_ascii_digit() || *c == '+')
-        .collect();
-    let digits_only: String = stripped.trim_start_matches('+').to_string();
+    // Strip everything except digits — a mid-string '+' (e.g. "973+305") would
+    // produce an invalid JID, so we discard '+' entirely and re-add it as a prefix.
+    let digits_only: String = raw.chars().filter(|c| c.is_ascii_digit()).collect();
     // Reject inputs with no digits — avoid sending "+" to the sidecar.
     if digits_only.is_empty() {
         return String::new();
@@ -180,7 +178,18 @@ pub async fn whatsapp_status(
     actor_user_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<WhatsAppStatus> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    if actor_user_id.trim().is_empty() {
+        let setup_done: Option<String> =
+            sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'setup_complete'")
+                .fetch_optional(&state.db)
+                .await?
+                .flatten();
+        if setup_done.as_deref() == Some("1") {
+            return Err(AppError::Permission("User context is required".into()));
+        }
+    } else {
+        rbac::require_any_role(&state.db, &actor_user_id).await?;
+    }
     let token = read_sidecar_token(&state);
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
@@ -250,6 +259,30 @@ pub async fn whatsapp_send_delivery(
     )
     .await?;
 
+    // Phase 1: record a pending payment confirmation so that when this customer
+    // replies with a payment screenshot, ZanAI auto-verifies amount + business name.
+    let (branch_id, business_name): (Option<String>, String) =
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT branch_id, name FROM branches WHERE is_active = 1 LIMIT 1",
+        )
+        .fetch_optional(&state.db)
+        .await
+        .ok()
+        .flatten()
+        .map(|(id, name)| (Some(id), name))
+        .unwrap_or((None, String::new()));
+    let jid = crate::commands::payment_confirm_commands::jid_for_phone(&phone);
+    let _ = crate::commands::payment_confirm_commands::record_pending(
+        &state.db,
+        &jid,
+        &input.receipt_number,
+        input.net_total_minor,
+        input.currency_exponent,
+        &business_name,
+        branch_id.as_deref(),
+    )
+    .await;
+
     Ok(true)
 }
 
@@ -313,6 +346,7 @@ pub async fn whatsapp_save_config(
     .bind(&now)
     .execute(&state.db)
     .await?;
+    sync_commands::schedule_immediate_sync(&state);
     Ok(())
 }
 
@@ -336,13 +370,12 @@ pub async fn whatsapp_notify_arrival(
 
     // Hard rule: arrival message only within 1 hour of delivery bill creation.
     if !input.delivery_id.is_empty() {
-        let created_at_str: Option<String> = sqlx::query_scalar(
-            "SELECT created_at FROM deliveries WHERE delivery_id = ?",
-        )
-        .bind(&input.delivery_id)
-        .fetch_optional(&state.db)
-        .await?
-        .flatten();
+        let created_at_str: Option<String> =
+            sqlx::query_scalar("SELECT created_at FROM deliveries WHERE delivery_id = ?")
+                .bind(&input.delivery_id)
+                .fetch_optional(&state.db)
+                .await?
+                .flatten();
         if let Some(s) = created_at_str {
             if let Ok(created_at) = chrono::DateTime::parse_from_rfc3339(&s) {
                 let age = chrono::Utc::now()
@@ -397,13 +430,12 @@ pub async fn whatsapp_payment_reminder(
 
     // Hard rule: payment reminder only on the same calendar day as the delivery bill (Bahrain UTC+3).
     if !input.delivery_id.is_empty() {
-        let created_at_str: Option<String> = sqlx::query_scalar(
-            "SELECT created_at FROM deliveries WHERE delivery_id = ?",
-        )
-        .bind(&input.delivery_id)
-        .fetch_optional(&state.db)
-        .await?
-        .flatten();
+        let created_at_str: Option<String> =
+            sqlx::query_scalar("SELECT created_at FROM deliveries WHERE delivery_id = ?")
+                .bind(&input.delivery_id)
+                .fetch_optional(&state.db)
+                .await?
+                .flatten();
         if let Some(s) = created_at_str {
             if let Ok(created_at) = chrono::DateTime::parse_from_rfc3339(&s) {
                 let bahrain = chrono::FixedOffset::east_opt(3 * 3600).unwrap();
@@ -411,7 +443,8 @@ pub async fn whatsapp_payment_reminder(
                 let today = chrono::Utc::now().with_timezone(&bahrain).date_naive();
                 if created_date != today {
                     return Err(AppError::Validation(
-                        "Payment reminders can only be sent on the same day as the delivery bill.".into(),
+                        "Payment reminders can only be sent on the same day as the delivery bill."
+                            .into(),
                     ));
                 }
             }
@@ -605,7 +638,10 @@ pub(crate) async fn whatsapp_send_delivery_impl(
     });
 
     let token = read_sidecar_token(state);
-    send_raw(&phone, &message, &token).await?;
+    // Best-effort: log failures but don't block the delivery status update.
+    if let Err(e) = send_raw(&phone, &message, &token).await {
+        tracing::warn!("WhatsApp delivery notification failed (best-effort): {}", e);
+    }
     Ok(())
 }
 
@@ -637,7 +673,11 @@ pub(crate) async fn whatsapp_notify_arrival_impl(
         r = receipt_number,
     );
     let token = read_sidecar_token(state);
-    send_raw(&phone, &message, &token).await?;
+    if !send_raw(&phone, &message, &token).await? {
+        return Err(AppError::Internal(
+            "WhatsApp: message was not accepted by the sidecar. Please re-scan the QR code.".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -695,7 +735,7 @@ pub(crate) async fn whatsapp_payment_reminder_impl(
              ─────────────────\n\
              💳 تذكير بالدفع — طلب #{r}\n\
              المبلغ المستحق: {amount} {cur}\n\n\
-             يرجى إرسال لنا صورة من إصمال الدفع للتأكيد. 🧾\n\n\
+             يرجى إرسال لنا صورة من إيصال الدفع للتأكيد. 🧾\n\n\
              شكراً! 🙏",
             r = receipt_number,
             cur = currency,
@@ -703,7 +743,11 @@ pub(crate) async fn whatsapp_payment_reminder_impl(
         ),
     };
     let token = read_sidecar_token(state);
-    send_raw(&phone, &message, &token).await?;
+    if !send_raw(&phone, &message, &token).await? {
+        return Err(AppError::Internal(
+            "WhatsApp: message was not accepted by the sidecar. Please re-scan the QR code.".into(),
+        ));
+    }
     Ok(())
 }
 

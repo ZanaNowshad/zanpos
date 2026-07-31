@@ -55,6 +55,12 @@ function methodLabel(m: string) {
   return m.charAt(0).toUpperCase() + m.slice(1);
 }
 
+export function deliveryStatusActionLabel(status: string) {
+  return status === "dispatched" || status === "out_for_delivery"
+    ? "Out for delivery"
+    : "Delivered";
+}
+
 function fmtDateTime(iso: string) {
   const d = new Date(iso);
   return d.toLocaleDateString([], { day: "2-digit", month: "short", year: "numeric" }) +
@@ -317,6 +323,14 @@ export default function DeliveriesTab({ sessionUser }: Props) {
 
   return (
     <div className="dlv-tab">
+      <header className="dlv-command-header">
+        <div>
+          <span>Operations queue</span>
+          <h2>Delivery queue</h2>
+          <p>Handle payment exceptions and move each order to its next stage.</p>
+        </div>
+        <strong>{rows.length}<small>{preset === "all" ? " shown" : ` ${preset}`}</small></strong>
+      </header>
 
       {/* ── Top bar ── */}
       <div className="dlv-topbar">
@@ -449,7 +463,11 @@ export default function DeliveriesTab({ sessionUser }: Props) {
 
       {/* ── Empty state ── */}
       {!loading && rows.length === 0 && (
-        <div className="dlv-empty">No deliveries found.</div>
+        <div className="dlv-empty">
+          <span aria-hidden="true">✓</span>
+          <strong>No deliveries need attention</strong>
+          <p>{hasAdvancedFilters || search ? "Clear filters to see the full queue." : "New delivery orders will appear here automatically."}</p>
+        </div>
       )}
 
       {/* ── Register book table ── */}
@@ -620,7 +638,8 @@ export default function DeliveriesTab({ sessionUser }: Props) {
                                       className="dlv-action-btn"
                                       onClick={() => handleStatusChange(row, s)}
                                     >
-                                      → {s === "out_for_delivery" ? "Out for Delivery" : "Delivered"}
+                                      <span className="icon-directional" aria-hidden="true">→</span>{" "}
+                                      {deliveryStatusActionLabel(s)}
                                     </button>
                                   ))}
                                 </div>

@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { DeviceRow } from "../types";
 import { DEVICE } from "../types";
 import * as cmd from "../tauri/commands";
+import { useLanguage } from "../hooks/useLanguage";
+import { deviceStatusText, operationsTranslator } from "../i18n/operationsStrings";
 
 interface Props { sessionUserId: string; }
 
 export default function DevicesTab({ sessionUserId }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => operationsTranslator(language), [language]);
   const [devices, setDevices]   = useState<DeviceRow[]>([]);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);
@@ -20,17 +24,17 @@ export default function DevicesTab({ sessionUserId }: Props) {
       const rows = await cmd.deviceList(sessionUserId);
       setDevices(rows);
     } catch {
-      setError("Failed to load devices");
+      setError(t("devicesLoadFailed"));
     } finally {
       setLoading(false);
     }
-  }, [sessionUserId]);
+  }, [sessionUserId, t]);
 
   useEffect(() => { load(); }, [load]);
 
   async function handleAdd() {
     if (!code.trim() || !name.trim()) {
-      setError("Device code and name are required"); return;
+      setError(t("deviceCodeNameRequired")); return;
     }
     setSaving(true); setError(null);
     try {
@@ -38,7 +42,7 @@ export default function DevicesTab({ sessionUserId }: Props) {
       setDevices(prev => [...prev, created]);
       setShowForm(false); setCode(""); setName("");
     } catch (e: unknown) {
-      setError(typeof e === "string" ? e : "Failed to create device");
+      setError(typeof e === "string" ? e : t("deviceCreateFailed"));
     } finally {
       setSaving(false);
     }
@@ -51,38 +55,38 @@ export default function DevicesTab({ sessionUserId }: Props) {
         d.device_id === device.device_id ? { ...d, is_active: !d.is_active } : d
       ));
     } catch (e: unknown) {
-      setError(typeof e === "string" ? e : "Failed to update device");
+      setError(typeof e === "string" ? e : t("deviceUpdateFailed"));
     }
   }
 
-  if (loading) return <div className="bo-empty">Loading devices…</div>;
+  if (loading) return <div className="bo-empty">{t("loadingDevices")}</div>;
 
   return (
     <div className="devices-layout">
       <div className="devices-header">
-        <h2 className="settings-title">POS Terminals</h2>
+        <h2 className="settings-title">{t("posTerminals")}</h2>
         <button className="btn-primary" onClick={() => { setShowForm(s => !s); setError(null); }}>
-          {showForm ? "Cancel" : "+ Register Device"}
+          {t(showForm ? "cancel" : "registerDevice")}
         </button>
       </div>
 
       {showForm && (
         <div className="devices-form-card">
-          <h3>New Device</h3>
+          <h3>{t("newDevice")}</h3>
           {error && <div className="bo-form-error">{error}</div>}
           <div className="bo-row-two">
             <div>
-              <label className="bo-label">Device Code *</label>
+              <label className="bo-label">{t("deviceCode")} *</label>
               <input className="bo-input" value={code} onChange={e => setCode(e.target.value)} placeholder="POS02" autoFocus />
             </div>
             <div>
-              <label className="bo-label">Device Name *</label>
-              <input className="bo-input" value={name} onChange={e => setName(e.target.value)} placeholder="Counter 2" />
+              <label className="bo-label">{t("deviceName")} *</label>
+              <input className="bo-input" value={name} onChange={e => setName(e.target.value)} placeholder={t("counterTwo")} />
             </div>
           </div>
           <div className="bo-form-actions">
             <button className="btn-primary" onClick={handleAdd} disabled={saving}>
-              {saving ? "Saving…" : "Register"}
+              {t(saving ? "saving" : "register")}
             </button>
           </div>
         </div>
@@ -93,11 +97,11 @@ export default function DevicesTab({ sessionUserId }: Props) {
       <table className="devices-table">
         <thead>
           <tr>
-            <th>Code</th>
-            <th>Name</th>
-            <th>Status</th>
-            <th>This Device</th>
-            <th>Action</th>
+            <th>{t("code")}</th>
+            <th>{t("name")}</th>
+            <th>{t("status")}</th>
+            <th>{t("thisDevice")}</th>
+            <th>{t("action")}</th>
           </tr>
         </thead>
         <tbody>
@@ -109,17 +113,17 @@ export default function DevicesTab({ sessionUserId }: Props) {
                 <td>{d.device_name}</td>
                 <td>
                   <span className={`devices-badge ${d.is_active ? "devices-badge-active" : "devices-badge-inactive"}`}>
-                    {d.is_active ? "Active" : "Inactive"}
+                    {deviceStatusText(language, d.is_active)}
                   </span>
                 </td>
-                <td>{isCurrent ? <span className="devices-current-chip">This terminal</span> : ""}</td>
+                <td>{isCurrent ? <span className="devices-current-chip">{t("thisTerminal")}</span> : ""}</td>
                 <td>
                   {!isCurrent && (
                     <button
                       className={d.is_active ? "btn-secondary" : "btn-primary"}
                       onClick={() => handleToggle(d)}
                     >
-                      {d.is_active ? "Deactivate" : "Activate"}
+                      {t(d.is_active ? "deactivate" : "activate")}
                     </button>
                   )}
                 </td>
@@ -127,7 +131,7 @@ export default function DevicesTab({ sessionUserId }: Props) {
             );
           })}
           {devices.length === 0 && (
-            <tr><td colSpan={5} className="bo-empty">No devices registered.</td></tr>
+            <tr><td colSpan={5} className="bo-empty">{t("noDevicesRegistered")}</td></tr>
           )}
         </tbody>
       </table>

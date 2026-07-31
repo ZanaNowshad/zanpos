@@ -1,32 +1,31 @@
-import { useCallback, useEffect, useState } from "react";
-import type { AdminProduct, CategoryRow, GhostSummary, ProductPrefill, TaxRuleRow } from "../types";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { AdminProduct, CategoryRow, ProductPrefill, TaxRuleRow } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney } from "../money";
 import * as cmd from "../tauri/commands";
 import BarcodesPrintModal from "./BarcodesPrintModal";
 import BulkImportModal from "./BulkImportModal";
-import GhostBarcodesPanel from "./GhostBarcodesPanel";
+import DuplicateProductsModal from "./DuplicateProductsModal";
 import ProductFormModal from "./ProductFormModal";
+import { useLanguage } from "../hooks/useLanguage";
+import { modalTranslator } from "../i18n/modalStrings";
 
 interface Props {
   sessionUserId: string;
-  ghostSummary?: GhostSummary;
-  ghostPrefill?: ProductPrefill | null;
-  onGhostPrefillConsumed?: () => void;
-  onGhostCountChange?: () => void;
-  onCreateProductFromGhost?: (prefill: ProductPrefill) => void;
+  /** Pre-fill data to open the create form with (e.g. from a POS notification). */
+  prefill?: ProductPrefill | null;
+  onPrefillConsumed?: () => void;
 }
 
 const PAGE_SIZE = 100;
 
 export default function ProductsTab({
   sessionUserId,
-  ghostSummary,
-  ghostPrefill,
-  onGhostPrefillConsumed,
-  onGhostCountChange,
-  onCreateProductFromGhost,
+  prefill,
+  onPrefillConsumed,
 }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => modalTranslator(language), [language]);
   const [products, setProducts]       = useState<AdminProduct[]>([]);
   const [total, setTotal]             = useState(0);
   const [offset, setOffset]           = useState(0);
@@ -35,10 +34,14 @@ export default function ProductsTab({
   const [taxRules, setTaxRules]       = useState<TaxRuleRow[]>([]);
   const [selected, setSelected]       = useState<AdminProduct | null>(null);
   const [creating, setCreating]       = useState(false);
+  // Local copy of ghost prefill — captured before the parent clears productPrefill.
+  const [localPrefill, setLocalPrefill] = useState<ProductPrefill | null>(null);
   const [search, setSearch]           = useState("");
   const [searchInput, setSearchInput] = useState(""); // debounced into `search`
   const [printProducts, setPrintProducts] = useState<AdminProduct[] | null>(null);
   const [showBulkImport, setShowBulkImport] = useState(false);
+  const [showDupModal, setShowDupModal] = useState(false);
+  const [duplicateCount, setDuplicateCount] = useState<number | null>(null);
 
   const exp = DEVICE.currency_exponent;
   const cur = DEVICE.currency;
@@ -73,13 +76,29 @@ export default function ProductsTab({
       });
   }, [sessionUserId]);
 
-  // Open create form with ghost barcode prefill data
+  const scanDuplicateCount = useCallback(async () => {
+    try {
+      const groups = await cmd.adminFindDuplicateProducts(sessionUserId, false);
+      setDuplicateCount(groups.reduce((n, g) => n + Math.max(0, g.products.length - 1), 0));
+    } catch {
+      setDuplicateCount(null);
+    }
+  }, [sessionUserId]);
+
   useEffect(() => {
-    if (!ghostPrefill) return;
+    scanDuplicateCount();
+  }, [scanDuplicateCount]);
+
+  // Open the create form with prefilled data (e.g. handed off from a POS
+  // notification). Capture it locally first so the form still has the data even
+  // though the parent clears its prefill in the same render batch.
+  useEffect(() => {
+    if (!prefill) return;
+    setLocalPrefill(prefill);
     setCreating(true);
     setSelected(null);
-    onGhostPrefillConsumed?.();
-  }, [ghostPrefill]); // eslint-disable-line react-hooks/exhaustive-deps
+    onPrefillConsumed?.();
+  }, [prefill]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function startCreate() {
     setSelected(null);
@@ -94,6 +113,7 @@ export default function ProductsTab({
   function cancelEdit() {
     setSelected(null);
     setCreating(false);
+    setLocalPrefill(null);
   }
 
   const showingForm = creating || selected !== null;
@@ -108,13 +128,13 @@ export default function ProductsTab({
     {printProducts && <BarcodesPrintModal products={printProducts} onClose={() => setPrintProducts(null)} />}
     {showBulkImport && <BulkImportModal mode="products" sessionUserId={sessionUserId} onClose={() => setShowBulkImport(false)} onDone={refreshProducts} />}
 
-    {/* Product form modal — widget style */}
+    {/* Product form modal — full-screen overlay */}
     {showingForm && (
       <ProductFormModal
         mode={creating ? "create" : "edit"}
         product={selected}
-        prefilledName={ghostPrefill?.name}
-        prefilledBarcode={ghostPrefill?.barcode}
+        prefilledName={localPrefill?.name}
+        prefilledBarcode={localPrefill?.barcode}
         categories={categories}
         taxRules={taxRules}
         sessionUserId={sessionUserId}
@@ -123,31 +143,43 @@ export default function ProductsTab({
       />
     )}
 
+    {/* Duplicate-products triage — scans the catalog, merges or archives dupes */}
+    {showDupModal && (
+      <DuplicateProductsModal
+        sessionUserId={sessionUserId}
+        onClose={() => setShowDupModal(false)}
+        onResolved={() => { refreshProducts(); scanDuplicateCount(); }}
+      />
+    )}
+
     <div className="bo-tab-layout">
-      {ghostSummary && (ghostSummary.pending + ghostSummary.found + ghostSummary.not_found) > 0 && (
-        <GhostBarcodesPanel
-          sessionUserId={sessionUserId} summary={ghostSummary}
-          onCreateProduct={(prefill) => onCreateProductFromGhost?.(prefill)}
-          onCountChange={() => onGhostCountChange?.()}
-        />
-      )}
       {/* ── Full-width product list ── */}
       <div className="bo-list-pane bo-list-full">
         <div className="bo-list-header">
-          <input className="bo-search" placeholder="Search products…" value={searchInput} onChange={e => setSearchInput(e.target.value)} />
-          <button className="btn-secondary" onClick={() => setPrintProducts(products)} title="Print barcode labels">Labels</button>
-          <button className="btn-secondary" onClick={() => setShowBulkImport(true)} title="Bulk import CSV">Import</button>
-          <button className="btn-primary" onClick={startCreate}>+ New Product</button>
+          <input className="bo-search" placeholder={t("searchProducts")} value={searchInput} onChange={e => setSearchInput(e.target.value)} />
+          <button className="btn-secondary" onClick={() => setShowDupModal(true)} title={t("duplicates")}>{t("duplicates")}</button>
+          <button className="btn-secondary" onClick={() => setPrintProducts(products)} title={t("printLabels")}>{t("labels")}</button>
+          <button className="btn-secondary" onClick={() => setShowBulkImport(true)} title={t("importAction")}>{t("importAction")}</button>
+          <button className="btn-primary" onClick={startCreate}>+ {t("newProduct")}</button>
         </div>
+        {duplicateCount !== null && duplicateCount > 0 && (
+          <div className="product-integrity-banner">
+            <div>
+              <strong>{duplicateCount} {t("possibleDuplicatesFound")}</strong>
+              <span>{t("duplicateReviewHint")}</span>
+            </div>
+            <button className="btn-primary" onClick={() => setShowDupModal(true)}>{t("reviewAndMerge")}</button>
+          </div>
+        )}
         {total > 0 && (
           <div className="bo-pagination">
-            <span className="bo-pagination-info">{loading ? "Loading…" : `${offset + 1}–${Math.min(offset + products.length, total)} of ${total.toLocaleString()}`}</span>
-            <button className="bo-pagination-btn" disabled={offset === 0 || loading} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>‹ Prev</button>
-            <button className="bo-pagination-btn" disabled={offset + PAGE_SIZE >= total || loading} onClick={() => setOffset(offset + PAGE_SIZE)}>Next ›</button>
+            <span className="bo-pagination-info">{loading ? t("loading") : `${offset + 1}–${Math.min(offset + products.length, total)} ${t("of")} ${total.toLocaleString()}`}</span>
+            <button className="bo-pagination-btn" disabled={offset === 0 || loading} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}><span className="icon-directional" aria-hidden="true">‹</span> {t("previous")}</button>
+            <button className="bo-pagination-btn" disabled={offset + PAGE_SIZE >= total || loading} onClick={() => setOffset(offset + PAGE_SIZE)}>{t("next")} <span className="icon-directional" aria-hidden="true">›</span></button>
           </div>
         )}
         <div className="bo-list">
-          {loading && products.length === 0 && <div className="bo-empty">Loading…</div>}
+          {loading && products.length === 0 && <div className="bo-empty">{t("loading")}</div>}
           {products.map(p => (
             <div key={p.product_id} className="bo-list-row-wrap">
               <button
@@ -160,17 +192,17 @@ export default function ProductsTab({
                 </div>
                 <div className="bo-list-row-right">
                   <span className="bo-list-row-price">{cur} {formatMoney(p.price_minor, exp)}</span>
-                  {!p.is_active && <span className="bo-badge-inactive">Inactive</span>}
+                  {!p.is_active && <span className="bo-badge-inactive">{t("inactive")}</span>}
                 </div>
               </button>
-              <button className="btn-secondary bo-label-btn" onClick={e => { e.stopPropagation(); setPrintProducts([p]); }}>Label</button>
+              <button className="btn-secondary bo-label-btn" onClick={e => { e.stopPropagation(); setPrintProducts([p]); }}>{t("label")}</button>
             </div>
           ))}
           {!loading && products.length === 0 && (
             <div className="bo-empty">
               <div className="bo-empty-icon">📦</div>
-              <p className="bo-empty-title">No products found</p>
-              <p className="bo-empty-hint">Try a different search term, or add a new product.</p>
+              <p className="bo-empty-title">{t("noProductsFound")}</p>
+              <p className="bo-empty-hint">{t("noProductsHint")}</p>
             </div>
           )}
         </div>

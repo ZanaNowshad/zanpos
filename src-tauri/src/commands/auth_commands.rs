@@ -1,5 +1,4 @@
 use crate::commands::override_token;
-use crate::commands::rbac;
 use crate::db::repositories::auth_repo;
 use crate::domain::auth::{SessionUser, UserSummary};
 use crate::errors::AppError;
@@ -12,28 +11,10 @@ use tauri::State;
 static LAST_LIST_USERS: OnceLock<AtomicI64> = OnceLock::new();
 
 /// List active users for the PIN-login screen.
-/// Requires an authenticated caller so that the user list cannot be enumerated
-/// by an unauthenticated IPC call (e.g. a compromised webview).
-/// The PIN-screen itself is allowed because it passes its own active user_id.
-/// First-run (no user logged in yet) passes the seeded owner ID from app_config.
+/// This is deliberately pre-authentication because users select their profile
+/// before entering a PIN. The response is rate-limited and contains summaries only.
 #[tauri::command]
-pub async fn auth_list_users(
-    actor_user_id: Option<String>,
-    state: State<'_, AppState>,
-) -> Result<Vec<UserSummary>, AppError> {
-    // Allow the call only when a valid actor_user_id is supplied.
-    // An empty/missing actor is rejected — the PIN screen must supply its current user.
-    // EXCEPTION: if no active users exist at all (first-run before wizard), allow through
-    // so the wizard can render the screen. After setup_wizard_complete the owner is active.
-    if let Some(ref uid) = actor_user_id {
-        if !uid.is_empty() {
-            // Best-effort: ignore RBAC error here so the login screen can still
-            // show users even if the session token expired. The sensitive operations
-            // (create/update/delete users) are individually RBAC-guarded.
-            let _ = rbac::require_any_role(&state.db, uid).await;
-        }
-    }
-
+pub async fn auth_list_users(state: State<'_, AppState>) -> Result<Vec<UserSummary>, AppError> {
     let counter = LAST_LIST_USERS.get_or_init(|| AtomicI64::new(0));
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -80,7 +61,20 @@ pub async fn auth_login_pin(
     if result.is_err() {
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     }
-    result
+    let mut user = result?;
+    let issued = state.sessions.issue(&user.user_id).await;
+    user.session_token = issued.token;
+    user.session_expires_at = issued.expires_at.to_rfc3339();
+    Ok(user)
+}
+
+#[tauri::command]
+pub async fn auth_logout(
+    session_token: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    state.sessions.revoke(&session_token).await?;
+    Ok(())
 }
 
 /// Verify a PIN belongs to an active OWNER account — used to unlock the
@@ -129,6 +123,7 @@ pub async fn auth_validate_manager_pin(
     pin: String,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
+    validate_manager_pin_input(&pin)?;
     let rows = sqlx::query(
         "SELECT u.user_id, u.pin_hash
          FROM users u JOIN roles r ON r.role_id = u.role_id
@@ -153,5 +148,28 @@ pub async fn auth_validate_manager_pin(
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             Err(AppError::Permission("Invalid manager PIN".into()))
         }
+    }
+}
+
+fn validate_manager_pin_input(pin: &str) -> Result<(), AppError> {
+    if pin.len() > 64 {
+        return Err(AppError::Validation(
+            "PIN must not exceed 64 characters".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn manager_pin_rejects_more_than_64_characters() {
+        assert!(matches!(
+            validate_manager_pin_input(&"1".repeat(65)),
+            Err(AppError::Validation(_))
+        ));
+        assert!(validate_manager_pin_input(&"1".repeat(64)).is_ok());
     }
 }

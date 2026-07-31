@@ -1,0 +1,663 @@
+/* ZANPOS design tokens — the single source of truth for colour, theme and
+   layout primitives.
+   Extracted verbatim from App.css: identical values, identical order, so the
+   cascade is unchanged. Imported by App.tsx BEFORE App.css, which is what
+   preserves that order — a CSS @import would have to precede the @font-face
+   rules App.css opens with, so the import lives in TS instead.
+   Every [data-theme] block below overrides :root. Keep them together: the two
+   light-theme blocks that once sat 12k lines apart silently disagreed on 13
+   tokens, and nobody noticed for months. */
+:root {
+  /* ── Surfaces ── */
+  --bg:       #0E0C0A;   /* was #0C0E13 — amber-warmed black */
+  --surface:  #1A1713;   /* was #181B27 — warm charcoal */
+  --surface2: #221F1A;   /* was #1F2335 */
+  --surface3: #2C2822;   /* was #262B42 */
+  --surface4: #36322A;   /* was #2E3452 */
+
+  /* ── Primary: Warm Gold — action, brand, money, CTAs ── */
+  --accent:    #F0A500;
+  --accent-h:  #D49200;
+  --accent-t:  #0D0F14;   /* text ON accent buttons */
+  --accent2:   rgba(240,165,0,0.10);
+
+  /* ── Gold (money values — same family as accent) ── */
+  --gold:      #F0A500;
+  --gold-h:    #D49200;
+  --gold-dim:  rgba(240,165,0,0.10);
+
+  /* ── Semantic ── */
+  --success: #22C55E;
+  --warning: #FBBF24;
+  --error:   #DC2626;
+  --info:    #60A5FA;
+  /* T16: AI-chat tool-card category colors — mapped to semantic roles */
+  --ai-indigo: #6366f1;  /* analytics / reporting */
+  --ai-purple: #8b5cf6;  /* admin / people */
+  /* T19: Sticky note palette — light pastels override-able per theme */
+  --note-yellow-bg: #fef08a; --note-yellow-bd: #eab308;
+  --note-green-bg:  #bbf7d0; --note-green-bd:  #22c55e;
+  --note-blue-bg:   #bae6fd; --note-blue-bd:   #0ea5e9;
+  --note-pink-bg:   #fbcfe8; --note-pink-bd:   #ec4899;
+  --note-purple-bg: #e9d5ff; --note-purple-bd: #a855f7;
+
+  /* ── Text ── */
+  --text:       #F4F5FA;
+  --text-dim:   #9BA5CC;   /* was #8890B0 — lifted for readability */
+  --text-muted: #727EAC;   /* was #454C6A — 2.1:1 → 5.2:1 contrast, BIG fix */
+
+  /* ── Borders ── */
+  --border:  rgba(255,255,255,0.11);  /* was 0.07 — cards now visible */
+  --border2: rgba(255,255,255,0.06);  /* was 0.04 */
+
+  /* ── Geometry: rounded enterprise cards ── */
+  --radius:    14px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+  --radius-pill: 999px;
+
+  /* ── Transition tokens (T28) ── */
+  /* Decelerate-dominant curve — same as modal-in; starts fast, settles gently */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --t-fast:   80ms var(--ease-out);
+  --t-base:  120ms var(--ease-out);
+  --t-slow:  150ms var(--ease-out);
+  /* T34: spring easing — slight overshoot for tactile feel */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* Polish pass — raw durations for keyframe animations (transitions use the
+     shorthand tokens above; @keyframes need a bare duration). */
+  --dur-enter:    380ms;   /* element entrances — rise / pop */
+  --dur-flourish: 640ms;   /* signature gold success flourish */
+  --stagger-step:  45ms;   /* per-item delay in staggered reveals */
+
+  /* ── Typography ── */
+  --font:         'DM Sans', 'Segoe UI Variable Text', system-ui, sans-serif;
+  --font-display: 'Bricolage Grotesque', 'Syne', system-ui, sans-serif;
+  --font-mono:    'IBM Plex Mono', 'Cascadia Code', monospace;
+
+  /* ── Shadows ── */
+  --shadow-sm: 0 1px 4px rgba(0,0,0,0.4);
+  --shadow-md: 0 4px 24px rgba(0,0,0,0.5);
+  --shadow-lg: 0 12px 48px rgba(0,0,0,0.65);
+  --shadow-gold: 0 4px 24px rgba(240,165,0,0.25);
+  --shadow-gold-lg: 0 8px 32px rgba(240,165,0,0.35);
+
+  /* ── Semantic focus / interactive ── */
+  --color-focus:        #2563EB;
+  --color-focus-ring:   rgba(37,99,235,0.18);
+
+  /* ── Soft fills for state surfaces ── */
+  --color-success-soft: rgba(34,197,94,0.10);
+  --color-danger-soft:  rgba(239,68,68,0.10);
+  --color-warning-soft: rgba(251,191,36,0.12);
+  --color-info-soft:    rgba(96,165,250,0.10);
+
+  /* ── Spacing scale (8px grid) ── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* ── Z-index layering system ─────────────────────────────────────────────
+     Layer tokens enforce a strict visual stacking order.  Use ONLY these
+     values for z-index; never write a bare integer except for local
+     stacking-context adjustments (0 / 1 / 2 within a single component).
+
+     Layer          Token            Value    Used for
+     ──────────     ──────────────── ──────   ──────────────────────────────
+     dropdown       --z-dropdown      100     Autocomplete, select dropdowns
+     sticky         --z-sticky        200     Fixed top bar, sticky headers
+     overlay        --z-overlay       400     Drawer / side-panel scrim
+     toast          --z-toast         500     Toast notifications
+     modal          --z-modal        1000     Standard modal dialogs
+     modal-raised   --z-modal-raised 1200     Modals above other modals
+     dialog-top     --z-dialog-top   2000     Highest-priority dialogs
+     lock           --z-lock         9000     Lock screen / blocking overlays
+     top            --z-top          9999     Absolute topmost (emergencies)
+     ─────────────────────────────────────────────────────────────────── */
+  --z-dropdown:    100;
+  --z-sticky:      200;
+  --z-overlay:     400;
+  --z-toast:       500;
+  --z-modal:      1000;
+  --z-modal-raised:1200;
+  --z-dialog-top: 2000;
+  --z-lock:       9000;
+  --z-top:        9999;
+
+  /* ── Touch targets ── */
+  --touch-sm: 44px;
+  --touch-md: 56px;
+  --touch-lg: 72px;
+  --touch-xl: 80px;
+
+  /* ── Button heights ── */
+  --btn-sm:   44px;
+  --btn-md:   56px;
+  --btn-lg:   64px;
+  --btn-xl:   80px;
+
+  /* ── Input height ── */
+  --input-height: 56px;
+
+  /* ── Accent gradient (Charge button, primary CTAs) ── */
+  --accent-gradient: linear-gradient(135deg, #F5AD0A 0%, #D49200 100%);
+
+  font-size: 15px;
+}
+/* ── Light theme ── */
+/* Light theme. Previously split across two [data-theme="light"] blocks 12k
+   lines apart, where the later one silently overrode 13 tokens of the first —
+   including --gold, leaving --gold-h/--gold-dim derived from a value that no
+   longer applied. Merged here, keeping the values that actually won so the
+   theme is unchanged except for the two deliberate fixes below.
+   --accent-t was #FFFFFF on --accent #D99000 = 2.64:1, failing WCAG AA for
+   every primary button in light mode; #0D0F14 gives 7.25:1 and matches the
+   ink dark theme already uses. */
+[data-theme="light"] {
+  --bg: #F8FAFC;
+  --surface: #FFFFFF;
+  --surface2: #F2F4F7;
+  --surface3: #EAECF0;
+  --surface4: #D0D5DD;
+  --accent: #D99000;
+  --accent-h: #B86E00;
+  --accent-t: #0D0F14;
+  --accent2: #FFF7E6;
+  --gold: #B86E00;
+  --gold-h: #9A5C00;
+  --gold-dim: rgba(184,110,0,0.10);
+  --success: #039855;
+  --warning: #B54708;
+  --error: #D92D20;
+  --info: #2563EB;
+  --text: #101828;
+  --text-dim: #475467;
+  --shadow-sm: 0 1px 4px rgba(0,0,0,0.08);
+  --shadow-md: 0 4px 24px rgba(0,0,0,0.10);
+  --shadow-lg: 0 12px 48px rgba(0,0,0,0.14);
+  --shadow-gold: 0 4px 24px rgba(212,146,0,0.20);
+  --color-focus: #2563EB;
+  --color-focus-ring: rgba(37,99,235,0.16);
+  --color-success-soft: rgba(22,163,74,0.08);
+  --color-danger-soft: rgba(220,38,38,0.08);
+  --color-warning-soft: rgba(217,119,6,0.10);
+  --color-info-soft: rgba(37,99,235,0.08);
+  --text-muted: #667085;
+  --border: #D0D5DD;
+  --border2: #EAECF0;
+}
+
+/* ── Midnight — true black + electric blue ── */
+[data-theme="midnight"] {
+  --bg:       #06060A;
+  --surface:  #0D0F18;
+  --surface2: #131624;
+  --surface3: #191E30;
+  --surface4: #1F253C;
+  --accent:    #3371D5;   /* darkened: white-on-accent was 3.68:1 */
+  --accent-h:  #2563EB;
+  --accent-t:  #FFFFFF;
+  --accent2:   rgba(59,130,246,0.12);
+  --gold:      #3B82F6;
+  --gold-h:    #2563EB;
+  --gold-dim:  rgba(59,130,246,0.10);
+  --success:  #22C55E;
+  --warning:  #FBBF24;
+  --error:    #EF4444;
+  --info:     #60A5FA;
+  --text:       #DDE4FF;
+  --text-dim:   #7B8FCC;
+  --text-muted: #6B7EBC;
+  --border:   rgba(59,130,246,0.14);
+  --border2:  rgba(59,130,246,0.07);
+  --shadow-sm: 0 1px 4px rgba(0,0,0,0.55);
+  --shadow-md: 0 4px 24px rgba(0,0,0,0.65);
+  --shadow-lg: 0 12px 48px rgba(0,0,0,0.80);
+  --shadow-gold: 0 4px 24px rgba(59,130,246,0.30);
+  --color-focus:        #3B82F6;
+  --color-focus-ring:   rgba(59,130,246,0.20);
+  --color-success-soft: rgba(34,197,94,0.10);
+  --color-danger-soft:  rgba(239,68,68,0.10);
+  --color-warning-soft: rgba(251,191,36,0.12);
+  --color-info-soft:    rgba(59,130,246,0.12);
+}
+
+/* ── Forest — deep pine + emerald ── */
+[data-theme="forest"] {
+  --bg:       #060C08;
+  --surface:  #0D1810;
+  --surface2: #132018;
+  --surface3: #192922;
+  --surface4: #20332C;
+  --accent:    #10B981;
+  --accent-h:  #059669;
+  --accent-t:  #031A10;
+  --accent2:   rgba(16,185,129,0.12);
+  --gold:      #10B981;
+  --gold-h:    #059669;
+  --gold-dim:  rgba(16,185,129,0.10);
+  --success:  #22C55E;
+  --warning:  #FBBF24;
+  --error:    #EF4444;
+  --info:     #60A5FA;
+  --text:       #E4F5EC;
+  --text-dim:   #70AB8A;
+  --text-muted: #559272;
+  --border:   rgba(16,185,129,0.14);
+  --border2:  rgba(16,185,129,0.07);
+  --shadow-sm: 0 1px 4px rgba(0,0,0,0.50);
+  --shadow-md: 0 4px 24px rgba(0,0,0,0.60);
+  --shadow-lg: 0 12px 48px rgba(0,0,0,0.75);
+  --shadow-gold: 0 4px 24px rgba(16,185,129,0.28);
+  --color-focus:        #10B981;
+  --color-focus-ring:   rgba(16,185,129,0.20);
+  --color-success-soft: rgba(16,185,129,0.12);
+  --color-danger-soft:  rgba(239,68,68,0.10);
+  --color-warning-soft: rgba(251,191,36,0.10);
+  --color-info-soft:    rgba(96,165,250,0.10);
+}
+
+/* ── Blossom — soft blush pink LIGHT theme ── */
+[data-theme="blossom"] {
+  --bg:       #FDF2F5;
+  --surface:  #FFFFFF;
+  --surface2: #FEF0F4;
+  --surface3: #FDDDE8;
+  --surface4: #FBC8D5;
+  --accent:    #E11D48;
+  --accent-h:  #BE123C;
+  --accent-t:  #FFFFFF;
+  --accent2:   rgba(225,29,72,0.09);
+  --gold:      #E11D48;
+  --gold-h:    #BE123C;
+  --gold-dim:  rgba(225,29,72,0.09);
+  --success:  #16A34A;
+  --warning:  #D97706;
+  --error:    #DC2626;
+  --info:     #2563EB;
+  --text:       #2C0A15;
+  --text-dim:   #7A3A52;
+  --text-muted: #9E5A6E;
+  --border:   rgba(0,0,0,0.10);
+  --border2:  rgba(0,0,0,0.06);
+  --shadow-sm: 0 1px 4px rgba(0,0,0,0.07);
+  --shadow-md: 0 4px 24px rgba(0,0,0,0.10);
+  --shadow-lg: 0 12px 48px rgba(0,0,0,0.14);
+  --shadow-gold: 0 4px 24px rgba(225,29,72,0.16);
+  --color-focus:        #E11D48;
+  --color-focus-ring:   rgba(225,29,72,0.18);
+  --color-success-soft: rgba(22,163,74,0.08);
+  --color-danger-soft:  rgba(220,38,38,0.08);
+  --color-warning-soft: rgba(217,119,6,0.10);
+  --color-info-soft:    rgba(37,99,235,0.08);
+}
+
+/* ── Sky — powder blue LIGHT theme ── */
+[data-theme="sky"] {
+  --bg:       #EEF5FF;
+  --surface:  #FFFFFF;
+  --surface2: #F0F6FF;
+  --surface3: #DCE9FF;
+  --surface4: #C6D8FF;
+  --accent:    #027BB9;   /* darkened: white-on-accent was 4.10:1 */
+  --accent-h:  #0369A1;
+  --accent-t:  #FFFFFF;
+  --accent2:   rgba(2,132,199,0.10);
+  --gold:      #0284C7;
+  --gold-h:    #0369A1;
+  --gold-dim:  rgba(2,132,199,0.10);
+  --success:  #16A34A;
+  --warning:  #D97706;
+  --error:    #DC2626;
+  --info:     #0284C7;
+  --text:       #081830;
+  --text-dim:   #3A6088;
+  --text-muted: #557891;
+  --border:   rgba(0,0,0,0.11);
+  --border2:  rgba(0,0,0,0.06);
+  --shadow-sm: 0 1px 4px rgba(2,132,199,0.08);
+  --shadow-md: 0 4px 24px rgba(0,0,0,0.10);
+  --shadow-lg: 0 12px 48px rgba(0,0,0,0.14);
+  --shadow-gold: 0 4px 24px rgba(2,132,199,0.18);
+  --color-focus:        #0284C7;
+  --color-focus-ring:   rgba(2,132,199,0.20);
+  --color-success-soft: rgba(22,163,74,0.08);
+  --color-danger-soft:  rgba(220,38,38,0.08);
+  --color-warning-soft: rgba(217,119,6,0.10);
+  --color-info-soft:    rgba(2,132,199,0.10);
+}
+
+/* ── Sage — soft sage green LIGHT theme ── */
+[data-theme="sage"] {
+  --bg:       #EDF5EF;
+  --surface:  #FFFFFF;
+  --surface2: #EFF7F1;
+  --surface3: #D8EDD8;
+  --surface4: #C2E0C2;
+  --accent:    #15803D;
+  --accent-h:  #166534;
+  --accent-t:  #FFFFFF;
+  --accent2:   rgba(21,128,61,0.10);
+  --gold:      #15803D;
+  --gold-h:    #166534;
+  --gold-dim:  rgba(21,128,61,0.10);
+  --success:  #15803D;
+  --warning:  #D97706;
+  --error:    #DC2626;
+  --info:     #2563EB;
+  --text:       #0A200E;
+  --text-dim:   #3A6040;
+  --text-muted: #547260;
+  --border:   rgba(0,0,0,0.11);
+  --border2:  rgba(0,0,0,0.06);
+  --shadow-sm: 0 1px 4px rgba(0,0,0,0.07);
+  --shadow-md: 0 4px 24px rgba(0,0,0,0.10);
+  --shadow-lg: 0 12px 48px rgba(0,0,0,0.14);
+  --shadow-gold: 0 4px 24px rgba(21,128,61,0.18);
+  --color-focus:        #15803D;
+  --color-focus-ring:   rgba(21,128,61,0.20);
+  --color-success-soft: rgba(21,128,61,0.10);
+  --color-danger-soft:  rgba(220,38,38,0.08);
+  --color-warning-soft: rgba(217,119,6,0.10);
+  --color-info-soft:    rgba(37,99,235,0.08);
+}
+
+/* Layout primitives — radius, gaps, padding, hairlines. */
+:root {
+  --ui-radius: 8px;
+  --ui-radius-sm: 6px;
+  --ui-gap: 12px;
+  --ui-gap-lg: 16px;
+  --ui-pad: 16px;
+  --ui-pad-lg: 20px;
+  --ui-hairline: color-mix(in srgb, var(--border) 82%, transparent);
+  --ui-panel-bg: color-mix(in srgb, var(--surface) 94%, #ffffff 2%);
+  --ui-panel-bg-2: color-mix(in srgb, var(--surface2) 92%, #ffffff 2%);
+}
+
+/* ── Semantic roles (spec §7) ──────────────────────────────────────────────
+   Aliases onto the existing palette rather than replacements. Every rule in
+   App.css still resolves against the original names, so adopting a role is a
+   per-component choice instead of one 17k-line rewrite that nobody can review.
+   Roles carry MEANING, not appearance: --money-in is green because it is money
+   arriving, not because green looked right. Never reuse them decoratively —
+   that is how --accent ended up meaning four different things. */
+:root {
+  /* Surfaces: the till runs near-black for glare and long shifts; the back
+     office is lighter and theme-following. */
+  --surface-till:   var(--bg);
+  --surface-office: var(--surface);
+
+  /* Two accents, two jobs. --accent-action is the ZANPOS gold, reserved for
+     primary actions and brand. --accent-ai marks ZanAI surfaces only, so an
+     AI-suggested action is never mistaken for one the operator chose. */
+  --accent-action: var(--accent);
+  --accent-ai:     #14B8A6;
+  --accent-ai-dim: rgba(20,184,166,0.12);
+
+  /* Money. Used ONLY for money — never for generic success or failure. */
+  --money-in:  var(--success);
+  --money-out: var(--error);
+
+  /* --danger already exists for destructive actions and failures.
+     --warn is the degraded state: printer offline, sync behind, licence in
+     grace. Amber means "still trading, but look at me". */
+  --warn: var(--warning);
+}
+
+/* ── Spacing — 4px grid (spec §7) ─────────────────────────────────────────── */
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* Hit targets. The till is used with wet, cold or gloved hands and often
+     without looking, so its minimum is well above the back office's. */
+  --hit-till:   48px;
+  --hit-office: 36px;
+}
+
+/* ── Motion (spec §7) ─────────────────────────────────────────────────────── */
+:root {
+  --motion-fast: 120ms;
+  --motion-base: 160ms;
+  --motion-ease: cubic-bezier(0.2, 0, 0, 1);
+  /* The sale path is deliberately unanimated: scan→cart must read as
+     instantaneous. Anything on that path uses this, not a duration. */
+  --motion-none: 0ms;
+}
+
+/* Respect the OS setting. A till in a busy shop is not the place to insist on
+   animation someone has explicitly asked not to see. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-base: 0ms;
+  }
+}
+
+/* ── Arabic typography ────────────────────────────────────────────────────
+   One Arabic-capable stack, appended to each existing family so a mixed
+   EN/AR line renders in one visual voice instead of two. Noto Sans Arabic is
+   the fallback; the leading families are kept first so Latin text is
+   unchanged. */
+:root {
+  --font-arabic: 'Noto Sans Arabic', 'Segoe UI', Tahoma, sans-serif;
+}
+:root[lang="ar"] {
+  --font:         'Noto Sans Arabic', 'DM Sans', 'Segoe UI', Tahoma, sans-serif;
+  --font-display: 'Noto Sans Arabic', 'Bricolage Grotesque', system-ui, sans-serif;
+}
+
+/* ── Focus visibility (spec §7, item 93) ──────────────────────────────────
+   The back office is keyboard-driven, so focus must be unmistakable. This
+   uses :focus-visible, not :focus — a mouse click should not leave a ring
+   behind, which is why the browser distinguishes them. Two-tone (ring plus
+   offset halo) so it stays legible on both near-black till surfaces and
+   white back-office cards without per-theme overrides. */
+:root {
+  --focus-ring: 2px solid var(--accent);
+  --focus-halo: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+  box-shadow: var(--focus-halo);
+  border-radius: var(--ui-radius-sm, 6px);
+}
+
+/* Windows High Contrast: system colours replace ours entirely, so force a
+   ring the OS will actually render. */
+@media (forced-colors: active) {
+  :where(button, a, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid Highlight;
+  }
+}
+
+/* ── Hit targets (spec §7, item 84) ───────────────────────────────────────
+   Audited at time of writing: POS sidebar 54px, action bar 60px, back-office
+   sub-tabs 36px, note buttons 44px — all already compliant. These rules exist
+   so anything added LATER inherits the floor rather than depending on someone
+   remembering it.
+
+   :where() keeps specificity at zero, so a component that genuinely needs a
+   different size overrides it without an !important arms race. */
+:where(.pos-shell, .pos-main, .pos-sidebar, .action-bar) :where(button, [role="button"]) {
+  min-height: var(--hit-till);
+}
+:where(.settings-page, .bo-tab-content, .oa-embedded-tab) :where(button, [role="button"]) {
+  min-height: var(--hit-office);
+}
+
+/* ── Card radius (spec §7, item 86) ───────────────────────────────────────
+   One radius for panels and cards. --ui-radius is already 8px and widely
+   used; this aliases the older per-component names onto it so they cannot
+   drift apart again. */
+:root {
+  --radius-card: var(--ui-radius, 8px);
+}
+
+/* ── Motion (spec §7, items 89 + 90) ──────────────────────────────────────
+   120-160ms ease-out is the house standard. The sale-critical path is
+   exempt and must stay exempt: a cashier scanning at speed reads any
+   transition on the cart as lag, and lag at the till is what makes an
+   operator distrust the whole app. Cart rows, the numpad and the barcode
+   field therefore animate at 0ms by rule, not by omission. */
+:where(.pos-cart-col, .numpad-panel, .pos-scan-strip) :where(*) {
+  transition-duration: var(--motion-none) !important;
+  animation-duration: var(--motion-none) !important;
+}
+
+/* ── Type scale (spec §7, items 80 + 81) ──────────────────────────────────
+   The till gets TWO sizes, not a scale. A cashier reads two things at a
+   glance — the number they are taking and everything else — and every extra
+   step in a type ramp is one more thing to mis-scan under pressure.
+   The back office is a reading surface and gets a conventional four steps. */
+:root {
+  /* POS: large is ONLY amount due, keypad keys and cart total. */
+  --type-pos-base:  1rem;
+  --type-pos-large: 2rem;
+  --leading-pos-base:  1.45;
+  --leading-pos-large: 1.25;
+
+  /* Back office: page title → section heading → body → caption. */
+  --type-office-page:    1.25rem;
+  --type-office-section: 1rem;
+  --type-office-body:    0.875rem;
+  --type-office-caption: 0.75rem;
+  --leading-office-page:    1.3;
+  --leading-office-section: 1.35;
+  --leading-office-body:    1.5;
+  --leading-office-caption: 1.45;
+}
+
+/* ── RTL (spec §7, item 91) ───────────────────────────────────────────────
+   Layout direction flips on <html dir> (set by useLanguage), so the grid and
+   text handle themselves. Two things do NOT flip on their own:
+
+   1. Directional icons. An arrow meaning "next" must point the way the
+      reader is going. Non-directional icons (printer, trash, bell) must NOT
+      mirror — a mirrored printer is just a broken printer.
+   2. Numbers. Money, quantities, barcodes and receipt numbers stay
+      left-to-right inside Arabic text; only their surrounding flow is RTL. */
+.icon-directional,
+[data-icon-direction="inline"] {
+  display: inline-block;
+}
+
+[dir="rtl"] :where(.icon-directional, [data-icon-direction="inline"]) {
+  transform: scaleX(-1);
+}
+
+[dir="rtl"] .user-card:hover .user-arrow {
+  transform: translateX(-3px) scaleX(-1);
+}
+
+[dir] :is(
+  .numeric-ltr,
+  [data-numeric],
+  .money,
+  .num,
+  .num-cell,
+  .rpt-num:not(th),
+  .rpt-money,
+  .rpt-receipt,
+  .cart-qty-val,
+  .cart-line-unit,
+  .cart-line-total,
+  .np-fast-total,
+  .numpad-multiplier,
+  .top-bar-time,
+  .eod-summary-value,
+  .eod-shift-time,
+  .dlv-id-chip,
+  .dlv-receipt,
+  .dlv-date,
+  .dlv-time,
+  .dlv-amount
+) {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+/* Text and rails use logical edges so back-office navigation, tables, and
+   side sheets follow the document direction without mirroring their icons. */
+[dir] :is(.bo-nav-item, .bo-sidebar-action-btn, .oa-nav-item, .oa-secondary-nav button,
+  .oa-command-results > button, .cart-line-name-btn, .devices-table th) {
+  text-align: start;
+}
+
+[dir] :is(.pos-sidebar, .product-area, .bo-sidebar) {
+  border-inline-end: 1px solid var(--border);
+  border-right: 0;
+}
+
+[dir] :is(.oa-nav, .oa-primary-nav) {
+  border-inline-end: 1px solid var(--oa-line);
+  border-right: 0;
+}
+
+[dir] .cart-panel {
+  border-inline-start: 1px solid var(--border);
+  border-left: 0;
+}
+
+[dir] .numpad-panel {
+  border-inline-start: 2px solid var(--border);
+  border-left: 0;
+}
+
+[dir] .pos-sidebar-item.active::before {
+  inset-inline-start: 0;
+  left: auto;
+}
+
+[dir] .pos-sidebar-badge {
+  inset-inline-end: 14px;
+  right: auto;
+}
+
+[dir] :is(.oa-context-sheet, .oa-copilot-sheet) {
+  inset-inline-end: 0;
+  right: auto;
+  border-inline-start: 1px solid var(--oa-line-strong);
+  border-left: 0;
+}
+
+[dir="rtl"] :where(.oa-context-sheet, .oa-copilot-sheet) {
+  box-shadow: 18px 0 48px rgba(0, 0, 0, 0.28);
+  animation-name: oa-sheet-in-rtl;
+}
+
+@keyframes oa-sheet-in-rtl {
+  from { transform: translateX(-24px); opacity: 0.7; }
+}
+
+[dir="rtl"] :where(input[type="number"], input[type="tel"], input[inputmode="numeric"],
+  input[inputmode="decimal"], input[inputmode="tel"]) {
+  direction: ltr;
+  text-align: start;
+  unicode-bidi: isolate;
+}
+
+[dir="rtl"] :where(.oa-nav-item-active, .bo-nav-item-active) {
+  background-image: linear-gradient(270deg, color-mix(in srgb, var(--accent) 18%, transparent), transparent);
+}
+
+[dir="rtl"] .pos-sidebar-item.active::before {
+  border-radius: 3px 0 0 3px;
+}

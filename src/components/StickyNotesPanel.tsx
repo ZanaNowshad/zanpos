@@ -3,7 +3,9 @@ import {
   type NoteColor, type StickyNote,
   NOTES_STORAGE_KEY, loadNotes, saveNotes,
   formatReminderTime, defaultReminderInput,
+  toLocalDateTimeInput, tomorrowMorningInput,
 } from "../utils/stickyNotes";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 // T19: bg/border reference CSS vars so themes can override the palette
 const COLORS: { id: NoteColor; label: string; bg: string; border: string }[] = [
@@ -31,6 +33,8 @@ export default function StickyNotesPanel({ onClose }: Props) {
   const [newColor, setNewColor]       = useState<NoteColor>("yellow");
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(panelRef, onClose);
 
   // Persist every change
   useEffect(() => { saveNotes(notes); }, [notes]);
@@ -73,7 +77,7 @@ export default function StickyNotesPanel({ onClose }: Props) {
     setDraftReminderOn(!!note.reminderAt);
     setDraftReminderAt(
       note.reminderAt
-        ? new Date(note.reminderAt).toISOString().slice(0, 16)
+        ? toLocalDateTimeInput(new Date(note.reminderAt))
         : defaultReminderInput(),
     );
     setEditingId(note.id);
@@ -113,15 +117,19 @@ export default function StickyNotesPanel({ onClose }: Props) {
   const colorMeta = (c: NoteColor) => COLORS.find(x => x.id === c)!;
 
   // Minimum datetime value = now (can't set a reminder in the past)
-  const nowInput = new Date().toISOString().slice(0, 16);
+  const nowInput = toLocalDateTimeInput(new Date());
 
   return (
     <div className="stickynotes-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="stickynotes-panel">
+      <div className="stickynotes-panel" ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="stickynotes-title">
 
         {/* Header */}
         <div className="stickynotes-header">
-          <span className="stickynotes-title">📝 Notes &amp; Reminders</span>
+          <div className="stickynotes-heading">
+            <span>Register workspace</span>
+            <h2 className="stickynotes-title" id="stickynotes-title">Quick notes</h2>
+            <p>Capture a reminder without leaving the sale.</p>
+          </div>
           <div className="stickynotes-header-actions">
             <div className="stickynotes-color-picker">
               {COLORS.map(c => (
@@ -131,6 +139,8 @@ export default function StickyNotesPanel({ onClose }: Props) {
                   style={{ background: c.bg, borderColor: c.border }}
                   onClick={() => setNewColor(c.id)}
                   title={c.label}
+                  aria-label={`Use ${c.label.toLowerCase()} for new note`}
+                  aria-pressed={newColor === c.id}
                 />
               ))}
             </div>
@@ -145,7 +155,9 @@ export default function StickyNotesPanel({ onClose }: Props) {
         <div className="stickynotes-grid">
           {notes.length === 0 && (
             <div className="stickynotes-empty">
-              No notes yet. Click <strong>+ New Note</strong> to get started.
+              <strong>No notes yet</strong>
+              <span>Capture a reminder, customer request, or shift handoff.</span>
+              <button type="button" onClick={addNote}>New note</button>
             </div>
           )}
 
@@ -171,6 +183,8 @@ export default function StickyNotesPanel({ onClose }: Props) {
                         style={{ background: c.bg, borderColor: c.border }}
                         onClick={() => changeColor(note.id, c.id)}
                         title={c.label}
+                        aria-label={`Change note color to ${c.label.toLowerCase()}`}
+                        aria-pressed={note.color === c.id}
                       />
                     ))}
                   </div>
@@ -213,24 +227,25 @@ export default function StickyNotesPanel({ onClose }: Props) {
                       {draftReminderOn && (
                         <div className="stickynote-reminder-presets">
                           {[
-                            { label: "30 min",  mins: 30 },
-                            { label: "1 hr",    mins: 60 },
-                            { label: "2 hrs",   mins: 120 },
-                            { label: "Tomorrow",mins: 16 * 60 },
-                          ].map(({ label, mins }) => {
-                            const ts = new Date(Date.now() + mins * 60000);
-                            const val = ts.toISOString().slice(0, 16);
-                            return (
-                              <button
-                                key={label}
-                                type="button"
-                                className={`stickynote-preset-btn${draftReminderAt === val ? " active" : ""}`}
-                                onClick={() => setDraftReminderAt(val)}
-                              >
-                                {label}
-                              </button>
-                            );
-                          })}
+                            { label: "In 30 min", minutes: 30 },
+                            { label: "In 1 hour", minutes: 60 },
+                            { label: "In 2 hours", minutes: 120 },
+                            { label: "Tomorrow, 9:00", minutes: null },
+                          ].map(({ label, minutes }) => (
+                            <button
+                              key={label}
+                              type="button"
+                              className="stickynote-preset-btn"
+                              onClick={() => {
+                                const now = new Date();
+                                setDraftReminderAt(minutes === null
+                                  ? tomorrowMorningInput(now)
+                                  : toLocalDateTimeInput(new Date(now.getTime() + minutes * 60000)));
+                              }}
+                            >
+                              {label}
+                            </button>
+                          ))}
                           <input
                             type="datetime-local"
                             className="stickynote-reminder-dt"
@@ -261,7 +276,7 @@ export default function StickyNotesPanel({ onClose }: Props) {
 
                 {/* Save button */}
                 {isEditing && (
-                  <button className="stickynote-save-btn" onMouseDown={e => { e.preventDefault(); commitEdit(); }}>
+                  <button className="stickynote-save-btn" onClick={commitEdit}>
                     ✓ Done
                   </button>
                 )}

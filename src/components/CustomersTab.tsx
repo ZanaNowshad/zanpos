@@ -1,13 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { UserRound } from "lucide-react";
 import type { CustomerRow } from "../types";
 import * as cmd from "../tauri/commands";
+import { useLanguage } from "../hooks/useLanguage";
+import { countText, operationsTranslator } from "../i18n/operationsStrings";
 
 const EMPTY_FORM = { name: "", phone: "", email: "", notes: "" };
 
 interface Props { sessionUserId: string; }
 
 export default function CustomersTab({ sessionUserId }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => operationsTranslator(language), [language]);
   const [customers, setCustomers]   = useState<CustomerRow[]>([]);
   const [selected, setSelected]     = useState<CustomerRow | null>(null);
   const [creating, setCreating]     = useState(false);
@@ -21,9 +25,9 @@ export default function CustomersTab({ sessionUserId }: Props) {
       const rows = await cmd.customerList(sessionUserId, q);
       setCustomers(rows);
     } catch {
-      setError("Failed to load customers");
+      setError(t("customersLoadFailed"));
     }
-  }, [sessionUserId]);
+  }, [sessionUserId, t]);
 
   useEffect(() => { load(""); }, [load]);
 
@@ -54,7 +58,7 @@ export default function CustomersTab({ sessionUserId }: Props) {
   function set(key: string, val: string) { setForm(f => ({ ...f, [key]: val })); }
 
   async function save() {
-    if (!form.name.trim()) { setError("Name is required"); return; }
+    if (!form.name.trim()) { setError(t("nameRequired")); return; }
     setSaving(true); setError(null);
     try {
       if (creating) {
@@ -79,7 +83,7 @@ export default function CustomersTab({ sessionUserId }: Props) {
       }
       cancelEdit();
     } catch (e: unknown) {
-      setError(typeof e === "string" ? e : "Save failed");
+      setError(typeof e === "string" ? e : t("saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -94,11 +98,11 @@ export default function CustomersTab({ sessionUserId }: Props) {
         <div className="bo-list-header">
           <input
             className="bo-search"
-            placeholder="Search by name or phone…"
+            placeholder={t("searchCustomer")}
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
-          <button className="btn-primary bo-add-btn" onClick={startCreate}>+ New</button>
+          <button className="btn-primary bo-add-btn" onClick={startCreate}>{t("newAction")}</button>
         </div>
         <div className="bo-list">
           {customers.map(c => (
@@ -115,15 +119,15 @@ export default function CustomersTab({ sessionUserId }: Props) {
                 </span>
               </div>
               <div className="bo-list-row-right">
-                <span className="cust-loyalty">{c.loyalty_points} pts</span>
+                <span className="cust-loyalty numeric-ltr">{countText(language, "points", c.loyalty_points)}</span>
               </div>
             </button>
           ))}
           {customers.length === 0 && (
             <div className="bo-empty">
               <div className="bo-empty-icon"><UserRound size={40} strokeWidth={1.5} /></div>
-              <p className="bo-empty-title">No customers found</p>
-              <p className="bo-empty-hint">Try a different search term, or add a new customer.</p>
+              <p className="bo-empty-title">{t("noCustomersFound")}</p>
+              <p className="bo-empty-hint">{t("customersEmptyHint")}</p>
             </div>
           )}
         </div>
@@ -132,31 +136,31 @@ export default function CustomersTab({ sessionUserId }: Props) {
       {/* ── Form pane ── */}
       {showingForm && (
         <div className="bo-form-pane">
-          <h3 className="bo-form-title">{creating ? "New Customer" : "Edit Customer"}</h3>
+          <h3 className="bo-form-title">{t(creating ? "newCustomer" : "editCustomer")}</h3>
           {error && <div className="bo-form-error">{error}</div>}
 
-          <label className="bo-label">Name *</label>
-          <input className="bo-input" value={form.name} onChange={e => set("name", e.target.value)} autoFocus placeholder="Full name" />
+          <label className="bo-label">{t("name")} *</label>
+          <input className="bo-input" value={form.name} onChange={e => set("name", e.target.value)} autoFocus placeholder={t("fullName")} />
 
-          <label className="bo-label">Phone</label>
+          <label className="bo-label">{t("phone")}</label>
           <input className="bo-input" value={form.phone} onChange={e => set("phone", e.target.value)} placeholder="+973 1234 5678" />
 
-          <label className="bo-label">Email</label>
+          <label className="bo-label">{t("email")}</label>
           <input className="bo-input" type="email" value={form.email} onChange={e => set("email", e.target.value)} placeholder="customer@example.com" />
 
-          <label className="bo-label">Notes</label>
-          <textarea className="bo-input" rows={3} value={form.notes} onChange={e => set("notes", e.target.value)} placeholder="Any notes about this customer" />
+          <label className="bo-label">{t("notes")}</label>
+          <textarea className="bo-input" rows={3} value={form.notes} onChange={e => set("notes", e.target.value)} placeholder={t("customerNotesPlaceholder")} />
 
           {selected && (
             <div className="cust-loyalty-info">
-              Loyalty points: <strong>{selected.loyalty_points}</strong>
+              {t("loyaltyPoints")}: <strong className="numeric-ltr">{selected.loyalty_points}</strong>
             </div>
           )}
 
           <div className="bo-form-actions">
-            <button className="btn-secondary" onClick={cancelEdit}>Cancel</button>
+            <button className="btn-secondary" onClick={cancelEdit}>{t("cancel")}</button>
             <button className="btn-primary" onClick={save} disabled={saving}>
-              {saving ? "Saving…" : "Save"}
+              {t(saving ? "saving" : "save")}
             </button>
           </div>
         </div>

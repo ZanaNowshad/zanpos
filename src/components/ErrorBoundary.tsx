@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from "react";
+import { logDiagnostic } from "../tauri/diagnostics";
 
 interface Props {
   children: ReactNode;
@@ -22,6 +23,7 @@ export default class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: { componentStack: string }) {
     console.error("[ErrorBoundary]", error, info.componentStack);
+    logDiagnostic("js_error", error.message, error.stack).catch(() => {});
   }
 
   render() {

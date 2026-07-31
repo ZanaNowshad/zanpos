@@ -1,17 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { SyncQueueItem } from "../types";
 import { syncQueueList, syncQueueRetry, syncQueueDismiss } from "../tauri/commands";
+import { useLanguage } from "../hooks/useLanguage";
+import { modalTranslator, ownedModalLabel } from "../i18n/modalStrings";
+import { detailTranslator } from "../i18n/detailStrings";
 
 interface Props {
   onClose: () => void;
   sessionUserId: string;
 }
-
-const STATUS_LABEL: Record<string, string> = {
-  pending:  "Pending",
-  failed:   "Failed",
-  conflict: "Conflict",
-};
 
 const STATUS_CLASS: Record<string, string> = {
   pending:  "sq-badge-pending",
@@ -20,6 +17,9 @@ const STATUS_CLASS: Record<string, string> = {
 };
 
 export default function SyncQueueModal({ onClose, sessionUserId }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => modalTranslator(language), [language]);
+  const dt = useMemo(() => detailTranslator(language), [language]);
   const [items, setItems] = useState<SyncQueueItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -32,11 +32,11 @@ export default function SyncQueueModal({ onClose, sessionUserId }: Props) {
     cancelledRef.current = false;
     syncQueueList(sessionUserId)
       .then(data => { if (!cancelledRef.current) setItems(data); })
-      .catch(() => { if (!cancelledRef.current) setError("Failed to load sync queue"); })
+      .catch(() => { if (!cancelledRef.current) setError(dt("failedLoadSyncQueue")); })
       .finally(() => { if (!cancelledRef.current) setLoading(false); });
   };
 
-  useEffect(load, [sessionUserId]);
+  useEffect(load, [dt, sessionUserId]);
 
   const handleRetry = async (id: string) => {
     setBusyId(id);
@@ -45,7 +45,7 @@ export default function SyncQueueModal({ onClose, sessionUserId }: Props) {
       await syncQueueRetry(sessionUserId, id);
       load();
     } catch (e: unknown) {
-      setError(typeof e === "string" ? e : "Retry failed");
+      setError(typeof e === "string" ? e : dt("retryFailed"));
     } finally {
       setBusyId(null);
     }
@@ -58,7 +58,7 @@ export default function SyncQueueModal({ onClose, sessionUserId }: Props) {
       await syncQueueDismiss(sessionUserId, id);
       setItems(prev => prev.filter(i => i.sync_event_id !== id));
     } catch (e: unknown) {
-      setError(typeof e === "string" ? e : "Dismiss failed");
+      setError(typeof e === "string" ? e : dt("failedDismiss"));
     } finally {
       setBusyId(null);
     }
@@ -75,25 +75,25 @@ export default function SyncQueueModal({ onClose, sessionUserId }: Props) {
   return (
     <div className="modal-overlay">
       <div className="modal sync-queue-modal">
-        <h2 className="modal-title">Sync Queue</h2>
+        <h2 className="modal-title">{t("syncQueue")}</h2>
         <p className="modal-subtitle">
-          Events waiting to sync with the central server.
+          {t("eventsWaitingToSync")}
         </p>
 
         {loading ? (
-          <div className="sq-loading">Loading…</div>
+          <div className="sq-loading">{t("loading")}</div>
         ) : items.length === 0 ? (
           <div className="sq-empty">
             <div className="sq-empty-icon">✓</div>
-            <div className="sq-empty-msg">All events synced — nothing pending.</div>
+            <div className="sq-empty-msg">{t("allEventsSynced")}</div>
           </div>
         ) : (
           <>
             <div className="sq-toolbar">
-              <span className="sq-count">{items.length} item{items.length !== 1 ? "s" : ""}</span>
+              <span className="sq-count">{items.length} {t("items")}</span>
               {items.some(i => i.status === "failed" || i.status === "conflict") && (
                 <button className="sq-retry-all-btn" onClick={retryAll}>
-                  Retry All Failed
+                  {t("retryAllFailed")}
                 </button>
               )}
             </div>
@@ -102,10 +102,10 @@ export default function SyncQueueModal({ onClose, sessionUserId }: Props) {
                 <div key={item.sync_event_id} className="sq-item">
                   <div className="sq-item-header">
                     <span className={`sq-badge ${STATUS_CLASS[item.status] ?? "sq-badge-pending"}`}>
-                      {STATUS_LABEL[item.status] ?? item.status}
+                      {ownedModalLabel(language, item.status)}
                     </span>
                     <span className="sq-entity">{item.entity_type} / {item.operation}</span>
-                    <span className="sq-attempts">Attempts: {item.attempt_count}</span>
+                    <span className="sq-attempts">{t("attempts")}: {item.attempt_count}</span>
                   </div>
                   <div className="sq-item-id">{item.entity_id}</div>
                   {item.last_error && (
@@ -125,7 +125,7 @@ export default function SyncQueueModal({ onClose, sessionUserId }: Props) {
                           onClick={() => handleRetry(item.sync_event_id)}
                           disabled={busyId === item.sync_event_id}
                         >
-                          Retry
+                          {t("retry")}
                         </button>
                       )}
                       <button
@@ -133,7 +133,7 @@ export default function SyncQueueModal({ onClose, sessionUserId }: Props) {
                         onClick={() => handleDismiss(item.sync_event_id)}
                         disabled={busyId === item.sync_event_id}
                       >
-                        Dismiss
+                        {t("dismiss")}
                       </button>
                     </div>
                   </div>
@@ -146,9 +146,9 @@ export default function SyncQueueModal({ onClose, sessionUserId }: Props) {
         {error && <div className="modal-error">{error}</div>}
 
         <div className="modal-actions">
-          <button className="modal-btn-secondary" onClick={onClose}>Close</button>
+          <button className="modal-btn-secondary" onClick={onClose}>{t("close")}</button>
           <button className="modal-btn-secondary" onClick={load} disabled={loading}>
-            ↻ Refresh
+            ↻ {t("refresh")}
           </button>
         </div>
       </div>

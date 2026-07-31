@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 import type { AdminUserRow, RoleRow } from "../types";
 import * as cmd from "../tauri/commands";
+import { useLanguage } from "../hooks/useLanguage";
+import { operationsTranslator, roleText } from "../i18n/operationsStrings";
 
 const EMPTY_FORM = { display_name: "", username: "", pin: "", confirm_pin: "", role_id: "", is_active: true };
 
 interface Props { sessionUserId: string; }
 
 export default function UsersTab({ sessionUserId }: Props) {
+  const { language } = useLanguage();
+  const t = operationsTranslator(language);
   const [users, setUsers]       = useState<AdminUserRow[]>([]);
   const [roles, setRoles]       = useState<RoleRow[]>([]);
   const [selected, setSelected] = useState<AdminUserRow | null>(null);
@@ -40,14 +44,14 @@ export default function UsersTab({ sessionUserId }: Props) {
 
   async function save() {
     if (!form.display_name.trim() || !form.role_id) {
-      setError("Name and role are required."); return;
+      setError(t("nameAndRoleRequired")); return;
     }
     if (creating && !form.username.trim()) {
-      setError("Username is required for new users."); return;
+      setError(t("usernameRequired")); return;
     }
     if (creating || form.pin) {
-      if (form.pin.length < 4) { setError("PIN must be at least 4 characters."); return; }
-      if (form.pin !== form.confirm_pin) { setError("PINs do not match."); return; }
+      if (form.pin.length < 4) { setError(t("pinMinimum")); return; }
+      if (form.pin !== form.confirm_pin) { setError(t("pinsMismatch")); return; }
     }
 
     setSaving(true); setError(null);
@@ -74,7 +78,7 @@ export default function UsersTab({ sessionUserId }: Props) {
       }
       cancelEdit();
     } catch (e: unknown) {
-      setError(typeof e === "string" ? e : "Save failed");
+      setError(typeof e === "string" ? e : t("saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -86,8 +90,8 @@ export default function UsersTab({ sessionUserId }: Props) {
     <div className="bo-tab-layout">
       <div className="bo-list-pane">
         <div className="bo-list-header">
-          <span className="bo-list-title">Staff Users</span>
-          <button className="btn-primary bo-add-btn" onClick={startCreate}>+ New</button>
+          <span className="bo-list-title">{t("staffUsers")}</span>
+          <button className="btn-primary bo-add-btn" onClick={startCreate}>{t("newAction")}</button>
         </div>
         <div className="bo-list">
           {users.map(u => (
@@ -98,54 +102,54 @@ export default function UsersTab({ sessionUserId }: Props) {
             >
               <div className="bo-list-row-main">
                 <span className="bo-list-row-name">{u.display_name}</span>
-                <span className="bo-list-row-sub">{u.username} · {u.role_name}</span>
+                <span className="bo-list-row-sub">{u.username} · {roleText(language, u.role_name)}</span>
               </div>
-              {!u.is_active && <span className="bo-badge-inactive">Inactive</span>}
+              {!u.is_active && <span className="bo-badge-inactive">{t("inactive")}</span>}
             </button>
           ))}
-          {users.length === 0 && <div className="bo-empty">No users.</div>}
+          {users.length === 0 && <div className="bo-empty">{t("noUsers")}</div>}
         </div>
       </div>
 
       {showingForm && (
         <div className="bo-form-pane">
-          <h3 className="bo-form-title">{creating ? "New User" : "Edit User"}</h3>
+          <h3 className="bo-form-title">{t(creating ? "newUser" : "editUser")}</h3>
           {error && <div className="bo-form-error">{error}</div>}
 
-          <label className="bo-label">Display Name *</label>
+          <label className="bo-label">{t("displayName")} *</label>
           <input className="bo-input" value={form.display_name} onChange={e => set("display_name", e.target.value)}
-            placeholder="Full name" autoFocus />
+            placeholder={t("fullName")} autoFocus />
 
           {creating && (
             <>
-              <label className="bo-label">Username *</label>
+              <label className="bo-label">{t("username")} *</label>
               <input className="bo-input" value={form.username} onChange={e => set("username", e.target.value)}
-                placeholder="Login username" autoComplete="off" />
+                placeholder={t("loginUsername")} autoComplete="off" />
             </>
           )}
 
-          <label className="bo-label">Role *</label>
+          <label className="bo-label">{t("role")} *</label>
           <select className="bo-select" value={form.role_id} onChange={e => set("role_id", e.target.value)}>
-            <option value="">— select —</option>
-            {roles.map(r => <option key={r.role_id} value={r.role_id}>{r.name}</option>)}
+            <option value="">{t("select")}</option>
+            {roles.map(r => <option key={r.role_id} value={r.role_id}>{roleText(language, r.name)}</option>)}
           </select>
 
           {/* PIN section */}
           {!creating && (
             <div className="bo-change-pin-toggle">
               <button className="btn-secondary bo-pin-toggle-btn" onClick={() => setShowPin(p => !p)}>
-                {showPin ? "Cancel PIN change" : "Change PIN"}
+                {t(showPin ? "cancelPinChange" : "changePin")}
               </button>
             </div>
           )}
 
           {(creating || showPin) && (
             <>
-              <label className="bo-label">{creating ? "PIN *" : "New PIN"} (min 4 digits)</label>
+              <label className="bo-label">{creating ? `${t("pin")} *` : t("newPin")} ({t("minFourDigits")})</label>
               <input className="bo-input" type="password" inputMode="numeric" maxLength={8}
                 value={form.pin} onChange={e => set("pin", e.target.value)} placeholder="••••" autoComplete="new-password" />
 
-              <label className="bo-label">Confirm PIN</label>
+              <label className="bo-label">{t("confirmPin")}</label>
               <input className="bo-input" type="password" inputMode="numeric" maxLength={8}
                 value={form.confirm_pin} onChange={e => set("confirm_pin", e.target.value)}
                 placeholder="••••" autoComplete="new-password" />
@@ -156,15 +160,15 @@ export default function UsersTab({ sessionUserId }: Props) {
             <div className="bo-checkboxes" style={{ marginTop: 12 }}>
               <label className="bo-checkbox-label">
                 <input type="checkbox" checked={form.is_active} onChange={e => set("is_active", e.target.checked)} />
-                Active
+                {t("active")}
               </label>
             </div>
           )}
 
           <div className="bo-form-actions">
-            <button className="btn-secondary" onClick={cancelEdit}>Cancel</button>
+            <button className="btn-secondary" onClick={cancelEdit}>{t("cancel")}</button>
             <button className="btn-primary" onClick={save} disabled={saving}>
-              {saving ? "Saving…" : "Save"}
+              {t(saving ? "saving" : "save")}
             </button>
           </div>
         </div>

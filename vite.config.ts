@@ -16,7 +16,7 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    host: host || "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",
@@ -30,7 +30,10 @@ export default defineConfig(async () => ({
     },
   },
   build: {
-    chunkSizeWarningLimit: 200,
+    // The intentionally cohesive back-office chunk is ~256 kB minified (~62 kB
+    // gzip). Splitting its mutually-referencing modal/tab graph creates circular
+    // chunks, so warn only above a genuine regression threshold.
+    chunkSizeWarningLimit: 300,
     // F-MED-07: Strip console.* and debugger in production to prevent
     // debug output in production builds and minor stack trace leakage.
     minify: "esbuild",
@@ -63,10 +66,6 @@ export default defineConfig(async () => ({
           // MigrationAgent — lazy-loaded, keep isolated.
           if (id.includes("/pages/MigrationAgentPage")) {
             return "migration";
-          }
-          // OfficeAI workspace (shell + ZanAI chat) — lazy-loaded at App level.
-          if (id.includes("/officeai/")) {
-            return "officeai";
           }
           // Admin/back-office tabs and modals — loaded via BackOfficeModal.
           // Splitting these keeps the main POS chunk lean (<200 kB).
@@ -103,9 +102,6 @@ export default defineConfig(async () => ({
               id.includes("/components/PaymentModal") ||
               id.includes("/components/ReceiptPreview")) {
             return "backoffice";
-          }
-          if (id.includes("/officeai/")) {
-            return "officeai";
           }
         },
       },

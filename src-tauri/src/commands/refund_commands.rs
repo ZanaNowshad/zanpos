@@ -107,7 +107,7 @@ pub async fn refund_create(
             .await?
             .flatten();
 
-    let is_cross_device = sale_device.as_deref().map_or(false, |sd| sd != device_id);
+    let is_cross_device = sale_device.as_deref().is_some_and(|sd| sd != device_id);
 
     // Step 4 — Enforce cross-device refund policy.
     let override_used = if is_cross_device {

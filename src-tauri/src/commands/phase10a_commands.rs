@@ -1,4 +1,4 @@
-use crate::commands::rbac;
+use crate::commands::{rbac, sync_commands};
 use crate::db::repositories::audit_hash;
 use crate::errors::{AppError, AppResult};
 use crate::sync::scope::report_scope;
@@ -45,6 +45,7 @@ pub async fn app_config_set_timeout(
     .bind(&now)
     .execute(&state.db)
     .await?;
+    sync_commands::schedule_immediate_sync(&state);
     Ok(())
 }
 

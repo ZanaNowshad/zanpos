@@ -1,4 +1,4 @@
-use crate::commands::rbac;
+use crate::commands::{rbac, sync_commands};
 use crate::db::repositories::auth_repo;
 use crate::errors::AppError;
 use crate::AppState;
@@ -12,6 +12,7 @@ use tauri::State;
 #[derive(Debug, Serialize, Clone)]
 pub struct AppConfig {
     pub setup_complete: bool,
+    pub database_path: String,
     /// "hub" | "terminal" | "standalone" — drives Settings/Hub UI + SyncChip.
     pub hub_mode: String,
     pub hub_url: Option<String>,
@@ -110,9 +111,20 @@ pub async fn app_config_load(state: State<'_, AppState>) -> Result<AppConfig, Ap
 
     let currency: String = branch_row.get("currency");
     let exp = currency_exponent(&currency);
+    let database_path = sqlx::query("PRAGMA database_list")
+        .fetch_all(&state.db)
+        .await
+        .ok()
+        .and_then(|rows| {
+            rows.iter()
+                .find(|row| row.get::<String, _>("name") == "main")
+                .map(|row| row.get::<String, _>("file"))
+        })
+        .unwrap_or_default();
 
     Ok(AppConfig {
         setup_complete,
+        database_path,
         hub_mode,
         hub_url,
         branch_id: branch_row.get("branch_id"),
@@ -365,6 +377,7 @@ pub async fn setup_wizard_complete(
 
     tx.commit().await?;
     tracing::info!("setup_wizard_complete: transaction committed");
+    sync_commands::schedule_immediate_sync(&state);
 
     // Return updated config with owner user_id so the frontend can
     // call RBAC-gated commands (CSV import, etc.) as the new owner.
@@ -466,6 +479,8 @@ pub async fn settings_update_branch(
     .execute(&state.db)
     .await?;
 
+    sync_commands::schedule_immediate_sync(&state);
+
     settings_get_branch(input.actor_user_id, state).await
 }
 
@@ -501,6 +516,7 @@ pub async fn setup_save_benefit_number(
     .await?;
 
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
+    sync_commands::schedule_immediate_sync(&state);
 
     Ok(())
 }
@@ -616,6 +632,183 @@ pub async fn business_flags_save(
     .await?;
 
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
+    sync_commands::schedule_immediate_sync(&state);
 
+    Ok(())
+}
+
+// ─── Operational settings ────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct OperationalSettings {
+    pub loyalty_points_per_bhd: i64,
+    pub retention_days_sales: i64,
+    pub retention_days_logs: i64,
+    pub sync_interval_terminal_secs: i64,
+    pub sync_interval_hub_secs: i64,
+}
+
+impl Default for OperationalSettings {
+    fn default() -> Self {
+        Self {
+            loyalty_points_per_bhd: 1,
+            retention_days_sales: 90,
+            retention_days_logs: 30,
+            sync_interval_terminal_secs: 10,
+            sync_interval_hub_secs: 300,
+        }
+    }
+}
+
+async fn read_i64(pool: &sqlx::SqlitePool, key: &str, default: i64) -> i64 {
+    sqlx::query_scalar("SELECT CAST(value AS INTEGER) FROM app_config WHERE key = ?")
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .flatten()
+        .unwrap_or(default)
+}
+
+async fn write_i64(pool: &sqlx::SqlitePool, key: &str, value: i64) -> crate::errors::AppResult<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO app_config (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+    )
+    .bind(key)
+    .bind(value.to_string())
+    .bind(&now)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn operational_settings_load(
+    state: State<'_, AppState>,
+) -> Result<OperationalSettings, AppError> {
+    let s = OperationalSettings {
+        loyalty_points_per_bhd: read_i64(&state.db, "loyalty_points_per_bhd", 1).await,
+        retention_days_sales: read_i64(&state.db, "retention_days_sales", 90).await,
+        retention_days_logs: read_i64(&state.db, "retention_days_logs", 30).await,
+        sync_interval_terminal_secs: read_i64(&state.db, "sync_interval_terminal_secs", 10).await,
+        sync_interval_hub_secs: read_i64(&state.db, "sync_interval_hub_secs", 300).await,
+    };
+    Ok(s)
+}
+
+#[derive(Deserialize)]
+pub struct SaveOperationalSettingsInput {
+    pub settings: OperationalSettings,
+    pub actor_user_id: String,
+}
+
+#[tauri::command]
+pub async fn operational_settings_save(
+    input: SaveOperationalSettingsInput,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
+
+    write_i64(
+        &state.db,
+        "loyalty_points_per_bhd",
+        input.settings.loyalty_points_per_bhd,
+    )
+    .await?;
+    write_i64(
+        &state.db,
+        "retention_days_sales",
+        input.settings.retention_days_sales,
+    )
+    .await?;
+    write_i64(
+        &state.db,
+        "retention_days_logs",
+        input.settings.retention_days_logs,
+    )
+    .await?;
+    write_i64(
+        &state.db,
+        "sync_interval_terminal_secs",
+        input.settings.sync_interval_terminal_secs,
+    )
+    .await?;
+    write_i64(
+        &state.db,
+        "sync_interval_hub_secs",
+        input.settings.sync_interval_hub_secs,
+    )
+    .await?;
+
+    sync_commands::schedule_immediate_sync(&state);
+
+    Ok(())
+}
+
+// ─── Onboarding wizard progress (resumable across restarts) ──────────────────
+// Power cuts happen in this market — the first-run wizard persists which of
+// its six steps are resolved (done or explicitly skipped) so a relaunch can
+// resume instead of starting over. See migration 0041_onboarding_state.sql.
+
+#[derive(Debug, Serialize, Clone)]
+pub struct OnboardingStepRow {
+    pub step: String,
+    pub completed_at: String,
+}
+
+/// Read which onboarding steps have been resolved. Unauthenticated like
+/// `app_config_load` — it is polled at app startup, before any user is
+/// signed in, purely to decide whether to resume the wizard.
+#[tauri::command]
+pub async fn onboarding_get_state(
+    state: State<'_, AppState>,
+) -> Result<Vec<OnboardingStepRow>, AppError> {
+    let rows = sqlx::query("SELECT step, completed_at FROM onboarding_state")
+        .fetch_all(&state.db)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| OnboardingStepRow {
+            step: row.get("step"),
+            completed_at: row.get("completed_at"),
+        })
+        .collect())
+}
+
+/// Mark one onboarding step resolved (completed or explicitly skipped).
+/// Idempotent — safe to replay if the app restarts mid-step.
+#[tauri::command]
+pub async fn onboarding_mark_step(
+    step: String,
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    rbac::owner_only(&state.db, &actor_user_id).await?;
+    if step.trim().is_empty() {
+        return Err(AppError::Validation(
+            "Onboarding step name is required".into(),
+        ));
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO onboarding_state (step, completed_at) VALUES (?, ?)
+         ON CONFLICT(step) DO UPDATE SET completed_at = excluded.completed_at",
+    )
+    .bind(&step)
+    .bind(&now)
+    .execute(&state.db)
+    .await?;
+    // Wizard progress is the only signal for how far a store gets unassisted,
+    // and where they stall. Recorded after the write so a failed step is not
+    // reported as completed.
+    crate::diagnostics::record_event(
+        &state.db,
+        "wizard_step",
+        Some(serde_json::json!({ "step": step })),
+    )
+    .await;
     Ok(())
 }

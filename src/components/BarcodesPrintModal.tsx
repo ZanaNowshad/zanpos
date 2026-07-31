@@ -1,8 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { AdminProduct } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney } from "../money";
 import JsBarcode from "jsbarcode";
+import { useLanguage } from "../hooks/useLanguage";
+import { modalTranslator } from "../i18n/modalStrings";
 
 interface Props {
   products: AdminProduct[];
@@ -61,6 +63,8 @@ function BarcodeLabel({ product, exp, currency }: LabelProps) {
 }
 
 export default function BarcodesPrintModal({ products, onClose }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => modalTranslator(language), [language]);
   const exp = DEVICE.currency_exponent;
   const currency = DEVICE.currency;
 
@@ -68,14 +72,14 @@ export default function BarcodesPrintModal({ products, onClose }: Props) {
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal barcodes-modal">
         <div className="barcodes-modal-header">
-          <h2>Print Labels</h2>
+          <h2>{t("printLabels")}</h2>
           <div className="barcodes-modal-actions">
-            <button className="btn-secondary" onClick={onClose}>Cancel</button>
-            <button className="btn-primary" onClick={() => window.print()}>Print Labels</button>
+            <button className="btn-secondary" onClick={onClose}>{t("cancel")}</button>
+            <button className="btn-primary" onClick={() => window.print()}>{t("printLabels")}</button>
           </div>
         </div>
         <p className="barcodes-hint">
-          {products.length} label{products.length !== 1 ? "s" : ""} ready to print.
+          {products.length} {t("labelsReadyToPrint")}
         </p>
         <div className="barcode-labels-grid" id="barcode-print-area">
           {products.map(p => (

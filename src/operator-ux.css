@@ -1,0 +1,422 @@
+/* Operator-first pass: a calm transaction runway for register work. */
+:root {
+  --op-navy: #142033;
+  --op-amber: #d98e00;
+  --op-cloud: #f4f7fa;
+  --op-ink: #1b2838;
+  --op-line: #d8e0e8;
+  --op-success: #16845b;
+}
+
+/* Login — fast handoff, not a marketing splash. */
+.login-screen {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--surface) 88%, var(--op-cloud)) 0 42%, var(--bg) 42% 100%);
+}
+.login-brand { flex-basis: 40%; padding-inline: clamp(44px, 5vw, 88px); }
+.login-right { justify-content: flex-start; padding-left: clamp(52px, 8vw, 150px); }
+.login-panel {
+  width: 560px;
+  max-width: min(560px, calc(100% - 32px));
+  max-height: calc(100vh - 64px);
+  overflow: auto;
+  padding: 30px;
+  border-radius: 18px;
+  box-shadow: 0 24px 64px rgba(20, 32, 51, 0.18);
+}
+.login-panel-icon {
+  width: 38px;
+  height: 38px;
+  margin: 0 0 16px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  font-family: var(--font-mono);
+  font-size: 1rem;
+}
+.login-kicker {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--accent-h);
+  font: 700 0.64rem/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.login-heading {
+  margin: 0 0 7px;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: -0.025em;
+  font: 700 clamp(1.4rem, 2vw, 1.8rem)/1.1 "Bricolage Grotesque", var(--font);
+}
+.login-subheading { margin: 0 0 22px; text-align: left; font-size: 0.84rem; }
+.login-status {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  background: var(--surface2);
+  font-size: 0.8rem;
+}
+.user-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-height: min(52vh, 440px);
+  overflow: auto;
+  padding: 2px;
+}
+.user-card {
+  min-height: 108px;
+  padding: 16px;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) 24px;
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  text-align: left;
+  align-items: center;
+  border-radius: 12px;
+}
+.user-avatar { grid-row: 1 / 3; width: 46px; height: 46px; margin: 0; font-size: 1.1rem; }
+.user-name { margin: 0; align-self: end; font-size: 1rem; }
+.user-role { align-self: start; }
+.user-arrow { grid-column: 3; grid-row: 1 / 3; margin: 0; font-size: 1.2rem; }
+.pin-enter-label h3 { font-size: 1.12rem; text-transform: none; letter-spacing: 0; }
+.pin-key:disabled { opacity: 0.42; cursor: not-allowed; }
+
+/* POS — the center is a transaction runway; touch controls stay substantial. */
+.pos-sidebar-item { width: 76px; min-height: 58px; }
+.pos-sidebar-item span { font-size: 0.61rem; }
+.pos-quickadd-strip { min-height: 56px; padding: 8px 10px; }
+.pos-quickadd-custom, .pos-quickadd-chip { min-height: 40px; }
+.cart-panel-idle .cart-lines { display: grid; place-items: center; }
+.cart-empty {
+  width: min(620px, calc(100% - 48px));
+  min-height: 280px;
+  padding: 32px !important;
+  justify-content: center;
+  border: 1px dashed color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 5%, var(--surface)) 0 50%, var(--surface) 50% 100%);
+}
+.cart-empty-icon {
+  width: 52px;
+  height: 52px;
+  margin-bottom: 8px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--accent-h);
+  opacity: 1;
+}
+.cart-empty-kicker {
+  color: var(--accent-h);
+  font: 700 0.62rem/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.cart-empty-label { margin-top: 7px; font: 700 1.35rem/1.15 "Bricolage Grotesque", var(--font); }
+.cart-empty-hint { margin-top: 7px; max-width: 420px; font-size: 0.8rem; }
+.cart-empty-actions { width: 100%; margin-top: 22px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.cart-empty-actions span {
+  min-height: 48px;
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 0.73rem;
+}
+.cart-empty-actions b {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 15%, var(--surface));
+  color: var(--accent-h);
+  font-family: var(--font-mono);
+}
+.cart-qty-btn, .cart-line-del-btn { width: 42px; height: 42px; }
+.numpad-panel { padding: 10px; }
+.numpad-display { min-height: 58px; }
+.dialpad-key { min-height: 58px; }
+.np-fast-cash-btn { min-height: 72px; }
+.np-method-btn { min-height: 52px; }
+.action-bar { border-top: 1px solid var(--border); background: var(--surface); }
+
+/* Payment — amount, method and completion form one visual axis. */
+.pm-shell-calm {
+  width: min(1240px, calc(100vw - 40px));
+  min-height: min(640px, calc(100vh - 40px));
+  border-radius: 16px;
+  overflow: hidden;
+}
+.pm-shell-calm .pm-left { flex: 1.42; padding: 24px; gap: 11px; }
+.pm-shell-calm .pm-mid { flex: 0.62; background: color-mix(in srgb, var(--surface2) 72%, var(--surface)); }
+.pm-shell-calm .pm-right { flex: 0.78; max-width: 340px; padding: 20px; background: var(--surface2); }
+.pm-header { align-items: flex-end; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.pm-header-copy { display: flex; flex-direction: column; gap: 4px; }
+.pm-header-copy h2 { margin: 0; font: 700 1.35rem/1 "Bricolage Grotesque", var(--font); }
+.pm-title { color: var(--accent-h); font: 700 0.62rem/1 var(--font-mono); letter-spacing: 0.12em; text-transform: uppercase; }
+.pm-total-badge {
+  margin-left: auto;
+  margin-right: 12px;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--text) !important;
+  font: 700 var(--type-pos-large)/var(--leading-pos-large) var(--font-mono) !important;
+  font-variant-numeric: tabular-nums;
+}
+.pm-close-btn {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface2);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.pm-close-btn:hover { border-color: var(--text-dim); color: var(--text); }
+.pm-step-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 2px;
+  color: var(--text);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+.pm-step-label > span {
+  width: 21px;
+  height: 21px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--text);
+  color: var(--surface);
+  font: 700 0.6rem var(--font-mono);
+}
+.pm-step-muted { color: var(--text-dim); }
+.pm-step-muted > span { background: var(--border); color: var(--text-dim); }
+.pm-methods { padding: 5px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface2); }
+.pm-shell-calm .pm-method {
+  position: relative;
+  min-height: 78px;
+  padding: 11px 8px;
+  align-items: flex-start;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+.pm-method-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.pm-method-detail { font-size: 0.58rem; font-weight: 550; opacity: 0.72; white-space: nowrap; }
+.pm-method > kbd {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 1px 4px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font: 600 0.5rem var(--font-mono);
+  opacity: 0.45;
+}
+.pm-method-active { box-shadow: 0 5px 16px color-mix(in srgb, var(--accent) 22%, transparent); }
+.pm-method-guidance { min-height: 38px; display: flex; align-items: center; border-left: 3px solid var(--accent); }
+.pm-shell-calm .pm-amount-box {
+  min-height: 70px;
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+}
+.pm-amount-locked { cursor: default; border-style: solid; background: var(--surface2) !important; }
+.pm-amount-locked:hover { border-color: var(--border); }
+.pm-amount-locked .pm-amount-label::after {
+  content: "  • locked";
+  color: var(--text-muted);
+  font-size: 0.58rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.pm-change-pill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+}
+.pm-change-pill > span { display: inline-flex; align-items: center; gap: 6px; }
+.pm-change-pill > strong { font-family: var(--font-mono); }
+.pm-shell-calm .pm-amount-value {
+  margin-left: auto;
+  font-size: var(--type-pos-large);
+  line-height: var(--leading-pos-large);
+  font-family: var(--font-mono);
+}
+.pm-mid-title { color: var(--text-dim); font-size: 0.66rem; letter-spacing: 0.1em; }
+.pm-entry-heading {
+  min-height: 58px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+.pm-entry-heading span { color: var(--accent-h); font: 700 0.62rem var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.pm-entry-heading strong { color: var(--text); font: 750 1.15rem var(--font-mono); }
+.pm-ready-panel {
+  min-height: 355px;
+  padding: 28px 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--success) 24%, var(--border));
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 50% 20%, color-mix(in srgb, var(--success) 10%, transparent), transparent 42%),
+    var(--surface);
+  text-align: center;
+}
+.pm-ready-icon {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 16px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--success) 14%, var(--surface));
+  color: var(--success);
+}
+.pm-ready-kicker { color: var(--success); font: 750 0.62rem var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase; }
+.pm-ready-panel h3 { margin: 7px 0 0; font: 750 1.1rem "Bricolage Grotesque", var(--font); }
+.pm-ready-amount {
+  margin: 13px 0 25px;
+  color: var(--text);
+  font: 750 var(--type-pos-large)/var(--leading-pos-large) var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.pm-ready-check {
+  width: 100%;
+  min-height: 43px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  text-align: left;
+}
+.pm-ready-check svg { flex: 0 0 auto; color: var(--success); }
+.pm-ready-check-action svg { color: var(--accent-h); }
+.pm-confirm-status {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--success);
+  font-size: 0.65rem;
+  text-align: center;
+}
+.pm-confirm-status-blocked { color: var(--danger); }
+.pm-confirm-status kbd { margin-inline: 4px; font-family: var(--font-mono); }
+.pm-confirm-btn { min-height: 62px; box-shadow: 0 4px 0 color-mix(in srgb, var(--accent) 72%, #6e4600); }
+.pm-cancel-btn { min-height: 44px; }
+
+/* Deliveries — frame the register as an exception queue. */
+.dlv-command-header {
+  min-height: 84px;
+  padding: 14px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(105deg, color-mix(in srgb, var(--accent) 7%, var(--surface)), var(--surface));
+}
+.dlv-command-header span { color: var(--accent-h); font: 700 0.6rem var(--font-mono); letter-spacing: 0.12em; text-transform: uppercase; }
+.dlv-command-header h2 { margin: 3px 0; font: 700 1.28rem/1 "Bricolage Grotesque", var(--font); }
+.dlv-command-header p { margin: 0; color: var(--text-dim); font-size: 0.74rem; }
+.dlv-command-header > strong { color: var(--text); font: 700 1.75rem/1 var(--font-mono); }
+.dlv-command-header > strong small { display: block; margin-top: 4px; color: var(--text-dim); font: 600 0.58rem var(--font); text-align: right; text-transform: uppercase; }
+.dlv-topbar { padding: 12px 18px; background: var(--surface); }
+.dlv-preset-btn { min-height: 40px; padding-inline: 16px; }
+.dlv-search, .dlv-filter-toggle, .dlv-refresh-btn { min-height: 42px; }
+.dlv-table-wrap { margin: 0 18px 18px; border: 1px solid var(--border); border-radius: 12px; overflow: auto; }
+.dlv-table thead { position: sticky; top: 0; z-index: 2; }
+.dlv-th { background: var(--surface2); }
+.dlv-td { padding-block: 14px; }
+.dlv-col-id, .dlv-col-method { display: none; }
+.dlv-tr-expanded .dlv-td { box-shadow: inset 0 2px 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+.dlv-empty {
+  width: min(520px, calc(100% - 40px));
+  min-height: 240px;
+  margin: 48px auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px dashed var(--border);
+  border-radius: 16px;
+  background: var(--surface2);
+}
+.dlv-empty > span { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 50%; background: color-mix(in srgb, var(--success) 14%, var(--surface)); color: var(--success); font-weight: 800; }
+.dlv-empty strong { color: var(--text); font-size: 1rem; }
+.dlv-empty p { margin: 0; color: var(--text-dim); font-size: 0.76rem; }
+.dlv-quick-btn { min-width: 42px; min-height: 42px; }
+.dlv-detail { padding: 18px; background: color-mix(in srgb, var(--accent) 4%, var(--surface)); }
+
+/* Notes — compact capture workspace with a paper-card signature. */
+.stickynotes-overlay { background: rgba(15, 23, 34, 0.72); backdrop-filter: blur(5px); }
+.stickynotes-panel { width: min(1080px, 94vw); max-height: 88dvh; border-radius: 16px; }
+.stickynotes-header { min-height: 72px; padding: 14px 18px; }
+.stickynotes-heading > span { color: var(--accent-h); font: 700 0.58rem var(--font-mono); letter-spacing: 0.11em; text-transform: uppercase; }
+.stickynotes-heading h2 { margin: 3px 0 0; font: 700 1.16rem/1 "Bricolage Grotesque", var(--font); }
+.stickynotes-heading p { margin: 4px 0 0; color: var(--text-dim); font-size: 0.68rem; }
+.stickynotes-title { font-size: inherit; }
+.stickynotes-color-dot { width: 38px; height: 38px; }
+.stickynotes-color-dot-sm { width: 30px; height: 30px; }
+.stickynotes-add-btn { min-height: 42px; padding-inline: 17px; font-weight: 750; }
+.stickynotes-close-btn { width: 42px; height: 42px; border: 1px solid var(--border); border-radius: 10px; }
+.stickynotes-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; padding: 18px; }
+.stickynotes-empty { min-height: 260px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; border: 1px dashed var(--border); border-radius: 14px; background: var(--surface2); }
+.stickynotes-empty strong { color: var(--text); font-size: 1rem; }
+.stickynotes-empty span { max-width: 340px; }
+.stickynotes-empty button { min-height: 42px; margin-top: 8px; padding: 0 18px; border: 0; border-radius: 8px; background: var(--accent); color: var(--accent-t); font-weight: 700; }
+.stickynote { min-height: 190px; border-width: 1px 1px 1px 5px; border-radius: 10px; overflow: hidden; }
+.stickynote-toolbar { min-height: 46px; border-bottom: 1px solid rgba(0,0,0,0.07); }
+.stickynote-body { padding: 14px; font-size: 0.92rem; }
+
+@media (max-width: 980px) {
+  .login-brand { display: none; }
+  .login-screen { background: var(--bg); }
+  .login-right { justify-content: center; padding: 20px; }
+  .login-panel { width: min(560px, 100%); }
+  .pm-shell-calm { min-height: 0; }
+  .pm-shell-calm .pm-right { position: sticky; bottom: 0; background: var(--surface2); }
+}
+
+@media (max-width: 720px) {
+  .user-grid, .cart-empty-actions { grid-template-columns: 1fr; }
+  .login-panel { max-height: calc(100dvh - 24px); padding: 22px; }
+  .dlv-command-header, .dlv-topbar { align-items: stretch; flex-direction: column; }
+  .dlv-command-header > strong { align-self: flex-start; }
+  .dlv-table-wrap { margin-inline: 8px; }
+  .stickynotes-overlay { align-items: flex-end; }
+  .stickynotes-panel { width: 100%; max-height: 94dvh; border-radius: 16px 16px 0 0; }
+  .stickynotes-header { align-items: flex-start; }
+  .stickynotes-color-picker { display: none; }
+  .stickynotes-grid { grid-template-columns: 1fr; padding: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-brand, .login-right, .user-card, .login-geo-1, .login-geo-2, .login-geo-glow { animation: none !important; }
+}

@@ -1,8 +1,11 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { CartLine } from "../types";
 import { formatMoney, parseMoney } from "../money";
 import { DEVICE } from "../types";
 import { useFocusTrap } from "../hooks/useFocusTrap";
+import { useLanguage } from "../hooks/useLanguage";
+import { modalTranslator } from "../i18n/modalStrings";
+import { detailTranslator } from "../i18n/detailStrings";
 
 interface Props {
   line: CartLine;
@@ -23,6 +26,9 @@ export default function LineEditModal({
   onRemove,
   onClose,
 }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => modalTranslator(language), [language]);
+  const dt = useMemo(() => detailTranslator(language), [language]);
   const modalRef = useRef<HTMLDivElement>(null);
   useFocusTrap(modalRef, onClose);
 
@@ -93,7 +99,7 @@ export default function LineEditModal({
         <p className="line-edit-unit-price">Unit price: {fmt(line.unit_price_minor)}</p>
 
         {/* ── Quantity ── */}
-        <label className="line-edit-label" htmlFor="line-edit-qty">Quantity</label>
+        <label className="line-edit-label" htmlFor="line-edit-qty">{t("quantity")}</label>
         <div className="line-edit-qty-row">
           <button
             className="qty-btn"
@@ -119,7 +125,7 @@ export default function LineEditModal({
         </div>
 
         {/* ── Line discount ── */}
-        <label className="line-edit-label" htmlFor="line-edit-discount">Line Discount</label>
+        <label className="line-edit-label" htmlFor="line-edit-discount">{t("lineDiscount")}</label>
         <div className="discount-mode-tabs">
           <button
             className={`discount-mode-tab ${discountMode === "pct" ? "discount-mode-tab-active" : ""}`}
@@ -128,7 +134,7 @@ export default function LineEditModal({
           <button
             className={`discount-mode-tab ${discountMode === "flat" ? "discount-mode-tab-active" : ""}`}
             onClick={() => { setDiscountMode("flat"); setDiscountValue(""); }}
-          >Flat</button>
+          >{t("flatAmount")}</button>
         </div>
         <div className="discount-input-row">
           {discountMode === "pct" ? (
@@ -164,19 +170,20 @@ export default function LineEditModal({
         {discountPreview > 0 && (
           <p className="discount-current-note">
             Discount: − {fmt(discountPreview)}
-            &nbsp;→ Line total: {fmt(Math.max(0, lineSubtotal - discountPreview))}
+            &nbsp;<span className="icon-directional" aria-hidden="true">→</span> Line total:{" "}
+            <span className="numeric-ltr">{fmt(Math.max(0, lineSubtotal - discountPreview))}</span>
           </p>
         )}
 
         {discountPreview > 0 && (
             <>
-              <label className="line-edit-label" htmlFor="line-edit-discount-reason">Discount reason (required)</label>
+              <label className="line-edit-label" htmlFor="line-edit-discount-reason">{t("reasonRequired")}</label>
               <input
                 id="line-edit-discount-reason"
               className={`line-edit-note-input${discountNeedsReason ? " input-error" : ""}`}
               type="text"
               maxLength={120}
-              placeholder="e.g. Manager approved, loyalty reward…"
+              placeholder={dt("managerDiscountExample")}
               value={discountReason}
               onChange={e => setDiscountReason(e.target.value)}
             />
@@ -184,20 +191,20 @@ export default function LineEditModal({
         )}
 
         {/* ── Note ── */}
-        <label className="line-edit-label" htmlFor="line-edit-note">Note (optional)</label>
+        <label className="line-edit-label" htmlFor="line-edit-note">{t("noteOptional")}</label>
         <input
           id="line-edit-note"
           className="line-edit-note-input"
           type="text"
           maxLength={120}
-          placeholder="e.g. No ice"
+          placeholder={dt("lineNoteExample")}
           value={note}
           onChange={e => setNote(e.target.value)}
         />
 
         <div className="modal-actions line-edit-actions">
-          <button className="btn-danger" onClick={handleRemove}>Remove</button>
-          <button className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn-danger" onClick={handleRemove}>{t("remove")}</button>
+          <button className="btn-secondary" onClick={onClose}>{t("cancel")}</button>
           <button className="btn-primary" onClick={handleApply} disabled={!qtyValid || discountNeedsReason}>
             Apply
           </button>

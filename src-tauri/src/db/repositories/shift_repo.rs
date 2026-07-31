@@ -338,7 +338,15 @@ pub async fn close_shift(
                          FROM payments p2
                          WHERE p2.sale_id = sa.sale_id AND p2.payment_method = 'cash'),
                         sa.net_total_minor
-                    ) * r.refund_total_minor / sa.net_total_minor
+                    ) * MAX(
+                        r.refund_total_minor - COALESCE((
+                            SELECT SUM(ep.amount_minor)
+                            FROM payments ep
+                            WHERE ep.payment_method = 'exchange_credit'
+                              AND ep.external_reference = r.refund_id
+                        ), 0),
+                        0
+                    ) / sa.net_total_minor
                     END
                   )
                   FROM refunds r

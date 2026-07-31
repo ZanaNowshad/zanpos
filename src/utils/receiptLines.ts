@@ -1,7 +1,6 @@
 /**
  * Shared receipt line builder — produces the 48-char plain-text lines fed to
- * the ESC/POS printer.  Used by both ReceiptPreview (on-screen modal) and
- * PosPage (auto-print after payment confirmation).
+ * the ESC/POS printer. Used by POS sale, reprint, and auto-print paths.
  */
 import type { BranchSettings, SaleResult } from "../types";
 import { formatMoney } from "../money";
@@ -16,6 +15,42 @@ function pad(l: string, r: string): string {
 }
 
 const DIVIDER = "-".repeat(W);
+
+export type ReceiptPrintTrigger = "auto" | "manual";
+export type ReceiptPrintOutcome = "printed" | "skipped" | "unavailable";
+
+interface PerformReceiptPrintInput {
+  sale: SaleResult;
+  settings: BranchSettings | null;
+  trigger: ReceiptPrintTrigger;
+  autoPrintEnabled: boolean;
+  thermalEnabled: boolean;
+  isReprint?: boolean;
+  print: (storeName: string, lines: string[]) => Promise<string>;
+}
+
+/**
+ * One policy for every sale-time receipt path.
+ * Automatic prints honor the business toggle; explicit prints never do.
+ */
+export async function performReceiptPrint({
+  sale,
+  settings,
+  trigger,
+  autoPrintEnabled,
+  thermalEnabled,
+  isReprint = false,
+  print,
+}: PerformReceiptPrintInput): Promise<ReceiptPrintOutcome> {
+  if (!thermalEnabled) return "unavailable";
+  if (trigger === "auto" && !autoPrintEnabled) return "skipped";
+
+  await print(
+    sale.branch_name || settings?.name || "ZANPOS",
+    buildReceiptLines(sale, settings, isReprint),
+  );
+  return "printed";
+}
 
 /** Build the full plain-text receipt body for ESC/POS printing. */
 export function buildReceiptLines(

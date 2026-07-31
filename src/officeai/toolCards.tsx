@@ -1,13 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  AlarmClock, AlertTriangle, ArrowLeftRight, Banknote, BarChart2,
+  AlarmClock, AlertTriangle, ArrowLeftRight, Banknote, BarChart2, BookOpen,
   Building2, CalendarDays, ClipboardList, Clock, Cloud, Database,
-  Flag, FolderOpen, Globe, Link, Lock, Monitor, Package, PanelsTopLeft,
+  Flag, FolderOpen, Globe, HeartPulse, Link, Lock, Monitor, Package, PanelsTopLeft,
   Pencil, PlusCircle, QrCode, Receipt, RefreshCw, Search, Settings,
   ShoppingCart, Store, Tag, TrendingUp, Truck, Undo2, User,
   Users, Wallet, Trophy,
 } from "lucide-react";
 import type { ToolCallEntry, ToolMetaEntry, ChatState } from "./officeAiTypes";
+import { useLanguage } from "../hooks/useLanguage";
+import { isKnownOfficeAiTool, officeAiToolLabel } from "../i18n/officeAiToolStrings";
+import { officeAiTranslator } from "../i18n/officeAiStrings";
 
 export { QUICK_ACTIONS } from "./officeAiTypes";
 
@@ -74,10 +77,51 @@ export const TOOL_META: Record<string, ToolMetaEntry> = {
   compare_store_prices:       { Icon: ShoppingCart,    label: "Price Comparison",         color: "var(--info)"      },
   bahrain_market_price_check: { Icon: ShoppingCart,    label: "Market Check",             color: "var(--info)"      },
   open_tab:                   { Icon: PanelsTopLeft,   label: "Opening Tab",              color: "var(--info)"      },
+  // ZanAI Insights — Phase 1
+  get_frequently_bought_together: { Icon: ShoppingCart, label: "Bought Together",        color: "var(--ai-indigo)" },
+  get_bundle_suggestions:         { Icon: Tag,           label: "Bundle Ideas",           color: "var(--success)"   },
+  get_weekly_forecast:            { Icon: TrendingUp,    label: "Weekly Forecast",        color: "var(--ai-indigo)" },
+  get_rfm_segmentation:           { Icon: Users,         label: "RFM Segments",           color: "var(--ai-purple)" },
+  get_margin_trend:               { Icon: BarChart2,     label: "Margin Trend",           color: "var(--success)"   },
+  get_restock_priority:           { Icon: AlertTriangle, label: "Restock Priority",       color: "var(--warning)"   },
+  get_dead_stock_value:           { Icon: Package,       label: "Dead Stock Value",       color: "var(--error)"     },
+  get_category_forecast:          { Icon: CalendarDays,  label: "Category Forecast",      color: "var(--ai-indigo)" },
+  // Product Quality
+  find_duplicate_products:        { Icon: Search,        label: "Find Duplicates",        color: "var(--warning)"   },
+  merge_products:                 { Icon: RefreshCw,     label: "Merging Products",       color: "var(--warning)"   },
+  // Workflow loader
+  load_workflow:                  { Icon: BookOpen,       label: "Loading Workflow",       color: "var(--info)"      },
+  // Database maintenance
+  reindex_database:               { Icon: Database,      label: "Rebuilding Indexes",     color: "var(--warning)"   },
+  force_wal_checkpoint:           { Icon: Database,      label: "WAL Checkpoint",         color: "var(--warning)"   },
+  check_foreign_key_integrity:    { Icon: Link,           label: "FK Integrity Check",     color: "var(--info)"      },
+  // Ghost barcodes
+  list_ghost_barcodes:            { Icon: QrCode,        label: "Ghost Barcodes",         color: "var(--warning)"   },
+  resolve_ghost_barcode:          { Icon: QrCode,        label: "Resolving Barcode",      color: "var(--warning)"   },
+  // Sync conflicts
+  list_sync_conflicts:            { Icon: AlertTriangle, label: "Sync Conflicts",         color: "var(--error)"     },
+  resolve_sync_conflict:          { Icon: RefreshCw,     label: "Resolving Conflict",     color: "var(--warning)"   },
+  // Database maintenance (advanced)
+  run_quick_integrity_check:       { Icon: ClipboardList, label: "Quick Integrity Check",  color: "var(--info)"      },
+  get_database_fragmentation:      { Icon: Database,      label: "DB Fragmentation",       color: "var(--info)"      },
+  clear_ghost_sync_records:       { Icon: Cloud,          label: "Clean Sync Orphans",     color: "var(--warning)"   },
+  run_diagnostics_and_fix:        { Icon: HeartPulse,     label: "Diagnostics & Repair",   color: "var(--warning)"   },
+  // Bulk imports
+  bulk_import_products:           { Icon: Tag,            label: "Importing Products",     color: "var(--warning)"   },
+  bulk_import_categories:         { Icon: FolderOpen,     label: "Importing Categories",   color: "var(--warning)"   },
+  // WhatsApp
+  send_receipt_via_whatsapp:      { Icon: Receipt,        label: "Sending Receipt PDF",    color: "var(--warning)"   },
 };
 
-export function toolMeta(name: string): ToolMetaEntry {
-  return TOOL_META[name] ?? {
+export function toolMeta(name: string, language: "en" | "ar"): ToolMetaEntry {
+  const meta = TOOL_META[name];
+  if (meta) {
+    return {
+      ...meta,
+      label: isKnownOfficeAiTool(name) ? officeAiToolLabel(language, name) : meta.label,
+    };
+  }
+  return {
     Icon: Settings,
     label: name.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
     color: "var(--text-dim)",
@@ -87,8 +131,10 @@ export function toolMeta(name: string): ToolMetaEntry {
 // ─── Tool Call Card ────────────────────────────────────────────────────────────
 
 export function ToolCallCard({ entry }: { entry: ToolCallEntry }) {
+  const { language } = useLanguage();
+  const t = officeAiTranslator(language);
   const [elapsed, setElapsed] = useState(0);
-  const meta  = toolMeta(entry.name);
+  const meta  = toolMeta(entry.name, language);
   const running = entry.status === "running";
 
   useEffect(() => {
@@ -112,7 +158,7 @@ export function ToolCallCard({ entry }: { entry: ToolCallEntry }) {
       {/* Text body */}
       <div className="ai-tool-body">
         <div className="ai-tool-label" style={{ color: running ? meta.color : undefined }}>
-          {running ? `Calling ${meta.label}…` : meta.label}
+          {running ? `${t("calling")} ${meta.label}…` : meta.label}
         </div>
         <div className="ai-tool-raw">{entry.name}</div>
       </div>
@@ -128,7 +174,7 @@ export function ToolCallCard({ entry }: { entry: ToolCallEntry }) {
           </div>
         ) : (
           <span className="ai-tool-done-badge">
-            ✓ {entry.duration !== undefined ? `${entry.duration}ms` : "done"}
+            ✓ {entry.duration !== undefined ? `${entry.duration}ms` : t("done")}
           </span>
         )}
       </div>
@@ -151,25 +197,24 @@ export function LiveActivityBar({
   tokenCount: number;
   streamStartTime: number | null;
 }) {
-  const [, tick] = useState(0);
+  const { language } = useLanguage();
+  const t = officeAiTranslator(language);
+  const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
     if (chatState === "idle") return;
-    const id = setInterval(() => tick(n => n + 1), 100);
+    const id = setInterval(() => {
+      setElapsed(streamStartTime ? Date.now() - streamStartTime : 0);
+    }, 100);
     return () => clearInterval(id);
-  }, [chatState]);
+  }, [chatState, streamStartTime]);
 
-  const { elapsed, runningTool, phase } = useMemo(() => {
-    // eslint-disable-next-line react-hooks/purity
-    const e = streamStartTime ? Date.now() - streamStartTime : 0;
-    const rt = liveToolCalls.find(t => t.status === "running");
-    const p: ActivityPhase = rt ? "tool" : tokenCount > 0 ? "streaming" : "thinking";
-    return { elapsed: e, runningTool: rt, phase: p };
-  }, [streamStartTime, liveToolCalls, tokenCount]);
+  const runningTool = liveToolCalls.find(t => t.status === "running");
+  const phase: ActivityPhase = runningTool ? "tool" : tokenCount > 0 ? "streaming" : "thinking";
 
   if (chatState === "idle") return null;
 
-  const meta = runningTool ? toolMeta(runningTool.name) : null;
+  const meta = runningTool ? toolMeta(runningTool.name, language) : null;
 
   return (
     <div className={`lab lab--${phase}`}>
@@ -194,17 +239,17 @@ export function LiveActivityBar({
 
         {/* Center: text */}
         <div className="lab-text">
-          {phase === "thinking" && <span className="lab-status">Thinking…</span>}
+          {phase === "thinking" && <span className="lab-status">{t("thinking")}</span>}
           {phase === "tool" && meta && (
             <span className="lab-status">
               <span className="lab-tool-icon"><meta.Icon size={14} /></span>
-              {" Calling "}<strong>{meta.label}</strong>
+              {` ${t("calling")} `}<strong>{meta.label}</strong>
             </span>
           )}
           {phase === "streaming" && (
             <span className="lab-status">
-              Streaming response
-              <span className="lab-token-count">{tokenCount} tokens</span>
+              {t("streamingResponse")}
+              <span className="lab-token-count">{tokenCount} {t("tokens")}</span>
             </span>
           )}
         </div>

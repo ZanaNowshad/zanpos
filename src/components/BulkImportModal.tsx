@@ -1,6 +1,9 @@
-import { type DragEvent, useRef, useState } from "react";
+import { type DragEvent, useMemo, useRef, useState } from "react";
 import type { BulkImportResult, BulkCategoryRow, BulkProductRow } from "../tauri/commands";
 import * as cmd from "../tauri/commands";
+import { useLanguage } from "../hooks/useLanguage";
+import { modalTranslator } from "../i18n/modalStrings";
+import { detailTranslator } from "../i18n/detailStrings";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -85,6 +88,9 @@ function rowsToProducts(rows: string[][]): BulkProductRow[] {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => modalTranslator(language), [language]);
+  const dt = useMemo(() => detailTranslator(language), [language]);
   const [step, setStep]         = useState<"upload" | "preview" | "result">("upload");
   const [parsed, setParsed]     = useState<string[][]>([]);
   const [importing, setImporting] = useState(false);
@@ -151,7 +157,7 @@ export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }
       setStep("result");
       if (res.inserted > 0) onDone();
     } catch (e: unknown) {
-      setError(typeof e === "string" ? e : "Import failed. Check your file and try again.");
+      setError(typeof e === "string" ? e : dt("importFailed"));
     } finally {
       setImporting(false);
     }
@@ -162,7 +168,7 @@ export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }
       <div className="bulk-modal">
         <div className="bulk-modal-header">
           <h2 className="bulk-modal-title">
-            {isProducts ? "Bulk Import Products" : "Bulk Import Categories"}
+            {isProducts ? t("bulkImportProducts") : t("bulkImportCategories")}
           </h2>
           <button className="bulk-modal-close" onClick={onClose}>✕</button>
         </div>
@@ -171,11 +177,10 @@ export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }
         {step === "upload" && (
           <div className="bulk-upload-area">
             <p className="bulk-upload-hint">
-              Upload a CSV file to add multiple {isProducts ? "products" : "categories"} at once.
-              Existing records with the same name will be skipped.
+              {t("uploadCsvHint")}
             </p>
             <button className="btn-secondary bulk-template-btn" onClick={downloadTemplate}>
-              ⬇ Download Template
+              ⬇ {t("downloadTemplate")}
             </button>
             <div
               className="bulk-dropzone"
@@ -184,8 +189,8 @@ export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }
               onClick={() => fileRef.current?.click()}
             >
               <div className="bulk-dropzone-icon">📂</div>
-              <p className="bulk-dropzone-text">Drop your CSV here, or click to browse</p>
-              <p className="bulk-dropzone-sub">.csv files only</p>
+              <p className="bulk-dropzone-text">{t("dropCsv")}</p>
+              <p className="bulk-dropzone-sub">{t("csvFilesOnly")}</p>
             </div>
             <input
               ref={fileRef}
@@ -196,26 +201,26 @@ export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }
             />
 
             <div className="bulk-format-box">
-              <p className="bulk-format-title">Required CSV columns:</p>
+              <p className="bulk-format-title">{t("requiredCsvColumns")}</p>
               {isProducts ? (
                 <table className="bulk-format-table">
-                  <thead><tr><th>Column</th><th>Required</th><th>Notes</th></tr></thead>
+                  <thead><tr><th>{t("column")}</th><th>{t("required")}</th><th>{t("notesOptional")}</th></tr></thead>
                   <tbody>
-                    <tr><td><code>name</code></td><td>✅</td><td>Product name</td></tr>
-                    <tr><td><code>category_name</code></td><td>✅</td><td>Created automatically if missing</td></tr>
-                    <tr><td><code>price</code></td><td>✅</td><td>Full BHD e.g. <code>1.500</code></td></tr>
-                    <tr><td><code>sku</code></td><td>–</td><td>Stock Keeping Unit</td></tr>
-                    <tr><td><code>barcodes</code></td><td>–</td><td>Pipe-separated: <code>12345|67890</code> (single barcode also works)</td></tr>
-                    <tr><td><code>track_inventory</code></td><td>–</td><td><code>true</code> or <code>false</code> (default true)</td></tr>
-                    <tr><td><code>tax_rule_name</code></td><td>–</td><td>Must match an existing tax rule name</td></tr>
+                    <tr><td><code>name</code></td><td>✅</td><td>{dt("productNameColumn")}</td></tr>
+                    <tr><td><code>category_name</code></td><td>✅</td><td>{dt("autoCreateCategory")}</td></tr>
+                    <tr><td><code>price</code></td><td>✅</td><td>{dt("fullBhdExample")}</td></tr>
+                    <tr><td><code>sku</code></td><td>–</td><td>{dt("stockKeepingUnit")}</td></tr>
+                    <tr><td><code>barcodes</code></td><td>–</td><td>{dt("pipeSeparatedBarcodes")}</td></tr>
+                    <tr><td><code>track_inventory</code></td><td>–</td><td>{dt("booleanDefaultTrue")}</td></tr>
+                    <tr><td><code>tax_rule_name</code></td><td>–</td><td>{dt("existingTaxRule")}</td></tr>
                   </tbody>
                 </table>
               ) : (
                 <table className="bulk-format-table">
-                  <thead><tr><th>Column</th><th>Required</th><th>Notes</th></tr></thead>
+                  <thead><tr><th>{t("column")}</th><th>{t("required")}</th><th>{t("notesOptional")}</th></tr></thead>
                   <tbody>
-                    <tr><td><code>name</code></td><td>✅</td><td>Category name</td></tr>
-                    <tr><td><code>sort_order</code></td><td>–</td><td>Display order number</td></tr>
+                    <tr><td><code>name</code></td><td>✅</td><td>{dt("categoryNameColumn")}</td></tr>
+                    <tr><td><code>sort_order</code></td><td>–</td><td>{dt("displayOrderNumber")}</td></tr>
                   </tbody>
                 </table>
               )}
@@ -227,8 +232,8 @@ export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }
         {step === "preview" && (
           <div className="bulk-preview-area">
             <p className="bulk-preview-count">
-              {previewRows.length} row{previewRows.length !== 1 ? "s" : ""} detected
-              {previewRows.length === 0 && " — no valid rows found. Check headers match the required columns."}
+              {previewRows.length} {t("rowsDetected")}
+              {previewRows.length === 0 && ` — ${t("noValidRows")}`}
             </p>
             {error && <div className="bo-form-error">{error}</div>}
             {previewRows.length > 0 && (
@@ -238,11 +243,11 @@ export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }
                     <tr>
                       {isProducts ? (
                         <>
-                          <th>#</th><th>Name</th><th>Category</th><th>Price</th>
-                          <th>SKU</th><th>Barcode(s)</th><th>Track</th>
+                          <th>#</th><th>{t("name")}</th><th>{t("category")}</th><th>{t("price")}</th>
+                          <th>{t("sku")}</th><th>{t("barcodes")}</th><th>{t("trackInventory")}</th>
                         </>
                       ) : (
-                        <><th>#</th><th>Name</th><th>Sort</th></>
+                        <><th>#</th><th>{t("name")}</th><th>{t("sortOrder")}</th></>
                       )}
                     </tr>
                   </thead>
@@ -257,7 +262,7 @@ export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }
                             <td>{(r as BulkProductRow).price}</td>
                             <td className="bulk-cell-dim">{(r as BulkProductRow).sku || "–"}</td>
                             <td className="bulk-cell-dim">{(r as BulkProductRow).barcodes || (r as BulkProductRow).barcode || "–"}</td>
-                            <td>{(r as BulkProductRow).track_inventory === false ? "No" : "Yes"}</td>
+                            <td>{(r as BulkProductRow).track_inventory === false ? dt("no") : dt("yes")}</td>
                           </>
                         )}
                         {!isProducts && (
@@ -274,14 +279,14 @@ export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }
             )}
             <div className="bulk-preview-actions">
               <button className="btn-secondary" onClick={() => { setStep("upload"); setError(null); }}>
-                ← Back
+                <span className="icon-directional" aria-hidden="true">←</span> {t("back")}
               </button>
               <button
                 className="btn-primary"
                 onClick={runImport}
                 disabled={importing || previewRows.length === 0}
               >
-                {importing ? "Importing…" : `Import ${previewRows.length} rows`}
+                {importing ? t("importing") : `${t("importAction")} ${previewRows.length}`}
               </button>
             </div>
           </div>
@@ -292,23 +297,23 @@ export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }
           <div className="bulk-result-area">
             <div className={`bulk-result-summary ${result.inserted > 0 ? "bulk-result-ok" : "bulk-result-warn"}`}>
               <span className="bulk-result-stat">
-                ✅ <strong>{result.inserted}</strong> inserted
+                ✅ <strong>{result.inserted}</strong> {t("inserted")}
               </span>
               {result.skipped > 0 && (
                 <span className="bulk-result-stat">
-                  ⏭ <strong>{result.skipped}</strong> skipped (already exist)
+                  ⏭ <strong>{result.skipped}</strong> {t("skipped")}
                 </span>
               )}
               {result.errors.length > 0 && (
                 <span className="bulk-result-stat bulk-result-err-count">
-                  ❌ <strong>{result.errors.length}</strong> errors
+                  ❌ <strong>{result.errors.length}</strong> {t("errors")}
                 </span>
               )}
             </div>
 
             {result.errors.length > 0 && (
               <div className="bulk-errors-box">
-                <p className="bulk-errors-title">Rows with errors (not imported):</p>
+                <p className="bulk-errors-title">{t("errors")}:</p>
                 <div className="bulk-errors-scroll">
                   {result.errors.map((e, i) => (
                     <div key={i} className="bulk-error-row">
@@ -325,7 +330,7 @@ export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }
               <button className="btn-secondary" onClick={() => { setStep("upload"); setParsed([]); setResult(null); }}>
                 Import another file
               </button>
-              <button className="btn-primary" onClick={onClose}>Done</button>
+              <button className="btn-primary" onClick={onClose}>{t("done")}</button>
             </div>
           </div>
         )}

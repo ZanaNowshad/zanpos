@@ -1,0 +1,18 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "zanpos-storefront",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2026-07-23",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"],
+    "not_found_handling": "single-page-application"
+  },
+  "r2_buckets": [
+    {
+      "binding": "CATALOG",
+      "bucket_name": "zanpos-catalog"
+    }
+  ]
+}

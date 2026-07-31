@@ -1,4 +1,4 @@
-use crate::commands::rbac;
+use crate::commands::{rbac, sync_commands};
 use crate::db::repositories::audit_hash;
 use crate::errors::{AppError, AppResult};
 use crate::inventory::stock_repo::{self, StockLevel, StockLevelPage, StockMovementRow};
@@ -101,6 +101,7 @@ pub async fn inventory_get_movements(
 pub struct ReceiveStockInput {
     pub product_id: String,
     pub quantity: String, // decimal string
+    pub expiry_date: Option<String>,
     pub notes: Option<String>,
     pub received_by_user_id: String,
 }
@@ -121,6 +122,7 @@ pub async fn inventory_receive_stock(
     if qty <= Decimal::ZERO {
         return Err(AppError::Validation("Quantity must be positive".into()));
     }
+    let expiry_date = crate::inventory::lots::validate_expiry_date(input.expiry_date.as_deref())?;
 
     let branch_id = active_branch_id(&state).await?;
     let device_id = active_device_id(&state).await?;
@@ -183,8 +185,9 @@ pub async fn inventory_receive_stock(
     sqlx::query(
         "INSERT INTO stock_movements
            (movement_id, product_id, branch_id, device_id, origin_device_id, movement_type, quantity_delta,
-            quantity_after, reference_type, notes, created_by_user_id, created_at, sync_status)
-         VALUES (?, ?, ?, ?, ?, 'receive', ?, ?, 'receive', ?, ?, ?, 'pending')",
+            quantity_after, reference_type, notes, created_by_user_id, created_at, sync_status,
+            expiry_date, lot_quantity_received, lot_quantity_remaining)
+         VALUES (?, ?, ?, ?, ?, 'receive', ?, ?, 'receive', ?, ?, ?, 'pending', ?, ?, ?)",
     )
     .bind(&movement_id)
     .bind(&input.product_id)
@@ -196,12 +199,16 @@ pub async fn inventory_receive_stock(
     .bind(&input.notes)
     .bind(&input.received_by_user_id)
     .bind(&now)
+    .bind(expiry_date)
+    .bind(&delta_str)
+    .bind(&delta_str)
     .execute(&mut *tx)
     .await?;
 
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     tx.commit().await?;
+    sync_commands::schedule_immediate_sync(&state);
 
     // ── Audit log AFTER commit (H-29) ──
     let after_json = serde_json::json!({"quantity_on_hand": new_qty_str}).to_string();
@@ -336,6 +343,7 @@ pub async fn inventory_adjust_stock(
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     tx.commit().await?;
+    sync_commands::schedule_immediate_sync(&state);
 
     // ── Audit log AFTER commit (H-29) ──
     let after_json = serde_json::json!({"quantity_on_hand": new_qty_str}).to_string();
@@ -539,6 +547,10 @@ pub async fn inventory_bulk_stock_take(
         }
 
         updated += 1;
+    }
+
+    if updated > 0 {
+        sync_commands::schedule_immediate_sync(&state);
     }
 
     Ok(BulkStockTakeResult { updated, errors })

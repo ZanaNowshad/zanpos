@@ -1,6 +1,7 @@
 //! Embedded LAN hub server. When app_config.hub_mode='1', this device serves
 //! its SQLite to sibling terminals over the PostgREST subset that
 //! sync_v2::client::HttpSyncClient already speaks.
+pub mod discovery;
 pub mod pairing;
 pub mod rest;
 

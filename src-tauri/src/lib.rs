@@ -25,6 +25,7 @@ mod secure_store;
 pub mod storefront;
 mod sync;
 pub mod sync_v2;
+mod telemetry;
 mod telemetry_uploader;
 
 use crate::sync::SyncWorker;

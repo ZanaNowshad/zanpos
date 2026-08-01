@@ -1,3 +1,4 @@
+pub mod action_registry;
 pub mod business_insights;
 pub mod client;
 pub mod config;

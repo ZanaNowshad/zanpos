@@ -1,5 +1,5 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { type ComponentPropsWithoutRef, type ReactNode } from "react";
+import { type ComponentPropsWithoutRef } from "react";
 
 type DialogProps = ComponentPropsWithoutRef<typeof DialogPrimitive.Root> & {
   open: boolean;

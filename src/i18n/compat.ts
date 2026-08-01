@@ -1,4 +1,4 @@
-import type { Language } from "../../hooks/useLanguage";
+import type { Language } from "../hooks/useLanguage";
 import i18n from "./index";
 
 export function t(key: string, ns = "pos"): string {

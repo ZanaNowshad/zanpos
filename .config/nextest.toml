@@ -1,0 +1,22 @@
+# cargo-nextest configuration for ZANPOS
+# v0.9.109 — Apache-2.0 OR MIT — https://nexte.st
+
+[profile.default]
+# Hard timeout per test: 120 seconds
+default-test-timeout = "120s"
+# Warn on tests slower than 30 seconds, kill after 60s
+slow-timeout = { period = "30s", terminate-after = 3 }
+# Warn means give more time before killing
+leak-timeout = "2s"
+
+[profile.ci]
+default-test-timeout = "120s"
+slow-timeout = { period = "30s", terminate-after = 2 }
+leak-timeout = "2s"
+
+# JUnit output for CI artifact publication
+[profile.ci.junit]
+path = "target/nextest/ci/junit.xml"
+report-name = "zanpos-test-report"
+store-success-output = false
+store-failure-output = true

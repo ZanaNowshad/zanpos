@@ -98,6 +98,24 @@ jobs:
         working-directory: src-tauri
         run: cargo test --all-targets
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest@0.9.109
+
+      - name: Cargo nextest (JUnit + slow-test reporting)
+        working-directory: src-tauri
+        run: cargo nextest run --all-targets --profile ci 2>&1
+        env:
+          NEXTEST_EXPERIMENTAL_LIBTEST_JSON: 1
+
+      - name: Upload nextest JUnit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-junit
+          path: src-tauri/target/nextest/ci/junit.xml
+
   # ────────────────────────────────────────────────────────────────────────────
   # 2. Frontend – type-check / lint / unit tests / npm audit
   # ────────────────────────────────────────────────────────────────────────────

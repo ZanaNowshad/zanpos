@@ -19,6 +19,7 @@
     "test:e2e:tauri": "wdio run tests/e2e-tauri/wdio.conf.ts"
   },
   "dependencies": {
+    "@hookform/resolvers": "^5.5.7",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-opener": "^2",
@@ -27,7 +28,9 @@
     "lucide-react": "^1.16.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "react-i18next": "^17.0.11"
+    "react-hook-form": "^7.84.0",
+    "react-i18next": "^17.0.11",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
-import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useLanguage } from "../hooks/useLanguage";
 import { operationsTranslator } from "../i18n/operationsStrings";
+import { Dialog, DialogContent, DialogClose } from "./ui";
 
 interface Props {
   title: string;
@@ -22,28 +22,23 @@ export default function AppConfirmModal({
 }: Props) {
   const { language } = useLanguage();
   const t = operationsTranslator(language);
-  const modalRef = useRef<HTMLDivElement>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
-  useFocusTrap(modalRef, onCancel);
 
   useEffect(() => { confirmRef.current?.focus(); }, []);
 
   return (
-    <div className="modal-overlay" onClick={onCancel}>
-      <div
-        ref={modalRef}
-        className="modal confirm-action-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="app-confirm-title"
-        aria-describedby="app-confirm-desc"
-        onClick={e => e.stopPropagation()}
+    <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }}>
+      <DialogContent
+        title={title}
+        onEscapeKeyDown={onCancel}
+        onPointerDownOutside={onCancel}
       >
-        <h2 id="app-confirm-title">{title}</h2>
-        <p id="app-confirm-desc" className="confirm-description">{description}</p>
+        <p className="confirm-description">{description}</p>
         <p className="confirm-warning">{t("operatorWorkflowWarning")}</p>
         <div className="modal-actions">
-          <button className="btn-secondary" onClick={onCancel}>{t("cancel")}</button>
+          <DialogClose onClick={onCancel}>
+            <button className="btn-secondary" type="button">{t("cancel")}</button>
+          </DialogClose>
           <button
             ref={confirmRef}
             className={danger ? "btn-danger" : "btn-primary"}
@@ -52,7 +47,7 @@ export default function AppConfirmModal({
             {confirmLabel ?? t("confirm")}
           </button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -4,6 +4,7 @@ import type { CustomerRow } from "../types";
 import * as cmd from "../tauri/commands";
 import { useLanguage } from "../hooks/useLanguage";
 import { countText, operationsTranslator } from "../i18n/operationsStrings";
+import { customerSchema } from "../forms";
 
 const EMPTY_FORM = { name: "", phone: "", email: "", notes: "" };
 
@@ -58,7 +59,16 @@ export default function CustomersTab({ sessionUserId }: Props) {
   function set(key: string, val: string) { setForm(f => ({ ...f, [key]: val })); }
 
   async function save() {
-    if (!form.name.trim()) { setError(t("nameRequired")); return; }
+    const parsed = customerSchema.safeParse({
+      name: form.name.trim(),
+      phone: form.phone.trim() || undefined,
+      email: form.email.trim() || undefined,
+      notes: form.notes.trim() || undefined,
+    });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? t("nameRequired"));
+      return;
+    }
     setSaving(true); setError(null);
     try {
       if (creating) {

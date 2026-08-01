@@ -20,6 +20,7 @@ mod errors;
 pub mod hub;
 mod inventory;
 mod license;
+pub mod printing;
 mod secure_store;
 pub mod storefront;
 mod sync;

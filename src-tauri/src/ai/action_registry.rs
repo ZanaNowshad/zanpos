@@ -1,10 +1,9 @@
 /// ZANPOS Action Registry — single source of truth for all AI tools.
 ///
-/// Every tool is represented by exactly one ActionDefinition containing name,
-/// JSON Schema, read/mutation classification, required role, preview, execute,
-/// audit, undo, timeout, and idempotency policy. Provider tool schemas and
-/// prompt catalogues are generated from this registry.
+/// Populated from the authoritative `tools_catalogue::all_tool_definitions()`.
+/// Provider tool schemas and prompt catalogues are generated from this registry.
 
+use crate::ai::tools_catalogue::all_tool_definitions;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -36,12 +35,38 @@ pub struct ActionRegistry {
 }
 
 impl ActionRegistry {
-    pub fn new() -> Self {
-        Self { actions: HashMap::new() }
-    }
+    pub fn load() -> Self {
+        let mut reg = Self {
+            actions: HashMap::new(),
+        };
 
-    pub fn register(&mut self, def: ActionDefinition) {
-        self.actions.insert(def.name.clone(), def);
+        for def in all_tool_definitions() {
+            let is_mutation = classify_mutation(&def.name);
+            let action = ActionDefinition {
+                name: def.name.clone(),
+                description: def.description.clone(),
+                kind: if is_mutation {
+                    ActionKind::Mutation
+                } else {
+                    ActionKind::Read
+                },
+                required_role: if is_mutation {
+                    "manager".into()
+                } else {
+                    "cashier".into()
+                },
+                timeout_seconds: 30,
+                confirmation: if is_mutation {
+                    ConfirmationPolicy::Required
+                } else {
+                    ConfirmationPolicy::Required
+                },
+                has_undo: has_undo(&def.name),
+            };
+            reg.actions.insert(def.name.clone(), action);
+        }
+
+        reg
     }
 
     pub fn get(&self, name: &str) -> Option<&ActionDefinition> {
@@ -69,92 +94,46 @@ impl ActionRegistry {
     }
 }
 
-impl Default for ActionRegistry {
-    fn default() -> Self {
-        let mut reg = Self::new();
+fn classify_mutation(name: &str) -> bool {
+    let mutation_verbs = [
+        "create_",
+        "update_",
+        "delete_",
+        "set_",
+        "adjust_",
+        "void_",
+        "cancel_",
+        "confirm_",
+        "receive_",
+        "bulk_",
+        "add_",
+        "remove_",
+        "reset_",
+        "dismiss_",
+        "advance_",
+        "sync_",
+    ];
+    mutation_verbs
+        .iter()
+        .any(|v| name.starts_with(v) || name.contains(&format!("_{v}")))
+        || name.contains("_update")
+        || name.contains("_delete")
+        || name.contains("_create")
+}
 
-        reg.register(ActionDefinition {
-            name: "get_today_summary".into(),
-            description: "Get today's sales summary".into(),
-            kind: ActionKind::Read,
-            required_role: "cashier".into(),
-            timeout_seconds: 10,
-            confirmation: ConfirmationPolicy::Required,
-            has_undo: false,
-        });
-
-        reg.register(ActionDefinition {
-            name: "list_products".into(),
-            description: "List all products in the catalogue".into(),
-            kind: ActionKind::Read,
-            required_role: "cashier".into(),
-            timeout_seconds: 15,
-            confirmation: ConfirmationPolicy::Required,
-            has_undo: false,
-        });
-
-        reg.register(ActionDefinition {
-            name: "update_product_price".into(),
-            description: "Update a product's selling price".into(),
-            kind: ActionKind::Mutation,
-            required_role: "manager".into(),
-            timeout_seconds: 10,
-            confirmation: ConfirmationPolicy::Required,
-            has_undo: true,
-        });
-
-        reg.register(ActionDefinition {
-            name: "set_product_active".into(),
-            description: "Activate or deactivate a product".into(),
-            kind: ActionKind::Mutation,
-            required_role: "manager".into(),
-            timeout_seconds: 10,
-            confirmation: ConfirmationPolicy::Required,
-            has_undo: true,
-        });
-
-        reg.register(ActionDefinition {
-            name: "create_product".into(),
-            description: "Create a new product in the catalogue".into(),
-            kind: ActionKind::Mutation,
-            required_role: "manager".into(),
-            timeout_seconds: 15,
-            confirmation: ConfirmationPolicy::Required,
-            has_undo: true,
-        });
-
-        reg.register(ActionDefinition {
-            name: "bulk_price_adjust".into(),
-            description: "Adjust prices for multiple products at once".into(),
-            kind: ActionKind::Mutation,
-            required_role: "manager".into(),
-            timeout_seconds: 30,
-            confirmation: ConfirmationPolicy::Required,
-            has_undo: true,
-        });
-
-        reg.register(ActionDefinition {
-            name: "get_stock_levels".into(),
-            description: "Get current stock levels".into(),
-            kind: ActionKind::Read,
-            required_role: "cashier".into(),
-            timeout_seconds: 10,
-            confirmation: ConfirmationPolicy::Required,
-            has_undo: false,
-        });
-
-        reg.register(ActionDefinition {
-            name: "get_low_stock".into(),
-            description: "List products below reorder point".into(),
-            kind: ActionKind::Read,
-            required_role: "cashier".into(),
-            timeout_seconds: 10,
-            confirmation: ConfirmationPolicy::Required,
-            has_undo: false,
-        });
-
-        reg
-    }
+fn has_undo(name: &str) -> bool {
+    let reversible = [
+        "update_product_price",
+        "update_product_name",
+        "set_product_active",
+        "create_product",
+        "create_category",
+        "bulk_update_prices",
+        "bulk_stock_take",
+        "adjust_stock",
+        "stock_take",
+    ];
+    reversible.contains(&name)
 }
 
 #[cfg(test)]
@@ -162,17 +141,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_covers_all_known_tools() {
-        let reg = ActionRegistry::default();
-        assert!(reg.len() > 0, "Registry must contain tool definitions");
+    fn registry_loads_all_catalogue_tools() {
+        let reg = ActionRegistry::load();
+        let catalogue_count = all_tool_definitions().len();
+        assert_eq!(
+            reg.len(),
+            catalogue_count,
+            "Registry must contain every tool from the catalogue"
+        );
     }
 
     #[test]
     fn mutations_require_confirmation() {
-        let reg = ActionRegistry::default();
+        let reg = ActionRegistry::load();
         for m in reg.mutations() {
             assert!(
-                matches!(m.confirmation, ConfirmationPolicy::Required | ConfirmationPolicy::RiskBased),
+                matches!(
+                    m.confirmation,
+                    ConfirmationPolicy::Required | ConfirmationPolicy::RiskBased
+                ),
                 "Mutation {} must require confirmation",
                 m.name
             );
@@ -180,16 +167,13 @@ mod tests {
     }
 
     #[test]
-    fn mutations_with_undo_are_explicit() {
-        let reg = ActionRegistry::default();
-        for m in reg.mutations() {
-            if m.has_undo {
-                assert!(
-                    m.name.contains("update") || m.name.contains("create") || m.name.contains("set_") || m.name.contains("adjust") || m.name.contains("bulk"),
-                    "{} has undo — verify this is correct",
-                    m.name
-                );
-            }
-        }
+    fn reads_outnumber_mutations() {
+        let reg = ActionRegistry::load();
+        let reads = reg.reads().count();
+        let muts = reg.mutations().count();
+        assert!(
+            reads > muts,
+            "Reads ({reads}) should outnumber mutations ({muts})"
+        );
     }
 }

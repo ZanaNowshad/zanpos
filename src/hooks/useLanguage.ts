@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import i18n from "../i18n";
 
 /**
  * UI language for the till and back office.
@@ -47,12 +48,11 @@ export const directionFor = (language: Language): "rtl" | "ltr" =>
   language === "ar" ? "rtl" : "ltr";
 
 function applyLanguage(language: Language) {
-  // Set on <html> so the flip happens at the layout level rather than being
-  // re-implemented per component — the approach the storefront already uses.
   if (typeof document !== "undefined") {
     document.documentElement.setAttribute("lang", language);
     document.documentElement.setAttribute("dir", directionFor(language));
   }
+  i18n.changeLanguage(language).catch(() => {});
 }
 
 export function useLanguage() {

@@ -223,6 +223,8 @@ pub fn run() {
                             .with_writer(file_writer),
                     )
                     .try_init();
+
+                let _ = crate::telemetry::init("zanpos");
             }
 
             let db_path = app_data.join("zanpos.db");

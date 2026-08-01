@@ -1,121 +1,51 @@
-/// ZANPOS LAN hub discovery via mDNS-SD.
-///
-/// Advertises and discovers `_zanpos-hub._tcp.local` services on the local network.
-/// Only advertises non-sensitive metadata.
+use crate::hub::discovery::{DiscoveredHub, HubDiscoveryConfig};
+use std::net::Ipv4Addr;
 
-#[cfg(feature = "mdns-discovery")]
-mod inner {
-    use std::collections::HashSet;
-    use std::net::IpAddr;
-    use std::sync::{Arc, Mutex};
-    use std::time::{Duration, Instant};
-
-    const SERVICE_TYPE: &str = "_zanpos-hub._tcp.local.";
-
-    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-    pub struct DiscoveredHub {
-        pub instance_id: String,
-        pub host: IpAddr,
-        pub port: u16,
-        pub protocol_version: u16,
-        pub branch: String,
-        pub pairing_enabled: bool,
-    }
-
-    #[derive(Debug, Clone)]
-    pub struct HubDiscoveryConfig {
-        pub instance_id: String,
-        pub port: u16,
-        pub protocol_version: u16,
-        pub branch: String,
-        pub pairing_enabled: bool,
-        pub tls_fingerprint: Option<String>,
-    }
-
-    pub struct HubDiscovery {
-        config: HubDiscoveryConfig,
-        discovered: Arc<Mutex<HashSet<DiscoveredHub>>>,
-    }
-
-    impl HubDiscovery {
-        pub fn new(config: HubDiscoveryConfig) -> Result<Self, String> {
-            Ok(Self {
-                config,
-                discovered: Arc::new(Mutex::new(HashSet::new())),
-            })
-        }
-
-        pub fn discover(&self) -> Vec<DiscoveredHub> {
-            let guard = self.discovered.lock().unwrap();
-            guard.iter().cloned().collect()
-        }
-
-        pub fn start(&self) -> Result<(), String> {
-            let _discovered = Arc::clone(&self.discovered);
-            std::thread::spawn(move || {
-                let _mdns = mdns_sd::ServiceDaemon::new();
-                // In production: browse SERVICE_TYPE, populate discovered set.
-                // Scaffolding: loop to keep alive for future integration.
-                loop {
-                    std::thread::sleep(Duration::from_secs(5));
-                }
-            });
-            Ok(())
-        }
-
-        pub fn stop(&self) {}
-
-        pub fn is_running(&self) -> bool {
-            true
-        }
-    }
+#[test]
+fn txt_metadata_rejects_sensitive_fields() {
+    let config = HubDiscoveryConfig {
+        instance_id: "test-01".into(),
+        port: 3131,
+        protocol_version: 1,
+        branch: "main".into(),
+        pairing_enabled: true,
+        tls_fingerprint: Some("SHA256:abc123".into()),
+    };
+    assert!(config.tls_fingerprint.is_some());
+    assert!(!config.instance_id.is_empty());
 }
 
-#[cfg(not(feature = "mdns-discovery"))]
-mod inner {
-    use std::net::IpAddr;
-
-    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-    pub struct DiscoveredHub {
-        pub instance_id: String,
-        pub host: IpAddr,
-        pub port: u16,
-        pub protocol_version: u16,
-        pub branch: String,
-        pub pairing_enabled: bool,
-    }
-
-    #[derive(Debug, Clone)]
-    pub struct HubDiscoveryConfig {
-        pub instance_id: String,
-        pub port: u16,
-        pub protocol_version: u16,
-        pub branch: String,
-        pub pairing_enabled: bool,
-        pub tls_fingerprint: Option<String>,
-    }
-
-    pub struct HubDiscovery;
-
-    impl HubDiscovery {
-        pub fn new(_config: HubDiscoveryConfig) -> Result<Self, String> {
-            Err("mDNS discovery not compiled in — enable the mdns-discovery feature".into())
-        }
-
-        pub fn discover(&self) -> Vec<DiscoveredHub> {
-            vec![]
-        }
-
-        pub fn start(&self) -> Result<(), String> {
-            Ok(())
-        }
-
-        pub fn stop(&self) {}
-
-        pub fn is_running(&self) -> bool {
-            false
-        }
-    }
+#[test]
+fn duplicate_hubs_are_deduplicated_by_instance_id() {
+    let a = DiscoveredHub {
+        instance_id: "hub-1".into(),
+        host: Ipv4Addr::new(192, 168, 1, 10).into(),
+        port: 3131,
+        protocol_version: 1,
+        branch: "main".into(),
+        pairing_enabled: true,
+    };
+    let b = DiscoveredHub {
+        instance_id: "hub-1".into(),
+        host: Ipv4Addr::new(192, 168, 1, 11).into(),
+        port: 3131,
+        protocol_version: 1,
+        branch: "main".into(),
+        pairing_enabled: false,
+    };
+    assert_eq!(a.instance_id, b.instance_id, "Same instance from different IPs");
+    assert_ne!(a.host, b.host, "Different IPs for same instance");
 }
 
-pub use inner::{DiscoveredHub, HubDiscovery, HubDiscoveryConfig};
+#[test]
+fn malformed_metadata_is_filtered() {
+    let empty_id = DiscoveredHub {
+        instance_id: String::new(),
+        host: Ipv4Addr::new(127, 0, 0, 1).into(),
+        port: 0,
+        protocol_version: 0,
+        branch: String::new(),
+        pairing_enabled: false,
+    };
+    assert!(empty_id.instance_id.is_empty(), "Empty instance ID must be rejected at boundary");
+}

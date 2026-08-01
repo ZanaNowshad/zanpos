@@ -1,0 +1,23 @@
+# Gitleaks negative fixture — safe patterns that MUST NOT trigger ZANPOS rules.
+# These represent normal application strings that look superficially like secrets.
+
+# Argon2id hash — deterministic, safe
+PIN_HASH="$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$RdescudvJ7fklWxXMdiAh2a2mqj1JR4W8Qv2JHm4o2I"
+
+# SQLite connection string — local file path, not a secret
+DATABASE_URL="sqlite://C:/Users/merchant/AppData/Roaming/zanpos/zanpos.db"
+
+# npm lockfile integrity hash — deterministic
+"integrity": "sha512-dGkM6NKDh/WpNGXVyGRh2Gz3xkKNmDDXqFFDHMGdVKD5HQjq7HJEBBdQEqGPxwJR7XZJBnF0Hd9Vj1GBfSqjQ=="
+
+# cargo-deny checksum — not a secret
+checksum = "975a22143262fd27476d19ee00c7af67978426e40e1dee94eed6bbade1cf87dc"
+
+# Test PIN assertion — should be allowed
+assert_eq!(pin, "1234");
+
+# Numeric barcode — not a PIN
+product_barcode=1234567890123
+
+# Short hex identifier — not a key
+device_id=abc123

@@ -1,0 +1,69 @@
+# Gitleaks configuration for ZANPOS
+# v8.30.1 — MIT license — https://github.com/gitleaks/gitleaks
+#
+# Owner: ZANPOS Maintainers
+# Review/expiry: 2027-01-31
+
+title = "ZANPOS Gitleaks secret detection"
+
+[extend]
+useDefault = true
+
+# ─── Allowlist: verified non-secret fixtures and safe patterns ────
+
+[allowlist]
+description = "ZANPOS allowlist — test fixtures, deterministic keys, and safe structural patterns"
+
+paths = [
+  '''tests[/\\]security[/\\]gitleaks[/\\]''',
+  '''tests[/\\]license[/\\]''',
+  '''src-tauri[/\\]src[/\\]license[/\\]verify\.rs''',
+  '''Snap[/\\]''',
+  '''package-lock\.json$''',
+  '''\.env\.example$''',
+  '''migrations[/\\]0001_initial\.sql$''',
+  '''tests[/\\]security[/\\]gitleaks-fixtures[/\\]''',
+]
+
+regexes = [
+  '''"integrity":\s*"sha(?:256|384|512)-[A-Za-z0-9+/=]+"''',
+  '''\$argon2id\$[^\s"']+''',
+  '''sqlite:[/\\][/\\][^\s"']+\.db''',
+  '''^(checksum|digest|hash|value)\s*=\s*"[a-f0-9]{40,}"''',
+]
+
+# ─── Custom rules for ZANPOS-specific secret patterns ──────────────
+
+[[rules]]
+id = "zanpos-supabase-key"
+description = "Supabase anon/service_role key leaked in source or config"
+regex = '''(?:sbp_|eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.)[a-zA-Z0-9_-]{20,}'''
+tags = ["zanpos", "supabase", "key"]
+
+[[rules]]
+id = "zanpos-whatsapp-session"
+description = "WhatsApp session or auth material placed in source"
+regex = '''(?i)(?:whatsapp|baileys|wa_session|wa_auth)[\s:"'=]+[a-zA-Z0-9+/=]{40,}'''
+tags = ["zanpos", "whatsapp", "session"]
+
+[[rules]]
+id = "zanpos-updater-private-key"
+description = "Tauri updater or code-signing private key material in source"
+regex = '''(?m)^-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----'''
+tags = ["zanpos", "signing", "private-key"]
+
+[[rules]]
+id = "zanpos-csp-report-uri"
+description = "CSP report-uri pointing to an external collector containing a key or token"
+regex = '''report-uri\s+https?://[^\s;"]+[?&](?:token|key|api[_-]?key)=[^\s;"]+'''
+tags = ["zanpos", "csp", "leak"]
+
+[[rules]]
+id = "zanpos-explicit-plaintext-pin"
+description = "Hardcoded plaintext PIN — ZANPOS uses Argon2id; literal 4-6 digit PIN must never appear"
+regex = '''(?i)(?:pin|passcode|pincode)\s*[:=]\s*["']?\d{4,6}["']?'''
+tags = ["zanpos", "pin", "plaintext"]
+
+[rules.allowlist]
+description = "Allowlist for the plaintext-PIN rule — test assertions and numeric barcodes"
+regexes = ['''(?:assert|test|expect|should|must_eq|pin_hash).*["']?\d{4,6}["']?''']

@@ -8,6 +8,7 @@ import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useLanguage } from "../hooks/useLanguage";
 import { modalTranslator } from "../i18n/modalStrings";
 import { detailTranslator } from "../i18n/detailStrings";
+import { productSchema } from "../forms";
 
 interface Props {
   mode: "create" | "edit";
@@ -103,9 +104,18 @@ export default function ProductFormModal({
   }
 
   async function save() {
-    if (!name.trim() || !categoryId) { setError(t("nameCategoryRequired")); return; }
     const priceMinor = parseMoney(price, exp);
-    if (priceMinor <= 0) { setError(t("priceMustBePositive")); return; }
+    const parsed = productSchema.safeParse({
+      name: name.trim(),
+      category: categoryId,
+      price_minor: priceMinor,
+      barcode: barcode.trim() || undefined,
+      sku: sku.trim() || undefined,
+    });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? t("nameCategoryRequired"));
+      return;
+    }
     setSaving(true); setError(null);
     try {
       if (mode === "create") {

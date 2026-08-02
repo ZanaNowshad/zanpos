@@ -163,6 +163,7 @@ function AiSetupPanel({ onConfigured, sessionToken }: { onConfigured: () => void
         {provider === "anthropic" && (
           <>
             <label style={lbl}>Anthropic API Key</label>
+            // eslint-disable-next-line jsx-a11y/no-autofocus
             <input type="password" placeholder="sk-ant-api03-…" value={anthropicKey} autoFocus
               onChange={e => { setAnthropicKey(e.target.value); setError(null); }}
               onKeyDown={e => e.key==="Enter" && handleSaveAnthropic()} style={inp} />
@@ -262,6 +263,7 @@ function AiSettingsDrawer({ onClose, onSaved, sessionToken }: { onClose: () => v
           {provider === "anthropic" && (
             <>
               <label style={lbl}>Anthropic API Key</label>
+              // eslint-disable-next-line jsx-a11y/no-autofocus
               <input type="password" placeholder="sk-ant-api03-…" value={anthropicKey} autoFocus
                 onChange={e => { setAnthropicKey(e.target.value); setError(null); }}
                 onKeyDown={e => e.key==="Enter" && (async () => {
@@ -920,6 +922,7 @@ export default function MigrationAgentPage({ onDone, sessionUserId, sessionToken
               value={dbConnForm.conn}
               onChange={e => setDbConnForm(f => ({ ...f, conn: e.target.value }))}
               onKeyDown={e => e.key === "Enter" && runConnectTest()}
+              // eslint-disable-next-line jsx-a11y/no-autofocus
               autoFocus
               style={{ width:"100%", padding:"8px 11px", borderRadius:7, border:"1px solid var(--border)", background:"var(--bg)", color:"var(--text)", fontSize:"0.85rem", boxSizing:"border-box", marginBottom:10 }}
             />
@@ -953,6 +956,7 @@ export default function MigrationAgentPage({ onDone, sessionUserId, sessionToken
               placeholder="2025-01-15T10:30:00"
               value={rollbackTs}
               onChange={e => setRollbackTs(e.target.value)}
+              // eslint-disable-next-line jsx-a11y/no-autofocus
               autoFocus
               style={{ width:"100%", padding:"8px 11px", borderRadius:7, border:"1.5px solid #ef4444", background:"var(--bg)", color:"var(--text)", fontSize:"0.85rem", boxSizing:"border-box", marginBottom:10, fontFamily:"monospace" }}
             />

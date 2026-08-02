@@ -47,7 +47,7 @@ export default function CategoryFormModal({ mode, category, nextOrder, sessionUs
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <button className="modal-overlay" type="button" onClick={onClose}>
       <div ref={modalRef} className="modal bo-form-modal" role="dialog" aria-modal="true"
         aria-label={mode === "create" ? t("newCategory") : t("editCategory")}
         onClick={e => e.stopPropagation()}>

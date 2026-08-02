@@ -62,7 +62,7 @@ export default function RecentSalesModal({ onReprint, onEdit, onClose, sessionUs
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <button className="modal-overlay" type="button" onClick={onClose}>
       <div className="modal recent-sales-modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <span className="modal-title">{t("recentSales")}</span>

@@ -236,7 +236,7 @@ export default function NotificationModal({
 
   return (
     <>
-    <div className="modal-overlay" onClick={handleClose}>
+    <button className="modal-overlay" type="button" onClick={handleClose}>
       <div
         ref={modalRef}
         className="modal ghost-modal notif-modal"

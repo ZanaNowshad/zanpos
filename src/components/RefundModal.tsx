@@ -240,7 +240,7 @@ export default function RefundModal({ cashierUserId, onClose, onExchangeStarted 
 
   if (result) {
     return (
-      <div className="modal-overlay">
+      <button className="modal-overlay" type="button">
         <div className="modal refund-modal">
           <div className="refund-success">
             <div className="refund-success-icon">✓</div>
@@ -257,7 +257,7 @@ export default function RefundModal({ cashierUserId, onClose, onExchangeStarted 
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <button className="modal-overlay" type="button" onClick={onClose}>
       <div className="modal refund-modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <h2 className="modal-title">{t("refund")}</h2>
@@ -299,6 +299,7 @@ export default function RefundModal({ cashierUserId, onClose, onExchangeStarted 
               value={receiptInput}
               onChange={e => setReceiptInput(e.target.value)}
               onKeyDown={e => e.key === "Enter" && handleSearch()}
+              // eslint-disable-next-line jsx-a11y/no-autofocus
               autoFocus
             />
             <button className="modal-btn-secondary" onClick={handleSearch} disabled={searching}>
@@ -478,6 +479,7 @@ export default function RefundModal({ cashierUserId, onClose, onExchangeStarted 
                 value={managerPin}
                 onChange={e => setManagerPin(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && handlePinSubmit()}
+                // eslint-disable-next-line jsx-a11y/no-autofocus
                 autoFocus
               />
               {pinError && <div className="modal-error">{pinError}</div>}

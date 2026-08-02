@@ -150,7 +150,7 @@ export default function ProductFormModal({
     mode === "edit" ? extraBarcodes : pendingBarcodes;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <button className="modal-overlay" type="button" onClick={onClose}>
       <div ref={modalRef} className="modal bo-form-modal" role="dialog" aria-modal="true"
         aria-label={mode === "create" ? t("newProduct") : t("editProduct")}
         onClick={e => e.stopPropagation()}>

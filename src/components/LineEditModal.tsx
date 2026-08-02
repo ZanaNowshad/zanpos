@@ -86,7 +86,7 @@ export default function LineEditModal({
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <button className="modal-overlay" type="button" onClick={onClose}>
       <div
         ref={modalRef}
         className="modal line-edit-modal"

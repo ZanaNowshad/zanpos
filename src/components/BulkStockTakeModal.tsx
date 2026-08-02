@@ -73,7 +73,7 @@ export default function BulkStockTakeModal({ user, onClose }: Props) {
   const filledCount = rows.filter(r => r.counted.trim() !== "").length;
 
   return (
-    <div className="modal-overlay">
+    <button className="modal-overlay" type="button">
       <div className="modal bulk-stocktake-modal">
         <h2 className="modal-title">Bulk Stock-Take</h2>
 

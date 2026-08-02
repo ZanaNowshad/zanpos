@@ -217,7 +217,7 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
   };
 
   return (
-    <div className="modal-overlay">
+    <button className="modal-overlay" type="button">
       <div className="modal shift-modal" role="dialog" aria-modal="true" aria-labelledby="shift-dialog-title">
         {mode === "open" ? (
           <>

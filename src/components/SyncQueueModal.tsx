@@ -73,7 +73,7 @@ export default function SyncQueueModal({ onClose, sessionUserId }: Props) {
   };
 
   return (
-    <div className="modal-overlay">
+    <button className="modal-overlay" type="button">
       <div className="modal sync-queue-modal">
         <h2 className="modal-title">{t("syncQueue")}</h2>
         <p className="modal-subtitle">

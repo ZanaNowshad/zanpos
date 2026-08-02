@@ -100,7 +100,7 @@ export default function CatalogImportModal({ proposal, sessionToken, onClose, on
   };
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <button className="modal-overlay" type="button" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal catalog-import-modal" role="dialog" aria-modal="true" aria-label={t("catalogImportAria")}>
         <div className="modal-header">
           <span className="modal-title">📋 {t("catalogReviewTitle")}</span>

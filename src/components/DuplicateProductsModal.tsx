@@ -133,7 +133,7 @@ export default function DuplicateProductsModal({ sessionUserId, onClose, onResol
     g.products.find(p => p.product_id === keeperId)?.name ?? "kept product";
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <button className="modal-overlay" type="button" onClick={onClose}>
       <div
         ref={modalRef}
         className="modal dup-modal"

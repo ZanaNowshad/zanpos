@@ -8,6 +8,8 @@ pub mod oauth;
 pub mod openai_client;
 pub mod proactive;
 pub mod provider;
+#[cfg(feature = "rig-pilot")]
+pub mod rig_client;
 pub mod streaming;
 pub mod tool_policy;
 pub mod tool_registry;

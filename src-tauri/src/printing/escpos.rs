@@ -1,5 +1,5 @@
-use crate::printing::document::{BlockFont, BlockStyle, PrinterProfile, ReceiptDocument};
-use crate::printing::renderer::ReceiptRenderer;
+use crate::printing::document::{PrinterProfile, ReceiptDocument};
+use crate::printing::renderer::{render_escpos_document, ReceiptRenderer};
 
 pub struct EscposRenderer;
 
@@ -11,66 +11,8 @@ impl EscposRenderer {
 
 impl ReceiptRenderer for EscposRenderer {
     fn render(&self, doc: &ReceiptDocument, profile: &PrinterProfile) -> Vec<u8> {
-        let width = profile.width_chars as usize;
-        let mut output: Vec<u8> = Vec::new();
-
-        // Initialise printer
-        output.extend_from_slice(&[0x1b, 0x40]);
-
-        let blocks: Vec<_> = doc.all_blocks().collect();
-        for (i, block) in blocks.iter().enumerate() {
-            let style = block.style;
-
-            for line in &block.lines {
-                let text = pad_to(&line.text, width);
-
-                match style {
-                    BlockStyle::Centered => output.extend_from_slice(&[0x1b, 0x61, 0x01]),
-                    BlockStyle::RightAligned => output.extend_from_slice(&[0x1b, 0x61, 0x02]),
-                    _ => output.extend_from_slice(&[0x1b, 0x61, 0x00]),
-                }
-
-                if matches!(style, BlockStyle::Bold) {
-                    output.extend_from_slice(&[0x1b, 0x45, 0x01]);
-                }
-                if matches!(style, BlockStyle::DoubleWidth | BlockStyle::DoubleHeight) {
-                    output.extend_from_slice(&[0x1d, 0x21, 0x11]);
-                }
-
-                match line.font {
-                    BlockFont::FontA => output.extend_from_slice(&[0x1b, 0x4d, 0x00]),
-                    BlockFont::FontB => output.extend_from_slice(&[0x1b, 0x4d, 0x01]),
-                }
-
-                output.extend_from_slice(text.as_bytes());
-                output.extend_from_slice(b"\n");
-
-                if matches!(style, BlockStyle::Bold) {
-                    output.extend_from_slice(&[0x1b, 0x45, 0x00]);
-                }
-                if matches!(style, BlockStyle::DoubleWidth | BlockStyle::DoubleHeight) {
-                    output.extend_from_slice(&[0x1b, 0x21, 0x00]);
-                }
-            }
-
-            if i < blocks.len() - 1 {
-                output.extend_from_slice(b"\n");
-            }
-        }
-
-        // Feed and cut
-        output.extend_from_slice(b"\n\n\n");
-        if doc.cut_after {
-            output.extend_from_slice(&[0x1d, 0x56, 0x00]);
-        }
-
-        output
+        render_escpos_document(doc, profile)
     }
-}
-
-fn pad_to(s: &str, max: usize) -> String {
-    let clean: String = s.chars().take(max).collect();
-    format!("{:width$}", clean, width = max)
 }
 
 #[cfg(test)]

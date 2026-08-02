@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { CategoryRow } from "../types";
 import * as cmd from "../tauri/commands";
+import { useAutoFocus } from "../hooks/useAutoFocus";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useLanguage } from "../hooks/useLanguage";
 import { modalTranslator } from "../i18n/modalStrings";
@@ -20,6 +21,7 @@ export default function CategoryFormModal({ mode, category, nextOrder, sessionUs
   const modalRef = useRef<HTMLDivElement>(null);
   useFocusTrap(modalRef, onClose);
 
+  const nameRef = useAutoFocus<HTMLInputElement>();
   const [name, setName] = useState(category?.name ?? "");
   const [sortOrder, setSortOrder] = useState(category?.sort_order ?? nextOrder);
   const [isActive, setIsActive] = useState(category?.is_active ?? true);
@@ -57,7 +59,7 @@ export default function CategoryFormModal({ mode, category, nextOrder, sessionUs
           {error && <div className="bo-form-error">{error}</div>}
           <div className="bo-form-field">
             <label className="bo-label">{t("name")} *</label>
-            <input className="bo-input" value={name} onChange={e => setName(e.target.value)} placeholder={t("categoryName")} autoFocus />
+            <input className="bo-input" value={name} onChange={e => setName(e.target.value)} placeholder={t("categoryName")} ref={nameRef} />
           </div>
           <div className="bo-row-two">
             <div className="bo-form-field">

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAutoFocus } from "../hooks/useAutoFocus";
 import type { DeviceRow } from "../types";
 import { DEVICE } from "../types";
 import * as cmd from "../tauri/commands";
@@ -17,6 +18,7 @@ export default function DevicesTab({ sessionUserId }: Props) {
   const [code, setCode]         = useState("");
   const [name, setName]         = useState("");
   const [saving, setSaving]     = useState(false);
+  const codeRef = useAutoFocus<HTMLInputElement>();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -77,7 +79,7 @@ export default function DevicesTab({ sessionUserId }: Props) {
           <div className="bo-row-two">
             <div>
               <label className="bo-label">{t("deviceCode")} *</label>
-              <input className="bo-input" value={code} onChange={e => setCode(e.target.value)} placeholder="POS02" autoFocus />
+              <input className="bo-input" value={code} onChange={e => setCode(e.target.value)} placeholder="POS02" ref={codeRef} />
             </div>
             <div>
               <label className="bo-label">{t("deviceName")} *</label>

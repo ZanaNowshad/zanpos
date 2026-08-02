@@ -2,6 +2,7 @@ import { useMemo, useState, useRef } from "react";
 import type { CartLine } from "../types";
 import { formatMoney, parseMoney } from "../money";
 import { DEVICE } from "../types";
+import { useAutoFocus } from "../hooks/useAutoFocus";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useLanguage } from "../hooks/useLanguage";
 import { modalTranslator } from "../i18n/modalStrings";
@@ -19,6 +20,7 @@ export default function LineDiscountModal({ line, onApply, onCancel }: Props) {
   const dt = useMemo(() => detailTranslator(language), [language]);
   const modalRef = useRef<HTMLDivElement>(null);
   useFocusTrap(modalRef, onCancel);
+  const inputRef = useAutoFocus<HTMLInputElement>();
 
   const exp = DEVICE.currency_exponent;
   const cur = DEVICE.currency;
@@ -52,7 +54,7 @@ export default function LineDiscountModal({ line, onApply, onCancel }: Props) {
             placeholder={`0.${"0".repeat(exp)}`}
             value={value}
             onChange={e => setValue(e.target.value)}
-            autoFocus
+            ref={inputRef}
           />
         </div>
 

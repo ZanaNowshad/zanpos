@@ -37,7 +37,7 @@ export function PaymentMethodPicker({
             className={`pm-method${active ? " pm-method-active" : ""}`}
             role="radio"
             aria-checked={active}
-            autoFocus={active}
+            ref={(el) => { if (active && el instanceof HTMLElement) el.focus(); }}
             onClick={() => onSelect(method.id)}
           >
             <Icon className="pm-method-icon" size={19} strokeWidth={1.8} aria-hidden="true" />

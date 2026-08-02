@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAutoFocus } from "../hooks/useAutoFocus";
 import { UserRound } from "lucide-react";
 import type { CustomerRow } from "../types";
 import * as cmd from "../tauri/commands";
@@ -20,6 +21,7 @@ export default function CustomersTab({ sessionUserId }: Props) {
   const [saving, setSaving]         = useState(false);
   const [error, setError]           = useState<string | null>(null);
   const [search, setSearch]         = useState("");
+  const nameRef = useAutoFocus<HTMLInputElement>();
 
   const load = useCallback(async (q: string) => {
     try {
@@ -150,7 +152,7 @@ export default function CustomersTab({ sessionUserId }: Props) {
           {error && <div className="bo-form-error">{error}</div>}
 
           <label className="bo-label">{t("name")} *</label>
-          <input className="bo-input" value={form.name} onChange={e => set("name", e.target.value)} autoFocus placeholder={t("fullName")} />
+          <input className="bo-input" value={form.name} onChange={e => set("name", e.target.value)} ref={nameRef} placeholder={t("fullName")} />
 
           <label className="bo-label">{t("phone")}</label>
           <input className="bo-input" value={form.phone} onChange={e => set("phone", e.target.value)} placeholder="+973 1234 5678" />

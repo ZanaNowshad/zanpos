@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useAutoFocus } from "../hooks/useAutoFocus";
 import type { AdminUserRow, RoleRow } from "../types";
 import * as cmd from "../tauri/commands";
 import { useLanguage } from "../hooks/useLanguage";
@@ -19,6 +20,7 @@ export default function UsersTab({ sessionUserId }: Props) {
   const [saving, setSaving]     = useState(false);
   const [error, setError]       = useState<string | null>(null);
   const [showPin, setShowPin]   = useState(false);
+  const nameRef = useAutoFocus<HTMLInputElement>();
 
   useEffect(() => {
     let cancelled = false;
@@ -118,7 +120,7 @@ export default function UsersTab({ sessionUserId }: Props) {
 
           <label className="bo-label">{t("displayName")} *</label>
           <input className="bo-input" value={form.display_name} onChange={e => set("display_name", e.target.value)}
-            placeholder={t("fullName")} autoFocus />
+            placeholder={t("fullName")} ref={nameRef} />
 
           {creating && (
             <>

@@ -2,7 +2,6 @@
 ///
 /// Handles: shaping (letter joining, contextual forms), bidi reordering,
 /// and rasterization to monochrome bitmaps for ESC/POS image output.
-
 #[cfg(feature = "arabic-rendering")]
 mod inner {
     pub struct ArabicShaper;
@@ -17,6 +16,12 @@ mod inner {
         pub fn shape(&self, text: &str, _font_size: f32) -> Vec<(u16, i32, i32, i32)> {
             let _ = text;
             vec![]
+        }
+    }
+
+    impl Default for ArabicShaper {
+        fn default() -> Self {
+            Self::new()
         }
     }
 
@@ -36,7 +41,7 @@ mod inner {
         /// Rasterize shaped glyphs to a monochrome bitmap.
         /// Returns (width_px, height_px, bytes — 1 bit per pixel, row-packed).
         pub fn rasterize(&self, _glyphs: &[(u16, i32, i32, i32)]) -> (u32, u32, Vec<u8>) {
-            let byte_count = ((self.width_px + 7) / 8 * self.width_px) as usize;
+            let byte_count = (self.width_px.div_ceil(8) * self.width_px) as usize;
             (self.width_px, self.width_px, vec![0u8; byte_count])
         }
     }
@@ -46,7 +51,9 @@ mod inner {
 mod inner {
     pub struct ArabicShaper;
     impl ArabicShaper {
-        pub fn new() -> Self { Self }
+        pub fn new() -> Self {
+            Self
+        }
         pub fn shape(&self, _text: &str, _font_size: f32) -> Vec<(u16, i32, i32, i32)> {
             vec![]
         }
@@ -54,7 +61,9 @@ mod inner {
 
     pub struct Rasterizer;
     impl Rasterizer {
-        pub fn new(_w: u32, _h: u32) -> Self { Self }
+        pub fn new(_w: u32, _h: u32) -> Self {
+            Self
+        }
         pub fn rasterize(&self, _g: &[(u16, i32, i32, i32)]) -> (u32, u32, Vec<u8>) {
             (0, 0, vec![])
         }

@@ -28,6 +28,9 @@ pub mod sync_v2;
 mod telemetry;
 mod telemetry_uploader;
 
+pub use ai::action_registry::{ActionDefinition, ActionKind, ActionRegistry, ConfirmationPolicy};
+pub use telemetry::{shutdown as shutdown_telemetry, ZanposSpan};
+
 use crate::sync::SyncWorker;
 use chrono::Utc;
 use sqlx::SqlitePool;

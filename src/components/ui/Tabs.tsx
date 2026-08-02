@@ -1,9 +1,9 @@
 import * as TabsPrimitive from "@radix-ui/react-tabs";
-import { type ComponentPropsWithoutRef } from "react";
+import { type ComponentPropsWithoutRef, type ReactNode } from "react";
 
 type TabsProps = ComponentPropsWithoutRef<typeof TabsPrimitive.Root> & {
   tabs: readonly { value: string; label: string }[];
-  children: (activeTab: string) => React.ReactNode;
+  children: (activeTab: string) => ReactNode;
 };
 
 export function Tabs({ tabs, children, ...props }: TabsProps) {

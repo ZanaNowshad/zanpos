@@ -82,15 +82,24 @@ mod tests {
         ReceiptDocument {
             header: vec![ReceiptBlock {
                 style: BlockStyle::Centered,
-                lines: vec![BlockLine { text: "ZANPOS".into(), font: BlockFont::FontA }],
+                lines: vec![BlockLine {
+                    text: "ZANPOS".into(),
+                    font: BlockFont::FontA,
+                }],
             }],
             body: vec![ReceiptBlock {
                 style: BlockStyle::Normal,
-                lines: vec![BlockLine { text: "Item".into(), font: BlockFont::FontA }],
+                lines: vec![BlockLine {
+                    text: "Item".into(),
+                    font: BlockFont::FontA,
+                }],
             }],
             footer: vec![ReceiptBlock {
                 style: BlockStyle::Bold,
-                lines: vec![BlockLine { text: "TOTAL".into(), font: BlockFont::FontA }],
+                lines: vec![BlockLine {
+                    text: "TOTAL".into(),
+                    font: BlockFont::FontA,
+                }],
             }],
             cut_after: true,
         }
@@ -100,7 +109,7 @@ mod tests {
     fn output_starts_with_esc_init() {
         let renderer = EscposRenderer::new(&PROFILE_80MM);
         let bytes = renderer.render(&doc(), &PROFILE_80MM);
-        assert!(&bytes[..2] == [0x1b, 0x40], "ESC/POS init command missing");
+        assert!(bytes[..2] == [0x1b, 0x40], "ESC/POS init command missing");
     }
 
     #[test]
@@ -108,7 +117,10 @@ mod tests {
         let renderer = EscposRenderer::new(&PROFILE_80MM);
         let bytes = renderer.render(&doc(), &PROFILE_80MM);
         let tail = &bytes[bytes.len() - 3..];
-        assert!(tail == [0x1d, 0x56, 0x00], "ESC/POS cut command missing at end");
+        assert!(
+            tail == [0x1d, 0x56, 0x00],
+            "ESC/POS cut command missing at end"
+        );
     }
 
     #[test]

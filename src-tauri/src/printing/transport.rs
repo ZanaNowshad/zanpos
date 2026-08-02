@@ -1,7 +1,6 @@
 /// Physical printer transport abstraction.
 ///
 /// Implementations handle the actual I/O: serial port, Windows spooler, or mock.
-
 pub enum PrintTransport {
     Serial { port: String, baud: u32 },
     WindowsSpooler { printer_name: String },
@@ -13,8 +12,8 @@ pub trait PrintSender: Send + Sync {
 
 pub fn create_sender(transport: &PrintTransport) -> Box<dyn PrintSender> {
     match transport {
-        PrintTransport::Serial { .. } => Box::new(SerialSender::default()),
-        PrintTransport::WindowsSpooler { .. } => Box::new(WindowsSpoolerSender::default()),
+        PrintTransport::Serial { .. } => Box::new(SerialSender),
+        PrintTransport::WindowsSpooler { .. } => Box::new(WindowsSpoolerSender),
     }
 }
 

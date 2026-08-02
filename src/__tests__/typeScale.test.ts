@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-// @ts-expect-error Vitest runs in Node; the app intentionally omits Node types.
 import { readFileSync } from "node:fs";
 
 const tokensCss = readFileSync(new URL("../styles/tokens.css", import.meta.url), "utf8");

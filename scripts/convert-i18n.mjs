@@ -70,7 +70,7 @@ for (const { src, ns, enMarker, arMarker } of FILES) {
   const content = readFileSync(join(I18N_DIR, src), "utf-8");
 
   const enMark = enMarker || "const EN =";
-  const arMark = arMarker || "const AR:";  
+  const arMark = arMarker || "const AR:";
 
   const enRaw = extractObject(content, enMark);
   const enJSON = tsObjectToJSON(enRaw);

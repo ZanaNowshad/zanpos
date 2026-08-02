@@ -1,5 +1,5 @@
 {
-  
+
   "store": "Store",
   "receipt": "Receipt",
   "business": "Business",
@@ -8,7 +8,7 @@
   "systemControl": "System Control",
   "settings": "Settings",
 
-  
+
   "products": "Products",
   "categories": "Categories",
   "suppliers": "Suppliers",
@@ -19,7 +19,7 @@
   "devices": "Devices",
   "purchasing": "Purchasing",
 
-  
+
   "save": "Save",
   "cancel": "Cancel",
   "deleteAction": "Delete",
@@ -32,13 +32,13 @@
   "saving": "Saving…",
   "loading": "Loading…",
 
-  
+
   "enabled": "Enabled",
   "disabled": "Disabled",
   "noResults": "No results",
   "unsavedChanges": "You have unsaved changes",
 
-  
+
   "today": "Today",
   "thisWeek": "This Week",
   "thisMonth": "This Month",
@@ -148,7 +148,7 @@
   "cashEventPaidOut": "Paid out",
   "cashEventSafeDrop": "Safe drop",
 
-  
+
   "stocktake": "Stocktake",
   "currentStock": "Current stock",
   "lowStock": "Low stock",

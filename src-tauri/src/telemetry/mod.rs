@@ -2,17 +2,85 @@
 ///
 /// Each enum variant maps to a named span in the OTel trace.
 /// Attributes are deny-by-default; only explicitly allowlisted keys pass through.
+#[cfg(feature = "otel-tracing")]
+mod inner {
+    use opentelemetry::trace::TracerProvider;
+    use opentelemetry_sdk::trace as sdktrace;
+    use opentelemetry_sdk::Resource;
+    use std::sync::OnceLock;
+
+    static TRACER: OnceLock<sdktrace::Tracer> = OnceLock::new();
+
+    pub fn init(service_name: &str) -> Result<(), String> {
+        let exporter = opentelemetry_otlp::SpanExporter::builder()
+            .with_tonic()
+            .build()
+            .map_err(|error| error.to_string())?;
+
+        let provider = sdktrace::TracerProvider::builder()
+            .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+            .with_resource(Resource::new(vec![opentelemetry::KeyValue::new(
+                "service.name",
+                service_name.to_string(),
+            )]))
+            .build();
+
+        let tracer = provider.tracer("zanpos");
+        let _ = TRACER.set(tracer);
+        opentelemetry::global::set_tracer_provider(provider);
+
+        Ok(())
+    }
+
+    pub fn shutdown() {
+        opentelemetry::global::shutdown_tracer_provider();
+    }
+}
+
+#[cfg(not(feature = "otel-tracing"))]
+mod inner {
+    pub fn init(_service_name: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub fn shutdown() {}
+}
+
+pub use inner::init;
+
+pub fn shutdown() {
+    inner::shutdown();
+}
 
 pub enum ZanposSpan {
-    TauriCommand { command: &'static str },
-    DbTransaction { operation: &'static str },
-    SyncBatch { table_count: usize },
-    PrinterOperation { kind: &'static str },
-    AiProviderCall { provider: &'static str, model: &'static str },
-    AiToolExecution { tool: &'static str },
-    BackupOperation { phase: &'static str },
-    WhatsAppQueue { action: &'static str },
-    StorefrontPublish { stage: &'static str },
+    TauriCommand {
+        command: &'static str,
+    },
+    DbTransaction {
+        operation: &'static str,
+    },
+    SyncBatch {
+        table_count: usize,
+    },
+    PrinterOperation {
+        kind: &'static str,
+    },
+    AiProviderCall {
+        provider: &'static str,
+        model: &'static str,
+    },
+    AiToolExecution {
+        tool: &'static str,
+    },
+    BackupOperation {
+        phase: &'static str,
+    },
+    WhatsAppQueue {
+        action: &'static str,
+    },
+    StorefrontPublish {
+        stage: &'static str,
+    },
 }
 
 impl ZanposSpan {
@@ -35,8 +103,12 @@ impl ZanposSpan {
     pub fn attributes(&self) -> Vec<(&'static str, String)> {
         match self {
             ZanposSpan::TauriCommand { command } => vec![("command.name", command.to_string())],
-            ZanposSpan::DbTransaction { operation } => vec![("db.operation", operation.to_string())],
-            ZanposSpan::SyncBatch { table_count } => vec![("sync.table_count", table_count.to_string())],
+            ZanposSpan::DbTransaction { operation } => {
+                vec![("db.operation", operation.to_string())]
+            }
+            ZanposSpan::SyncBatch { table_count } => {
+                vec![("sync.table_count", table_count.to_string())]
+            }
             ZanposSpan::PrinterOperation { kind } => vec![("printer.kind", kind.to_string())],
             ZanposSpan::AiProviderCall { provider, model } => vec![
                 ("ai.provider", provider.to_string()),
@@ -45,7 +117,9 @@ impl ZanposSpan {
             ZanposSpan::AiToolExecution { tool } => vec![("ai.tool", tool.to_string())],
             ZanposSpan::BackupOperation { phase } => vec![("backup.phase", phase.to_string())],
             ZanposSpan::WhatsAppQueue { action } => vec![("whatsapp.action", action.to_string())],
-            ZanposSpan::StorefrontPublish { stage } => vec![("storefront.stage", stage.to_string())],
+            ZanposSpan::StorefrontPublish { stage } => {
+                vec![("storefront.stage", stage.to_string())]
+            }
         }
     }
 }
@@ -61,7 +135,10 @@ mod tests {
             ZanposSpan::DbTransaction { operation: "test" },
             ZanposSpan::SyncBatch { table_count: 0 },
             ZanposSpan::PrinterOperation { kind: "test" },
-            ZanposSpan::AiProviderCall { provider: "x", model: "y" },
+            ZanposSpan::AiProviderCall {
+                provider: "x",
+                model: "y",
+            },
             ZanposSpan::AiToolExecution { tool: "test" },
             ZanposSpan::BackupOperation { phase: "test" },
             ZanposSpan::WhatsAppQueue { action: "test" },
@@ -75,7 +152,10 @@ mod tests {
 
     #[test]
     fn no_sensitive_attributes_leak() {
-        let span = ZanposSpan::AiProviderCall { provider: "openai", model: "gpt" };
+        let span = ZanposSpan::AiProviderCall {
+            provider: "openai",
+            model: "gpt",
+        };
         for (key, _) in span.attributes() {
             assert!(!key.contains("key"));
             assert!(!key.contains("token"));

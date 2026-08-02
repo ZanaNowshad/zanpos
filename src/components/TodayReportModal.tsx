@@ -35,7 +35,7 @@ export default function TodayReportModal({ onClose, sessionUserId }: Props) {
     `${DEVICE.currency} ${formatMoney(minor, DEVICE.currency_exponent)}`;
 
   return (
-    <button className="modal-overlay" type="button" onClick={onClose}>
+    <div className="modal-overlay" onClick={onClose}>
       <div className="modal report-modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <h2 className="modal-title">{t("todaysSales")} — {today}</h2>

@@ -53,7 +53,7 @@ export default function ConfirmActionModal({ preview, previews, expiresAt, onCon
   }, [onConfirm]);
 
   return (
-    <button className="modal-overlay" type="button" onClick={onCancel}>
+    <div className="modal-overlay" onClick={onCancel}>
       <div
         ref={modalRef}
         className="modal confirm-action-modal"

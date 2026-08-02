@@ -78,7 +78,6 @@ export default function StepIdentity({ draft, onNext }: Props) {
         placeholder="e.g. My Coffee Shop"
         value={form.storeName}
         onChange={e => { setForm(f => ({ ...f, storeName: e.target.value })); setError(null); }}
-        // eslint-disable-next-line jsx-a11y/no-autofocus
         autoFocus
         maxLength={60}
       />

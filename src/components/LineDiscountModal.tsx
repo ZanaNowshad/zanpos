@@ -34,7 +34,7 @@ export default function LineDiscountModal({ line, onApply, onCancel }: Props) {
   const valid = discountMinor > 0 && discountMinor <= total && reason.trim().length > 0;
 
   return (
-    <button className="modal-overlay" type="button" onClick={onCancel}>
+    <div className="modal-overlay" onClick={onCancel}>
       <div ref={modalRef} className="modal" style={{ maxWidth: 380 }} role="dialog" aria-modal="true" aria-label={t("lineDiscount")} onClick={e => e.stopPropagation()}>
         <h2 className="modal-title">Discount — {line.product_name}</h2>
         <p style={{ fontSize: "0.82rem", color: "var(--text-dim)", marginBottom: 10 }}>

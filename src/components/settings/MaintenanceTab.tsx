@@ -106,7 +106,6 @@ export default function MaintenanceTab({ sessionUserId }: { sessionUserId: strin
               onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
               onKeyDown={(e) => e.key === "Enter" && handleUnlock()}
               disabled={verifying}
-              // eslint-disable-next-line jsx-a11y/no-autofocus
               autoFocus
             />
           </label>

@@ -470,7 +470,6 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
             placeholder="e.g. My Coffee Shop"
             value={storeName}
             onChange={e => { setStoreName(e.target.value); clearError(); }}
-            // eslint-disable-next-line jsx-a11y/no-autofocus
             autoFocus
             maxLength={60}
           />
@@ -585,7 +584,6 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
           <p className="setup-body">This account has full access. Keep your PIN secure.</p>
 
           <label className="field-label">Full Name *</label>
-          // eslint-disable-next-line jsx-a11y/no-autofocus
           <input className="field-input" type="text" placeholder="e.g. Mohammed Al-Farsi" value={ownerName} onChange={e => { setOwnerName(e.target.value); clearError(); }} autoFocus />
 
           <label className="field-label">Username *</label>
@@ -876,7 +874,6 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
             placeholder="192.168.1.50"
             value={hubUrl}
             onChange={e => { setHubUrl(e.target.value); clearError(); }}
-            // eslint-disable-next-line jsx-a11y/no-autofocus
             autoFocus
           />
 
@@ -920,7 +917,6 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
             placeholder="e.g. POS Terminal 2"
             value={deviceName}
             onChange={e => { setDeviceName(e.target.value); clearError(); }}
-            // eslint-disable-next-line jsx-a11y/no-autofocus
             autoFocus
           />
 

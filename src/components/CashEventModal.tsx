@@ -115,7 +115,7 @@ export default function CashEventModal({ shiftId, userId, cashierName, onDone, o
     const sign = recorded.type === "paid_in" ? "+" : "−";
     const m = TYPE_META[recorded.type];
     return (
-      <button className="modal-overlay" type="button">
+      <div className="modal-overlay">
         <div className="cash-event-shell cash-event-success-shell">
           <div className="cash-event-success">
             <div className="cash-event-success-icon" style={{ color: m.color }}>✓</div>
@@ -139,7 +139,7 @@ export default function CashEventModal({ shiftId, userId, cashierName, onDone, o
 
   // ── Form ──────────────────────────────────────────────────────────────────
   return (
-    <button className="modal-overlay" type="button" onClick={e => e.target === e.currentTarget && onCancel()}>
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onCancel()}>
       <div className="cash-event-shell">
 
         {/* ── Left: form ── */}

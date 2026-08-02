@@ -50,7 +50,7 @@ export default function PriceInputModal({ productName, onConfirm, onCancel }: Pr
   };
 
   return (
-    <button className="modal-overlay" type="button" onClick={e => e.target === e.currentTarget && !loading && onCancel()}>
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && !loading && onCancel()}>
       <div className="custom-item-shell price-input-shell">
 
         {/* ── Left: info + price display ── */}

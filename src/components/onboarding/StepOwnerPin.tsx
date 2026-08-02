@@ -48,7 +48,6 @@ export default function StepOwnerPin({ storeName, submitting, error, onSubmit, o
         placeholder="e.g. Mohammed Al-Farsi"
         value={ownerName}
         onChange={e => { setOwnerName(e.target.value); setLocalError(null); }}
-        // eslint-disable-next-line jsx-a11y/no-autofocus
         autoFocus
       />
 

@@ -48,7 +48,7 @@ export default function PosCartModals({
   return (
     <>
       {activeModal.kind === "clearConfirm" && (
-        <button className="modal-overlay" type="button" onClick={close}>
+        <div className="modal-overlay" onClick={close}>
           <div className="modal clear-confirm-modal" onClick={event => event.stopPropagation()}>
             <div className="modal-header">
               <span className="modal-title">Clear Cart?</span>

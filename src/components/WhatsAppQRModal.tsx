@@ -47,7 +47,7 @@ export default function WhatsAppQRModal({ onClose, onConnected, sessionUserId = 
   const waitingForQr = !loading && !unreachable && !status.connected && !status.qr;
 
   return (
-    <button className="modal-overlay" type="button" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal wa-qr-modal">
         <div className="modal-header">
           <span className="modal-title">📱 Connect WhatsApp</span>

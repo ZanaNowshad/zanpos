@@ -131,7 +131,7 @@ export default function CustomItemModal({ onAdd, onCancel }: Props) {
   };
 
   return (
-    <button className="modal-overlay" type="button" onClick={e => e.target === e.currentTarget && onCancel()}>
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onCancel()}>
       <div className="custom-item-shell">
 
         {/* ── Left: form ── */}

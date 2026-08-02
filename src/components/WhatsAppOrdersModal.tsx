@@ -83,7 +83,7 @@ export default function WhatsAppOrdersModal({ sessionUserId, onAddToCart, onClos
   }
 
   return (
-    <button className="modal-overlay" type="button" onMouseDown={onClose}>
+    <div className="modal-overlay" onMouseDown={onClose}>
       <div className="modal bo-form-modal" style={{ maxWidth: 640, width: "92%", maxHeight: "88vh", display: "flex", flexDirection: "column" }} onMouseDown={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h3 style={{ margin: 0 }}>{t("whatsappOrders")}</h3>

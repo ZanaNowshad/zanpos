@@ -31,7 +31,7 @@ export default function CriticalUpdateModal({
   const t = useMemo(() => modalTranslator(language), [language]);
   const dismiss = requiredBeforeShift ? undefined : onRemindLater;
   return (
-    <button className="modal-overlay" type="button" onClick={dismiss}>
+    <div className="modal-overlay" onClick={dismiss}>
       <div
         className="modal critical-update-modal"
         onClick={(e) => e.stopPropagation()}

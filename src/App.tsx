@@ -408,7 +408,7 @@ export default function App() {
         <>
           <LoginScreen onLogin={handleLogin} />
           {view === "shift_check" && updatePrompt.decision !== "critical-required" && (
-            <button className="modal-overlay" type="button">
+            <div className="modal-overlay">
               <div className="checking-shift">Checking shift…</div>
             </div>
           )}

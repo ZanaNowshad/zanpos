@@ -303,7 +303,7 @@ export default function PaymentModal({
     : `${dt("completeSale")} (${methodName}) · ${DEVICE.currency} ${fmt(netTotal)}`;
 
   return (
-    <button className="modal-overlay" type="button" onClick={e => e.target === e.currentTarget && onCancel()}>
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onCancel()}>
       <div className="pm-shell pm-shell-calm" role="dialog" aria-modal="true" aria-labelledby="pm-dialog-title" ref={containerRef}>
 
         <div className="pm-left">

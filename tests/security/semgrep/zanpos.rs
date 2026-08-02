@@ -248,6 +248,8 @@ pub fn lan_ips() -> Vec<String> {
         }
     }
     // ruleid: zanpos-no-wildcard-network-endpoint, zanpos-no-wildcard-listener-bind
+    std::net::UdpSocket::bind("0.0.0.0:0");
+    // ruleid: zanpos-no-wildcard-network-endpoint, zanpos-no-wildcard-listener-bind
     std::net::TcpListener::bind("0.0.0.0:8080");
     Vec::new()
 }

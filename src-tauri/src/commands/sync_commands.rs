@@ -312,6 +312,13 @@ async fn clear_join_replica(pool: &sqlx::SqlitePool) -> AppResult<()> {
     Ok(())
 }
 
+async fn clear_setup_pull_watermarks(pool: &sqlx::SqlitePool) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM app_config WHERE key LIKE 'sync_v2_watermark_%'")
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn setup_pull_catalog(state: State<'_, AppState>) -> Result<PullSummary, AppError> {
     // Called from the JoinStore wizard before the session user is established.
@@ -348,9 +355,7 @@ pub async fn setup_pull_catalog(state: State<'_, AppState>) -> Result<PullSummar
         .execute(&state.db)
         .await?;
     }
-    sqlx::query("DELETE FROM app_config WHERE key LIKE 'sync_v2_watermark_%'")
-        .execute(&state.db)
-        .await?;
+    clear_setup_pull_watermarks(&state.db).await?;
     let mut rows_pulled = 0u32;
     let mut pull_error: Option<String> = None;
     for attempt in 0..3 {

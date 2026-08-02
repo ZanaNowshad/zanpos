@@ -42,18 +42,14 @@ rules:
           let $AUTH = crate::commands::rbac::$CHECK(...).await?;
           ...
           sqlx::query($QUERY).execute(...).await?
-      - pattern-not-inside: |
-          sqlx::query("DELETE FROM app_config WHERE key LIKE 'sync_v2_watermark_%'")
-            .execute(...)
-            .await?
   - id: zanpos-tauri-repository-mutation-requires-rbac
     languages: [rust]
     severity: ERROR
     message: Tauri commands invoking mutation repository helpers must validate RBAC first.
     metadata:
       baseline:
-        structural_constraint: Imported and locally aliased paths resolve to the full sink. Wrapper calls use the finite persist_*_wrapper, *_mutation, or *_write convention. Branch exceptions end at delivery_update_status/shift_close. Nested AI exceptions repeat the exact authorized create_undo_record, expire_old_actions, create_session, save_message, and end_session expressions.
-        rationale: Every ordered negative repeats the same sink, and every nested exception matches only its reviewed expression. A later/unrelated RBAC call, a new sink before authorization, or a different future sink therefore remains visible.
+        structural_constraint: Imported and locally aliased paths resolve to the full sink. Wrapper calls use the finite persist_*_wrapper, *_mutation, or *_write convention. Delivery and shift correlations end at their reviewed sink; nested AI and bootstrap occurrences are enforced by scripts/validate_semgrep_exceptions.py.
+        rationale: Ordered Semgrep negatives repeat the correlated sink. The deterministic validator owns Community Edition's nested-control-flow gaps and rejects wrong paths, copied/reordered sinks, and unexpected occurrence counts.
         owner: ZANPOS Maintainers
         review_by: '2027-01-31'
     paths:
@@ -75,7 +71,7 @@ rules:
                   regex: '.*_repo$'
               - metavariable-regex:
                   metavariable: $METHOD
-                  regex: '.*(?:insert|update|delete|create|close|open|rollback|void|approve|execute|apply|add|checkout|receive|resume|sync|dismiss|resolve|mark|cancel|expire|end|finalize|merge|confirm|revert|clear|submit|save|set|record).*'
+                  regex: '^(?!(?:create_undo_record|expire_old_actions|create_session|save_message|end_session)$).*(?:insert|update|delete|create|close|open|rollback|void|approve|execute|apply|add|checkout|receive|resume|sync|dismiss|resolve|mark|cancel|expire|end|finalize|merge|confirm|revert|clear|submit|save|set|record).*'
               - pattern-not-inside: |
                   rbac::$CHECK(...).await?;
                   ...
@@ -184,7 +180,6 @@ rules:
             rbac::require_role(...).await?;
           }
           let $RESULT = delivery_repo::update_delivery_status(...).await?;
-      - pattern-not: delivery_repo::update_delivery_status(&state.db, &input)
       - pattern-not-inside: |
           if $ELEVATED {
             rbac::manager_or_owner(...).await?;
@@ -211,45 +206,3 @@ rules:
           let $AUTH = authorize_office(...).await.map_err(...)?;
           ...
           $REPO::$METHOD(...)
-      - pattern-not: |
-          ai_admin_repo::create_session(
-            &state.db,
-            &session_id,
-            &input.branch_id,
-            &input.user_id,
-            &provider_name,
-            &model_name,
-          )
-      - pattern-not: |
-          ai_admin_repo::create_undo_record(
-            &state.db,
-            &input.action_id,
-            &mutation_result.entity_type,
-            &mutation_result.entity_id,
-            &mutation_result.undo_snapshot_json,
-            &mutation_result.rollback_tool,
-            &mutation_result.rollback_input_json,
-          )
-      - pattern-not: ai_admin_repo::expire_old_actions(&state.db)
-      - pattern-not: |
-          ai_chat_history_repo::save_message(
-            &state.db,
-            &session_id,
-            &input.branch_id,
-            &input.user_id,
-            "user",
-            persisted_user_content,
-            "text",
-          )
-      - pattern-not: ai_admin_repo::end_session(&state.db, &session_id, end_status)
-      - pattern-not: |
-          ai_chat_history_repo::save_message(
-            &state.db,
-            &session_id,
-            &input.branch_id,
-            &input.user_id,
-            "assistant",
-            text,
-            "text",
-          )
-      - pattern-not: ai_admin_repo::end_session(&state.db, &session_id, "cancelled")

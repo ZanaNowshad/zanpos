@@ -367,8 +367,8 @@ rules:
     message: Do not bind a network listener to all interfaces without an explicit reviewed boundary.
     metadata:
       baseline:
-        structural_constraint: Only SocketAddr::from(([0,0,0,0], port)) in hub::start_hub and UdpSocket::bind("0.0.0.0:0") in hub::lan_ips are sanitized; other values flow through variables, tuples, format!, constructors, and into() to static or instance bind sinks.
-        rationale: start_hub is the authenticated shop-LAN hub boundary; lan_ips is a connected UDP discovery probe that never listens or accepts. Both exceptions are exact expressions in exact function names.
+        structural_constraint: SocketAddr::from(([0,0,0,0], port)) is limited to hub::start_hub. The lan_ips sanitizer matches only the reviewed UdpSocket bind-and-connect branch, whose exact path, shape, and occurrence count are also enforced by scripts/validate_semgrep_exceptions.py.
+        rationale: start_hub is the authenticated shop-LAN hub boundary; lan_ips is a connected UDP discovery probe that never listens or accepts. Any copied or additional 0.0.0.0:0 operation is rejected by the deterministic validator.
         owner: ZANPOS Maintainers
         review_by: '2027-01-31'
     paths:
@@ -396,10 +396,15 @@ rules:
           - pattern: std::net::SocketAddr::from(([0, 0, 0, 0], $PORT))
       - patterns:
           - pattern-inside: |
-              pub fn lan_ips() -> Vec<String> {
+              for $PROBE in [...] {
                 ...
+                if let Ok($SOCKET) = std::net::UdpSocket::bind("0.0.0.0:0") {
+                  if $SOCKET.connect($PROBE).is_ok() {
+                    ...
+                  }
+                }
               }
-          - pattern: '"0.0.0.0:0"'
+          - pattern: std::net::UdpSocket::bind("0.0.0.0:0")
 
   - id: zanpos-no-secret-log-shorthand
     languages: [rust]

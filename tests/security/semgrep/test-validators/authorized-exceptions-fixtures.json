@@ -1,0 +1,18 @@
+{
+  "owner": "ZANPOS Maintainers",
+  "review_by": "2027-01-31",
+  "scope": "Finite delivery, shift, AI, bootstrap, and LAN discovery exceptions delegated from Semgrep CE 1.172.0",
+  "sinks": [
+    {"id": "delivery_update_status", "valid": "production", "invalid": ["before_authorization", "copied_command", "additional_same_function"]},
+    {"id": "shift_close", "valid": "production", "invalid": ["before_authorization", "copied_command", "additional_same_function"]},
+    {"id": "setup_pull_catalog_watermark", "valid": "production", "invalid": ["before_authorization", "copied_command", "additional_same_function"]},
+    {"id": "ai_execute_action_undo", "valid": "production", "invalid": ["before_authorization", "copied_command", "additional_same_function"]},
+    {"id": "ai_chat_expire_old", "valid": "production", "invalid": ["before_authorization", "copied_command", "additional_same_function"]},
+    {"id": "ai_chat_create_session", "valid": "production", "invalid": ["before_authorization", "copied_command", "additional_same_function"]},
+    {"id": "ai_chat_save_user", "valid": "production", "invalid": ["before_authorization", "copied_command", "additional_same_function"]},
+    {"id": "ai_chat_end_status", "valid": "production", "invalid": ["before_authorization", "copied_command", "additional_same_function"]},
+    {"id": "ai_chat_save_assistant", "valid": "production", "invalid": ["before_authorization", "copied_command", "additional_same_function"]},
+    {"id": "ai_chat_end_cancelled", "valid": "production", "invalid": ["before_authorization", "copied_command", "additional_same_function"]},
+    {"id": "lan_discovery_bind", "valid": "production", "invalid": ["copied_command", "additional_same_function"]}
+  ]
+}

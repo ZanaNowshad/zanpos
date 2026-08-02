@@ -290,9 +290,6 @@ async fn setup_pull_catalog(pool: &SqlitePool, allowed: bool) -> Result<(), sqlx
     if !setup_pull_catalog_allowed(allowed) {
         return Err(sqlx::Error::RowNotFound);
     }
-    // ok: zanpos-tauri-mutation-requires-rbac
-    sqlx::query("DELETE FROM app_config WHERE key LIKE 'sync_v2_watermark_%'")
-        .execute(pool)
-        .await?;
+    clear_setup_pull_watermarks(pool).await?;
     Ok(())
 }

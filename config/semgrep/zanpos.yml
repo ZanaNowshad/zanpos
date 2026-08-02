@@ -45,8 +45,8 @@ rules:
       category: security
       technology: [rust, sqlx]
       baseline:
-        structural_constraint: Sanitizers are limited to explicit reject-and-return/continue identifier guards, named sync_v2 allowlist methods, Compiled Selector fragments in count/count_promotional/execute_price_adjust/execute_op, and migration_query_remote's reviewed read-only query.
-        rationale: Function parameters, request fields, environment values, DB row reads, assignments, concatenation, and String builders are sources/propagators into SQLx sinks. Community Edition cannot correlate Rust format implicit-capture names or arbitrary interprocedural transforms; those finite boundaries are fixtures with this owned review date rather than broad sanitizers.
+        structural_constraint: Sanitizers are exact reject-and-return guards, sync_v2 SQL format constructions, Compiled Selector fields in four named methods, migration_query_remote's limited_query, and one static pairing-test query call.
+        rationale: Parameters, request fields, environment values, DB reads, assignments, concatenation, and builders flow into SQLx sinks. Exact construction/call sanitizers preserve safe internal selectors without suppressing another value or future sink.
         owner: ZANPOS Maintainers
         review_by: '2027-01-31'
     paths:
@@ -114,6 +114,10 @@ rules:
                 ...
               }
           - pattern: $INPUT
+      - pattern: $ROW.get(...)
+      - pattern: $ROW.try_get(...)
+      - pattern: $ROW.try_get(...)?
+      - pattern: $ROW.try_get(...).unwrap()
     pattern-sinks:
       - pattern-either:
           - pattern: sqlx::query($SQL)
@@ -155,34 +159,24 @@ rules:
     pattern-sanitizers:
       - patterns:
           - pattern-inside: |
-              async fn mark_rows_synced(&self, $TABLE: &str, $ID: &str, ...) {
+              async fn mark_rows_synced(&self, ...) {
                 ...
               }
-          - pattern: $TABLE
+          - pattern: |
+              format!(
+                "UPDATE {} SET sync_status = 'synced' WHERE {} IN ({})",
+                $TABLE, $ID, $PLACEHOLDERS
+              )
       - patterns:
           - pattern-inside: |
-              async fn increment_attempts(&self, $TABLE: &str, $ID: &str, ...) {
+              async fn increment_attempts(&self, ...) {
                 ...
               }
-          - pattern: $TABLE
-      - patterns:
-          - pattern-inside: |
-              async fn mark_rows_synced(&self, $TABLE: &str, $ID: &str, ...) {
-                ...
-              }
-          - pattern: $ID
-      - patterns:
-          - pattern-inside: |
-              async fn increment_attempts(&self, $TABLE: &str, $ID: &str, ...) {
-                ...
-              }
-          - pattern: $ID
-      - patterns:
-          - pattern-inside: |
-              async fn mark_rows_synced(&self, $TABLE: &str, $ID: &str, ...) {
-                ...
-              }
-          - pattern: $SQL
+          - pattern: |
+              format!(
+                "UPDATE {} SET sync_attempts = sync_attempts + 1 WHERE {} = ?",
+                $TABLE, $ID
+              )
       - patterns:
           - pattern-inside: |
               pub async fn count_promotional(...) {
@@ -229,17 +223,19 @@ rules:
                 ...
               }
           - pattern: limited_query
+      - pattern: sqlx::query("SELECT token_digest FROM hub_paired_devices")
 
   - id: zanpos-no-db-derived-sql-format
     languages: [rust]
+    mode: taint
     severity: ERROR
     message: Do not build SQL text from a database row value; bind it as data instead.
     metadata:
       category: security
       technology: [rust, sqlx]
       baseline:
-        structural_constraint: A get/try_get row value must be an explicit format argument or push_str input to the same let-bound SQL variable that reaches a SQLx sink.
-        rationale: Treating every Row::get as a global taint source exceeded practical CE scan time. These finite same-function AST correlations cover direct and builder flows without marking unrelated row reads or internally formatted SQL.
+        structural_constraint: Intraprocedural taint starts at get/try_get and must reach the SQL argument at query, query_as, or query_scalar, including supported turbofish forms; only the exact static pairing-test query call is sanitized.
+        rationale: Sink-focused taint covers format, concatenation, assignment, and builder flows without uncorrelated function regexes; the exact static-query sanitizer prevents source-containment noise without masking dynamic SQL.
         owner: ZANPOS Maintainers
         review_by: '2027-01-31'
     paths:
@@ -247,35 +243,38 @@ rules:
         - /src-tauri/src/**/*.rs
         - /tests/security/semgrep/**/*.rs
         - '**/semgrep/**/*.rs'
-    pattern-either:
+    pattern-sources:
+      - pattern: $ROW.get(...)
+      - pattern: $ROW.try_get(...)
+      - pattern: $ROW.try_get(...)?
+      - pattern: $ROW.try_get(...).unwrap()
+    pattern-sinks:
+      - pattern-either:
+          - pattern: sqlx::query($SQL)
+          - pattern: sqlx::query::<$DB>($SQL)
+          - pattern: sqlx::query_as($SQL)
+          - pattern: sqlx::query_as::<$TYPE>($SQL)
+          - pattern: sqlx::query_as::<$DB, $TYPE>($SQL)
+          - pattern: sqlx::query_scalar($SQL)
+          - pattern: sqlx::query_scalar::<$TYPE>($SQL)
+          - pattern: sqlx::query_scalar::<$DB, $TYPE>($SQL)
+    pattern-propagators:
+      - pattern: $TO.push_str(&$FROM)
+        from: $FROM
+        to: $TO
+      - pattern: $TO.push_str($FROM)
+        from: $FROM
+        to: $TO
       - pattern: |
-          let $VALUE: $TYPE = $ROW.try_get(...)?;
-          ...
-          let $SQL = format!($FMT, $VALUE, ...);
-          ...
-          sqlx::query_as::<$A, $B>(&$SQL)
+          let $TO = format!($FMT, $FROM, ...);
+        from: $FROM
+        to: $TO
       - pattern: |
-          let $VALUE: $TYPE = $ROW.try_get(...)?;
-          ...
-          let mut $SQL = $INITIAL;
-          ...
-          $SQL.push_str(&$VALUE);
-          ...
-          sqlx::query_as::<$A, $B>(&$SQL)
-      - pattern: |
-          let $VALUE: $TYPE = $ROW.get(...);
-          ...
-          let $SQL = format!($FMT, $VALUE, ...);
-          ...
-          sqlx::query(&$SQL)
-      - pattern: |
-          let $VALUE: $TYPE = $ROW.get(...);
-          ...
-          let mut $SQL = $INITIAL;
-          ...
-          $SQL.push_str(&$VALUE);
-          ...
-          sqlx::query(&$SQL)
+          let $TO = format!($FMT, $NAME = $FROM, ...);
+        from: $FROM
+        to: $TO
+    pattern-sanitizers:
+      - pattern: sqlx::query("SELECT token_digest FROM hub_paired_devices")
 
   - id: zanpos-no-secret-in-log-fields
     languages: [rust]
@@ -343,7 +342,7 @@ rules:
     message: Do not use wildcard network bind or endpoint literals in application code.
     metadata:
       baseline:
-        structural_constraint: Only hub::lan_ips UDP probe binds are exempted.
+        structural_constraint: Only the exact UdpSocket discovery bind branch that connects the resulting socket to a probe is exempted.
         rationale: The UDP bind is local interface discovery; it does not expose a listener or accept traffic. String-literal wildcard binds are intentionally double-reported here and by zanpos-no-wildcard-listener-bind; both rules flag the same violation.
         owner: ZANPOS Maintainers
         review_by: '2027-01-31'
@@ -355,8 +354,10 @@ rules:
     patterns:
       - pattern-regex: '"(?:https?://(?:\*|0\.0\.0\.0(?::\d+)?)|0\.0\.0\.0:\d+)'
       - pattern-not-inside: |
-          pub fn lan_ips() -> Vec<String> {
-            ...
+          if let Ok($SOCKET) = std::net::UdpSocket::bind("0.0.0.0:0") {
+            if $SOCKET.connect($PROBE).is_ok() {
+              ...
+            }
           }
 
   - id: zanpos-no-wildcard-listener-bind
@@ -399,32 +400,6 @@ rules:
                 ...
               }
           - pattern: '"0.0.0.0:0"'
-
-  - id: zanpos-no-permissive-workflow-network
-    languages: [yaml]
-    severity: ERROR
-    message: CI workflows must not disable TLS verification or use wildcard network endpoints.
-    metadata:
-      category: security
-      baseline:
-        structural_constraint: curl -k/--insecure is matched at any flag position; correlated shell, PowerShell, and GitHub env-variable references are matched within the same bounded workflow block. NODE_TLS_REJECT_UNAUTHORIZED covers direct and correlated-zero assignments.
-        rationale: TLS verification bypasses and wildcard endpoints are always prohibited in CI. Variable-name backreferences prevent unrelated safe values from being treated as the insecure assignment.
-        owner: ZANPOS Maintainers
-        review_by: '2027-01-31'
-    paths:
-      include:
-        - /.github/workflows/**/*.yml
-        - /.github/workflows/**/*.yaml
-        - /tests/security/semgrep/**/*.yml
-        - '**/semgrep/**/*.yml'
-    pattern-either:
-      - pattern-regex: '(?i)(?:curl\b(?:[^\r\n\\]|\\\r?\n[ \t]*){0,500}?(?:\s-k\b|--insecure\b)|(?:set\s+|(?:\$\w+:|\$env:))?NODE_TLS_REJECT_UNAUTHORIZED\s*[:=]\s*["'']?0["'']?|https?://\*)'
-      - pattern-regex: >-
-          (?isx)(?:
-            (?:set\s+|\$env:)?(?P<CURL_VAR>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*["']?(?:-k|--insecure)["']?.{0,500}?curl\b.{0,500}?(?:\$(?:\{(?P=CURL_VAR)\}|(?P=CURL_VAR)\b)|\$env:(?P=CURL_VAR)\b|\$\{\{\s*env\.(?P=CURL_VAR)\s*\}\})
-            |
-            (?:set\s+|\$env:)?(?P<TLS_VAR>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*["']?0["']?.{0,500}?NODE_TLS_REJECT_UNAUTHORIZED\s*[:=]\s*(?:\$(?:\{(?P=TLS_VAR)\}|(?P=TLS_VAR)\b)|\$env:(?P=TLS_VAR)\b|\$\{\{\s*env\.(?P=TLS_VAR)\s*\}\})
-          )
 
   - id: zanpos-no-secret-log-shorthand
     languages: [rust]

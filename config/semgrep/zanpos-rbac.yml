@@ -7,8 +7,8 @@ rules:
       category: security
       technology: [rust, tauri, sqlx]
       baseline:
-        structural_constraint: setup_pull_catalog_allowed guards only the pre-session JoinStore bootstrap command; otherwise an RBAC call must precede the matched sink in the same statement sequence.
-        rationale: Ordered negative contexts are correlated to each sink, so a later RBAC call cannot authorize an earlier write. Guards outside the sink's AST statement sequence are finite Community Edition baselines reviewed in production scan output.
+        structural_constraint: The only bootstrap baseline is the exact setup_pull_catalog watermark-delete expression; every other SQL mutation requires an ordered RBAC call correlated to that same sink.
+        rationale: A later RBAC call cannot authorize an earlier write, and the exact bootstrap sink exception cannot suppress a different or newly added sink before the setup guard.
         owner: ZANPOS Maintainers
         review_by: '2027-01-31'
     paths:
@@ -43,22 +43,17 @@ rules:
           ...
           sqlx::query($QUERY).execute(...).await?
       - pattern-not-inside: |
-          #[tauri::command]
-          pub async fn setup_pull_catalog(...) {
-            ...
-            if !setup_pull_catalog_allowed(...) {
-              ...
-            }
-            ...
-          }
+          sqlx::query("DELETE FROM app_config WHERE key LIKE 'sync_v2_watermark_%'")
+            .execute(...)
+            .await?
   - id: zanpos-tauri-repository-mutation-requires-rbac
     languages: [rust]
     severity: ERROR
     message: Tauri commands invoking mutation repository helpers must validate RBAC first.
     metadata:
       baseline:
-        structural_constraint: Imported and locally aliased repository paths resolve to the fully qualified sink in Semgrep CE. Wrapper calls are limited to the finite persist_*_wrapper, *_mutation, or *_write convention. Only delivery_update_status, shift_close, ai_execute_action, and ai_chat_stream are exact function baselines.
-        rationale: Every ordered negative context repeats the concrete repository or wrapper sink, so a later or unrelated RBAC call cannot suppress it. The four named functions authorize before mutation through exhaustive branches, ownership predicates, or before a nested block. CE cannot correlate those nested controls per sink or follow arbitrary wrappers.
+        structural_constraint: Imported and locally aliased paths resolve to the full sink. Wrapper calls use the finite persist_*_wrapper, *_mutation, or *_write convention. Branch exceptions end at delivery_update_status/shift_close. Nested AI exceptions repeat the exact authorized create_undo_record, expire_old_actions, create_session, save_message, and end_session expressions.
+        rationale: Every ordered negative repeats the same sink, and every nested exception matches only its reviewed expression. A later/unrelated RBAC call, a new sink before authorization, or a different future sink therefore remains visible.
         owner: ZANPOS Maintainers
         review_by: '2027-01-31'
     paths:
@@ -80,7 +75,7 @@ rules:
                   regex: '.*_repo$'
               - metavariable-regex:
                   metavariable: $METHOD
-                  regex: '.*(?:insert|update|delete|create|close|open|rollback|void|approve|execute|apply|add|checkout|receive|sync|dismiss|resolve|mark|cancel|expire|end|finalize|merge|confirm|revert|clear|submit|save|set|record).*'
+                  regex: '.*(?:insert|update|delete|create|close|open|rollback|void|approve|execute|apply|add|checkout|receive|resume|sync|dismiss|resolve|mark|cancel|expire|end|finalize|merge|confirm|revert|clear|submit|save|set|record).*'
               - pattern-not-inside: |
                   rbac::$CHECK(...).await?;
                   ...
@@ -183,27 +178,78 @@ rules:
                   ...
                   $WRAPPER(...)
       - pattern-not-inside: |
-          pub async fn delivery_update_status(...) {
-            ...
+          if $STATUS == "cancelled" {
+            rbac::manager_or_owner(...).await?;
+          } else {
+            rbac::require_role(...).await?;
           }
+          let $RESULT = delivery_repo::update_delivery_status(...).await?;
+      - pattern-not: delivery_repo::update_delivery_status(&state.db, &input)
       - pattern-not-inside: |
-          pub async fn shift_close(...) {
-            ...
+          if $ELEVATED {
+            rbac::manager_or_owner(...).await?;
+          } else {
+            rbac::require_any_role(...).await?;
           }
+          ...
+          delivery_repo::update_delivery_status(...)
       - pattern-not-inside: |
-          pub async fn ai_execute_action(...) {
-            ...
+          if $OWNER != $ACTOR {
+            rbac::manager_or_owner(...).await?;
           }
+          ...
+          if $SHIFT_DEVICE != $ACTIVE_DEVICE {
+            rbac::owner_only(...).await?;
+          }
+          ...
+          let $CLOSED = shift_repo::close_shift(...).await?;
       - pattern-not-inside: |
-          pub async fn ai_chat_stream(...) {
-            ...
-          }
+          let $AUTH = authorize_office(...).await?;
+          ...
+          $REPO::$METHOD(...)
       - pattern-not-inside: |
-          #[tauri::command]
-          pub async fn setup_pull_catalog(...) {
-            ...
-            if !setup_pull_catalog_allowed(...) {
-              ...
-            }
-            ...
-          }
+          let $AUTH = authorize_office(...).await.map_err(...)?;
+          ...
+          $REPO::$METHOD(...)
+      - pattern-not: |
+          ai_admin_repo::create_session(
+            &state.db,
+            &session_id,
+            &input.branch_id,
+            &input.user_id,
+            &provider_name,
+            &model_name,
+          )
+      - pattern-not: |
+          ai_admin_repo::create_undo_record(
+            &state.db,
+            &input.action_id,
+            &mutation_result.entity_type,
+            &mutation_result.entity_id,
+            &mutation_result.undo_snapshot_json,
+            &mutation_result.rollback_tool,
+            &mutation_result.rollback_input_json,
+          )
+      - pattern-not: ai_admin_repo::expire_old_actions(&state.db)
+      - pattern-not: |
+          ai_chat_history_repo::save_message(
+            &state.db,
+            &session_id,
+            &input.branch_id,
+            &input.user_id,
+            "user",
+            persisted_user_content,
+            "text",
+          )
+      - pattern-not: ai_admin_repo::end_session(&state.db, &session_id, end_status)
+      - pattern-not: |
+          ai_chat_history_repo::save_message(
+            &state.db,
+            &session_id,
+            &input.branch_id,
+            &input.user_id,
+            "assistant",
+            text,
+            "text",
+          )
+      - pattern-not: ai_admin_repo::end_session(&state.db, &session_id, "cancelled")

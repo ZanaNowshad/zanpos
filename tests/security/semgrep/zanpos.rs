@@ -111,10 +111,10 @@ async fn raw_sql_database_builder(pool: &SqlitePool) -> Result<(), sqlx::Error> 
     let row = sqlx::query("SELECT name FROM fixture_metadata")
         .fetch_one(pool)
         .await?;
-    // ruleid: zanpos-no-db-derived-sql-format
     let table: String = row.try_get("name")?;
     let mut sql = "SELECT * FROM ".to_string();
     sql.push_str(&table);
+    // ruleid: zanpos-no-db-derived-sql-format, zanpos-no-dynamic-sql-format
     sqlx::query_as::<sqlx::Sqlite, (String,)>(&sql);
     Ok(())
 }
@@ -127,7 +127,7 @@ async fn raw_sql_database_unrelated(pool: &SqlitePool) -> Result<(), sqlx::Error
     let _unrelated: String = row.try_get("name")?;
     let internal_table = "products";
     let sql = format!("SELECT * FROM {}", internal_table);
-    // ok: zanpos-no-db-derived-sql-format
+    // ok: zanpos-no-db-derived-sql-format, zanpos-no-dynamic-sql-format
     sqlx::query_as::<sqlx::Sqlite, (String,)>(&sql);
     Ok(())
 }
@@ -239,8 +239,16 @@ pub async fn start_hub(pool: SqlitePool, port: u16) {
 }
 
 pub fn lan_ips() -> Vec<String> {
-    // ok: zanpos-no-wildcard-listener-bind
-    std::net::UdpSocket::bind("0.0.0.0:0");
+    for probe in ["192.0.2.1:80"] {
+        // ok: zanpos-no-wildcard-network-endpoint, zanpos-no-wildcard-listener-bind
+        if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
+            if socket.connect(probe).is_ok() {
+                let _ = socket.local_addr();
+            }
+        }
+    }
+    // ruleid: zanpos-no-wildcard-network-endpoint, zanpos-no-wildcard-listener-bind
+    std::net::TcpListener::bind("0.0.0.0:8080");
     Vec::new()
 }
 
@@ -292,4 +300,131 @@ async fn confirmed_ai_dispatch(pool: &SqlitePool, input: &serde_json::Value) {
         3,
     )
     .await;
+}
+
+mod tool_policy {
+    // ok: zanpos-no-raw-mutation-import-alias
+    use crate::ai::tools::execute_mutation_raw as reviewed_raw_executor;
+}
+
+async fn db_try_get_sink_variants(row: sqlx::sqlite::SqliteRow) {
+    let value: String = row.try_get("selector").unwrap();
+    let sql = format!("SELECT * FROM {}", value);
+    // ruleid: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query(&sql);
+    // ruleid: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query::<sqlx::Sqlite>(&sql);
+    // ruleid: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query_as(&sql);
+    // ruleid: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query_as::<sqlx::Sqlite, (String,)>(&sql);
+    // ruleid: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query_scalar(&sql);
+    // ruleid: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query_scalar::<sqlx::Sqlite, String>(&sql);
+}
+
+async fn db_get_sink_variants(row: sqlx::sqlite::SqliteRow) {
+    let value: String = row.get("selector");
+    let mut sql = "SELECT * FROM ".to_string();
+    sql.push_str(&value);
+    // ruleid: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query(&sql);
+    // ruleid: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query::<sqlx::Sqlite>(&sql);
+    // ruleid: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query_as(&sql);
+    // ruleid: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query_as::<sqlx::Sqlite, (String,)>(&sql);
+    // ruleid: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query_scalar(&sql);
+    // ruleid: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query_scalar::<sqlx::Sqlite, String>(&sql);
+}
+
+async fn unrelated_try_get_is_safe(row: sqlx::sqlite::SqliteRow) {
+    let _value: String = row.try_get("selector").unwrap();
+    let sql = "SELECT * FROM products".to_string();
+    // ok: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query(&sql);
+    // ok: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query::<sqlx::Sqlite>(&sql);
+    // ok: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query_as(&sql);
+    // ok: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query_as::<sqlx::Sqlite, (String,)>(&sql);
+    // ok: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query_scalar(&sql);
+    // ok: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query_scalar::<sqlx::Sqlite, String>(&sql);
+}
+
+async fn unrelated_get_is_safe(row: sqlx::sqlite::SqliteRow) {
+    let _value: String = row.get("selector");
+    let internal_table = "products";
+    let sql = format!("SELECT * FROM {internal_table}");
+    // ok: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query(&sql);
+    // ok: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query::<sqlx::Sqlite>(&sql);
+    // ok: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query_as(&sql);
+    // ok: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query_as::<sqlx::Sqlite, (String,)>(&sql);
+    // ok: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query_scalar(&sql);
+    // ok: zanpos-no-dynamic-sql-format, zanpos-no-db-derived-sql-format
+    sqlx::query_scalar::<sqlx::Sqlite, String>(&sql);
+}
+
+struct FixtureWorker {
+    pool: SqlitePool,
+}
+
+impl FixtureWorker {
+    async fn mark_rows_synced(
+        &self,
+        table: &str,
+        id_col: &str,
+        row_ids: &[String],
+        unsafe_clause: &str,
+    ) {
+        let placeholders = row_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "UPDATE {} SET sync_status = 'synced' WHERE {} IN ({})",
+            table, id_col, placeholders
+        );
+        // ok: zanpos-no-dynamic-sql-format
+        sqlx::query(&sql);
+
+        let unrelated = format!("DELETE FROM products WHERE {}", unsafe_clause);
+        // ruleid: zanpos-no-dynamic-sql-format
+        sqlx::query(&unrelated);
+    }
+}
+
+struct CompiledSelector {
+    cte: String,
+    where_sql: String,
+}
+
+struct Selector;
+
+impl Selector {
+    fn compile(&self) -> CompiledSelector {
+        CompiledSelector {
+            cte: "WITH selected AS (SELECT product_id FROM products)".into(),
+            where_sql: "product_id IN (SELECT product_id FROM selected)".into(),
+        }
+    }
+
+    pub async fn execute_price_adjust(&self, request: String) {
+        let compiled = self.compile();
+        let sql = format!(
+            "{} UPDATE products SET price = price WHERE {}",
+            compiled.cte, compiled.where_sql
+        );
+        // ok: zanpos-no-dynamic-sql-format
+        sqlx::query(&sql);
+    }
 }

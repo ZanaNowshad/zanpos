@@ -1,0 +1,30 @@
+rules:
+  - id: zanpos-no-permissive-workflow-network
+    languages: [yaml]
+    severity: ERROR
+    message: CI workflows must not disable TLS verification or use wildcard network endpoints.
+    metadata:
+      category: security
+      baseline:
+        structural_constraint: Direct flags and TLS zero values are bounded; shell, ordinary PowerShell, PowerShell env, and GitHub YAML assignments are correlated by exact variable-name backreferences in either reviewed order.
+        rationale: TLS bypasses and wildcard endpoints are prohibited in CI. Correlation prevents an unrelated insecure value from tainting a safe curl or TLS assignment.
+        owner: ZANPOS Maintainers
+        review_by: '2027-01-31'
+    paths:
+      include:
+        - /.github/workflows/**/*.yml
+        - /.github/workflows/**/*.yaml
+        - /tests/security/semgrep/**/*.yml
+        - '**/semgrep/**/*.yml'
+    pattern-either:
+      - pattern-regex: '(?i)(?:curl\b(?:[^\r\n\\]|\\\r?\n[ \t]*){0,500}?(?:\s-k\b|--insecure\b)|(?:set\s+|(?:\$\w+:|\$env:))?NODE_TLS_REJECT_UNAUTHORIZED\s*[:=]\s*["'']?0["'']?|https?://\*)'
+      - pattern-regex: >-
+          (?isx)(?:
+            (?:export\s+|set\s+)?(?:\$env:|\$)?(?P<CURL_VAR>[A-Za-z_][A-Za-z0-9_]*)\s*(?:=|:)\s*["']?(?:-k|--insecure)["']?.{0,800}?curl\b.{0,800}?(?:\$(?:\{(?P=CURL_VAR)\}|(?P=CURL_VAR)\b)|\$env:(?P=CURL_VAR)\b|\$\{\{\s*env\.(?P=CURL_VAR)\s*\}\})
+            |
+            run\s*:\s*curl\b[^\r\n]*\$\{\{\s*env\.(?P<CURL_REORDER>[A-Za-z_][A-Za-z0-9_]*)\s*\}\}[^\r\n]*\r?\n[ \t]+env\s*:\s*\r?\n[ \t]+(?P=CURL_REORDER)\s*:\s*["']?(?:-k|--insecure)["']?
+            |
+            (?:export\s+|set\s+)?(?:\$env:|\$)?(?P<TLS_VAR>[A-Za-z_][A-Za-z0-9_]*)\s*(?:=|:)\s*["']?0["']?.{0,800}?NODE_TLS_REJECT_UNAUTHORIZED\s*[:=]\s*(?:`\s*)?(?:\$(?:\{(?P=TLS_VAR)\}|(?P=TLS_VAR)\b)|\$env:(?P=TLS_VAR)\b|\$\{\{\s*env\.(?P=TLS_VAR)\s*\}\})
+            |
+            run\s*:\s*NODE_TLS_REJECT_UNAUTHORIZED\s*[:=]\s*\$\{\{\s*env\.(?P<TLS_REORDER>[A-Za-z_][A-Za-z0-9_]*)\s*\}\}[^\r\n]*\r?\n[ \t]+env\s*:\s*\r?\n[ \t]+(?P=TLS_REORDER)\s*:\s*["']?0["']?
+          )

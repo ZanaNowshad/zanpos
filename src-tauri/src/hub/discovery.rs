@@ -6,6 +6,12 @@ use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::net::IpAddr;
 
+const SERVICE_TYPE: &str = "_zanpos-hub._tcp.local.";
+#[allow(dead_code)]
+const STALE_DURATION_SECS: u64 = 30;
+#[allow(dead_code)]
+const PROTOCOL_VERSION_MIN: u16 = 1;
+
 #[derive(Debug, Clone)]
 pub struct DiscoveredHub {
     pub instance_id: String,
@@ -14,6 +20,8 @@ pub struct DiscoveredHub {
     pub protocol_version: u16,
     pub branch: String,
     pub pairing_enabled: bool,
+    pub tls_fingerprint: Option<String>,
+    pub last_seen_secs: u64,
 }
 
 impl DiscoveredHub {
@@ -97,21 +105,91 @@ fn validate_network_values(port: u16, protocol_version: u16) -> Result<(), Strin
 }
 
 #[cfg(feature = "mdns-discovery")]
+fn parse_txt_record(properties: &BTreeMap<String, String>) -> Result<DiscoveredHub, String> {
+    let instance_id = properties
+        .get("instance_id")
+        .ok_or("missing instance_id")?
+        .clone();
+    let branch = properties.get("branch").ok_or("missing branch")?.clone();
+    let protocol_version: u16 = properties
+        .get("protocol_version")
+        .ok_or("missing protocol_version")?
+        .parse()
+        .map_err(|_| "invalid protocol_version")?;
+    let pairing_enabled = properties
+        .get("pairing_enabled")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    let tls_fingerprint = properties.get("tls_fingerprint").cloned();
+
+    if protocol_version < PROTOCOL_VERSION_MIN {
+        return Err(format!(
+            "protocol_version {protocol_version} below minimum {PROTOCOL_VERSION_MIN}"
+        ));
+    }
+
+    Ok(DiscoveredHub {
+        instance_id,
+        host: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), // filled in by caller
+        port: 0,
+        protocol_version,
+        branch,
+        pairing_enabled,
+        tls_fingerprint,
+        last_seen_secs: 0,
+    })
+}
+
+#[cfg(feature = "mdns-discovery")]
 mod inner {
-    use super::{DiscoveredHub, HubDiscoveryConfig};
+    use super::{parse_txt_record, DiscoveredHub, HubDiscoveryConfig, STALE_DURATION_SECS, SERVICE_TYPE};
     use std::collections::HashSet;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     pub struct HubDiscovery {
         discovered: Arc<Mutex<HashSet<DiscoveredHub>>>,
+        running: Arc<AtomicBool>,
+        daemon: Option<Arc<mdns_sd::ServiceDaemon>>,
+    }
+
+    fn now_secs() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
     }
 
     impl HubDiscovery {
         pub fn new(config: HubDiscoveryConfig) -> Result<Self, String> {
             config.validate()?;
+            let daemon = mdns_sd::ServiceDaemon::new()
+                .map_err(|e| format!("mDNS daemon creation failed: {e}"))?;
+            let daemon = Arc::new(daemon);
+
+            // Register our own service
+            let service_info = mdns_sd::ServiceInfo::new(
+                SERVICE_TYPE,
+                &config.instance_id,
+                &format!("zanpos-hub-{}.local.", &config.instance_id),
+                "",
+                config.port,
+                &[(
+                    "txtvers",
+                    "1",
+                )],
+            )
+            .map_err(|e| format!("mDNS service info creation failed: {e}"))?;
+
+            daemon
+                .register(service_info)
+                .map_err(|e| format!("mDNS registration failed: {e}"))?;
+
             Ok(Self {
                 discovered: Arc::new(Mutex::new(HashSet::new())),
+                running: Arc::new(AtomicBool::new(false)),
+                daemon: Some(daemon),
             })
         }
 
@@ -120,26 +198,102 @@ mod inner {
                 .discovered
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
-            guard.iter().cloned().collect()
+            let now = now_secs();
+            guard
+                .iter()
+                .filter(|hub| now.saturating_sub(hub.last_seen_secs) <= STALE_DURATION_SECS)
+                .cloned()
+                .collect()
         }
 
         pub fn start(&self) -> Result<(), String> {
-            let _discovered = Arc::clone(&self.discovered);
+            if self
+                .running
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+            {
+                return Ok(());
+            }
+
+            let discovered = Arc::clone(&self.discovered);
+            let running = Arc::clone(&self.running);
+            let daemon = Arc::clone(
+                self.daemon
+                    .as_ref()
+                    .ok_or("mDNS daemon not initialized")?,
+            );
+
+            // Browse for _zanpos-hub._tcp.local services
+            let receiver = daemon
+                .browse(SERVICE_TYPE)
+                .map_err(|e| format!("mDNS browse failed: {e}"))?;
+
             std::thread::spawn(move || {
-                let _mdns = mdns_sd::ServiceDaemon::new();
-                loop {
-                    std::thread::sleep(Duration::from_secs(5));
+                while running.load(Ordering::SeqCst) {
+                    match receiver.recv_timeout(Duration::from_secs(2)) {
+                        Ok(mdns_sd::ServiceEvent::ServiceResolved(info)) => {
+                            let fullname = info.get_fullname().to_string();
+                            // Skip our own service
+                            if fullname.starts_with("zanpos-hub-") {
+                                continue;
+                            }
+                            Self::handle_resolved(&discovered, &info);
+                        }
+                        Ok(_) => {} // Ignore other events (search started, etc.)
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            // Timeout — normal, just loop again
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                            break;
+                        }
+                    }
                 }
             });
+
             Ok(())
         }
 
-        pub fn stop(&self) {}
+        fn handle_resolved(
+            discovered: &Arc<Mutex<HashSet<DiscoveredHub>>>,
+            info: &mdns_sd::ServiceInfo,
+        ) {
+            let properties = info.get_properties();
+            let timestamp = now_secs();
+
+            let mut hub = match parse_txt_record(&properties) {
+                Ok(hub) => hub,
+                Err(_) => return, // Malformed TXT — silently rejected
+            };
+
+            // Fill in connection details from the resolved service
+            hub.port = info.get_port();
+            hub.last_seen_secs = timestamp;
+
+            // Use first resolved address
+            if let Some(addr) = info.get_addresses().iter().next() {
+                hub.host = *addr;
+            }
+
+            let mut guard = discovered
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+
+            // Update or insert — deduplicates by instance_id
+            guard.replace(hub);
+        }
+
+        pub fn stop(&self) {
+            self.running.store(false, Ordering::SeqCst);
+        }
 
         pub fn is_running(&self) -> bool {
-            true
+            self.running.load(Ordering::SeqCst)
         }
     }
+
+    // Safety: the daemon is used from a single thread at a time
+    unsafe impl Send for HubDiscovery {}
+    unsafe impl Sync for HubDiscovery {}
 }
 
 #[cfg(not(feature = "mdns-discovery"))]
@@ -215,6 +369,8 @@ mod tests {
             protocol_version: 1,
             branch: "main".into(),
             pairing_enabled: true,
+            tls_fingerprint: None,
+            last_seen_secs: 0,
         };
         let b = DiscoveredHub {
             instance_id: "hub-1".into(),
@@ -237,6 +393,8 @@ mod tests {
             protocol_version: 0,
             branch: String::new(),
             pairing_enabled: false,
+            tls_fingerprint: None,
+            last_seen_secs: 0,
         };
 
         assert!(invalid_hub.validate().is_err());

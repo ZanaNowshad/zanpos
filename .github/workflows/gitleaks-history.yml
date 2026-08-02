@@ -1,0 +1,40 @@
+name: Gitleaks full-history scan
+
+on:
+  schedule:
+    # Weekly: midnight Sunday UTC
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+jobs:
+  history-scan:
+    name: Full-history secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Gitleaks 8.30.1 (checksum-verified)
+        run: |
+          GITLEAKS_VERSION="8.30.1"
+          GITLEAKS_SHA256="d29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e"
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar xzf gitleaks.tar.gz gitleaks
+          chmod +x gitleaks
+          ./gitleaks version
+
+      - name: Run full-history Gitleaks scan
+        # detect --no-git scans the entire commit history; no baseline is used
+        # so that every commit ever made is re-evaluated against the current ruleset.
+        run: ./gitleaks detect --config config/gitleaks.toml --verbose --no-git --log-opts="--all"
+
+      - name: Upload Gitleaks report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-history-report
+          path: gitleaks-report.json

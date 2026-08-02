@@ -48,8 +48,8 @@ rules:
     message: Tauri commands invoking mutation repository helpers must validate RBAC first.
     metadata:
       baseline:
-        structural_constraint: Imported and locally aliased paths resolve to the full sink. Wrapper calls use the finite persist_*_wrapper, *_mutation, or *_write convention. Delivery and shift correlations end at their reviewed sink; nested AI and bootstrap occurrences are enforced by scripts/validate_semgrep_exceptions.py.
-        rationale: Ordered Semgrep negatives repeat the correlated sink. The deterministic validator owns Community Edition's nested-control-flow gaps and rejects wrong paths, copied/reordered sinks, and unexpected occurrence counts.
+        structural_constraint: Imported and locally aliased paths resolve to the full sink. Wrapper calls use the finite persist_*_wrapper, *_mutation, or *_write convention. Delivery and shift correlations end at their reviewed sink; nested AI and bootstrap occurrences are enforced by exact normalized function contracts plus a global Rust identifier/call inventory in scripts/validate_semgrep_exceptions.py, coupled before this scan in CI.
+        rationale: Ordered Semgrep negatives repeat the correlated sink. The fail-closed validator owns every occurrence of the five CE-excluded method identifiers across parsed Rust files, independent of attributes, and rejects changed control flow, aliases, wrappers, copied/reordered sinks, and unexpected occurrence counts.
         owner: ZANPOS Maintainers
         review_by: '2027-01-31'
     paths:

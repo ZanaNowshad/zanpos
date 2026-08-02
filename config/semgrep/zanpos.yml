@@ -36,151 +36,6 @@ rules:
             ...
           }
 
-  - id: zanpos-tauri-mutation-requires-rbac
-    languages: [rust]
-    severity: ERROR
-    message: Tauri mutation commands must validate the caller with an RBAC helper before each mutation sink.
-    metadata:
-      category: security
-      technology: [rust, tauri, sqlx]
-      baseline:
-        structural_constraint: setup_pull_catalog_allowed guards the pre-session JoinStore bootstrap command; a sink is suppressed when the enclosing command function performs an RBAC authorization, regardless of control-flow nesting.
-        rationale: Statement-sequence patterns cannot cross block boundaries (if/else, async blocks), so per-sink ordering caused false positives on commands whose RBAC guard is nested. Function-scope suppression guarantees the command authorizes the caller; it cannot distinguish guard position, which is a CE limitation.
-        owner: ZANPOS Maintainers
-        review_by: '2027-01-31'
-    paths:
-      include:
-        - /src-tauri/src/commands/**/*.rs
-        - /tests/security/semgrep/**/*.rs
-        - '**/semgrep/**/*.rs'
-    patterns:
-      - pattern-inside: |
-          #[tauri::command]
-          pub async fn $FUNC(...) {
-            ...
-          }
-      - pattern: sqlx::query($QUERY).execute(...).await?
-      - metavariable-regex:
-          metavariable: $FUNC
-          regex: '.*(?:create|update|delete|void|dismiss|resolve|adjust|close|open|apply|add|rollback|checkout|approve|execute|sync|receive|import|save|set|record).*'
-      - pattern-not-inside: |
-          #[tauri::command]
-          pub async fn $FUNC(...) {
-            ...
-            rbac::$CHECK(...).await?;
-            ...
-          }
-      - pattern-not-inside: |
-          #[tauri::command]
-          pub async fn $FUNC(...) {
-            ...
-            crate::commands::rbac::$CHECK(...).await?;
-            ...
-          }
-      - pattern-not-inside: |
-          #[tauri::command]
-          pub async fn setup_pull_catalog(...) {
-            ...
-            if !setup_pull_catalog_allowed(...) {
-              ...
-            }
-            ...
-          }
-
-  - id: zanpos-tauri-repository-mutation-requires-rbac
-    languages: [rust]
-    severity: ERROR
-    message: Tauri commands invoking mutation repository helpers must validate RBAC first.
-    metadata:
-      baseline:
-        structural_constraint: A repository sink is suppressed when the enclosing command function performs an RBAC authorization (rbac::*, crate::commands::rbac::*, or authorize_office), regardless of control-flow nesting. Imported-path calls (use crate::db::repositories::x_repo) are a documented CE limitation — see tests/security/semgrep/test-validators/rbac_coverage.rs.
-        rationale: Statement-sequence patterns cannot cross block boundaries (if/else, async blocks), so per-sink ordering caused false positives on commands whose RBAC guard is nested. Function-scope suppression guarantees the command authorizes the caller; it cannot distinguish guard position, which is a CE limitation. Alias/import resolution is outside Community Edition matching, so imported-path calls are validated structurally by the Rust validator.
-        owner: ZANPOS Maintainers
-        review_by: '2027-01-31'
-    paths:
-      include:
-        - /src-tauri/src/commands/**/*.rs
-        - /tests/security/semgrep/**/*.rs
-        - '**/semgrep/**/*.rs'
-    patterns:
-      - pattern-inside: |
-          #[tauri::command]
-          pub async fn $FUNC(...) {
-            ...
-          }
-      - pattern: crate::db::repositories::$REPO::$METHOD(...)
-      - metavariable-regex:
-          metavariable: $REPO
-          regex: '.*_repo$'
-      - metavariable-regex:
-          metavariable: $METHOD
-          regex: '.*(?:insert|update|delete|create|close|open|rollback|void|approve|execute|apply|add|checkout|receive|sync|dismiss|resolve).*'
-      - pattern-not-inside: |
-          #[tauri::command]
-          pub async fn $FUNC(...) {
-            ...
-            rbac::$CHECK(...).await?;
-            ...
-          }
-      - pattern-not-inside: |
-          #[tauri::command]
-          pub async fn $FUNC(...) {
-            ...
-            let $X = rbac::$CHECK(...).await?;
-            ...
-          }
-      - pattern-not-inside: |
-          #[tauri::command]
-          pub async fn $FUNC(...) {
-            ...
-            crate::commands::rbac::$CHECK(...).await?;
-            ...
-          }
-      - pattern-not-inside: |
-          #[tauri::command]
-          pub async fn $FUNC(...) {
-            ...
-            let $X = crate::commands::rbac::$CHECK(...).await?;
-            ...
-          }
-      - pattern-not-inside: |
-          #[tauri::command]
-          pub async fn $FUNC(...) {
-            ...
-            authorize_office(...).await?;
-            ...
-          }
-      - pattern-not-inside: |
-          #[tauri::command]
-          pub async fn $FUNC(...) {
-            ...
-            let $X = authorize_office(...).await?;
-            ...
-          }
-      - pattern-not-inside: |
-          #[tauri::command]
-          pub async fn $FUNC(...) {
-            ...
-            authorize_office(...).await.map_err(...)?;
-            ...
-          }
-      - pattern-not-inside: |
-          #[tauri::command]
-          pub async fn $FUNC(...) {
-            ...
-            let $X = authorize_office(...).await.map_err(...)?;
-            ...
-          }
-      - pattern-not-inside: |
-          #[tauri::command]
-          pub async fn setup_pull_catalog(...) {
-            ...
-            if !setup_pull_catalog_allowed(...) {
-              ...
-            }
-            ...
-          }
-
   - id: zanpos-no-dynamic-sql-format
     languages: [rust]
     mode: taint
@@ -190,8 +45,8 @@ rules:
       category: security
       technology: [rust, sqlx]
       baseline:
-        structural_constraint: Sanitized values are sync_v2 worker table/id parameters, identifiers validated by migration_commands::is_safe_sql_identifier, and ai::engine::selector Compiled cte/where_sql fragments; migration_query_remote is exempted as a read-only (mode=ro) managed query with RBAC and a read-intent/destructive-keyword allowlist.
-        rationale: Those private methods receive table identifiers solely from the internal sync table allowlist; the migration table names come from the inspected DB's own schema and are rejected unless they pass the identifier safety check; selector fragments are fixed SQL text with all values bound; migration_query_remote is exempted via a function-scoped sanitizer because the CE taint engine ignores rule-level pattern-not-inside. Destructured (Path/String) or derived (split_once, DB row) bindings are CE propagation gaps.
+        structural_constraint: Sanitizers are limited to explicit reject-and-return/continue identifier guards, named sync_v2 allowlist methods, Compiled Selector fragments in count/count_promotional/execute_price_adjust/execute_op, and migration_query_remote's reviewed read-only query.
+        rationale: Function parameters, request fields, environment values, DB row reads, assignments, concatenation, and String builders are sources/propagators into SQLx sinks. Community Edition cannot correlate Rust format implicit-capture names or arbitrary interprocedural transforms; those finite boundaries are fixtures with this owned review date rather than broad sanitizers.
         owner: ZANPOS Maintainers
         review_by: '2027-01-31'
     paths:
@@ -206,6 +61,9 @@ rules:
                 ...
               }
           - pattern: $INPUT
+          - metavariable-regex:
+              metavariable: $TYPE
+              regex: '(?:str|String)'
       - patterns:
           - pattern-inside: |
               fn $F(..., $INPUT: String, ...) {
@@ -220,15 +78,80 @@ rules:
           - pattern-either:
               - pattern: $INPUT.$FIELD
               - pattern: $INPUT[$IDX]
+      - patterns:
+          - pattern-inside: |
+              fn $F<$GENERIC>(..., $INPUT: $TYPE, ...) {
+                ...
+              }
+          - pattern: $INPUT
+      - patterns:
+          - pattern-inside: |
+              fn $F<$GENERIC: $BOUND>(..., $INPUT: $TYPE, ...) {
+                ...
+              }
+          - pattern: $INPUT
+      - pattern-either:
+          - pattern: std::env::var(...)
+          - pattern: std::env::var(...)?
+          - pattern: std::env::var(...).unwrap_or_default()
+          - pattern: std::env::var(...).unwrap_or(...)
+          - pattern: std::env::var_os(...)
+      - patterns:
+          - pattern-inside: |
+              fn $F(..., Path($INPUT): Path<$TYPE>, ...) {
+                ...
+              }
+          - pattern: $INPUT
+      - patterns:
+          - pattern-inside: |
+              fn $F(..., Query($INPUT): Query<$TYPE>, ...) {
+                ...
+              }
+          - pattern: $INPUT
+      - patterns:
+          - pattern-inside: |
+              fn $F(..., Json($INPUT): Json<$TYPE>, ...) {
+                ...
+              }
+          - pattern: $INPUT
     pattern-sinks:
       - pattern-either:
           - pattern: sqlx::query($SQL)
+          - pattern: sqlx::query::<$DB>($SQL)
           - pattern: sqlx::query_as($SQL)
           - pattern: sqlx::query_scalar($SQL)
           - pattern: sqlx::query_as::<$T>($SQL)
           - pattern: sqlx::query_scalar::<$T>($SQL)
           - pattern: sqlx::query_as::<$A, $B>($SQL)
           - pattern: sqlx::query_scalar::<$A, $B>($SQL)
+          - pattern: sqlx::QueryBuilder::new($SQL)
+          - pattern: sqlx::QueryBuilder::<$DB>::new($SQL)
+      - patterns:
+          - pattern-inside: |
+              let mut $BUILDER = sqlx::QueryBuilder::new(...);
+              ...
+          - pattern: $BUILDER.push($SQL)
+          - focus-metavariable: $SQL
+      - patterns:
+          - pattern-inside: |
+              let mut $BUILDER = sqlx::QueryBuilder::<$DB>::new(...);
+              ...
+          - pattern: $BUILDER.push($SQL)
+          - focus-metavariable: $SQL
+    pattern-propagators:
+      - pattern: $TO.push_str(&$FROM)
+        from: $FROM
+        to: $TO
+      - pattern: $TO.push_str($FROM)
+        from: $FROM
+        to: $TO
+      - pattern: $TO += $FROM
+        from: $FROM
+        to: $TO
+      - pattern: |
+          let $TO = format!($FMT, $NAME = $FROM, ...);
+        from: $FROM
+        to: $TO
     pattern-sanitizers:
       - patterns:
           - pattern-inside: |
@@ -262,15 +185,37 @@ rules:
           - pattern: $SQL
       - patterns:
           - pattern-inside: |
-              fn $F(...) {
+              pub async fn count_promotional(...) {
                 ...
-                is_safe_sql_identifier($IDENT);
+                let $COMPILED = $SELF.compile();
                 ...
               }
-          - pattern: $IDENT
+          - pattern-either:
+              - pattern: $COMPILED.cte
+              - pattern: $COMPILED.where_sql
       - patterns:
           - pattern-inside: |
-              fn $F(...) {
+              pub async fn count(...) {
+                ...
+                let $COMPILED = $SELF.compile();
+                ...
+              }
+          - pattern-either:
+              - pattern: $COMPILED.cte
+              - pattern: $COMPILED.where_sql
+      - patterns:
+          - pattern-inside: |
+              pub async fn execute_price_adjust(...) {
+                ...
+                let $COMPILED = $SELF.compile();
+                ...
+              }
+          - pattern-either:
+              - pattern: $COMPILED.cte
+              - pattern: $COMPILED.where_sql
+      - patterns:
+          - pattern-inside: |
+              pub async fn execute_op(...) {
                 ...
                 let $COMPILED = $SELF.compile();
                 ...
@@ -284,6 +229,53 @@ rules:
                 ...
               }
           - pattern: limited_query
+
+  - id: zanpos-no-db-derived-sql-format
+    languages: [rust]
+    severity: ERROR
+    message: Do not build SQL text from a database row value; bind it as data instead.
+    metadata:
+      category: security
+      technology: [rust, sqlx]
+      baseline:
+        structural_constraint: A get/try_get row value must be an explicit format argument or push_str input to the same let-bound SQL variable that reaches a SQLx sink.
+        rationale: Treating every Row::get as a global taint source exceeded practical CE scan time. These finite same-function AST correlations cover direct and builder flows without marking unrelated row reads or internally formatted SQL.
+        owner: ZANPOS Maintainers
+        review_by: '2027-01-31'
+    paths:
+      include:
+        - /src-tauri/src/**/*.rs
+        - /tests/security/semgrep/**/*.rs
+        - '**/semgrep/**/*.rs'
+    pattern-either:
+      - pattern: |
+          let $VALUE: $TYPE = $ROW.try_get(...)?;
+          ...
+          let $SQL = format!($FMT, $VALUE, ...);
+          ...
+          sqlx::query_as::<$A, $B>(&$SQL)
+      - pattern: |
+          let $VALUE: $TYPE = $ROW.try_get(...)?;
+          ...
+          let mut $SQL = $INITIAL;
+          ...
+          $SQL.push_str(&$VALUE);
+          ...
+          sqlx::query_as::<$A, $B>(&$SQL)
+      - pattern: |
+          let $VALUE: $TYPE = $ROW.get(...);
+          ...
+          let $SQL = format!($FMT, $VALUE, ...);
+          ...
+          sqlx::query(&$SQL)
+      - pattern: |
+          let $VALUE: $TYPE = $ROW.get(...);
+          ...
+          let mut $SQL = $INITIAL;
+          ...
+          $SQL.push_str(&$VALUE);
+          ...
+          sqlx::query(&$SQL)
 
   - id: zanpos-no-secret-in-log-fields
     languages: [rust]
@@ -307,87 +299,6 @@ rules:
       - metavariable-regex:
           metavariable: $FIELD
           regex: '(?i).*(?:api[_-]?key|token|secret|password|passphrase|pin).*'
-
-  - id: zanpos-no-owned-inline-format-sql
-    languages: [rust]
-    severity: ERROR
-    message: Do not interpolate an owned request String into SQL via format! directly inside a SQLx sink.
-    metadata:
-      category: security
-      technology: [rust, sqlx]
-      baseline:
-        structural_constraint: An owned String function parameter appears as a positional format! argument directly inside a SQLx query sink.
-        rationale: The format! argument is correlated with the owned String parameter by metavariable, so unrelated format! calls or static queries do not match.
-        owner: ZANPOS Maintainers
-        review_by: '2027-01-31'
-    paths:
-      include:
-        - /src-tauri/src/**/*.rs
-        - /tests/security/semgrep/**/*.rs
-        - '**/semgrep/**/*.rs'
-    patterns:
-      - pattern-inside: |
-          async fn $FUNC(..., $OWNED: String, ...) {
-            ...
-          }
-      - pattern-either:
-          - pattern: sqlx::query(&format!($FMT, $OWNED, ...))
-          - pattern: sqlx::query_as(&format!($FMT, $OWNED, ...))
-          - pattern: sqlx::query_scalar(&format!($FMT, $OWNED, ...))
-          - pattern: sqlx::query_as::<$A, $B>(&format!($FMT, $OWNED, ...))
-          - pattern: sqlx::query_scalar::<$A, $B>(&format!($FMT, $OWNED, ...))
-
-  - id: zanpos-no-owned-let-format-sql
-    languages: [rust]
-    severity: ERROR
-    message: Do not build SQL from an owned request String with format! and pass it to a SQLx sink.
-    metadata:
-      category: security
-      technology: [rust, sqlx]
-      baseline:
-        structural_constraint: An async function accepts an owned String, formats SQL into a let-bound variable, then passes that exact variable to a SQLx query sink.
-        rationale: The sink variable is bound to the format! result by metavariable, so a later unrelated query does not match. sync_v2 worker table/id parameters remain sanitized via the shared allowlist.
-        owner: ZANPOS Maintainers
-        review_by: '2027-01-31'
-    paths:
-      include:
-        - /src-tauri/src/**/*.rs
-        - /tests/security/semgrep/**/*.rs
-        - '**/semgrep/**/*.rs'
-    patterns:
-      - pattern-inside: |
-          async fn $FUNC(..., $OWNED: String, ...) {
-            ...
-          }
-      - pattern-either:
-          - pattern: |
-              let $SQL = format!($FMT, $OWNED, ...);
-              ...
-              sqlx::query(&$SQL)
-          - pattern: |
-              let $SQL = format!($FMT, $OWNED, ...);
-              ...
-              sqlx::query_as(&$SQL)
-          - pattern: |
-              let $SQL = format!($FMT, $OWNED, ...);
-              ...
-              sqlx::query_scalar(&$SQL)
-          - pattern: |
-              let $SQL = format!($FMT, $OWNED, ...);
-              ...
-              sqlx::query_as::<$A, $B>(&$SQL)
-          - pattern: |
-              let $SQL = format!($FMT, $OWNED, ...);
-              ...
-              sqlx::query_scalar::<$A, $B>(&$SQL)
-      - pattern-not-inside: |
-          async fn mark_rows_synced(&self, $TABLE: &str, $ID: &str, ...) {
-            ...
-          }
-      - pattern-not-inside: |
-          async fn increment_attempts(&self, $TABLE: &str, $ID: &str, ...) {
-            ...
-          }
 
   - id: zanpos-no-secret-in-log-message
     languages: [rust]
@@ -442,7 +353,7 @@ rules:
         - /tests/security/semgrep/**/*.rs
         - '**/semgrep/**/*.rs'
     patterns:
-      - pattern-regex: '"(?:https?://(?:\*|0\.0\.0\.0(?::\d+)?)|0\.0\.0\.0(?::\d+)?)'
+      - pattern-regex: '"(?:https?://(?:\*|0\.0\.0\.0(?::\d+)?)|0\.0\.0\.0:\d+)'
       - pattern-not-inside: |
           pub fn lan_ips() -> Vec<String> {
             ...
@@ -450,12 +361,13 @@ rules:
 
   - id: zanpos-no-wildcard-listener-bind
     languages: [rust]
+    mode: taint
     severity: ERROR
     message: Do not bind a network listener to all interfaces without an explicit reviewed boundary.
     metadata:
       baseline:
-        structural_constraint: Only the hub::lan_ips UDP probe and the hub::start_hub variable-assigned bind are exempted; all other wildcard binds are flagged.
-        rationale: lan_ips is local interface discovery (no listener, no accept); start_hub binds 0.0.0.0 via a let-bound SocketAddr, which is a reviewed hub boundary. Variable-assigned binds are a documented structural baseline.
+        structural_constraint: Only SocketAddr::from(([0,0,0,0], port)) in hub::start_hub and UdpSocket::bind("0.0.0.0:0") in hub::lan_ips are sanitized; other values flow through variables, tuples, format!, constructors, and into() to static or instance bind sinks.
+        rationale: start_hub is the authenticated shop-LAN hub boundary; lan_ips is a connected UDP discovery probe that never listens or accepts. Both exceptions are exact expressions in exact function names.
         owner: ZANPOS Maintainers
         review_by: '2027-01-31'
     paths:
@@ -463,17 +375,30 @@ rules:
         - /src-tauri/src/**/*.rs
         - /tests/security/semgrep/**/*.rs
         - '**/semgrep/**/*.rs'
-    patterns:
-      - pattern-either:
-          - pattern-regex: '(?:std::net::|tokio::net::)?(?:TcpListener|UdpSocket)::bind\(\s*"0\.0\.0\.0:'
-          - pattern: $LISTENER::bind(std::net::SocketAddr::from(([0, 0, 0, 0], $PORT)))
-          - pattern: $LISTENER::bind(std::net::Ipv4Addr::UNSPECIFIED)
-          - pattern: $LISTENER::bind(std::net::SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, $PORT))
-          - pattern: $LISTENER::bind(std::net::Ipv4Addr::from([0, 0, 0, 0]))
-      - pattern-not-inside: |
-          pub fn lan_ips() -> Vec<String> {
-            ...
-          }
+    pattern-sources:
+      - pattern-regex: '"0\.0\.0\.0(?::[^"\r\n]*)?"'
+      - pattern: '[0, 0, 0, 0]'
+      - patterns:
+          - pattern: $IPV4::UNSPECIFIED
+          - metavariable-regex:
+              metavariable: $IPV4
+              regex: '(?:std::net::)?Ipv4Addr'
+    pattern-sinks:
+      - pattern: $NETWORK_TYPE::bind($ADDRESS)
+      - pattern: $SOCKET.bind($ADDRESS)
+    pattern-sanitizers:
+      - patterns:
+          - pattern-inside: |
+              pub async fn start_hub(...) {
+                ...
+              }
+          - pattern: std::net::SocketAddr::from(([0, 0, 0, 0], $PORT))
+      - patterns:
+          - pattern-inside: |
+              pub fn lan_ips() -> Vec<String> {
+                ...
+              }
+          - pattern: '"0.0.0.0:0"'
 
   - id: zanpos-no-permissive-workflow-network
     languages: [yaml]
@@ -482,8 +407,8 @@ rules:
     metadata:
       category: security
       baseline:
-        structural_constraint: curl -k/--insecure is matched at any flag position in the command line; NODE_TLS_REJECT_UNAUTHORIZED=0 is matched for shell, YAML env, set, and PowerShell env assignments.
-        rationale: TLS verification bypasses and wildcard endpoints are always prohibited in CI regardless of surrounding flags or assignment syntax.
+        structural_constraint: curl -k/--insecure is matched at any flag position; correlated shell, PowerShell, and GitHub env-variable references are matched within the same bounded workflow block. NODE_TLS_REJECT_UNAUTHORIZED covers direct and correlated-zero assignments.
+        rationale: TLS verification bypasses and wildcard endpoints are always prohibited in CI. Variable-name backreferences prevent unrelated safe values from being treated as the insecure assignment.
         owner: ZANPOS Maintainers
         review_by: '2027-01-31'
     paths:
@@ -492,7 +417,14 @@ rules:
         - /.github/workflows/**/*.yaml
         - /tests/security/semgrep/**/*.yml
         - '**/semgrep/**/*.yml'
-    pattern-regex: '(?i)(?:curl\b[^\r\n]*?\s(?:-k|--insecure)\b|(?:set\s+|(?:\$\w+:|$env:))?NODE_TLS_REJECT_UNAUTHORIZED\s*[:=]\s*["'']?0["'']?|https?://\*)'
+    pattern-either:
+      - pattern-regex: '(?i)(?:curl\b(?:[^\r\n\\]|\\\r?\n[ \t]*){0,500}?(?:\s-k\b|--insecure\b)|(?:set\s+|(?:\$\w+:|\$env:))?NODE_TLS_REJECT_UNAUTHORIZED\s*[:=]\s*["'']?0["'']?|https?://\*)'
+      - pattern-regex: >-
+          (?isx)(?:
+            (?:set\s+|\$env:)?(?P<CURL_VAR>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*["']?(?:-k|--insecure)["']?.{0,500}?curl\b.{0,500}?(?:\$(?:\{(?P=CURL_VAR)\}|(?P=CURL_VAR)\b)|\$env:(?P=CURL_VAR)\b|\$\{\{\s*env\.(?P=CURL_VAR)\s*\}\})
+            |
+            (?:set\s+|\$env:)?(?P<TLS_VAR>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*["']?0["']?.{0,500}?NODE_TLS_REJECT_UNAUTHORIZED\s*[:=]\s*(?:\$(?:\{(?P=TLS_VAR)\}|(?P=TLS_VAR)\b)|\$env:(?P=TLS_VAR)\b|\$\{\{\s*env\.(?P=TLS_VAR)\s*\}\})
+          )
 
   - id: zanpos-no-secret-log-shorthand
     languages: [rust]

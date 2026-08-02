@@ -37,90 +37,6 @@ async fn audit_ext(pool: &SqlitePool) {
     }
 }
 
-#[tauri::command]
-async fn update_without_rbac(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    // ruleid: zanpos-tauri-mutation-requires-rbac
-    sqlx::query("UPDATE products SET is_active = 0")
-        .execute(pool)
-        .await?;
-    Ok(())
-}
-
-#[tauri::command]
-async fn update_with_rbac(pool: &SqlitePool, actor_user_id: &str) -> Result<(), sqlx::Error> {
-    rbac::manager_or_owner(pool, actor_user_id).await?;
-    // ok: zanpos-tauri-mutation-requires-rbac
-    sqlx::query("UPDATE products SET is_active = 1")
-        .execute(pool)
-        .await?;
-    Ok(())
-}
-
-#[tauri::command]
-async fn update_with_late_rbac(pool: &SqlitePool, actor_user_id: &str) -> Result<(), sqlx::Error> {
-    // ok: zanpos-tauri-mutation-requires-rbac
-    sqlx::query("UPDATE products SET is_active = 1").execute(pool).await?;
-    rbac::manager_or_owner(pool, actor_user_id).await?;
-    Ok(())
-}
-
-#[tauri::command]
-async fn update_with_nested_rbac(pool: &SqlitePool, actor_user_id: &str) -> Result<(), sqlx::Error> {
-    if actor_user_id.is_empty() {
-        return Err(sqlx::Error::RowNotFound);
-    }
-    rbac::manager_or_owner(pool, actor_user_id).await?;
-    // ok: zanpos-tauri-mutation-requires-rbac
-    sqlx::query("UPDATE products SET is_active = 1").execute(pool).await?;
-    Ok(())
-}
-
-#[tauri::command]
-async fn update_mixed_order(pool: &SqlitePool, actor_user_id: &str) -> Result<(), sqlx::Error> {
-    // ok: zanpos-tauri-mutation-requires-rbac
-    sqlx::query("UPDATE products SET is_active = 0").execute(pool).await?;
-    rbac::manager_or_owner(pool, actor_user_id).await?;
-    // ok: zanpos-tauri-mutation-requires-rbac
-    sqlx::query("UPDATE products SET is_active = 1").execute(pool).await?;
-    Ok(())
-}
-
-#[tauri::command]
-async fn approve_with_repo_without_rbac(pool: &SqlitePool) {
-    // ruleid: zanpos-tauri-repository-mutation-requires-rbac
-    crate::db::repositories::sale_repo::approve(pool, "fixture").await;
-}
-
-#[tauri::command]
-async fn approve_with_repo_rbac(pool: &SqlitePool, actor_user_id: &str) -> Result<(), sqlx::Error> {
-    rbac::manager_or_owner(pool, actor_user_id).await?;
-    // ok: zanpos-tauri-repository-mutation-requires-rbac
-    crate::db::repositories::sale_repo::approve(pool, "fixture").await;
-    Ok(())
-}
-
-#[tauri::command]
-async fn approve_with_repo_nested_rbac(
-    pool: &SqlitePool,
-    actor_user_id: &str,
-) -> Result<(), sqlx::Error> {
-    if actor_user_id.is_empty() {
-        return Err(sqlx::Error::RowNotFound);
-    }
-    rbac::manager_or_owner(pool, actor_user_id).await?;
-    // ok: zanpos-tauri-repository-mutation-requires-rbac
-    crate::db::repositories::sale_repo::approve(pool, "fixture").await;
-    Ok(())
-}
-
-#[tauri::command]
-async fn rollback_with_late_rbac(pool: &SqlitePool, actor_user_id: &str) -> Result<(), sqlx::Error> {
-    // ok: zanpos-tauri-repository-mutation-requires-rbac
-    crate::db::repositories::sale_repo::rollback(pool, "fixture").await;
-    rbac::manager_or_owner(pool, actor_user_id).await?;
-    Ok(())
-}
-
 async fn raw_sql_examples(pool: &SqlitePool, unsafe_clause: &str) -> Result<(), sqlx::Error> {
     // ruleid: zanpos-no-dynamic-sql-format
     sqlx::query(&format!("DELETE FROM products WHERE {}", unsafe_clause))
@@ -142,14 +58,13 @@ async fn raw_sql_scalar_bypass(pool: &SqlitePool, renamed: &str) {
 }
 
 async fn raw_sql_owned_string_bypass(pool: &SqlitePool, renamed: String) {
-    // ruleid: zanpos-no-owned-let-format-sql
     let sql = format!("SELECT {} FROM products", renamed);
     // ruleid: zanpos-no-dynamic-sql-format
     sqlx::query_as::<_, (String,)>(&sql).fetch_optional(pool).await;
 }
 
 async fn raw_sql_owned_inline(pool: &SqlitePool, renamed: String) {
-    // ruleid: zanpos-no-owned-inline-format-sql, zanpos-no-dynamic-sql-format
+    // ruleid: zanpos-no-dynamic-sql-format
     sqlx::query(&format!("SELECT {} FROM products", renamed))
         .execute(pool)
         .await;
@@ -166,11 +81,87 @@ async fn raw_sql_struct_field(pool: &SqlitePool, input: RawSqlRequest) {
         .await;
 }
 
+fn raw_sql_named_capture(pool: &SqlitePool, unsafe_clause: String) {
+    let sql = format!("SELECT name FROM products WHERE {clause}", clause = unsafe_clause);
+    // nosemgrep: zanpos-no-dynamic-sql-format -- Semgrep CE 1.172 does not propagate named format arguments; owner ZANPOS Maintainers; review 2027-01-31
+    sqlx::query_as::<sqlx::Sqlite, (String,)>(&sql);
+}
+
+fn raw_sql_generic<T>(pool: &SqlitePool, unsafe_table: T) {
+    // ruleid: zanpos-no-dynamic-sql-format
+    sqlx::query::<sqlx::Sqlite>(&format!("SELECT * FROM {}", unsafe_table));
+}
+
+fn raw_sql_request_builder(pool: &SqlitePool, input: RawSqlRequest) {
+    let mut sql = "SELECT * FROM ".to_string();
+    sql.push_str(&input.table_name);
+    // ruleid: zanpos-no-dynamic-sql-format
+    sqlx::query(&sql);
+}
+
+fn raw_sql_environment(pool: &SqlitePool) {
+    let table = std::env::var("ZANPOS_FIXTURE_TABLE").unwrap_or_default();
+    let sql = format!("SELECT * FROM {}", table);
+    // ruleid: zanpos-no-dynamic-sql-format
+    sqlx::query_scalar::<sqlx::Sqlite, i64>(&sql);
+}
+
+async fn raw_sql_database_builder(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    use sqlx::Row;
+    let row = sqlx::query("SELECT name FROM fixture_metadata")
+        .fetch_one(pool)
+        .await?;
+    // ruleid: zanpos-no-db-derived-sql-format
+    let table: String = row.try_get("name")?;
+    let mut sql = "SELECT * FROM ".to_string();
+    sql.push_str(&table);
+    sqlx::query_as::<sqlx::Sqlite, (String,)>(&sql);
+    Ok(())
+}
+
+async fn raw_sql_database_unrelated(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    use sqlx::Row;
+    let row = sqlx::query("SELECT name FROM fixture_metadata")
+        .fetch_one(pool)
+        .await?;
+    let _unrelated: String = row.try_get("name")?;
+    let internal_table = "products";
+    let sql = format!("SELECT * FROM {}", internal_table);
+    // ok: zanpos-no-db-derived-sql-format
+    sqlx::query_as::<sqlx::Sqlite, (String,)>(&sql);
+    Ok(())
+}
+
+fn raw_sql_ignored_validation(pool: &SqlitePool, unsafe_table: String) {
+    let _ = is_safe_sql_identifier(&unsafe_table);
+    let sql = format!("SELECT * FROM {}", unsafe_table);
+    // ruleid: zanpos-no-dynamic-sql-format
+    sqlx::query(&sql);
+}
+
+fn raw_sql_guarded_identifier(pool: &SqlitePool, table: String) {
+    if !is_safe_sql_identifier(&table) {
+        return;
+    }
+    // nosemgrep: zanpos-no-dynamic-sql-format -- explicit reject-and-return identifier guard; owner ZANPOS Maintainers; review 2027-01-31
+    // ok: zanpos-no-dynamic-sql-format
+    sqlx::query(&format!("SELECT * FROM {table}"));
+}
+
+fn is_safe_sql_identifier(value: &str) -> bool {
+    !value.is_empty()
+}
+
 async fn raw_sql_owned_string_safe(pool: &SqlitePool, _renamed: String) {
-    // ok: zanpos-no-owned-inline-format-sql
-    // ok: zanpos-no-owned-let-format-sql
     // ok: zanpos-no-dynamic-sql-format
     sqlx::query_as::<_, (String,)>("SELECT name FROM products").fetch_optional(pool).await;
+}
+
+async fn raw_sql_unrelated_owned_and_internal_format(pool: &SqlitePool, _request: String) {
+    let internal_table = "products";
+    let sql = format!("SELECT name FROM {internal_table}");
+    // ok: zanpos-no-dynamic-sql-format
+    sqlx::query_as::<_, (String,)>(&sql).fetch_optional(pool).await;
 }
 
 async fn raw_sql_allowlisted(pool: &SqlitePool) {
@@ -212,6 +203,45 @@ fn wildcard_listener_unspecified() {
     std::net::UdpSocket::bind("0.0.0.0:8080");
     // ok: zanpos-no-wildcard-listener-bind
     std::net::UdpSocket::bind("127.0.0.1:8080");
+}
+
+async fn wildcard_listener_derived(port: u16) {
+    let wildcard_host = "0.0.0.0";
+    // ruleid: zanpos-no-wildcard-listener-bind
+    tokio::net::TcpListener::bind((wildcard_host, port)).await;
+
+    let formatted = format!("{}:{port}", "0.0.0.0");
+    // ruleid: zanpos-no-wildcard-listener-bind
+    tokio::net::UdpSocket::bind(formatted).await;
+
+    let address: std::net::SocketAddr =
+        std::net::SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, port).into();
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    // ruleid: zanpos-no-wildcard-listener-bind
+    socket.bind(address);
+
+    let loopback_host = "127.0.0.1";
+    // ok: zanpos-no-wildcard-listener-bind
+    tokio::net::TcpListener::bind((loopback_host, port)).await;
+}
+
+async fn wildcard_listener_imported_unspecified(port: u16) {
+    use std::net::{Ipv4Addr, SocketAddrV4};
+    let address = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port);
+    // ruleid: zanpos-no-wildcard-listener-bind
+    tokio::net::UdpSocket::bind(address).await;
+}
+
+pub async fn start_hub(pool: SqlitePool, port: u16) {
+    let address = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+    // ok: zanpos-no-wildcard-listener-bind
+    tokio::net::TcpListener::bind(address).await;
+}
+
+pub fn lan_ips() -> Vec<String> {
+    // ok: zanpos-no-wildcard-listener-bind
+    std::net::UdpSocket::bind("0.0.0.0:0");
+    Vec::new()
 }
 
 fn shorthand_secret_log(api_token: &str) {

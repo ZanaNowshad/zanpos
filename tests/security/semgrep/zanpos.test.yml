@@ -7,6 +7,14 @@ k_flag_after_flags: curl --fail --location -k https://example.invalid
 # ruleid: zanpos-no-permissive-workflow-network
 long_flag_anywhere: curl -sSL --insecure https://example.invalid
 # ruleid: zanpos-no-permissive-workflow-network
+long_flag_after_url: curl https://example.invalid --retry 3 --insecure
+multiline_insecure: |
+  # ruleid: zanpos-no-permissive-workflow-network
+  curl --fail \
+    --retry 3 \
+    --insecure \
+    https://example.invalid
+# ruleid: zanpos-no-permissive-workflow-network
 tls_env_equals: NODE_TLS_REJECT_UNAUTHORIZED=0
 # ruleid: zanpos-no-permissive-workflow-network
 tls_env_yaml: 'NODE_TLS_REJECT_UNAUTHORIZED: "0"'
@@ -14,7 +22,19 @@ tls_env_yaml: 'NODE_TLS_REJECT_UNAUTHORIZED: "0"'
 tls_env_set: set NODE_TLS_REJECT_UNAUTHORIZED=0
 # ruleid: zanpos-no-permissive-workflow-network
 tls_env_powershell: '$env:NODE_TLS_REJECT_UNAUTHORIZED = "0"'
+variable_insecure: |
+  # ruleid: zanpos-no-permissive-workflow-network
+  CURL_FLAGS=--insecure
+  curl $CURL_FLAGS https://example.invalid
+variable_tls_zero: |
+  # ruleid: zanpos-no-permissive-workflow-network
+  TLS_VERIFY=0
+  NODE_TLS_REJECT_UNAUTHORIZED=$TLS_VERIFY
 # ok: zanpos-no-permissive-workflow-network
 safe_curl: curl --fail --proto '=https' https://example.invalid
 # ok: zanpos-no-permissive-workflow-network
 safe_tls: NODE_TLS_REJECT_UNAUTHORIZED=1
+safe_variable_tls: |
+  # ok: zanpos-no-permissive-workflow-network
+  TLS_VERIFY=1
+  NODE_TLS_REJECT_UNAUTHORIZED=$TLS_VERIFY

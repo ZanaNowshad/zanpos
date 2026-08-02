@@ -1,0 +1,209 @@
+rules:
+  - id: zanpos-tauri-mutation-requires-rbac
+    languages: [rust]
+    severity: ERROR
+    message: Tauri mutation commands must validate the caller with an RBAC helper before each mutation sink.
+    metadata:
+      category: security
+      technology: [rust, tauri, sqlx]
+      baseline:
+        structural_constraint: setup_pull_catalog_allowed guards only the pre-session JoinStore bootstrap command; otherwise an RBAC call must precede the matched sink in the same statement sequence.
+        rationale: Ordered negative contexts are correlated to each sink, so a later RBAC call cannot authorize an earlier write. Guards outside the sink's AST statement sequence are finite Community Edition baselines reviewed in production scan output.
+        owner: ZANPOS Maintainers
+        review_by: '2027-01-31'
+    paths:
+      include:
+        - /src-tauri/src/commands/**/*.rs
+        - /tests/security/semgrep/**/*.rs
+        - '**/semgrep/**/*.rs'
+    patterns:
+      - pattern-inside: |
+          #[tauri::command]
+          pub async fn $FUNC(...) {
+            ...
+          }
+      - pattern: sqlx::query($QUERY).execute(...).await?
+      - metavariable-regex:
+          metavariable: $FUNC
+          regex: '.*(?:create|update|delete|void|dismiss|resolve|adjust|close|open|apply|add|rollback|checkout|approve|execute|sync|receive|import|save|set|record).*'
+      - pattern-not-inside: |
+          rbac::$CHECK(...).await?;
+          ...
+          sqlx::query($QUERY).execute(...).await?
+      - pattern-not-inside: |
+          let $AUTH = rbac::$CHECK(...).await?;
+          ...
+          sqlx::query($QUERY).execute(...).await?
+      - pattern-not-inside: |
+          crate::commands::rbac::$CHECK(...).await?;
+          ...
+          sqlx::query($QUERY).execute(...).await?
+      - pattern-not-inside: |
+          let $AUTH = crate::commands::rbac::$CHECK(...).await?;
+          ...
+          sqlx::query($QUERY).execute(...).await?
+      - pattern-not-inside: |
+          #[tauri::command]
+          pub async fn setup_pull_catalog(...) {
+            ...
+            if !setup_pull_catalog_allowed(...) {
+              ...
+            }
+            ...
+          }
+  - id: zanpos-tauri-repository-mutation-requires-rbac
+    languages: [rust]
+    severity: ERROR
+    message: Tauri commands invoking mutation repository helpers must validate RBAC first.
+    metadata:
+      baseline:
+        structural_constraint: Imported and locally aliased repository paths resolve to the fully qualified sink in Semgrep CE. Wrapper calls are limited to the finite persist_*_wrapper, *_mutation, or *_write convention. Only delivery_update_status, shift_close, ai_execute_action, and ai_chat_stream are exact function baselines.
+        rationale: Every ordered negative context repeats the concrete repository or wrapper sink, so a later or unrelated RBAC call cannot suppress it. The four named functions authorize before mutation through exhaustive branches, ownership predicates, or before a nested block. CE cannot correlate those nested controls per sink or follow arbitrary wrappers.
+        owner: ZANPOS Maintainers
+        review_by: '2027-01-31'
+    paths:
+      include:
+        - /src-tauri/src/commands/**/*.rs
+        - /tests/security/semgrep/**/*.rs
+        - '**/semgrep/**/*.rs'
+    patterns:
+      - pattern-inside: |
+          #[tauri::command]
+          pub async fn $FUNC(...) {
+            ...
+          }
+      - pattern-either:
+          - patterns:
+              - pattern: crate::db::repositories::$REPO::$METHOD(...)
+              - metavariable-regex:
+                  metavariable: $REPO
+                  regex: '.*_repo$'
+              - metavariable-regex:
+                  metavariable: $METHOD
+                  regex: '.*(?:insert|update|delete|create|close|open|rollback|void|approve|execute|apply|add|checkout|receive|sync|dismiss|resolve|mark|cancel|expire|end|finalize|merge|confirm|revert|clear|submit|save|set|record).*'
+              - pattern-not-inside: |
+                  rbac::$CHECK(...).await?;
+                  ...
+                  $REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  rbac::$CHECK(...).await?;
+                  ...
+                  crate::db::repositories::$REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  let $AUTH = rbac::$CHECK(...).await?;
+                  ...
+                  $REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  let $AUTH = rbac::$CHECK(...).await?;
+                  ...
+                  crate::db::repositories::$REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  crate::commands::rbac::$CHECK(...).await?;
+                  ...
+                  $REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  crate::commands::rbac::$CHECK(...).await?;
+                  ...
+                  crate::db::repositories::$REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  let $AUTH = crate::commands::rbac::$CHECK(...).await?;
+                  ...
+                  $REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  let $AUTH = crate::commands::rbac::$CHECK(...).await?;
+                  ...
+                  crate::db::repositories::$REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  authorize_office(...).await?;
+                  ...
+                  $REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  authorize_office(...).await?;
+                  ...
+                  crate::db::repositories::$REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  let $AUTH = authorize_office(...).await?;
+                  ...
+                  $REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  let $AUTH = authorize_office(...).await?;
+                  ...
+                  crate::db::repositories::$REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  authorize_office(...).await.map_err(...)?;
+                  ...
+                  $REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  authorize_office(...).await.map_err(...)?;
+                  ...
+                  crate::db::repositories::$REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  let $AUTH = authorize_office(...).await.map_err(...)?;
+                  ...
+                  $REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  let $AUTH = authorize_office(...).await.map_err(...)?;
+                  ...
+                  crate::db::repositories::$REPO::$METHOD(...)
+          - patterns:
+              - pattern: $WRAPPER(...)
+              - metavariable-regex:
+                  metavariable: $WRAPPER
+                  regex: '(?:persist_[a-zA-Z0-9_]+_wrapper|[a-zA-Z0-9_]+_(?:mutation|write))'
+              - pattern-not-inside: |
+                  rbac::$CHECK(...).await?;
+                  ...
+                  $WRAPPER(...)
+              - pattern-not-inside: |
+                  let $AUTH = rbac::$CHECK(...).await?;
+                  ...
+                  $WRAPPER(...)
+              - pattern-not-inside: |
+                  crate::commands::rbac::$CHECK(...).await?;
+                  ...
+                  $WRAPPER(...)
+              - pattern-not-inside: |
+                  let $AUTH = crate::commands::rbac::$CHECK(...).await?;
+                  ...
+                  $WRAPPER(...)
+              - pattern-not-inside: |
+                  authorize_office(...).await?;
+                  ...
+                  $WRAPPER(...)
+              - pattern-not-inside: |
+                  let $AUTH = authorize_office(...).await?;
+                  ...
+                  $WRAPPER(...)
+              - pattern-not-inside: |
+                  authorize_office(...).await.map_err(...)?;
+                  ...
+                  $WRAPPER(...)
+              - pattern-not-inside: |
+                  let $AUTH = authorize_office(...).await.map_err(...)?;
+                  ...
+                  $WRAPPER(...)
+      - pattern-not-inside: |
+          pub async fn delivery_update_status(...) {
+            ...
+          }
+      - pattern-not-inside: |
+          pub async fn shift_close(...) {
+            ...
+          }
+      - pattern-not-inside: |
+          pub async fn ai_execute_action(...) {
+            ...
+          }
+      - pattern-not-inside: |
+          pub async fn ai_chat_stream(...) {
+            ...
+          }
+      - pattern-not-inside: |
+          #[tauri::command]
+          pub async fn setup_pull_catalog(...) {
+            ...
+            if !setup_pull_catalog_allowed(...) {
+              ...
+            }
+            ...
+          }

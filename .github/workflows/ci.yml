@@ -261,7 +261,7 @@ jobs:
         run: semgrep --test --config config tests/security
 
       - name: Enforce custom Semgrep policy
-        run: semgrep scan --timeout 300 --error --config config/semgrep/zanpos.yml src src-tauri/src src-tauri/tauri.conf.json storefront .github
+        run: semgrep scan --timeout 300 --error --config config/semgrep src src-tauri/src src-tauri/tauri.conf.json storefront .github
 
   # ────────────────────────────────────────────────────────────────────────────
   # 5. Gitleaks — working-tree secret detection

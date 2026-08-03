@@ -77,12 +77,26 @@ def required_mutations(sink: str) -> dict[str, str]:
     if sink == LAN_ID:
         return {"copied_command": "LAN_LITERAL_INVENTORY", "additional_same_function": "LAN_LITERAL_INVENTORY"}
     if sink == "setup_watermark_helper":
-        return {"copied_command": "SINK_INVENTORY", "additional_same_function": "SINK_INVENTORY"}
-    result = dict(BASE_MUTATIONS)
+        return {"copied_command": "SINK_INVENTORY", "additional_same_function": "CONTROL_FLOW_CONTRACT,SINK_INVENTORY,SINK_SHAPE"}
+    result: dict[str, str] = {}
     if sink in AI_IDS:
-        result.update(AI_MUTATIONS)
+        result["copied_command"] = "CONTROL_REFERENCE_INVENTORY,SINK_INVENTORY"
+        result["additional_same_function"] = "CONTROL_FLOW_CONTRACT,CONTROL_REFERENCE_INVENTORY,SINK_INVENTORY,SINK_SHAPE"
+        result["copied_non_tauri_helper"] = "CONTROL_REFERENCE_INVENTORY,SINK_INVENTORY"
+        result["copied_parameterized_tauri"] = "CONTROL_REFERENCE_INVENTORY,SINK_INVENTORY"
+        result["copied_long_attribute"] = "CONTROL_REFERENCE_INVENTORY,SINK_INVENTORY"
+        result["aliased_reference"] = "CONTROL_REFERENCE_INVENTORY"
+        result["wrapper_reference"] = "CONTROL_REFERENCE_INVENTORY"
+    else:
+        result["copied_command"] = "SINK_INVENTORY"
+        result["additional_same_function"] = "CONTROL_FLOW_CONTRACT,SINK_INVENTORY,SINK_SHAPE"
+    result["before_authorization"] = "CONTROL_FLOW_CONTRACT"
     if sink == "setup_pull_catalog_watermark":
-        result.update(SETUP_MUTATIONS)
+        result["false_guard"] = "CONTROL_FLOW_CONTRACT"
+        result["alternate_branch"] = "CONTROL_FLOW_CONTRACT"
+        result["guard_after_helper"] = "CONTROL_FLOW_CONTRACT"
+        result["duplicated_helper"] = "CONTROL_FLOW_CONTRACT,SINK_INVENTORY,SINK_SHAPE"
+        result["copied_helper_call"] = "SINK_INVENTORY"
     return result
 
 

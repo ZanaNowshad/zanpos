@@ -15,8 +15,9 @@ def run_self_test(project: Project, cases: list[Case]) -> None:
         except ValidationError as error:
             failures.append(f"{case.sink}:{case.mutation}: pipeline stopped at {error.code}")
             continue
-        if case.code not in codes:
-            failures.append(f"{case.sink}:{case.mutation}: expected {case.code}, got {sorted(codes)}")
+        expected_codes = set(case.code.split(","))
+        if codes != expected_codes:
+            failures.append(f"{case.sink}:{case.mutation}: expected {sorted(expected_codes)}, got {sorted(codes)}")
     for name, (expected, source) in LEXER_CASES.items():
         try:
             changed = replace_source(project, f"src-tauri/src/commands/__lexer_{name}.rs", source)

@@ -78,12 +78,12 @@ export default function DevicesTab({ sessionUserId }: Props) {
           {error && <div className="bo-form-error">{error}</div>}
           <div className="bo-row-two">
             <div>
-              <label className="bo-label">{t("deviceCode")} *</label>
-              <input className="bo-input" value={code} onChange={e => setCode(e.target.value)} placeholder="POS02" ref={codeRef} />
+              <label htmlFor="a11y-input-1" className="bo-label">{t("deviceCode")} *</label>
+              <input id="a11y-input-1" className="bo-input" value={code} onChange={e => setCode(e.target.value)} placeholder="POS02" ref={codeRef} />
             </div>
             <div>
-              <label className="bo-label">{t("deviceName")} *</label>
-              <input className="bo-input" value={name} onChange={e => setName(e.target.value)} placeholder={t("counterTwo")} />
+              <label htmlFor="a11y-input-2" className="bo-label">{t("deviceName")} *</label>
+              <input id="a11y-input-2" className="bo-input" value={name} onChange={e => setName(e.target.value)} placeholder={t("counterTwo")} />
             </div>
           </div>
           <div className="bo-form-actions">

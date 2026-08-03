@@ -41,9 +41,9 @@ export default function StorefrontOrderCapture({ sessionUserId }: Props) {
         {enabled === null ? (
           <LoaderCircle className="sf-capture-spinner" aria-label="Loading order capture" />
         ) : (
-          <label className="sf-capture-toggle">
+          <label htmlFor="a11y-input-1" className="sf-capture-toggle">
             <span>{enabled ? "Capturing orders" : "Not capturing"}</span>
-            <input
+            <input id="a11y-input-1"
               type="checkbox"
               checked={enabled}
               disabled={saving}

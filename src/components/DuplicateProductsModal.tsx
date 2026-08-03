@@ -153,16 +153,16 @@ export default function DuplicateProductsModal({ sessionUserId, onClose, onResol
         </div>
 
         <div className="dup-toolbar">
-          <label className="dup-check">
-            <input
+          <label htmlFor="a11y-input-1" className="dup-check">
+            <input id="a11y-input-1"
               type="checkbox"
               checked={includeInactive}
               onChange={e => setIncludeInactive(e.target.checked)}
             />
             {dt("includeArchived")}
           </label>
-          <label className="dup-check">
-            <input
+          <label htmlFor="a11y-input-2" className="dup-check">
+            <input id="a11y-input-2"
               type="checkbox"
               checked={transferHistory}
               onChange={e => setTransferHistory(e.target.checked)}
@@ -232,8 +232,8 @@ export default function DuplicateProductsModal({ sessionUserId, onClose, onResol
                   {g.products.map((p: DuplicateProduct) => {
                     const isKeeper = p.product_id === keeperId;
                     return (
-                      <label key={p.product_id} className={`dup-row${isKeeper ? " dup-row-keeper" : ""}`}>
-                        <input
+                      <label htmlFor="a11y-input-3" key={p.product_id} className={`dup-row${isKeeper ? " dup-row-keeper" : ""}`}>
+                        <input id="a11y-input-3"
                           type="radio"
                           name={`keep-${gid}`}
                           checked={isKeeper}

@@ -275,16 +275,16 @@ export default function StorefrontCataloguePage({ sessionUserId, settings }: Pro
                     <strong>{product.name}</strong>
                     <span>{formatStorefrontMoney(product.price_minor, product.currency)}{product.dirty ? " · Change waiting" : ""}</span>
                   </div>
-                  <label className="sf-arabic-field">
+                  <label htmlFor="a11y-input-1" className="sf-arabic-field">
                     <span>Public Arabic name</span>
-                    <input dir="rtl" disabled={updatingId !== null} value={product.name_ar ?? ""} placeholder="الاسم بالعربية" onChange={event => patchProduct(product.product_id, { name_ar: event.target.value })} onBlur={event => void updateProduct(product.product_id, { name_ar: event.target.value.trim() || null })} />
+                    <input id="a11y-input-1" dir="rtl" disabled={updatingId !== null} value={product.name_ar ?? ""} placeholder="الاسم بالعربية" onChange={event => patchProduct(product.product_id, { name_ar: event.target.value })} onBlur={event => void updateProduct(product.product_id, { name_ar: event.target.value.trim() || null })} />
                   </label>
-                  <label className="sf-arabic-field sf-description-field">
+                  <label htmlFor="a11y-input-2" className="sf-arabic-field sf-description-field">
                     <span>Arabic description</span>
-                    <input dir="rtl" disabled={updatingId !== null} value={product.description_ar ?? ""} placeholder="وصف قصير للعميل" onChange={event => patchProduct(product.product_id, { description_ar: event.target.value })} onBlur={event => void updateProduct(product.product_id, { description_ar: event.target.value.trim() || null })} />
+                    <input id="a11y-input-2" dir="rtl" disabled={updatingId !== null} value={product.description_ar ?? ""} placeholder="وصف قصير للعميل" onChange={event => patchProduct(product.product_id, { description_ar: event.target.value })} onBlur={event => void updateProduct(product.product_id, { description_ar: event.target.value.trim() || null })} />
                   </label>
-                  <label className="sf-feature-check">
-                    <input type="checkbox" checked={product.featured} disabled={updatingId !== null} onChange={event => void updateProduct(product.product_id, { featured: event.target.checked })} />
+                  <label htmlFor="a11y-input-3" className="sf-feature-check">
+                    <input id="a11y-input-3" type="checkbox" checked={product.featured} disabled={updatingId !== null} onChange={event => void updateProduct(product.product_id, { featured: event.target.checked })} />
                     <Sparkles aria-hidden="true" /> Featured
                   </label>
                   <label className="sf-order-field">Order<input type="number" min="0" disabled={updatingId !== null} value={product.sort_order} onChange={event => patchProduct(product.product_id, { sort_order: Number(event.target.value) })} onBlur={event => void updateProduct(product.product_id, { sort_order: Math.max(0, Number(event.target.value) || 0) })} /></label>

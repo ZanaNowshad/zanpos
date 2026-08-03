@@ -90,8 +90,8 @@ export default function BusinessTab(props: BusinessTabProps) {
                 Sales proceed even if stock quantity is zero or negative.
               </div>
             </div>
-            <label className="biz-toggle">
-              <input type="checkbox" checked={flags.allow_negative_stock}
+            <label htmlFor="a11y-input-1" className="biz-toggle">
+              <input id="a11y-input-1" type="checkbox" checked={flags.allow_negative_stock}
                 onChange={e => setFlags(f => ({ ...f, allow_negative_stock: e.target.checked }))} />
               <span className="biz-toggle-track" />
             </label>
@@ -104,8 +104,8 @@ export default function BusinessTab(props: BusinessTabProps) {
                 When ON, cashier must type a reason before applying any discount.
               </div>
             </div>
-            <label className="biz-toggle">
-              <input type="checkbox" checked={flags.require_discount_reason}
+            <label htmlFor="a11y-input-2" className="biz-toggle">
+              <input id="a11y-input-2" type="checkbox" checked={flags.require_discount_reason}
                 onChange={e => setFlags(f => ({ ...f, require_discount_reason: e.target.checked }))} />
               <span className="biz-toggle-track" />
             </label>
@@ -118,8 +118,8 @@ export default function BusinessTab(props: BusinessTabProps) {
                 When OFF, only managers and owners can apply discounts.
               </div>
             </div>
-            <label className="biz-toggle">
-              <input type="checkbox" checked={flags.cashier_can_discount}
+            <label htmlFor="a11y-input-3" className="biz-toggle">
+              <input id="a11y-input-3" type="checkbox" checked={flags.cashier_can_discount}
                 onChange={e => setFlags(f => ({ ...f, cashier_can_discount: e.target.checked }))} />
               <span className="biz-toggle-track" />
             </label>
@@ -133,8 +133,8 @@ export default function BusinessTab(props: BusinessTabProps) {
                 Requires a thermal printer configured in the Printers section.
               </div>
             </div>
-            <label className="biz-toggle">
-              <input type="checkbox" checked={flags.auto_print_receipt}
+            <label htmlFor="a11y-input-4" className="biz-toggle">
+              <input id="a11y-input-4" type="checkbox" checked={flags.auto_print_receipt}
                 onChange={e => setFlags(f => ({ ...f, auto_print_receipt: e.target.checked }))} />
               <span className="biz-toggle-track" />
             </label>
@@ -163,8 +163,8 @@ export default function BusinessTab(props: BusinessTabProps) {
                 terminal. Default for cashier accounts.
               </div>
             </div>
-            <label className="biz-toggle">
-              <input type="radio" name="reports-scope"
+            <label htmlFor="a11y-input-5" className="biz-toggle">
+              <input id="a11y-input-5" type="radio" name="reports-scope"
                 checked={reportsCfg?.device_scope === "origin"}
                 onChange={() => setReportsCfg(c => c ? { ...c, device_scope: "origin" } : c)} />
               <span className="biz-toggle-track" />
@@ -180,8 +180,8 @@ export default function BusinessTab(props: BusinessTabProps) {
                 view.
               </div>
             </div>
-            <label className="biz-toggle">
-              <input type="radio" name="reports-scope"
+            <label htmlFor="a11y-input-6" className="biz-toggle">
+              <input id="a11y-input-6" type="radio" name="reports-scope"
                 checked={reportsCfg?.device_scope === "all"}
                 onChange={() => setReportsCfg(c => c ? { ...c, device_scope: "all" } : c)} />
               <span className="biz-toggle-track" />
@@ -208,9 +208,9 @@ export default function BusinessTab(props: BusinessTabProps) {
               Configure how loyalty points are earned. Set the number of points a customer receives for every 1 BHD spent.
             </p>
             <div className="ai-params-grid">
-              <label className="ai-param-row">
+              <label htmlFor="a11y-input-7" className="ai-param-row">
                 <span>Points per 1 BHD</span>
-                <input type="number" className="field-input" min={0} value={opSettings.loyalty_points_per_bhd}
+                <input id="a11y-input-7" type="number" className="field-input" min={0} value={opSettings.loyalty_points_per_bhd}
                   onChange={e => setOpSettings(s => s ? { ...s, loyalty_points_per_bhd: Number(e.target.value) } : s)} />
               </label>
             </div>
@@ -224,14 +224,14 @@ export default function BusinessTab(props: BusinessTabProps) {
               Auto-delete synced data older than the configured number of days. Lower values save disk space; higher values keep more history for reports.
             </p>
             <div className="ai-params-grid">
-              <label className="ai-param-row">
+              <label htmlFor="a11y-input-8" className="ai-param-row">
                 <span>Keep sales (days)</span>
-                <input type="number" className="field-input" min={1} value={opSettings.retention_days_sales}
+                <input id="a11y-input-8" type="number" className="field-input" min={1} value={opSettings.retention_days_sales}
                   onChange={e => setOpSettings(s => s ? { ...s, retention_days_sales: Number(e.target.value) } : s)} />
               </label>
-              <label className="ai-param-row">
+              <label htmlFor="a11y-input-9" className="ai-param-row">
                 <span>Keep logs (days)</span>
-                <input type="number" className="field-input" min={1} value={opSettings.retention_days_logs}
+                <input id="a11y-input-9" type="number" className="field-input" min={1} value={opSettings.retention_days_logs}
                   onChange={e => setOpSettings(s => s ? { ...s, retention_days_logs: Number(e.target.value) } : s)} />
               </label>
             </div>
@@ -245,14 +245,14 @@ export default function BusinessTab(props: BusinessTabProps) {
               How often the app syncs data. Terminal mode syncs frequently for real-time stock; hub mode runs housekeeping less often. Changes take effect on the next sync cycle.
             </p>
             <div className="ai-params-grid">
-              <label className="ai-param-row">
+              <label htmlFor="a11y-input-10" className="ai-param-row">
                 <span>Terminal sync (seconds)</span>
-                <input type="number" className="field-input" min={2} value={opSettings.sync_interval_terminal_secs}
+                <input id="a11y-input-10" type="number" className="field-input" min={2} value={opSettings.sync_interval_terminal_secs}
                   onChange={e => setOpSettings(s => s ? { ...s, sync_interval_terminal_secs: Number(e.target.value) } : s)} />
               </label>
-              <label className="ai-param-row">
+              <label htmlFor="a11y-input-11" className="ai-param-row">
                 <span>Hub sync (seconds)</span>
-                <input type="number" className="field-input" min={10} value={opSettings.sync_interval_hub_secs}
+                <input id="a11y-input-11" type="number" className="field-input" min={10} value={opSettings.sync_interval_hub_secs}
                   onChange={e => setOpSettings(s => s ? { ...s, sync_interval_hub_secs: Number(e.target.value) } : s)} />
               </label>
             </div>
@@ -320,13 +320,13 @@ export default function BusinessTab(props: BusinessTabProps) {
               {editingRule.tax_rule_id ? "Edit Tax Rule" : "New Tax Rule"}
             </h4>
 
-            <label className="bo-label">Name</label>
-            <input className="bo-input" value={editingRule.name ?? ""}
+            <label htmlFor="a11y-input-12" className="bo-label">Name</label>
+            <input id="a11y-input-12" className="bo-input" value={editingRule.name ?? ""}
               onChange={e => setEditingRule(r => r ? { ...r, name: e.target.value } : r)}
               placeholder="e.g. VAT 10%" maxLength={60} />
 
-            <label className="bo-label">Rate (%)</label>
-            <input className="bo-input" type="number" min={0} max={100} step={0.001}
+            <label htmlFor="a11y-input-13" className="bo-label">Rate (%)</label>
+            <input id="a11y-input-13" className="bo-input" type="number" min={0} max={100} step={0.001}
               value={editingRule.rate_basis_points !== undefined ? editingRule.rate_basis_points / 100 : 0}
               onChange={e => setEditingRule(r => r ? { ...r, rate_basis_points: Math.round(parseFloat(e.target.value || "0") * 100) } : r)}
               placeholder="e.g. 10 for 10%" />
@@ -350,8 +350,8 @@ export default function BusinessTab(props: BusinessTabProps) {
                 <div className="biz-flag-label">Active</div>
                 <div className="biz-flag-hint">Inactive rules are hidden in the product editor.</div>
               </div>
-              <label className="biz-toggle">
-                <input type="checkbox" checked={editingRule.is_active ?? true}
+              <label htmlFor="a11y-input-14" className="biz-toggle">
+                <input id="a11y-input-14" type="checkbox" checked={editingRule.is_active ?? true}
                   onChange={e => setEditingRule(r => r ? { ...r, is_active: e.target.checked } : r)} />
                 <span className="biz-toggle-track" />
               </label>

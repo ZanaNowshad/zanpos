@@ -23,12 +23,12 @@ export default function OfficeAICommandPalette({ items, onSelect, onDismiss }: P
   }, [items, query]);
 
   return (
-    <div className="oa-modal-backdrop" onMouseDown={onDismiss}>
+    <div role="presentation" className="oa-modal-backdrop" onMouseDown={onDismiss}>
       <section className="oa-command-palette" role="dialog" aria-modal="true" aria-label={t("openWorkspace")} onMouseDown={event => event.stopPropagation()}>
         <div className="oa-command-search">
           <Search size={17} />
           <input
-            autoFocus
+
             value={query}
             onChange={event => setQuery(event.target.value)}
             placeholder={t("searchZanAi")}

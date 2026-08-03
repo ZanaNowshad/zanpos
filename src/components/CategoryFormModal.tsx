@@ -58,22 +58,22 @@ export default function CategoryFormModal({ mode, category, nextOrder, sessionUs
         <div className="bo-form-modal-body">
           {error && <div className="bo-form-error">{error}</div>}
           <div className="bo-form-field">
-            <label className="bo-label">{t("name")} *</label>
-            <input className="bo-input" value={name} onChange={e => setName(e.target.value)} placeholder={t("categoryName")} ref={nameRef} />
+            <label htmlFor="a11y-input-1" className="bo-label">{t("name")} *</label>
+            <input id="a11y-input-1" className="bo-input" value={name} onChange={e => setName(e.target.value)} placeholder={t("categoryName")} ref={nameRef} />
           </div>
           <div className="bo-row-two">
             <div className="bo-form-field">
-              <label className="bo-label">{t("sortOrder")}</label>
-              <input className="bo-input" type="number" min="0" step="1" value={sortOrder} onChange={e => setSortOrder(parseInt(e.target.value) || 0)} />
+              <label htmlFor="a11y-input-2" className="bo-label">{t("sortOrder")}</label>
+              <input id="a11y-input-2" className="bo-input" type="number" min="0" step="1" value={sortOrder} onChange={e => setSortOrder(parseInt(e.target.value) || 0)} />
             </div>
             <div className="bo-form-field">
-              <label className="bo-label">{t("parentCategory")}</label>
-              <input className="bo-input" value={parentId} onChange={e => setParentId(e.target.value)} placeholder={t("none")} />
+              <label htmlFor="a11y-input-3" className="bo-label">{t("parentCategory")}</label>
+              <input id="a11y-input-3" className="bo-input" value={parentId} onChange={e => setParentId(e.target.value)} placeholder={t("none")} />
             </div>
           </div>
           {mode === "edit" && (
-            <label className="bo-checkbox-label" style={{marginTop: 10}}>
-              <input type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} />{t("active")}
+            <label htmlFor="a11y-input-4" className="bo-checkbox-label" style={{marginTop: 10}}>
+              <input id="a11y-input-4" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} />{t("active")}
             </label>
           )}
         </div>

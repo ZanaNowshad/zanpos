@@ -151,17 +151,17 @@ export default function CustomersTab({ sessionUserId }: Props) {
           <h3 className="bo-form-title">{t(creating ? "newCustomer" : "editCustomer")}</h3>
           {error && <div className="bo-form-error">{error}</div>}
 
-          <label className="bo-label">{t("name")} *</label>
-          <input className="bo-input" value={form.name} onChange={e => set("name", e.target.value)} ref={nameRef} placeholder={t("fullName")} />
+          <label htmlFor="a11y-input-1" className="bo-label">{t("name")} *</label>
+          <input id="a11y-input-1" className="bo-input" value={form.name} onChange={e => set("name", e.target.value)} ref={nameRef} placeholder={t("fullName")} />
 
-          <label className="bo-label">{t("phone")}</label>
-          <input className="bo-input" value={form.phone} onChange={e => set("phone", e.target.value)} placeholder="+973 1234 5678" />
+          <label htmlFor="a11y-input-2" className="bo-label">{t("phone")}</label>
+          <input id="a11y-input-2" className="bo-input" value={form.phone} onChange={e => set("phone", e.target.value)} placeholder="+973 1234 5678" />
 
-          <label className="bo-label">{t("email")}</label>
-          <input className="bo-input" type="email" value={form.email} onChange={e => set("email", e.target.value)} placeholder="customer@example.com" />
+          <label htmlFor="a11y-input-3" className="bo-label">{t("email")}</label>
+          <input id="a11y-input-3" className="bo-input" type="email" value={form.email} onChange={e => set("email", e.target.value)} placeholder="customer@example.com" />
 
-          <label className="bo-label">{t("notes")}</label>
-          <textarea className="bo-input" rows={3} value={form.notes} onChange={e => set("notes", e.target.value)} placeholder={t("customerNotesPlaceholder")} />
+          <label htmlFor="a11y-input-4" className="bo-label">{t("notes")}</label>
+          <textarea id="a11y-input-4" className="bo-input" rows={3} value={form.notes} onChange={e => set("notes", e.target.value)} placeholder={t("customerNotesPlaceholder")} />
 
           {selected && (
             <div className="cust-loyalty-info">

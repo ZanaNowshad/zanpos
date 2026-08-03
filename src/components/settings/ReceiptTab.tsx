@@ -23,14 +23,14 @@ export default function ReceiptTab(props: ReceiptTabProps) {
         <h3 className="settings-page-title">Receipt Text</h3>
         <p className="settings-hint">These lines are printed on every customer receipt.</p>
 
-        <label className="bo-label">Receipt Header</label>
-        <input className="bo-input" type="text" value={receiptHeader}
+        <label htmlFor="a11y-input-1" className="bo-label">Receipt Header</label>
+        <input id="a11y-input-1" className="bo-input" type="text" value={receiptHeader}
           onChange={e => { setReceiptHeader(e.target.value); setSavedReceipt(false); }}
           placeholder="Printed above the item list (e.g. tagline)"
           maxLength={120} />
 
-        <label className="bo-label">Receipt Footer</label>
-        <input className="bo-input" type="text" value={receiptFooter}
+        <label htmlFor="a11y-input-2" className="bo-label">Receipt Footer</label>
+        <input id="a11y-input-2" className="bo-input" type="text" value={receiptFooter}
           onChange={e => { setReceiptFooter(e.target.value); setSavedReceipt(false); }}
           placeholder="Printed below the total (e.g. Thank you!)"
           maxLength={120} />

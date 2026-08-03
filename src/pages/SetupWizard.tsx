@@ -425,15 +425,15 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
             across your other POS terminals on the same shop WiFi.
           </p>
 
-          <label className="field-label">
-            <input type="checkbox" checked={enableHub} onChange={e => setEnableHub(e.target.checked)} />
+          <label htmlFor="a11y-input-1" className="field-label">
+            <input id="a11y-input-1" type="checkbox" checked={enableHub} onChange={e => setEnableHub(e.target.checked)} />
             {" "}Enable Hub on this device
           </label>
 
           {enableHub && (
             <div>
-              <label className="field-label">Hub Port</label>
-              <input
+              <label htmlFor="a11y-input-2" className="field-label">Hub Port</label>
+              <input id="a11y-input-2"
                 className="field-input"
                 type="number"
                 value={hubPort}
@@ -463,24 +463,24 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
         <div className="setup-content">
           <h2 className="setup-title">Store Information</h2>
 
-          <label className="field-label">Store Name *</label>
-          <input
+          <label htmlFor="a11y-input-3" className="field-label">Store Name *</label>
+          <input id="a11y-input-3"
             className="field-input"
             type="text"
             placeholder="e.g. My Coffee Shop"
             value={storeName}
             onChange={e => { setStoreName(e.target.value); clearError(); }}
-            autoFocus
+
             maxLength={60}
           />
 
-          <label className="field-label">Currency *</label>
-          <select className="bo-select field-input" value={currency} onChange={e => setCurrency(e.target.value)}>
+          <label htmlFor="a11y-input-4" className="field-label">Currency *</label>
+          <select id="a11y-input-4" className="bo-select field-input" value={currency} onChange={e => setCurrency(e.target.value)}>
             {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.label}</option>)}
           </select>
 
-          <label className="field-label">Timezone *</label>
-          <select className="bo-select field-input" value={timezone} onChange={e => setTimezone(e.target.value)}>
+          <label htmlFor="a11y-input-5" className="field-label">Timezone *</label>
+          <select id="a11y-input-5" className="bo-select field-input" value={timezone} onChange={e => setTimezone(e.target.value)}>
             {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
           </select>
 
@@ -498,23 +498,23 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
           <h2 className="setup-title">Contact & Receipt</h2>
           <p className="setup-body">All fields are optional — update anytime in Settings.</p>
 
-          <label className="field-label">Address</label>
-          <textarea className="field-input" rows={2} placeholder="123 Main Street, City" value={address} onChange={e => setAddress(e.target.value)} />
+          <label htmlFor="a11y-input-6" className="field-label">Address</label>
+          <textarea id="a11y-input-6" className="field-input" rows={2} placeholder="123 Main Street, City" value={address} onChange={e => setAddress(e.target.value)} />
 
-          <label className="field-label">Phone Number</label>
-          <input className="field-input" type="tel" placeholder="+973 1234 5678" value={phone} onChange={e => setPhone(e.target.value)} />
+          <label htmlFor="a11y-input-7" className="field-label">Phone Number</label>
+          <input id="a11y-input-7" className="field-input" type="tel" placeholder="+973 1234 5678" value={phone} onChange={e => setPhone(e.target.value)} />
 
-          <label className="field-label">Tax / VAT Registration Number</label>
-          <input className="field-input" type="text" placeholder="Optional" value={taxNumber} onChange={e => setTaxNumber(e.target.value)} />
+          <label htmlFor="a11y-input-8" className="field-label">Tax / VAT Registration Number</label>
+          <input id="a11y-input-8" className="field-input" type="text" placeholder="Optional" value={taxNumber} onChange={e => setTaxNumber(e.target.value)} />
 
-          <label className="field-label">Commercial Register Number (CR No)</label>
-          <input className="field-input" type="text" placeholder="Optional" value={crNumber} onChange={e => setCrNumber(e.target.value)} />
+          <label htmlFor="a11y-input-9" className="field-label">Commercial Register Number (CR No)</label>
+          <input id="a11y-input-9" className="field-input" type="text" placeholder="Optional" value={crNumber} onChange={e => setCrNumber(e.target.value)} />
 
-          <label className="field-label">Receipt Header</label>
-          <input className="field-input" type="text" placeholder="e.g. Thank you for visiting!" value={receiptHeader} onChange={e => setReceiptHeader(e.target.value)} />
+          <label htmlFor="a11y-input-10" className="field-label">Receipt Header</label>
+          <input id="a11y-input-10" className="field-input" type="text" placeholder="e.g. Thank you for visiting!" value={receiptHeader} onChange={e => setReceiptHeader(e.target.value)} />
 
-          <label className="field-label">Receipt Footer</label>
-          <input className="field-input" type="text" placeholder="Thank you for your purchase!" value={receiptFooter} onChange={e => setReceiptFooter(e.target.value)} />
+          <label htmlFor="a11y-input-11" className="field-label">Receipt Footer</label>
+          <input id="a11y-input-11" className="field-input" type="text" placeholder="Thank you for your purchase!" value={receiptFooter} onChange={e => setReceiptFooter(e.target.value)} />
 
           <div className="setup-actions">
             <button className="setup-btn-secondary" onClick={() => { setError(null); setStep(3); }}><span className="icon-directional" aria-hidden="true">←</span> Back</button>
@@ -532,9 +532,9 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
             and optionally connect WhatsApp now.
           </p>
 
-          <label className="field-label">BenefitPay Number <span style={{ opacity: 0.6, fontSize: "0.82em" }}>(optional)</span></label>
+          <label htmlFor="a11y-input-12" className="field-label">BenefitPay Number <span style={{ opacity: 0.6, fontSize: "0.82em" }}>(optional)</span></label>
           <p className="setup-field-hint">Customers send delivery payments to this number via BenefitPay. You can add it later in Settings.</p>
-          <input
+          <input id="a11y-input-12"
             className="field-input"
             type="text"
             placeholder="e.g. 33050666"
@@ -583,17 +583,17 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
           <h2 className="setup-title">Owner Account</h2>
           <p className="setup-body">This account has full access. Keep your PIN secure.</p>
 
-          <label className="field-label">Full Name *</label>
-          <input className="field-input" type="text" placeholder="e.g. Mohammed Al-Farsi" value={ownerName} onChange={e => { setOwnerName(e.target.value); clearError(); }} autoFocus />
+          <label htmlFor="a11y-input-13" className="field-label">Full Name *</label>
+ <input id="a11y-input-13" className="field-input" type="text" placeholder="e.g. Mohammed Al-Farsi" value={ownerName} onChange={e => { setOwnerName(e.target.value); clearError(); }} />
 
-          <label className="field-label">Username *</label>
-          <input className="field-input" type="text" placeholder="admin" value={ownerUsername} onChange={e => { setOwnerUsername(e.target.value.toLowerCase().replace(/\s/g, "")); clearError(); }} />
+          <label htmlFor="a11y-input-14" className="field-label">Username *</label>
+          <input id="a11y-input-14" className="field-input" type="text" placeholder="admin" value={ownerUsername} onChange={e => { setOwnerUsername(e.target.value.toLowerCase().replace(/\s/g, "")); clearError(); }} />
 
-          <label className="field-label">PIN (4–6 digits) *</label>
-          <input className="field-input setup-pin-input" type="password" inputMode="numeric" pattern="[0-9]*" placeholder="Enter PIN" maxLength={6} value={ownerPin} onChange={e => { setOwnerPin(e.target.value.replace(/\D/g, "")); clearError(); }} />
+          <label htmlFor="a11y-input-15" className="field-label">PIN (4–6 digits) *</label>
+          <input id="a11y-input-15" className="field-input setup-pin-input" type="password" inputMode="numeric" pattern="[0-9]*" placeholder="Enter PIN" maxLength={6} value={ownerPin} onChange={e => { setOwnerPin(e.target.value.replace(/\D/g, "")); clearError(); }} />
 
-          <label className="field-label">Confirm PIN *</label>
-          <input className="field-input setup-pin-input" type="password" inputMode="numeric" pattern="[0-9]*" placeholder="Re-enter PIN" maxLength={6} value={ownerPinConfirm} onChange={e => { setOwnerPinConfirm(e.target.value.replace(/\D/g, "")); clearError(); }} />
+          <label htmlFor="a11y-input-16" className="field-label">Confirm PIN *</label>
+          <input id="a11y-input-16" className="field-input setup-pin-input" type="password" inputMode="numeric" pattern="[0-9]*" placeholder="Re-enter PIN" maxLength={6} value={ownerPinConfirm} onChange={e => { setOwnerPinConfirm(e.target.value.replace(/\D/g, "")); clearError(); }} />
 
           {error && <div className="modal-error">{error}</div>}
           <div className="setup-actions">
@@ -868,17 +868,17 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
             deliveries, and reports over your shop WiFi.
           </p>
 
-          <label className="field-label">Hub Address *</label>
-          <input
+          <label htmlFor="a11y-input-17" className="field-label">Hub Address *</label>
+          <input id="a11y-input-17"
             className="field-input"
             placeholder="192.168.1.50"
             value={hubUrl}
             onChange={e => { setHubUrl(e.target.value); clearError(); }}
-            autoFocus
+
           />
 
-          <label className="field-label">Store Token *</label>
-          <input
+          <label htmlFor="a11y-input-18" className="field-label">Store Token *</label>
+          <input id="a11y-input-18"
             className="field-input"
             type="password"
             placeholder="Paste the token from the hub…"
@@ -911,17 +911,17 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
             its own local database and syncs changes with the hub automatically.
           </p>
 
-          <label className="field-label">Terminal Name *</label>
-          <input
+          <label htmlFor="a11y-input-19" className="field-label">Terminal Name *</label>
+          <input id="a11y-input-19"
             className="field-input"
             placeholder="e.g. POS Terminal 2"
             value={deviceName}
             onChange={e => { setDeviceName(e.target.value); clearError(); }}
-            autoFocus
+
           />
 
-          <label className="field-label">Terminal Code * (short, uppercase)</label>
-          <input
+          <label htmlFor="a11y-input-20" className="field-label">Terminal Code * (short, uppercase)</label>
+          <input id="a11y-input-20"
             className="field-input"
             placeholder="e.g. POS02"
             value={deviceCode}

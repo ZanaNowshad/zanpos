@@ -100,9 +100,9 @@ export default function CloudflareConnectionPanel({
             <button className="cf-template-button" type="button" onClick={() => void openUrl(CLOUDFLARE_TOKEN_TEMPLATE_URL)}>
               <ExternalLink aria-hidden="true" /> Create connection key
             </button>
-            <label>
+            <label htmlFor="a11y-input-1">
               <span>Cloudflare connection key</span>
-              <span className="cf-token-input"><KeyRound aria-hidden="true" /><input type="password" autoComplete="new-password" spellCheck={false} value={token} onChange={event => setToken(event.target.value)} placeholder="Paste the key from Cloudflare" /></span>
+              <span className="cf-token-input"><KeyRound aria-hidden="true" /><input id="a11y-input-1" type="password" autoComplete="new-password" spellCheck={false} value={token} onChange={event => setToken(event.target.value)} placeholder="Paste the key from Cloudflare" /></span>
             </label>
             <button className="btn-primary" type="submit" disabled={!token.trim() || busy}>
               {busy ? <LoaderCircle aria-hidden="true" /> : connection.state === "degraded" ? <RefreshCw aria-hidden="true" /> : <Cloud aria-hidden="true" />}

@@ -27,8 +27,8 @@ export default function PrinterTab(props: PrinterTabProps) {
           Click <strong>Scan</strong> if your printer isn't showing — make sure it's powered on and connected.
         </p>
 
-        <label className="bo-checkbox-label" style={{ marginBottom: "14px" }}>
-          <input type="checkbox" checked={thermal.enabled}
+        <label htmlFor="a11y-input-1" className="bo-checkbox-label" style={{ marginBottom: "14px" }}>
+          <input id="a11y-input-1" type="checkbox" checked={thermal.enabled}
             onChange={e => setThermal(t => ({ ...t, enabled: e.target.checked }))} />
           Enable thermal printing
         </label>

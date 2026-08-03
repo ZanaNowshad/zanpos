@@ -45,10 +45,10 @@ export default function CashierReportTab({ sessionUserId }: { sessionUserId: str
       <h3 className="tab-title">{t("cashierReport")}</h3>
 
       <div className="report-filters">
-        <label className="field-label">{t("from")}</label>
-        <input className="field-input date-input" type="date" value={from} onChange={e => setFrom(e.target.value)} />
-        <label className="field-label">{t("to")}</label>
-        <input className="field-input date-input" type="date" value={to} onChange={e => setTo(e.target.value)} />
+        <label htmlFor="a11y-input-1" className="field-label">{t("from")}</label>
+        <input id="a11y-input-1" className="field-input date-input" type="date" value={from} onChange={e => setFrom(e.target.value)} />
+        <label htmlFor="a11y-input-2" className="field-label">{t("to")}</label>
+        <input id="a11y-input-2" className="field-input date-input" type="date" value={to} onChange={e => setTo(e.target.value)} />
         <button className="btn-primary" onClick={load} disabled={loading}>
           {loading ? t("loading") : t("runReport")}
         </button>

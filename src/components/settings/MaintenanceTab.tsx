@@ -94,9 +94,9 @@ export default function MaintenanceTab({ sessionUserId }: { sessionUserId: strin
           <p className="settings-backup-hint" style={{ marginBottom: 16 }}>
             This page is protected. Enter an <strong>owner PIN</strong> to continue.
           </p>
-          <label className="setup-label" style={{ maxWidth: 280 }}>
+          <label htmlFor="a11y-input-1" className="setup-label" style={{ maxWidth: 280 }}>
             Owner PIN
-            <input
+            <input id="a11y-input-1"
               type="password"
               inputMode="numeric"
               autoComplete="off"
@@ -106,7 +106,7 @@ export default function MaintenanceTab({ sessionUserId }: { sessionUserId: strin
               onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
               onKeyDown={(e) => e.key === "Enter" && handleUnlock()}
               disabled={verifying}
-              autoFocus
+
             />
           </label>
           {gateError && <p className="setup-error">{gateError}</p>}

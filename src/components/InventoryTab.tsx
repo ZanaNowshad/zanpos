@@ -65,7 +65,7 @@ export default function InventoryTab({ sessionUserId }: Props) {
   // Reload when search or offset changes
   useEffect(() => {
     fetchPage(search, offset);
-  }, [search, offset]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [search, offset]); 
 
   // ── Detail views (togglable — click again to collapse) ───────────────────
 
@@ -137,14 +137,14 @@ export default function InventoryTab({ sessionUserId }: Props) {
             {t("currentStock")}: <strong>{parseFloat(selected.quantity_on_hand).toLocaleString()}</strong>
             {selected.is_low_stock && <span className="inv-badge-low"> ⚠ {t("lowStock")}</span>}
           </div>
-          <label className="bo-label">{t("quantityReceived")} *</label>
-          <input ref={recvRef} className="bo-input" type="number" step="0.001" min="0.001"
+          <label htmlFor="a11y-input-1" className="bo-label">{t("quantityReceived")} *</label>
+          <input id="a11y-input-1" ref={recvRef} className="bo-input" type="number" step="0.001" min="0.001"
             placeholder="0.000" value={recvQty} onChange={e => setRecvQty(e.target.value)} />
-          <label className="bo-label">{t("expiryDate")}</label>
-          <input className="bo-input" type="date" value={recvExpiry}
+          <label htmlFor="a11y-input-2" className="bo-label">{t("expiryDate")}</label>
+          <input id="a11y-input-2" className="bo-input" type="date" value={recvExpiry}
             onChange={e => setRecvExpiry(e.target.value)} />
-          <label className="bo-label">{t("notesPoSupplier")}</label>
-          <input className="bo-input" type="text" placeholder={t("optional")}
+          <label htmlFor="a11y-input-3" className="bo-label">{t("notesPoSupplier")}</label>
+          <input id="a11y-input-3" className="bo-input" type="text" placeholder={t("optional")}
             value={recvNotes} onChange={e => setRecvNotes(e.target.value)} />
           {recvError && <div className="modal-error">{recvError}</div>}
           <div className="inv-form-actions">
@@ -161,16 +161,16 @@ export default function InventoryTab({ sessionUserId }: Props) {
       return (<tr className="inv-expanded-row"><td colSpan={6}>
         <div className="inv-form-inline">
           <div className="inv-current">{t("systemQuantity")}: <strong>{oldQty.toLocaleString()}</strong></div>
-          <label className="bo-label">{t("actualCountedQuantity")} *</label>
-          <input ref={adjRef} className="bo-input" type="number" step="0.001" min="0"
+          <label htmlFor="a11y-input-4" className="bo-label">{t("actualCountedQuantity")} *</label>
+          <input id="a11y-input-4" ref={adjRef} className="bo-input" type="number" step="0.001" min="0"
             value={adjQty} onChange={e => setAdjQty(e.target.value)} />
           {adjQty && !isNaN(delta) && (
             <div className={`inv-delta ${delta < 0 ? "inv-delta-neg" : delta > 0 ? "inv-delta-pos" : ""}`}>
               {delta === 0 ? t("noChange") : `${delta > 0 ? "+" : ""}${delta.toFixed(3)} ${t("variance")}`}
             </div>
           )}
-          <label className="bo-label">{t("reasonForAdjustment")}</label>
-          <input className="bo-input" type="text" placeholder={t("stockAdjustmentExample")}
+          <label htmlFor="a11y-input-5" className="bo-label">{t("reasonForAdjustment")}</label>
+          <input id="a11y-input-5" className="bo-input" type="text" placeholder={t("stockAdjustmentExample")}
             value={adjNotes} onChange={e => setAdjNotes(e.target.value)} />
           {adjError && <div className="modal-error">{adjError}</div>}
           <div className="inv-form-actions">

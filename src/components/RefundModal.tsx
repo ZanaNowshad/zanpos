@@ -299,7 +299,7 @@ export default function RefundModal({ cashierUserId, onClose, onExchangeStarted 
               value={receiptInput}
               onChange={e => setReceiptInput(e.target.value)}
               onKeyDown={e => e.key === "Enter" && handleSearch()}
-              autoFocus
+
             />
             <button className="modal-btn-secondary" onClick={handleSearch} disabled={searching}>
               {searching ? "…" : t("search")}
@@ -310,8 +310,8 @@ export default function RefundModal({ cashierUserId, onClose, onExchangeStarted 
         {mode === "browse" && !sale && (
           <div className="refund-browse-section">
             <div className="refund-browse-header">
-              <label>{t("date")}:</label>
-              <input
+              <label htmlFor="a11y-input-1">{t("date")}:</label>
+              <input id="a11y-input-1"
                 className="field-input refund-browse-date"
                 type="date"
                 value={browseDate}
@@ -478,7 +478,7 @@ export default function RefundModal({ cashierUserId, onClose, onExchangeStarted 
                 value={managerPin}
                 onChange={e => setManagerPin(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && handlePinSubmit()}
-                autoFocus
+
               />
               {pinError && <div className="modal-error">{pinError}</div>}
               <div className="pin-actions">

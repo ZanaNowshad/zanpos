@@ -441,8 +441,8 @@ export default function AITab({ sessionUserId, sessionToken }: Props) {
                   ["customer_insights", "Customer Insights — customer analysis tools"],
                   ["insights_engine", "Insights Engine — analytics dashboard & proactive intelligence (experimental)"],
                 ] as [keyof FeatureToggles, string][]).map(([key, label]) => (
-                  <label key={key} className="ai-toggle-row">
-                    <input type="checkbox" checked={toggles[key]} onChange={() => toggleOne(key)} />
+                  <label htmlFor="a11y-input-1" key={key} className="ai-toggle-row">
+                    <input id="a11y-input-1" type="checkbox" checked={toggles[key]} onChange={() => toggleOne(key)} />
                     <span>{label}</span>
                   </label>
                 ))}
@@ -463,49 +463,49 @@ export default function AITab({ sessionUserId, sessionToken }: Props) {
                 Fine-tune AI behaviour. Changes take effect on the next chat message — no restart needed.
               </p>
               <div className="ai-params-grid">
-                <label className="ai-param-row">
+                <label htmlFor="a11y-input-2" className="ai-param-row">
                   <span>Anthropic Max Tokens</span>
-                  <input type="number" className="field-input" min="1" max="32000" value={aiConfig.anthropic_max_tokens}
+                  <input id="a11y-input-2" type="number" className="field-input" min="1" max="32000" value={aiConfig.anthropic_max_tokens}
                     onChange={e => updateAiConfig({ anthropic_max_tokens: Number(e.target.value) })} />
                 </label>
-                <label className="ai-param-row">
+                <label htmlFor="a11y-input-3" className="ai-param-row">
                   <span>OpenAI Max Tokens</span>
-                  <input type="number" className="field-input" min="1" max="128000" value={aiConfig.openai_max_tokens}
+                  <input id="a11y-input-3" type="number" className="field-input" min="1" max="128000" value={aiConfig.openai_max_tokens}
                     onChange={e => updateAiConfig({ openai_max_tokens: Number(e.target.value) })} />
                 </label>
-                <label className="ai-param-row">
+                <label htmlFor="a11y-input-4" className="ai-param-row">
                   <span>Temperature</span>
-                  <input type="number" className="field-input" step="0.1" min="0" max="2" value={aiConfig.temperature}
+                  <input id="a11y-input-4" type="number" className="field-input" step="0.1" min="0" max="2" value={aiConfig.temperature}
                     onChange={e => updateAiConfig({ temperature: Number(e.target.value) })} />
                 </label>
-                <label className="ai-param-row">
+                <label htmlFor="a11y-input-5" className="ai-param-row">
                   <span>Max Tool Turns</span>
-                  <input type="number" className="field-input" min="1" max="50" value={aiConfig.max_turns}
+                  <input id="a11y-input-5" type="number" className="field-input" min="1" max="50" value={aiConfig.max_turns}
                     onChange={e => updateAiConfig({ max_turns: Number(e.target.value) })} />
                 </label>
-                <label className="ai-param-row">
+                <label htmlFor="a11y-input-6" className="ai-param-row">
                   <span>Context Window (chars)</span>
-                  <input type="number" className="field-input" min="1000" max="1000000" value={aiConfig.context_window_chars}
+                  <input id="a11y-input-6" type="number" className="field-input" min="1000" max="1000000" value={aiConfig.context_window_chars}
                     onChange={e => updateAiConfig({ context_window_chars: Number(e.target.value) })} />
                 </label>
-                <label className="ai-param-row">
+                <label htmlFor="a11y-input-7" className="ai-param-row">
                   <span>Connect Timeout (secs)</span>
-                  <input type="number" className="field-input" min="1" max="60" value={aiConfig.connect_timeout_secs}
+                  <input id="a11y-input-7" type="number" className="field-input" min="1" max="60" value={aiConfig.connect_timeout_secs}
                     onChange={e => updateAiConfig({ connect_timeout_secs: Number(e.target.value) })} />
                 </label>
-                <label className="ai-param-row">
+                <label htmlFor="a11y-input-8" className="ai-param-row">
                   <span>Stream Timeout (secs)</span>
-                  <input type="number" className="field-input" min="300" max="1800" value={aiConfig.stream_timeout_secs}
+                  <input id="a11y-input-8" type="number" className="field-input" min="300" max="1800" value={aiConfig.stream_timeout_secs}
                     onChange={e => updateAiConfig({ stream_timeout_secs: Number(e.target.value) })} />
                 </label>
-                <label className="ai-param-row">
+                <label htmlFor="a11y-input-9" className="ai-param-row">
                   <span>Action Expiry (minutes)</span>
-                  <input type="number" className="field-input" min="1" max="1440" value={aiConfig.action_expiry_minutes}
+                  <input id="a11y-input-9" type="number" className="field-input" min="1" max="1440" value={aiConfig.action_expiry_minutes}
                     onChange={e => updateAiConfig({ action_expiry_minutes: Number(e.target.value) })} />
                 </label>
-                <label className="ai-param-row">
+                <label htmlFor="a11y-input-10" className="ai-param-row">
                   <span>Bulk Batch Size</span>
-                  <input type="number" className="field-input" min="1" max="500" value={aiConfig.bulk_batch_size}
+                  <input id="a11y-input-10" type="number" className="field-input" min="1" max="500" value={aiConfig.bulk_batch_size}
                     onChange={e => updateAiConfig({ bulk_batch_size: Number(e.target.value) })} />
                 </label>
               </div>

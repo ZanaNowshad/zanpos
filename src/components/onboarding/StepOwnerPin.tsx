@@ -41,18 +41,18 @@ export default function StepOwnerPin({ storeName, submitting, error, onSubmit, o
         has full access — keep the PIN secure.
       </p>
 
-      <label className="field-label">Full Name *</label>
-      <input
+      <label htmlFor="a11y-input-1" className="field-label">Full Name *</label>
+      <input id="a11y-input-1"
         className="field-input"
         type="text"
         placeholder="e.g. Mohammed Al-Farsi"
         value={ownerName}
         onChange={e => { setOwnerName(e.target.value); setLocalError(null); }}
-        autoFocus
+
       />
 
-      <label className="field-label">Username *</label>
-      <input
+      <label htmlFor="a11y-input-2" className="field-label">Username *</label>
+      <input id="a11y-input-2"
         className="field-input"
         type="text"
         placeholder="admin"
@@ -60,8 +60,8 @@ export default function StepOwnerPin({ storeName, submitting, error, onSubmit, o
         onChange={e => { setOwnerUsername(e.target.value.toLowerCase().replace(/\s/g, "")); setLocalError(null); }}
       />
 
-      <label className="field-label">PIN (4–6 digits) *</label>
-      <input
+      <label htmlFor="a11y-input-3" className="field-label">PIN (4–6 digits) *</label>
+      <input id="a11y-input-3"
         className="field-input setup-pin-input"
         type="password" inputMode="numeric" pattern="[0-9]*" maxLength={6}
         placeholder="Enter PIN"
@@ -69,8 +69,8 @@ export default function StepOwnerPin({ storeName, submitting, error, onSubmit, o
         onChange={e => { setOwnerPin(e.target.value.replace(/\D/g, "")); setLocalError(null); }}
       />
 
-      <label className="field-label">Confirm PIN *</label>
-      <input
+      <label htmlFor="a11y-input-4" className="field-label">Confirm PIN *</label>
+      <input id="a11y-input-4"
         className="field-input setup-pin-input"
         type="password" inputMode="numeric" pattern="[0-9]*" maxLength={6}
         placeholder="Re-enter PIN"

@@ -162,8 +162,8 @@ function AiSetupPanel({ onConfigured, sessionToken }: { onConfigured: () => void
         </div>
         {provider === "anthropic" && (
           <>
-            <label style={lbl}>Anthropic API Key</label>
-            <input type="password" placeholder="sk-ant-api03-…" value={anthropicKey} autoFocus
+            <label htmlFor="a11y-input-1" style={lbl}>Anthropic API Key</label>
+ <input id="a11y-input-1" type="password" placeholder="sk-ant-api03-…" value={anthropicKey}
               onChange={e => { setAnthropicKey(e.target.value); setError(null); }}
               onKeyDown={e => e.key==="Enter" && handleSaveAnthropic()} style={inp} />
             {error && <div style={{ color:"#ef4444", fontSize:"0.8rem", marginBottom:10 }}>{error}</div>}
@@ -179,11 +179,11 @@ function AiSetupPanel({ onConfigured, sessionToken }: { onConfigured: () => void
         )}
         {provider === "openai" && (
           <>
-            <label style={lbl}>Base URL</label>
-            <input type="text" value={baseUrl}
+            <label htmlFor="a11y-input-2" style={lbl}>Base URL</label>
+            <input id="a11y-input-2" type="text" value={baseUrl}
               onChange={e => { setBaseUrl(e.target.value); setModels([]); setSelectedModel(""); setError(null); }} style={inp} />
-            <label style={lbl}>API Key</label>
-            <input type="password" placeholder="sk-…" value={openaiKey}
+            <label htmlFor="a11y-input-3" style={lbl}>API Key</label>
+            <input id="a11y-input-3" type="password" placeholder="sk-…" value={openaiKey}
               onChange={e => { setOpenaiKey(e.target.value); setModels([]); setSelectedModel(""); setError(null); }}
               style={{ ...inp, marginBottom:14 }} />
             {error && <div style={{ color:"#ef4444", fontSize:"0.8rem", marginBottom:10 }}>{error}</div>}
@@ -196,8 +196,8 @@ function AiSetupPanel({ onConfigured, sessionToken }: { onConfigured: () => void
               </button>
             ) : (
               <>
-                <label style={lbl}>Model</label>
-                <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)} style={{ ...inp, marginBottom:14 }}>
+                <label htmlFor="a11y-input-4" style={lbl}>Model</label>
+                <select id="a11y-input-4" value={selectedModel} onChange={e => setSelectedModel(e.target.value)} style={{ ...inp, marginBottom:14 }}>
                   {models.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
                 </select>
                 <button onClick={handleSaveOpenai} disabled={saving||!selectedModel}
@@ -261,8 +261,8 @@ function AiSettingsDrawer({ onClose, onSaved, sessionToken }: { onClose: () => v
           </div>
           {provider === "anthropic" && (
             <>
-              <label style={lbl}>Anthropic API Key</label>
-              <input type="password" placeholder="sk-ant-api03-…" value={anthropicKey} autoFocus
+              <label htmlFor="a11y-input-5" style={lbl}>Anthropic API Key</label>
+ <input id="a11y-input-5" type="password" placeholder="sk-ant-api03-…" value={anthropicKey}
                 onChange={e => { setAnthropicKey(e.target.value); setError(null); }}
                 onKeyDown={e => e.key==="Enter" && (async () => {
                   const key = anthropicKey.trim();
@@ -286,10 +286,10 @@ function AiSettingsDrawer({ onClose, onSaved, sessionToken }: { onClose: () => v
           )}
           {provider === "openai" && (
             <>
-              <label style={lbl}>Base URL</label>
-              <input type="text" value={baseUrl} onChange={e => { setBaseUrl(e.target.value); setModels([]); setSelectedModel(""); setError(null); }} style={inp} />
-              <label style={lbl}>API Key</label>
-              <input type="password" placeholder="sk-…" value={openaiKey} onChange={e => { setOpenaiKey(e.target.value); setModels([]); setSelectedModel(""); setError(null); }} style={{ ...inp, marginBottom:12 }} />
+              <label htmlFor="a11y-input-6" style={lbl}>Base URL</label>
+              <input id="a11y-input-6" type="text" value={baseUrl} onChange={e => { setBaseUrl(e.target.value); setModels([]); setSelectedModel(""); setError(null); }} style={inp} />
+              <label htmlFor="a11y-input-7" style={lbl}>API Key</label>
+              <input id="a11y-input-7" type="password" placeholder="sk-…" value={openaiKey} onChange={e => { setOpenaiKey(e.target.value); setModels([]); setSelectedModel(""); setError(null); }} style={{ ...inp, marginBottom:12 }} />
               {error && <div style={{ color:"#ef4444", fontSize:"0.78rem", marginBottom:8 }}>{error}</div>}
               {models.length === 0 ? (
                 <button onClick={async () => {
@@ -305,8 +305,8 @@ function AiSettingsDrawer({ onClose, onSaved, sessionToken }: { onClose: () => v
                 </button>
               ) : (
                 <>
-                  <label style={lbl}>Model</label>
-                  <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)} style={inp}>
+                  <label htmlFor="a11y-input-8" style={lbl}>Model</label>
+                  <select id="a11y-input-8" value={selectedModel} onChange={e => setSelectedModel(e.target.value)} style={inp}>
                     {models.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
                   </select>
                   <button onClick={async () => {
@@ -509,7 +509,6 @@ export default function MigrationAgentPage({ onDone, sessionUserId, sessionToken
       node: <WelcomeFilePicker onFile={handleFile} isDragOver={isDragOver} />,
       ts: Date.now(),
     }]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aiReady]);
 
   // ── File handling ──────────────────────────────────────────────────────────
@@ -536,7 +535,6 @@ export default function MigrationAgentPage({ onDone, sessionUserId, sessionToken
         node: <WelcomeFilePicker onFile={handleFile} isDragOver={false} compact />,
       } : m));
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addMsg, updateMsgNode]);
 
   const handlePickFile = async () => {
@@ -583,7 +581,6 @@ export default function MigrationAgentPage({ onDone, sessionUserId, sessionToken
         node: <RetryButton label="♻ Retry AI Mapping" onClick={() => runAiMap(s)} />,
       } : msg));
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addMsg]);
 
   // ── Execute ────────────────────────────────────────────────────────────────
@@ -637,7 +634,6 @@ export default function MigrationAgentPage({ onDone, sessionUserId, sessionToken
         text: `❌ Migration error: ${sanitizeErrorMessage(String(e))}`,
       } : msg));
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addMsg, messages, onDone]);
 
   // ── Page drag-drop ─────────────────────────────────────────────────────────
@@ -920,7 +916,7 @@ export default function MigrationAgentPage({ onDone, sessionUserId, sessionToken
               value={dbConnForm.conn}
               onChange={e => setDbConnForm(f => ({ ...f, conn: e.target.value }))}
               onKeyDown={e => e.key === "Enter" && runConnectTest()}
-              autoFocus
+
               style={{ width:"100%", padding:"8px 11px", borderRadius:7, border:"1px solid var(--border)", background:"var(--bg)", color:"var(--text)", fontSize:"0.85rem", boxSizing:"border-box", marginBottom:10 }}
             />
             <div style={{ display:"flex", gap:8 }}>
@@ -953,7 +949,7 @@ export default function MigrationAgentPage({ onDone, sessionUserId, sessionToken
               placeholder="2025-01-15T10:30:00"
               value={rollbackTs}
               onChange={e => setRollbackTs(e.target.value)}
-              autoFocus
+
               style={{ width:"100%", padding:"8px 11px", borderRadius:7, border:"1.5px solid #ef4444", background:"var(--bg)", color:"var(--text)", fontSize:"0.85rem", boxSizing:"border-box", marginBottom:10, fontFamily:"monospace" }}
             />
             <div style={{ display:"flex", gap:8 }}>

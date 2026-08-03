@@ -139,7 +139,7 @@ export default function CashEventModal({ shiftId, userId, cashierName, onDone, o
 
   // ── Form ──────────────────────────────────────────────────────────────────
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onCancel()}>
+    <button className="modal-overlay" type="button" onClick={e => e.target === e.currentTarget && onCancel()}>
       <div className="cash-event-shell">
 
         {/* ── Left: form ── */}
@@ -234,6 +234,6 @@ export default function CashEventModal({ shiftId, userId, cashierName, onDone, o
         </div>
 
       </div>
-    </div>
+    </button>
   );
 }

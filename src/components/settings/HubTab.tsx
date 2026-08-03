@@ -353,8 +353,8 @@ export default function HubTab({ sessionUserId }: Props) {
         <div className="hub-card">
           <h4>{t("becomeHub")}</h4>
           <p>{t("becomeHubDescription")}</p>
-          <label className="field-label">{t("port")}</label>
-          <input
+          <label htmlFor="a11y-input-1" className="field-label">{t("port")}</label>
+          <input id="a11y-input-1"
             className="field-input"
             type="number"
             value={port}
@@ -369,15 +369,15 @@ export default function HubTab({ sessionUserId }: Props) {
         <div className="hub-card">
           <h4>{t("connectExistingHub")}</h4>
           <p>{t("connectExistingDescription")}</p>
-          <label className="field-label">{t("hubAddress")}</label>
-          <input
+          <label htmlFor="a11y-input-2" className="field-label">{t("hubAddress")}</label>
+          <input id="a11y-input-2"
             className="field-input"
             placeholder="192.168.1.50"
             value={connectUrl}
             onChange={e => setConnectUrl(e.target.value)}
           />
-          <label className="field-label">{t("storeToken")}</label>
-          <input
+          <label htmlFor="a11y-input-3" className="field-label">{t("storeToken")}</label>
+          <input id="a11y-input-3"
             className="field-input"
             type="password"
             placeholder={t("pasteHubToken")}

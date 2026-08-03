@@ -226,13 +226,13 @@ export default function StorefrontSetupPage({
               <button type="button" aria-label="Open customer URL" onClick={() => void openUrl(settings.public_url)} disabled={!settings.public_url}><ExternalLink /></button>
             </span>
           </label>
-          <label>
+          <label htmlFor="a11y-input-1">
             WhatsApp ordering number
-            <input value={settings.whatsapp_number} onChange={event => patchSettings({ whatsapp_number: event.target.value })} placeholder="+973 3300 1234" inputMode="tel" />
+            <input id="a11y-input-1" value={settings.whatsapp_number} onChange={event => patchSettings({ whatsapp_number: event.target.value })} placeholder="+973 3300 1234" inputMode="tel" />
           </label>
-          <label>
+          <label htmlFor="a11y-input-2">
             Customer language
-            <select value={settings.locale} onChange={event => patchSettings({ locale: event.target.value as StorefrontSettings["locale"] })}>
+            <select id="a11y-input-2" value={settings.locale} onChange={event => patchSettings({ locale: event.target.value as StorefrontSettings["locale"] })}>
               {LOCALES.map(locale => <option key={locale.value} value={locale.value}>{locale.label}</option>)}
             </select>
           </label>
@@ -240,10 +240,10 @@ export default function StorefrontSetupPage({
         <details className="sf-advanced-endpoint">
           <summary>Advanced · Custom publishing endpoint</summary>
           <div className="sf-field-grid">
-            <label>CDN / publish destination<input value={settings.publish_url} onChange={event => patchSettings({ publish_url: event.target.value })} placeholder="https://shop.example.com" /></label>
+            <label htmlFor="a11y-input-3">CDN / publish destination<input value={settings.publish_url} onChange={event => patchSettings({ publish_url: event.target.value })} placeholder="https://shop.example.com" /></label>
             <label>
               Publishing secret
-              <input type="password" autoComplete="new-password" value={settings.publish_secret ?? ""} onChange={event => patchSettings({ publish_secret: event.target.value || undefined })} placeholder="Leave blank to keep the stored secret" />
+              <input id="a11y-input-3" type="password" autoComplete="new-password" value={settings.publish_secret ?? ""} onChange={event => patchSettings({ publish_secret: event.target.value || undefined })} placeholder="Leave blank to keep the stored secret" />
               <small>Use this only for an existing custom deployment.</small>
             </label>
           </div>

@@ -89,9 +89,9 @@ export default function StepRestore({ ownerUserId, onRestored, onSkip }: Props) 
         If this store has run ZANPOS before and you have its backup file, restore
         it now instead of setting up again.
       </p>
-      <label>
+      <label htmlFor="a11y-input-1">
         Licence key <small>(only if this is a new machine)</small>
-        <input
+        <input id="a11y-input-1"
           value={licenseKey}
           onChange={event => setLicenseKey(event.target.value)}
           placeholder="Leave blank to use this machine's own key"

@@ -44,7 +44,6 @@ export default function DeliveryForm({
       const normalized = normalizePhone(raw);
       if (normalized) onPhoneChange(raw, normalized, null);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCustomer]);
 
   // Load rider suggestions
@@ -66,7 +65,6 @@ export default function DeliveryForm({
       onChange({ ...value, contact_number: normalized });
     }
     // We don't call onPhoneChange here to avoid a loop — parent already set phoneRaw
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phoneRaw]);
 
   const set = (field: keyof DeliveryInput, val: string) =>
@@ -110,8 +108,8 @@ export default function DeliveryForm({
       {/* Flat No + Bldg/House in one row */}
       <div className="delivery-field-row">
         <div className="delivery-field" style={{ flex: 1 }}>
-          <label className="delivery-label">{t("flatNumber")}</label>
-          <input
+          <label htmlFor="a11y-input-1" className="delivery-label">{t("flatNumber")}</label>
+          <input id="a11y-input-1"
             className="delivery-input"
             placeholder={t("apartmentFlat")}
             value={value.area ?? ""}
@@ -146,8 +144,8 @@ export default function DeliveryForm({
 
       {/* Rider */}
       <div className="delivery-field" style={{ position: "relative" }}>
-        <label className="delivery-label">{t("rider")}</label>
-        <input
+        <label htmlFor="a11y-input-2" className="delivery-label">{t("rider")}</label>
+        <input id="a11y-input-2"
           className="delivery-input"
           placeholder={t("staffName")}
           value={value.delivery_staff_name ?? ""}

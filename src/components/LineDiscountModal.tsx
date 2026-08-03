@@ -35,7 +35,7 @@ export default function LineDiscountModal({ line, onApply, onCancel }: Props) {
 
   return (
     <button className="modal-overlay" type="button" onClick={onCancel}>
-      <div ref={modalRef} className="modal" style={{ maxWidth: 380 }} role="dialog" aria-modal="true" aria-label={t("lineDiscount")} onClick={e => e.stopPropagation()}>
+      <div ref={modalRef} className="modal" style={{ maxWidth: 380 }} role="dialog" aria-modal="true" aria-label={t("lineDiscount")} onClick={e => e.stopPropagation()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}>
         <h2 className="modal-title">Discount — {line.product_name}</h2>
         <p style={{ fontSize: "0.82rem", color: "var(--text-dim)", marginBottom: 10 }}>
           Qty: {line.quantity} · Unit: {fmt(line.unit_price_minor)} · Line: {fmt(total)}
@@ -58,8 +58,8 @@ export default function LineDiscountModal({ line, onApply, onCancel }: Props) {
           />
         </div>
 
-        <label className="line-edit-label">{t("reasonRequired")}</label>
-        <input
+        <label htmlFor="a11y-input-1" className="line-edit-label">{t("reasonRequired")}</label>
+        <input id="a11y-input-1"
           className="line-edit-note-input"
           type="text"
           maxLength={120}

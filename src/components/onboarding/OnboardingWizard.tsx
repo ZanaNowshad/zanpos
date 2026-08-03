@@ -280,13 +280,13 @@ function ResumeSignIn({ submitting, error, onSubmit }: {
       <div className="setup-body">
         Your store is already set up. Sign in as the owner to finish the remaining steps.
       </div>
-      <label>
+      <label htmlFor="a11y-input-1">
         Username
-        <input value={username} onChange={e => setUsername(e.target.value)} autoComplete="off" />
+        <input id="a11y-input-1" value={username} onChange={e => setUsername(e.target.value)} autoComplete="off" />
       </label>
-      <label>
+      <label htmlFor="a11y-input-2">
         Owner PIN
-        <input
+        <input id="a11y-input-2"
           className="setup-pin-input"
           type="password"
           inputMode="numeric"

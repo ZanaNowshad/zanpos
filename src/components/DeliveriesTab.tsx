@@ -373,9 +373,9 @@ export default function DeliveriesTab({ sessionUser }: Props) {
       {/* ── Advanced filters panel ── */}
       {showFilters && (
         <div className="dlv-adv-filters">
-          <label className="dlv-filter-label">
+          <label htmlFor="a11y-input-1" className="dlv-filter-label">
             Method
-            <select
+            <select id="a11y-input-1"
               className="dlv-filter-select"
               value={filterMethod}
               onChange={e => setFilterMethod(e.target.value)}
@@ -420,9 +420,9 @@ export default function DeliveriesTab({ sessionUser }: Props) {
             </div>
           </label>
 
-          <label className="dlv-filter-label">
+          <label htmlFor="a11y-input-2" className="dlv-filter-label">
             From
-            <input
+            <input id="a11y-input-2"
               type="date"
               className="dlv-filter-input dlv-filter-date"
               value={filterDateFrom}
@@ -430,9 +430,9 @@ export default function DeliveriesTab({ sessionUser }: Props) {
             />
           </label>
 
-          <label className="dlv-filter-label">
+          <label htmlFor="a11y-input-3" className="dlv-filter-label">
             To
-            <input
+            <input id="a11y-input-3"
               type="date"
               className="dlv-filter-input dlv-filter-date"
               value={filterDateTo}

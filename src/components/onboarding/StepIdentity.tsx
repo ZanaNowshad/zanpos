@@ -71,19 +71,19 @@ export default function StepIdentity({ draft, onNext }: Props) {
       <h2 className="setup-title">Store Identity</h2>
       <p className="setup-body">Let's get the basics right — you can change any of this later in Settings.</p>
 
-      <label className="field-label">Store Name *</label>
-      <input
+      <label htmlFor="a11y-input-1" className="field-label">Store Name *</label>
+      <input id="a11y-input-1"
         className="field-input"
         type="text"
         placeholder="e.g. My Coffee Shop"
         value={form.storeName}
         onChange={e => { setForm(f => ({ ...f, storeName: e.target.value })); setError(null); }}
-        autoFocus
+
         maxLength={60}
       />
 
-      <label className="field-label">Phone Number</label>
-      <input
+      <label htmlFor="a11y-input-2" className="field-label">Phone Number</label>
+      <input id="a11y-input-2"
         className="field-input"
         type="tel"
         placeholder="+973 1234 5678"
@@ -91,8 +91,8 @@ export default function StepIdentity({ draft, onNext }: Props) {
         onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
       />
 
-      <label className="field-label">Currency *</label>
-      <select
+      <label htmlFor="a11y-input-3" className="field-label">Currency *</label>
+      <select id="a11y-input-3"
         className="bo-select field-input"
         value={form.currency}
         onChange={e => setForm(f => ({ ...f, currency: e.target.value }))}
@@ -101,8 +101,8 @@ export default function StepIdentity({ draft, onNext }: Props) {
       </select>
       <p className="setup-field-hint">Prices will be shown with {decimals} decimal places.</p>
 
-      <label className="field-label">Customer Language</label>
-      <select
+      <label htmlFor="a11y-input-4" className="field-label">Customer Language</label>
+      <select id="a11y-input-4"
         className="bo-select field-input"
         value={form.language}
         onChange={e => setForm(f => ({ ...f, language: e.target.value as IdentityDraft["language"] }))}
@@ -113,13 +113,13 @@ export default function StepIdentity({ draft, onNext }: Props) {
 
       <label className="field-label">VAT</label>
       <div className="setup-vat-choices">
-        <label className="bo-checkbox-label">
-          <input type="radio" name="vat-choice" checked={form.vatChoice === "standard"}
+        <label htmlFor="a11y-input-5" className="bo-checkbox-label">
+          <input id="a11y-input-5" type="radio" name="vat-choice" checked={form.vatChoice === "standard"}
             onChange={() => setForm(f => ({ ...f, vatChoice: "standard" }))} />
           {" "}Standard 10% VAT
         </label>
-        <label className="bo-checkbox-label">
-          <input type="radio" name="vat-choice" checked={form.vatChoice === "custom"}
+        <label htmlFor="a11y-input-6" className="bo-checkbox-label">
+          <input id="a11y-input-6" type="radio" name="vat-choice" checked={form.vatChoice === "custom"}
             onChange={() => setForm(f => ({ ...f, vatChoice: "custom" }))} />
           {" "}Custom rate:
           {" "}
@@ -132,8 +132,8 @@ export default function StepIdentity({ draft, onNext }: Props) {
           />
           %
         </label>
-        <label className="bo-checkbox-label">
-          <input type="radio" name="vat-choice" checked={form.vatChoice === "none"}
+        <label htmlFor="a11y-input-7" className="bo-checkbox-label">
+          <input id="a11y-input-7" type="radio" name="vat-choice" checked={form.vatChoice === "none"}
             onChange={() => setForm(f => ({ ...f, vatChoice: "none" }))} />
           {" "}Not VAT registered
         </label>

@@ -236,7 +236,7 @@ export default function NotificationModal({
 
   return (
     <>
-    <div className="modal-overlay" onClick={handleClose}>
+    <button className="modal-overlay" type="button" onClick={handleClose}>
       <div
         ref={modalRef}
         className="modal ghost-modal notif-modal"
@@ -439,7 +439,7 @@ export default function NotificationModal({
           )}
         </div>
       </div>
-    </div>
+    </button>
 
     {viewing && (
       <div className="modal-overlay wa-view-overlay" onClick={() => setViewing(null)}>

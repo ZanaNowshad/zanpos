@@ -66,7 +66,7 @@ export default function ProductsTab({
 
   useEffect(() => {
     fetchProducts(search, offset);
-  }, [search, offset]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [search, offset]); 
 
   useEffect(() => {
     Promise.all([cmd.adminListCategories(sessionUserId), cmd.adminListTaxRules(sessionUserId)])
@@ -98,7 +98,7 @@ export default function ProductsTab({
     setCreating(true);
     setSelected(null);
     onPrefillConsumed?.();
-  }, [prefill]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [prefill]); 
 
   function startCreate() {
     setSelected(null);

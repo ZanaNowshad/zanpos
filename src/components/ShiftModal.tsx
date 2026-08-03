@@ -225,8 +225,8 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
             <p className="shift-info-text">
               {t("startingShiftFor")} <strong>{user.display_name}</strong> {t("on")} {DEVICE.branch_name}
             </p>
-            <label className="field-label">{t("openingCash")} ({DEVICE.currency})</label>
-            <input
+            <label htmlFor="a11y-input-1" className="field-label">{t("openingCash")} ({DEVICE.currency})</label>
+            <input id="a11y-input-1"
               className="field-input"
               type="number"
               step="0.001"
@@ -415,8 +415,8 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
               </div>
             )}
 
-            <label className="field-label">{t("countedCash")} ({DEVICE.currency})</label>
-            <input
+            <label htmlFor="a11y-input-2" className="field-label">{t("countedCash")} ({DEVICE.currency})</label>
+            <input id="a11y-input-2"
               className="field-input"
               type="number"
               step="0.001"
@@ -439,8 +439,8 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
                 </div>
               );
             })()}
-            <label className="field-label">{t("notesOptional")}</label>
-            <textarea
+            <label htmlFor="a11y-input-3" className="field-label">{t("notesOptional")}</label>
+            <textarea id="a11y-input-3"
               className="field-input"
               rows={2}
               value={notes}

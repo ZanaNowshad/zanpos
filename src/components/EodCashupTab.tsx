@@ -40,8 +40,8 @@ export default function EodCashupTab({ sessionUserId }: { sessionUserId: string 
       <h3 className="tab-title">{t("endOfDayCashup")}</h3>
 
       <div className="report-filters">
-        <label className="field-label">{t("businessDate")}</label>
-        <input className="field-input date-input" type="date" value={date} onChange={e => setDate(e.target.value)} />
+        <label htmlFor="a11y-input-1" className="field-label">{t("businessDate")}</label>
+        <input id="a11y-input-1" className="field-input date-input" type="date" value={date} onChange={e => setDate(e.target.value)} />
         <button className="btn-primary" onClick={load} disabled={loading}>
           {loading ? t("loading") : t("runReport")}
         </button>

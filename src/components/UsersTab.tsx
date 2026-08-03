@@ -118,20 +118,20 @@ export default function UsersTab({ sessionUserId }: Props) {
           <h3 className="bo-form-title">{t(creating ? "newUser" : "editUser")}</h3>
           {error && <div className="bo-form-error">{error}</div>}
 
-          <label className="bo-label">{t("displayName")} *</label>
-          <input className="bo-input" value={form.display_name} onChange={e => set("display_name", e.target.value)}
+          <label htmlFor="a11y-input-1" className="bo-label">{t("displayName")} *</label>
+          <input id="a11y-input-1" className="bo-input" value={form.display_name} onChange={e => set("display_name", e.target.value)}
             placeholder={t("fullName")} ref={nameRef} />
 
           {creating && (
             <>
-              <label className="bo-label">{t("username")} *</label>
-              <input className="bo-input" value={form.username} onChange={e => set("username", e.target.value)}
+              <label htmlFor="a11y-input-2" className="bo-label">{t("username")} *</label>
+              <input id="a11y-input-2" className="bo-input" value={form.username} onChange={e => set("username", e.target.value)}
                 placeholder={t("loginUsername")} autoComplete="off" />
             </>
           )}
 
-          <label className="bo-label">{t("role")} *</label>
-          <select className="bo-select" value={form.role_id} onChange={e => set("role_id", e.target.value)}>
+          <label htmlFor="a11y-input-3" className="bo-label">{t("role")} *</label>
+          <select id="a11y-input-3" className="bo-select" value={form.role_id} onChange={e => set("role_id", e.target.value)}>
             <option value="">{t("select")}</option>
             {roles.map(r => <option key={r.role_id} value={r.role_id}>{roleText(language, r.name)}</option>)}
           </select>
@@ -147,12 +147,12 @@ export default function UsersTab({ sessionUserId }: Props) {
 
           {(creating || showPin) && (
             <>
-              <label className="bo-label">{creating ? `${t("pin")} *` : t("newPin")} ({t("minFourDigits")})</label>
-              <input className="bo-input" type="password" inputMode="numeric" maxLength={8}
+              <label htmlFor="a11y-input-4" className="bo-label">{creating ? `${t("pin")} *` : t("newPin")} ({t("minFourDigits")})</label>
+              <input id="a11y-input-4" className="bo-input" type="password" inputMode="numeric" maxLength={8}
                 value={form.pin} onChange={e => set("pin", e.target.value)} placeholder="••••" autoComplete="new-password" />
 
-              <label className="bo-label">{t("confirmPin")}</label>
-              <input className="bo-input" type="password" inputMode="numeric" maxLength={8}
+              <label htmlFor="a11y-input-5" className="bo-label">{t("confirmPin")}</label>
+              <input id="a11y-input-5" className="bo-input" type="password" inputMode="numeric" maxLength={8}
                 value={form.confirm_pin} onChange={e => set("confirm_pin", e.target.value)}
                 placeholder="••••" autoComplete="new-password" />
             </>
@@ -160,8 +160,8 @@ export default function UsersTab({ sessionUserId }: Props) {
 
           {!creating && (
             <div className="bo-checkboxes" style={{ marginTop: 12 }}>
-              <label className="bo-checkbox-label">
-                <input type="checkbox" checked={form.is_active} onChange={e => set("is_active", e.target.checked)} />
+              <label htmlFor="a11y-input-6" className="bo-checkbox-label">
+                <input id="a11y-input-6" type="checkbox" checked={form.is_active} onChange={e => set("is_active", e.target.checked)} />
                 {t("active")}
               </label>
             </div>

@@ -73,7 +73,7 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
 
   return (
     <button className="modal-overlay" type="button" onClick={onClose}>
-      <div className="modal hold-modal" role="dialog" aria-modal="true" aria-labelledby="hold-dialog-title" onClick={e => e.stopPropagation()}>
+      <div className="modal hold-modal" role="dialog" aria-modal="true" aria-labelledby="hold-dialog-title" onClick={e => e.stopPropagation()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}>
         <div className="modal-header">
           <h2 className="modal-title" id="hold-dialog-title">{t("holdOrder")}</h2>
           <button className="modal-close" onClick={onClose}>✕</button>
@@ -91,7 +91,7 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
               placeholder={t("customerNameOptional")}
               value={note}
               maxLength={60}
-              autoFocus
+
               onChange={e => setNote(e.target.value)}
             />
             {error && <div className="modal-error">{error}</div>}

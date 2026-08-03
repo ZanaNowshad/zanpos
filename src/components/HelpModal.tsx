@@ -63,7 +63,7 @@ export default function HelpModal({ onClose }: Props) {
   const { language } = useLanguage();
   return (
     <button className="modal-overlay" type="button" onClick={onClose}>
-      <div className="modal help-modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="help-title">
+      <div className="modal help-modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="help-title" onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}>
         <div className="modal-header">
           <span className="modal-title" id="help-title">⌨ {detailText(language, "keyboardShortcuts")}</span>
           <button className="modal-close" onClick={onClose}>✕</button>

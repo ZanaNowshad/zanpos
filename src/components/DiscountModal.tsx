@@ -60,7 +60,7 @@ export default function DiscountModal({ grossMinor, currentDiscountMinor, onAppl
   };
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onCancel()}>
+    <button className="modal-overlay" type="button" onClick={e => e.target === e.currentTarget && onCancel()}>
       <div className="cash-event-shell" role="dialog" aria-modal="true" aria-label={t("applyDiscount")}>
 
         {/* ── Left: form ── */}
@@ -183,6 +183,6 @@ export default function DiscountModal({ grossMinor, currentDiscountMinor, onAppl
         </div>
 
       </div>
-    </div>
+    </button>
   );
 }

@@ -163,47 +163,47 @@ export default function ProductFormModal({
 
           <div className="bo-form-grid">
             <div className="bo-form-field bo-form-field-full">
-              <label className="bo-label">{t("name")} *</label>
-              <input className="bo-input" value={name} onChange={e => setName(e.target.value)} placeholder={t("productName")} autoFocus />
+              <label htmlFor="a11y-input-1" className="bo-label">{t("name")} *</label>
+ <input id="a11y-input-1" className="bo-input" value={name} onChange={e => setName(e.target.value)} placeholder={t("productName")} />
             </div>
             <div className="bo-form-field">
-              <label className="bo-label">{t("category")} *</label>
-              <select className="bo-select" value={categoryId} onChange={e => setCategoryId(e.target.value)}>
+              <label htmlFor="a11y-input-2" className="bo-label">{t("category")} *</label>
+              <select id="a11y-input-2" className="bo-select" value={categoryId} onChange={e => setCategoryId(e.target.value)}>
                 <option value="">— {t("select")} —</option>
                 {categories.map(c => <option key={c.category_id} value={c.category_id}>{c.name}</option>)}
               </select>
             </div>
             <div className="bo-form-field">
-              <label className="bo-label">{t("price")} ({cur}) *</label>
-              <input className="bo-input" type="number" inputMode="decimal" min="0" step={Math.pow(10, -exp).toFixed(exp)}
+              <label htmlFor="a11y-input-3" className="bo-label">{t("price")} ({cur}) *</label>
+              <input id="a11y-input-3" className="bo-input" type="number" inputMode="decimal" min="0" step={Math.pow(10, -exp).toFixed(exp)}
                 value={price} onChange={e => setPrice(e.target.value)} placeholder={`0.${"0".repeat(exp)}`} />
             </div>
             <div className="bo-form-field">
-              <label className="bo-label">{t("cost")} ({cur})</label>
-              <input className="bo-input" type="number" inputMode="decimal" min="0" step={Math.pow(10, -exp).toFixed(exp)}
+              <label htmlFor="a11y-input-4" className="bo-label">{t("cost")} ({cur})</label>
+              <input id="a11y-input-4" className="bo-input" type="number" inputMode="decimal" min="0" step={Math.pow(10, -exp).toFixed(exp)}
                 value={costPrice} onChange={e => { setCostPrice(e.target.value); const s = computeSelling(parseMoney(e.target.value, exp), markupPct); if (s > 0) setPrice(formatMoney(s, exp)); }}
                 placeholder={`0.${"0".repeat(exp)}`} />
             </div>
             <div className="bo-form-field">
-              <label className="bo-label">{t("markupPercent")}</label>
-              <input className="bo-input" type="number" inputMode="decimal" min="0" step="0.1"
+              <label htmlFor="a11y-input-5" className="bo-label">{t("markupPercent")}</label>
+              <input id="a11y-input-5" className="bo-input" type="number" inputMode="decimal" min="0" step="0.1"
                 value={markupPct} onChange={e => { setMarkupPct(e.target.value); const s = computeSelling(parseMoney(costPrice, exp), e.target.value); if (s > 0) setPrice(formatMoney(s, exp)); }}
                 placeholder="0" />
             </div>
             <div className="bo-form-field">
-              <label className="bo-label">{t("taxRule")}</label>
-              <select className="bo-select" value={taxRuleId} onChange={e => setTaxRuleId(e.target.value)}>
+              <label htmlFor="a11y-input-6" className="bo-label">{t("taxRule")}</label>
+              <select id="a11y-input-6" className="bo-select" value={taxRuleId} onChange={e => setTaxRuleId(e.target.value)}>
                 <option value="">{t("none")}</option>
                 {taxRules.map(t => <option key={t.tax_rule_id} value={t.tax_rule_id}>{t.name}</option>)}
               </select>
             </div>
             <div className="bo-form-field">
-              <label className="bo-label">{t("sku")}</label>
-              <input className="bo-input" value={sku} onChange={e => setSku(e.target.value)} placeholder={t("optional")} />
+              <label htmlFor="a11y-input-7" className="bo-label">{t("sku")}</label>
+              <input id="a11y-input-7" className="bo-input" value={sku} onChange={e => setSku(e.target.value)} placeholder={t("optional")} />
             </div>
             <div className="bo-form-field bo-form-field-full">
-              <label className="bo-label">{t("barcode")}</label>
-              <input className="bo-input" value={barcode} onChange={e => setBarcode(e.target.value)} placeholder={t("optional")} />
+              <label htmlFor="a11y-input-8" className="bo-label">{t("barcode")}</label>
+              <input id="a11y-input-8" className="bo-input" value={barcode} onChange={e => setBarcode(e.target.value)} placeholder={t("optional")} />
             </div>
           </div>
 
@@ -233,15 +233,15 @@ export default function ProductFormModal({
           </div>
 
           <div className="bo-checkboxes" style={{margin: "10px 0"}}>
-            <label className="bo-checkbox-label"><input type="checkbox" checked={trackInventory} onChange={e => setTrackInventory(e.target.checked)} />{t("trackInventory")}</label>
-            <label className="bo-checkbox-label"><input type="checkbox" checked={allowDecimal} onChange={e => setAllowDecimal(e.target.checked)} />{t("decimalQuantity")}</label>
-            {mode === "edit" && <label className="bo-checkbox-label"><input type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} />{t("active")}</label>}
+            <label htmlFor="a11y-input-9" className="bo-checkbox-label"><input type="checkbox" checked={trackInventory} onChange={e => setTrackInventory(e.target.checked)} />{t("trackInventory")}</label>
+            <label htmlFor="a11y-input-10" className="bo-checkbox-label"><input id="a11y-input-9" type="checkbox" checked={allowDecimal} onChange={e => setAllowDecimal(e.target.checked)} />{t("decimalQuantity")}</label>
+            {mode === "edit" && <label className="bo-checkbox-label"><input id="a11y-input-10" type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} />{t("active")}</label>}
           </div>
 
           {trackInventory && (
             <div style={{marginBottom: 10}}>
-              <label className="bo-label">{t("reorderPoint")}</label>
-              <input className="bo-input" type="number" min="0" step="1" value={reorderPoint} onChange={e => setReorderPoint(parseInt(e.target.value) || 0)} />
+              <label htmlFor="a11y-input-11" className="bo-label">{t("reorderPoint")}</label>
+              <input id="a11y-input-11" className="bo-input" type="number" min="0" step="1" value={reorderPoint} onChange={e => setReorderPoint(parseInt(e.target.value) || 0)} />
             </div>
           )}
 

@@ -27,35 +27,35 @@ export default function StoreTab(props: StoreTabProps) {
       <section>
         <h3 className="settings-page-title">Store Identity</h3>
 
-        <label className="bo-label">Store Name *</label>
-        <input className="bo-input" type="text" value={name}
+        <label htmlFor="a11y-input-1" className="bo-label">Store Name *</label>
+        <input id="a11y-input-1" className="bo-input" type="text" value={name}
           onChange={e => { setName(e.target.value); setSavedStore(false); }} maxLength={60} />
 
-        <label className="bo-label">Timezone</label>
-        <select className="bo-select" value={timezone} onChange={e => setTimezone(e.target.value)}>
+        <label htmlFor="a11y-input-2" className="bo-label">Timezone</label>
+        <select id="a11y-input-2" className="bo-select" value={timezone} onChange={e => setTimezone(e.target.value)}>
           {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
         </select>
 
-        <label className="bo-label">Address</label>
-        <textarea className="bo-input" rows={3} value={address}
+        <label htmlFor="a11y-input-3" className="bo-label">Address</label>
+        <textarea id="a11y-input-3" className="bo-input" rows={3} value={address}
           onChange={e => { setAddress(e.target.value); setSavedStore(false); }}
           placeholder="Full address printed on receipts" />
 
-        <label className="bo-label">Phone Number</label>
-        <input className="bo-input" type="tel" value={phone}
+        <label htmlFor="a11y-input-4" className="bo-label">Phone Number</label>
+        <input id="a11y-input-4" className="bo-input" type="tel" value={phone}
           onChange={e => { setPhone(e.target.value); setSavedStore(false); }}
           placeholder="+973 1234 5678" />
 
         <div className="bo-row-two" style={{ marginTop: 0 }}>
           <div>
-            <label className="bo-label">Tax / VAT Registration Number</label>
-            <input className="bo-input" type="text" value={taxNumber}
+            <label htmlFor="a11y-input-5" className="bo-label">Tax / VAT Registration Number</label>
+            <input id="a11y-input-5" className="bo-input" type="text" value={taxNumber}
               onChange={e => { setTaxNumber(e.target.value); setSavedStore(false); }}
               placeholder="e.g. VAT-1234567890" />
           </div>
           <div>
-            <label className="bo-label">Commercial Register (CR No)</label>
-            <input className="bo-input" type="text" value={crNumber}
+            <label htmlFor="a11y-input-6" className="bo-label">Commercial Register (CR No)</label>
+            <input id="a11y-input-6" className="bo-input" type="text" value={crNumber}
               onChange={e => { setCrNumber(e.target.value); setSavedStore(false); }}
               placeholder="e.g. 12345-1" />
           </div>
@@ -67,9 +67,9 @@ export default function StoreTab(props: StoreTabProps) {
       <section>
         <h3 className="settings-page-title">Security</h3>
 
-        <label className="bo-label">Session Timeout</label>
+        <label htmlFor="a11y-input-7" className="bo-label">Session Timeout</label>
         <div className="settings-timeout-row">
-          <select
+          <select id="a11y-input-7"
             className="bo-select settings-timeout-select"
             value={timeoutMinutes}
             onChange={e => setTimeoutMinutes(Number(e.target.value))}

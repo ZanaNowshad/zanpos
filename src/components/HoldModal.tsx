@@ -72,7 +72,7 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <button className="modal-overlay" type="button" onClick={onClose}>
       <div className="modal hold-modal" role="dialog" aria-modal="true" aria-labelledby="hold-dialog-title" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <h2 className="modal-title" id="hold-dialog-title">{t("holdOrder")}</h2>
@@ -137,6 +137,6 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
           <p className="hold-empty">{t("noHeldOrders")}</p>
         )}
       </div>
-    </div>
+    </button>
   );
 }

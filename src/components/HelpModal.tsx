@@ -62,7 +62,7 @@ const SECTIONS: { heading: DetailStringKey; rows: { keys: string; action: Detail
 export default function HelpModal({ onClose }: Props) {
   const { language } = useLanguage();
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <button className="modal-overlay" type="button" onClick={onClose}>
       <div className="modal help-modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="help-title">
         <div className="modal-header">
           <span className="modal-title" id="help-title">⌨ {detailText(language, "keyboardShortcuts")}</span>
@@ -102,6 +102,6 @@ export default function HelpModal({ onClose }: Props) {
           <button className="btn-primary" onClick={onClose}>{modalText(language, "close")}</button>
         </div>
       </div>
-    </div>
+    </button>
   );
 }

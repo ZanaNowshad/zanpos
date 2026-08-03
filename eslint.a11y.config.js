@@ -47,13 +47,13 @@ export default [
       "jsx-a11y/role-supports-aria-props": "error",
       "jsx-a11y/scope": "error",
 
-      // Pre-existing patterns — enforced as warnings (incremental fixes ongoing)
-      "jsx-a11y/no-static-element-interactions": "warn",
-      "jsx-a11y/click-events-have-key-events": "warn",
-      "jsx-a11y/label-has-associated-control": "warn",
-      "jsx-a11y/no-autofocus": "warn",
-      "jsx-a11y/no-noninteractive-element-interactions": "warn",
-      "jsx-a11y/tabindex-no-positive": "warn",
+      // Incrementally addressed rules — now at error enforcement
+      "jsx-a11y/no-static-element-interactions": "error",
+      "jsx-a11y/click-events-have-key-events": "error",
+      "jsx-a11y/label-has-associated-control": "error",
+      "jsx-a11y/no-autofocus": "error",
+      "jsx-a11y/no-noninteractive-element-interactions": "error",
+      "jsx-a11y/tabindex-no-positive": "error",
 
       // react-hooks plugin
       "react-hooks/exhaustive-deps": "off",

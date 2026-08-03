@@ -257,7 +257,7 @@ export default function RefundModal({ cashierUserId, onClose, onExchangeStarted 
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <button className="modal-overlay" type="button" onClick={onClose}>
       <div className="modal refund-modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <h2 className="modal-title">{t("refund")}</h2>
@@ -491,6 +491,6 @@ export default function RefundModal({ cashierUserId, onClose, onExchangeStarted 
           </div>
         )}
       </div>
-    </div>
+    </button>
   );
 }

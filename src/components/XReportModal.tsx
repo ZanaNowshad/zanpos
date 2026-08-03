@@ -32,7 +32,7 @@ export default function XReportModal({ shiftId, actorUserId, onClose }: Props) {
   const fmt = (n: number) => `${DEVICE.currency} ${formatMoney(n, DEVICE.currency_exponent)}`;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <button className="modal-overlay" type="button" onClick={onClose}>
       <div className="modal xreport-modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <h2 className="modal-title">📊 {t("xReportMidShift")}</h2>
@@ -92,6 +92,6 @@ export default function XReportModal({ shiftId, actorUserId, onClose }: Props) {
           <button className="btn-primary" onClick={onClose}>{t("close")}</button>
         </div>
       </div>
-    </div>
+    </button>
   );
 }

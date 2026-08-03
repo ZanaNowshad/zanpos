@@ -69,7 +69,7 @@ export default function BarcodesPrintModal({ products, onClose }: Props) {
   const currency = DEVICE.currency;
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <button className="modal-overlay" type="button" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal barcodes-modal">
         <div className="barcodes-modal-header">
           <h2>{t("printLabels")}</h2>
@@ -87,6 +87,6 @@ export default function BarcodesPrintModal({ products, onClose }: Props) {
           ))}
         </div>
       </div>
-    </div>
+    </button>
   );
 }

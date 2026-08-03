@@ -17,7 +17,7 @@ export default function SaleDetailsModal({ sale, onClose }: Props) {
   const fmt = (value: number) => `${DEVICE.currency} ${formatMoney(value, DEVICE.currency_exponent)}`;
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <button className="modal-overlay" type="button" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="sale-details-modal" role="dialog" aria-modal="true" aria-labelledby="sale-details-title">
         <header>
           <div>
@@ -50,6 +50,6 @@ export default function SaleDetailsModal({ sale, onClose }: Props) {
           <div><span>{t("paid")}</span><strong>{sale.payments.map(p => ownedModalLabel(language, p.method)).join(", ") || t("recorded")}</strong></div>
         </footer>
       </div>
-    </div>
+    </button>
   );
 }

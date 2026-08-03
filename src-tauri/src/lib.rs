@@ -105,6 +105,9 @@ pub struct AppState {
     /// opaque request ID. The watch sender lets `ai_cancel_chat` drop the live
     /// provider/tool future instead of merely hiding its UI output.
     pub active_ai_chats: Arc<std::sync::Mutex<HashMap<String, ActiveAiChat>>>,
+    /// mDNS LAN hub discovery (always present; degrades to no-op stub when the
+    /// mdns-discovery feature is not enabled).
+    pub hub_discovery: crate::hub::discovery::HubDiscovery,
 }
 
 pub struct ActiveAiChat {
@@ -695,6 +698,17 @@ pub fn run() {
             let pool_alerts = db.clone();
             let pool_ai_maintenance = db.clone();
             let pool_maint = db.clone();
+            let hub_discovery = crate::hub::discovery::HubDiscovery::new_or_stub(
+                crate::hub::discovery::HubDiscoveryConfig {
+                    instance_id: "zanpos-01".into(),
+                    port: 3131,
+                    protocol_version: 1,
+                    branch: "main".into(),
+                    pairing_enabled: true,
+                    tls_fingerprint: None,
+                },
+            );
+
             app.manage(AppState {
                 db,
                 sessions: Arc::new(auth_session::SessionStore::default()),
@@ -703,6 +717,7 @@ pub fn run() {
                 wa_token_file,
                 hub: hub_runtime,
                 active_ai_chats: Arc::new(std::sync::Mutex::new(HashMap::new())),
+                hub_discovery,
             });
 
             // ── Trust spine: panic/error diagnostics + telemetry uploader ─────────
@@ -1132,6 +1147,10 @@ pub fn run() {
             commands::ghost_barcode_commands::ghost_resolve,
             commands::ghost_barcode_commands::ghost_dismiss,
             commands::ghost_barcode_commands::ghost_prefill,
+            // mDNS LAN hub discovery
+            commands::hub_commands::list_discovered_hubs,
+            commands::hub_commands::start_lan_discovery,
+            commands::hub_commands::stop_lan_discovery,
         ])
         .on_window_event(|window, event| {
             match event {

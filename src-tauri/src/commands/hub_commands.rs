@@ -471,14 +471,56 @@ pub async fn hub_set_url(
     hub_status(actor_user_id, state).await
 }
 
-#[cfg(test)]
-mod tests {
-    use super::join_schema_compatible;
+// ── mDNS LAN hub discovery ─────────────────────────────────────────
 
+#[derive(Serialize, Clone)]
+pub struct DiscoveredHubDto {
+    pub instance_id: String,
+    pub host: String,
+    pub port: u16,
+    pub protocol_version: u16,
+    pub branch: String,
+    pub pairing_enabled: bool,
+    pub tls_fingerprint: Option<String>,
+    pub last_seen_secs: u64,
+}
+
+#[tauri::command]
+pub async fn list_discovered_hubs(
+    state: State<'_, AppState>,
+) -> Result<Vec<DiscoveredHubDto>, String> {
+    let hubs = state.hub_discovery.discover();
+    Ok(hubs
+        .iter()
+        .map(|hub| DiscoveredHubDto {
+            instance_id: hub.instance_id.clone(),
+            host: hub.host.to_string(),
+            port: hub.port,
+            protocol_version: hub.protocol_version,
+            branch: hub.branch.clone(),
+            pairing_enabled: hub.pairing_enabled,
+            tls_fingerprint: hub.tls_fingerprint.clone(),
+            last_seen_secs: hub.last_seen_secs,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn start_lan_discovery(state: State<'_, AppState>) -> Result<(), String> {
+    state.hub_discovery.start()
+}
+
+#[tauri::command]
+pub async fn stop_lan_discovery(state: State<'_, AppState>) -> Result<(), String> {
+    state.hub_discovery.stop();
+    Ok(())
+}
+
+mod tests {
     #[test]
     fn terminal_join_requires_the_same_schema_as_the_hub() {
-        assert!(join_schema_compatible(30, 30));
-        assert!(!join_schema_compatible(30, 29));
-        assert!(!join_schema_compatible(29, 30));
+        assert!(super::join_schema_compatible(30, 30));
+        assert!(!super::join_schema_compatible(30, 29));
+        assert!(!super::join_schema_compatible(29, 30));
     }
 }

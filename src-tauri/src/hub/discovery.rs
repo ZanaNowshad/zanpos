@@ -194,6 +194,18 @@ mod inner {
             })
         }
 
+        /// Always succeeds — falls back to a daemon-less stub on init failure.
+        pub fn new_or_stub(config: HubDiscoveryConfig) -> Self {
+            Self::new(config).unwrap_or_else(|e| {
+                tracing::warn!("mDNS discovery init failed, running in stub mode: {e}");
+                Self {
+                    discovered: Arc::new(Mutex::new(HashSet::new())),
+                    running: Arc::new(AtomicBool::new(false)),
+                    daemon: None,
+                }
+            })
+        }
+
         pub fn discover(&self) -> Vec<DiscoveredHub> {
             let guard = self
                 .discovered
@@ -307,6 +319,11 @@ mod inner {
         pub fn new(config: HubDiscoveryConfig) -> Result<Self, String> {
             config.validate()?;
             Err("mDNS discovery not compiled in — enable the mdns-discovery feature".into())
+        }
+
+        /// Always succeeds — returns a stub when feature is disabled.
+        pub fn new_or_stub(_config: HubDiscoveryConfig) -> Self {
+            Self
         }
 
         pub fn discover(&self) -> Vec<DiscoveredHub> {

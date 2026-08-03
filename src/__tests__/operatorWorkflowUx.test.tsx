@@ -78,8 +78,7 @@ describe("operator-first workflow hierarchy", () => {
     expect(html).toContain('aria-label="Payment method"');
     expect(html).toContain('role="radio"');
     expect(html).toContain('aria-checked="true"');
-    expect(html).toContain('autofocus=""');
-    expect(html).not.toMatch(/pm-confirm-btn[^>]*autofocus/);
+    expect(html).not.toContain("autofocus");
   });
 
   it("replaces the dialpad with a readiness summary for exact card payments", () => {

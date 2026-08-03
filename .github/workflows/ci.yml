@@ -269,12 +269,12 @@ jobs:
           semgrep scan --timeout 600 --error --config config/semgrep src src-tauri/src src-tauri/tauri.conf.json storefront .github
 
   # ────────────────────────────────────────────────────────────────────────────
-  # 5. Gitleaks — working-tree secret detection
+  # 5. Gitleaks — secret detection (working tree + PR range)
   # ────────────────────────────────────────────────────────────────────────────
   gitleaks:
     name: Gitleaks secret scan
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
@@ -291,16 +291,23 @@ jobs:
           chmod +x gitleaks
           ./gitleaks version
 
-      - name: Run Gitleaks working-tree scan
-        run: ./gitleaks detect --config config/gitleaks.toml --verbose
+      - name: Run Gitleaks working-tree scan (uncommitted files)
+        run: |
+          ./gitleaks detect --config config/gitleaks.toml --no-git --redact \
+            --source src --source src-tauri --source storefront \
+            --source .github --source config --source tests --source scripts
 
       - name: Run Gitleaks commit-range scan (PR only)
         if: github.event_name == 'pull_request'
         run: |
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
           HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            echo "Skipping commit-range scan: base SHA is empty"
+            exit 0
+          fi
           echo "Scanning commits from $BASE_SHA to $HEAD_SHA"
-          ./gitleaks detect --config config/gitleaks.toml --verbose --log-opts="${BASE_SHA}..${HEAD_SHA}"
+          ./gitleaks detect --config config/gitleaks.toml --redact --log-opts="${BASE_SHA}..${HEAD_SHA}"
 
   # ────────────────────────────────────────────────────────────────────────────
   # 6. Tauri build (debug) – confirms the full app compiles end-to-end

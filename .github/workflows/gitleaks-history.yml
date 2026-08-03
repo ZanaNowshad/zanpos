@@ -28,9 +28,10 @@ jobs:
           ./gitleaks version
 
       - name: Run full-history Gitleaks scan
-        # detect --no-git scans the entire commit history; no baseline is used
-        # so that every commit ever made is re-evaluated against the current ruleset.
-        run: ./gitleaks detect --config config/gitleaks.toml --verbose --no-git --log-opts="--all"
+        # Git history mode (no --no-git): scans every commit reachable from HEAD
+        # --redact prevents accidental secret exposure in CI logs
+        run: |
+          ./gitleaks detect --config config/gitleaks.toml --redact --report-format json --report-path gitleaks-report.json
 
       - name: Upload Gitleaks report
         if: failure()
@@ -38,3 +39,4 @@ jobs:
         with:
           name: gitleaks-history-report
           path: gitleaks-report.json
+          if-no-files-found: error

@@ -6,22 +6,30 @@
 mod inner {
     use rig::{agent::AgentBuilder, completion::Prompt, providers::openai};
 
+    #[allow(dead_code)]
     pub struct RigClient {
-        agent: rig::agent::Agent<openai::CompletionModel>,
+        api_key: String,
+        model_name: String,
     }
 
+    #[allow(dead_code)]
     impl RigClient {
         pub fn new(api_key: String, model_name: String) -> Result<Self, String> {
-            let client = openai::Client::new(&api_key);
-            let model = client.completion_model(&model_name);
-            let agent = AgentBuilder::new(model).build();
-            Ok(Self { agent })
+            // Validate that the API key can initialize an OpenAI client.
+            let _ = openai::Client::new(&api_key);
+            Ok(Self {
+                api_key,
+                model_name,
+            })
         }
 
         /// Read-only chat completion via Rig agent.
         /// No mutations, no tool execution, no database access.
         pub async fn chat(&self, prompt: &str) -> Result<String, String> {
-            self.agent
+            let client = openai::Client::new(&self.api_key);
+            let model = client.completion_model(&self.model_name);
+            let agent = AgentBuilder::new(model).build();
+            agent
                 .prompt(prompt)
                 .await
                 .map_err(|e| format!("Rig completion failed: {e}"))
@@ -29,6 +37,7 @@ mod inner {
     }
 }
 
+#[allow(unused_imports)]
 #[cfg(feature = "rig-pilot")]
 pub use inner::RigClient;
 

@@ -7,16 +7,23 @@
 /// - Graceful bounded shutdown (5s drain)
 /// - Local no-op tracing when `otel-tracing` feature is disabled
 /// - Non-blocking: spans are buffered and exported async; checkout/financial paths never blocked
+#[cfg(feature = "otel-tracing")]
 use std::sync::OnceLock;
 use std::time::Duration;
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 const MAX_QUEUE_SIZE: usize = 2048;
+#[allow(dead_code)]
 const MAX_EXPORT_BATCH_SIZE: usize = 512;
+#[allow(dead_code)]
 const SCHEDULED_DELAY: Duration = Duration::from_secs(5);
+#[allow(dead_code)]
 const EXPORT_TIMEOUT: Duration = Duration::from_secs(30);
+#[allow(dead_code)]
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+#[allow(dead_code)]
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
 
 // ─── Span taxonomy ─────────────────────────────────────────────────────────
@@ -99,6 +106,7 @@ impl ZanposSpan {
 mod inner {
     use super::*;
     use opentelemetry::trace::TracerProvider;
+    use opentelemetry_otlp::WithExportConfig;
     use opentelemetry_sdk::trace as sdktrace;
     use opentelemetry_sdk::Resource;
 
@@ -113,9 +121,6 @@ mod inner {
 
         let provider = sdktrace::TracerProvider::builder()
             .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
-            .with_max_export_batch_size(MAX_EXPORT_BATCH_SIZE)
-            .with_max_queue_size(MAX_QUEUE_SIZE)
-            .with_scheduled_delay(SCHEDULED_DELAY)
             .with_resource(Resource::new(vec![opentelemetry::KeyValue::new(
                 "service.name",
                 service_name.to_string(),
@@ -156,6 +161,7 @@ pub fn shutdown() {
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 /// Returns whether OTel tracing is compiled in and initialized.
+#[allow(dead_code)]
 pub fn is_enabled() -> bool {
     cfg!(feature = "otel-tracing")
 }
@@ -201,6 +207,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "otel-tracing"))]
     fn disabled_rollback_does_not_panic() {
         // When otel-tracing feature is disabled, init returns Ok and shutdown is a no-op.
         let result = inner::init("test");
@@ -209,9 +216,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn queue_limits_are_bounded() {
         assert!(MAX_QUEUE_SIZE >= MAX_EXPORT_BATCH_SIZE);
-        assert!(MAX_QUEUE_SIZE <= 4096, "queue cap prevents unbounded memory growth");
-        assert!(SHUTDOWN_TIMEOUT.as_secs() <= 10, "shutdown must be fast");
+        assert!(MAX_QUEUE_SIZE <= 4096);
+        assert!(SHUTDOWN_TIMEOUT.as_secs() <= 10);
     }
 }

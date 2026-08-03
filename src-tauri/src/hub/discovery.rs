@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::net::IpAddr;
 
+#[allow(dead_code)]
 const SERVICE_TYPE: &str = "_zanpos-hub._tcp.local.";
 #[allow(dead_code)]
 const STALE_DURATION_SECS: u64 = 30;
@@ -142,8 +143,10 @@ fn parse_txt_record(properties: &BTreeMap<String, String>) -> Result<DiscoveredH
 
 #[cfg(feature = "mdns-discovery")]
 mod inner {
-    use super::{parse_txt_record, DiscoveredHub, HubDiscoveryConfig, STALE_DURATION_SECS, SERVICE_TYPE};
-    use std::collections::HashSet;
+    use super::{
+        parse_txt_record, DiscoveredHub, HubDiscoveryConfig, SERVICE_TYPE, STALE_DURATION_SECS,
+    };
+    use std::collections::{BTreeMap, HashSet};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -169,16 +172,14 @@ mod inner {
             let daemon = Arc::new(daemon);
 
             // Register our own service
+            let txt_properties: Vec<(&str, &str)> = vec![("txtvers", "1")];
             let service_info = mdns_sd::ServiceInfo::new(
                 SERVICE_TYPE,
                 &config.instance_id,
                 &format!("zanpos-hub-{}.local.", &config.instance_id),
                 "",
                 config.port,
-                &[(
-                    "txtvers",
-                    "1",
-                )],
+                txt_properties.as_slice(),
             )
             .map_err(|e| format!("mDNS service info creation failed: {e}"))?;
 
@@ -217,11 +218,7 @@ mod inner {
 
             let discovered = Arc::clone(&self.discovered);
             let running = Arc::clone(&self.running);
-            let daemon = Arc::clone(
-                self.daemon
-                    .as_ref()
-                    .ok_or("mDNS daemon not initialized")?,
-            );
+            let daemon = Arc::clone(self.daemon.as_ref().ok_or("mDNS daemon not initialized")?);
 
             // Browse for _zanpos-hub._tcp.local services
             let receiver = daemon
@@ -240,11 +237,9 @@ mod inner {
                             Self::handle_resolved(&discovered, &info);
                         }
                         Ok(_) => {} // Ignore other events (search started, etc.)
-                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                            // Timeout — normal, just loop again
-                        }
-                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                            break;
+                        Err(_) => {
+                            // recv_timeout exhausted or daemon disconnected.
+                            // Loop continues; running flag controls lifecycle.
                         }
                     }
                 }
@@ -257,7 +252,15 @@ mod inner {
             discovered: &Arc<Mutex<HashSet<DiscoveredHub>>>,
             info: &mdns_sd::ServiceInfo,
         ) {
-            let properties = info.get_properties();
+            let raw_props = info.get_properties();
+            let properties: BTreeMap<String, String> = raw_props
+                .iter()
+                .map(|prop| {
+                    let key = prop.key().to_string();
+                    let value = prop.val_str().to_string();
+                    (key, value)
+                })
+                .collect();
             let timestamp = now_secs();
 
             let mut hub = match parse_txt_record(&properties) {
@@ -274,9 +277,7 @@ mod inner {
                 hub.host = *addr;
             }
 
-            let mut guard = discovered
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
+            let mut guard = discovered.lock().unwrap_or_else(|error| error.into_inner());
 
             // Update or insert — deduplicates by instance_id
             guard.replace(hub);

@@ -31,11 +31,11 @@ mod inner {
         }
 
         /// Shape Arabic text into positioned glyphs using rustybuzz.
-        pub fn shape(&self, text: &str, font_size: f32) -> Vec<ShapedGlyph> {
+        pub fn shape(&self, text: &str, _font_size: f32) -> Vec<ShapedGlyph> {
             if text.is_empty() || self.font_data.is_none() {
                 return vec![];
             }
-            if text.chars().all(|c| c.is_ascii()) {
+            if text.is_ascii() {
                 return vec![];
             }
             // Placeholder: real implementation requires:
@@ -66,7 +66,10 @@ mod inner {
 
     impl Rasterizer {
         pub fn new(width_px: u32, height_px: u32) -> Self {
-            Self { width_px, height_px }
+            Self {
+                width_px,
+                height_px,
+            }
         }
 
         /// Rasterize shaped glyphs to a monochrome bitmap.
@@ -103,17 +106,31 @@ mod inner {
 
     pub struct ArabicShaper;
     impl ArabicShaper {
-        pub fn new() -> Self { Self }
-        pub fn with_font(self, _font_bytes: Vec<u8>) -> Self { self }
-        pub fn shape(&self, _text: &str, _font_size: f32) -> Vec<ShapedGlyph> { vec![] }
-        pub fn has_font(&self) -> bool { false }
+        pub fn new() -> Self {
+            Self
+        }
+        pub fn with_font(self, _font_bytes: Vec<u8>) -> Self {
+            self
+        }
+        pub fn shape(&self, _text: &str, _font_size: f32) -> Vec<ShapedGlyph> {
+            vec![]
+        }
+        pub fn has_font(&self) -> bool {
+            false
+        }
     }
 
     pub struct Rasterizer;
     impl Rasterizer {
-        pub fn new(_w: u32, _h: u32) -> Self { Self }
-        pub fn rasterize(&self, _g: &[ShapedGlyph]) -> (u32, u32, Vec<u8>) { (0, 0, vec![]) }
-        pub fn dimensions(&self) -> (u32, u32) { (0, 0) }
+        pub fn new(_w: u32, _h: u32) -> Self {
+            Self
+        }
+        pub fn rasterize(&self, _g: &[ShapedGlyph]) -> (u32, u32, Vec<u8>) {
+            (0, 0, vec![])
+        }
+        pub fn dimensions(&self) -> (u32, u32) {
+            (0, 0)
+        }
     }
 }
 
@@ -135,7 +152,10 @@ mod tests {
     fn shaper_skips_ascii_text() {
         let shaper = ArabicShaper::new().with_font(vec![0u8; 1024]);
         let glyphs = shaper.shape("Hello World", 12.0);
-        assert!(glyphs.is_empty(), "ASCII-only text should take the English fast path");
+        assert!(
+            glyphs.is_empty(),
+            "ASCII-only text should take the English fast path"
+        );
     }
 
     #[test]
@@ -152,15 +172,15 @@ mod tests {
     #[test]
     fn rasterizer_produces_correct_dimensions() {
         let raster = Rasterizer::new(384, 64);
-        let (w, h, data) = raster.dimensions();
+        let (w, h) = raster.dimensions();
         assert_eq!(w, 384);
         assert_eq!(h, 64);
 
-        let bitmap = raster.rasterize(&[]);
-        assert_eq!(bitmap.0, 384);
-        assert_eq!(bitmap.1, 64);
+        let (bw, bh, data) = raster.rasterize(&[]);
+        assert_eq!(bw, 384);
+        assert_eq!(bh, 64);
         let expected_bytes = 384usize.div_ceil(8) * 64;
-        assert_eq!(bitmap.2.len(), expected_bytes);
+        assert_eq!(data.len(), expected_bytes);
     }
 
     #[test]
@@ -169,6 +189,9 @@ mod tests {
         let (w, h, data) = raster.rasterize(&[]);
         assert_eq!(w, 48);
         assert_eq!(h, 16);
-        assert!(data.iter().all(|&b| b == 0), "empty glyphs should produce blank bitmap");
+        assert!(
+            data.iter().all(|&b| b == 0),
+            "empty glyphs should produce blank bitmap"
+        );
     }
 }

@@ -29,6 +29,7 @@ pub struct ActionDefinition {
     pub timeout_seconds: u64,
     pub confirmation: ConfirmationPolicy,
     pub has_undo: bool,
+    pub input_schema: Value,
 }
 
 pub struct ActionRegistry {
@@ -67,6 +68,7 @@ impl ActionRegistry {
                     Confirmation::Never => ConfirmationPolicy::Automatic,
                 },
                 has_undo: descriptor.undo != UndoPolicy::None,
+                input_schema: def.input_schema.clone(),
             };
             reg.actions.insert(def.name.clone(), action);
         }
@@ -108,31 +110,44 @@ impl ActionRegistry {
     }
 
     /// Generate provider-facing JSON Schema tool definitions for all registered actions.
+    /// Preserves the full input_schema properties from the authoritative tool definitions.
     pub fn generate_provider_schemas(&self, provider: &str) -> Vec<Value> {
         self.all()
-            .map(|def| match provider {
-                "openai" => json!({
-                    "type": "function",
-                    "function": {
+            .map(|def| {
+                let properties = def
+                    .input_schema
+                    .get("properties")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
+                let required = def
+                    .input_schema
+                    .get("required")
+                    .cloned()
+                    .unwrap_or_else(|| json!([]));
+                match provider {
+                    "openai" => json!({
+                        "type": "function",
+                        "function": {
+                            "name": def.name,
+                            "description": def.description,
+                            "parameters": {
+                                "type": "object",
+                                "properties": properties,
+                                "required": required
+                            }
+                        }
+                    }),
+                    "anthropic" => json!({
                         "name": def.name,
                         "description": def.description,
-                        "parameters": {
+                        "input_schema": {
                             "type": "object",
-                            "properties": {},
-                            "required": []
+                            "properties": properties,
+                            "required": required
                         }
-                    }
-                }),
-                "anthropic" => json!({
-                    "name": def.name,
-                    "description": def.description,
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {},
-                        "required": []
-                    }
-                }),
-                _ => json!({ "name": def.name, "description": def.description }),
+                    }),
+                    _ => json!({ "name": def.name, "description": def.description }),
+                }
             })
             .collect()
     }
@@ -248,5 +263,32 @@ mod schema_tests {
             assert!(s["name"].is_string());
             assert!(s["input_schema"].is_object());
         }
+    }
+
+    #[test]
+    fn schemas_preserve_input_properties() {
+        let reg = ActionRegistry::load().expect("authoritative registry");
+        let schemas = reg.generate_provider_schemas("openai");
+
+        let search = schemas
+            .iter()
+            .find(|s| s["function"]["name"] == "search_products")
+            .expect("search_products in openai schemas");
+        let props = &search["function"]["parameters"]["properties"];
+        assert!(
+            props["query"].is_object(),
+            "search_products must have query property"
+        );
+        assert_eq!(props["query"]["type"], "string");
+
+        let required = &search["function"]["parameters"]["required"];
+        assert!(required.as_array().unwrap().contains(&json!("query")));
+
+        let anthropic = reg.generate_provider_schemas("anthropic");
+        let anthro = anthropic
+            .iter()
+            .find(|s| s["name"] == "search_products")
+            .expect("search_products in anthropic schemas");
+        assert!(anthro["input_schema"]["properties"]["query"].is_object());
     }
 }

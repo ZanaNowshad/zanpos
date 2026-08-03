@@ -1,3 +1,4 @@
+import { useRef, useCallback } from "react";
 import type { ZodSchema } from "zod";
 
 /**
@@ -33,18 +34,23 @@ export function validatePayload<TSchema extends ZodSchema>(
 }
 
 /**
- * Prevents double-submit by tracking a submission lock.
- * Returns a [lock, unlock] pair.
+ * Prevents double-submit with a ref-based lock that survives re-renders.
+ * Returns [isLocked, tryLock, unlock].
  */
-export function useSubmitGuard(): [boolean, () => void, () => void] {
-  let locked = false;
-  const lock = () => {
-    if (locked) return false;
-    locked = true;
+export function useSubmitGuard(): [boolean, () => boolean, () => void] {
+  const lockedRef = useRef(false);
+
+  const isLocked = lockedRef.current;
+
+  const tryLock = useCallback(() => {
+    if (lockedRef.current) return false;
+    lockedRef.current = true;
     return true;
-  };
-  const unlock = () => {
-    locked = false;
-  };
-  return [locked, lock, unlock];
+  }, []);
+
+  const unlock = useCallback(() => {
+    lockedRef.current = false;
+  }, []);
+
+  return [isLocked, tryLock, unlock];
 }

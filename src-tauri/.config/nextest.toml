@@ -1,0 +1,23 @@
+# cargo-nextest configuration for ZANPOS
+#
+# Test parity (2026-08-02):
+#   cargo test --all-targets:    covers all tests
+#   cargo nextest --all-targets: covers same set
+#   cargo test --doc:            retained separately (nextest does not run doc-tests)
+#   CI runs both cargo test --all-targets AND cargo nextest with JUnit output
+#   No generic retry policy: flaky tests addressed individually at source
+
+[profile.default]
+slow-timeout = { period = "30s", terminate-after = 3 }
+leak-timeout = "2s"
+
+[profile.ci]
+slow-timeout = { period = "30s", terminate-after = 2 }
+leak-timeout = "2s"
+
+# JUnit output for CI artifact publication
+[profile.ci.junit]
+path = "target/nextest/ci/junit.xml"
+report-name = "zanpos-test-report"
+store-success-output = false
+store-failure-output = true

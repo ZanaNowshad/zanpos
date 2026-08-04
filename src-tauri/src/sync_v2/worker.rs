@@ -7,6 +7,7 @@ use crate::sync_v2::apply::{
 };
 use crate::sync_v2::client::HttpSyncClient;
 use crate::sync_v2::consistency;
+use crate::telemetry::{self, ZanposSpan};
 use serde_json::Value;
 use sqlx::Column;
 use sqlx::{Row, SqlitePool};
@@ -451,6 +452,7 @@ impl SyncWorker {
     /// app_config/keyring lookup. Production path load_client() + run_once()
     /// delegates here.
     pub async fn run_once_with(&self, client: &HttpSyncClient, device_id: &str) {
+        let _span = telemetry::instrument(ZanposSpan::SyncBatch { table_count: 0 });
         let _ = self.push_pending(client).await;
         let _ = self.pull_changes(client, device_id).await;
     }

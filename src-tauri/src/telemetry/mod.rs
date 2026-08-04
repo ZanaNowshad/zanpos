@@ -100,6 +100,36 @@ impl ZanposSpan {
     }
 }
 
+/// Instrument an operation with an OTel span (no-op when feature is disabled).
+#[inline]
+pub fn instrument(span_def: ZanposSpan) -> impl Drop {
+    let name = span_def.name().to_string();
+    #[cfg(feature = "otel-tracing")]
+    {
+        use opentelemetry::trace::Tracer;
+        use opentelemetry::KeyValue;
+        if let Some(tracer) = inner::TRACER.get() {
+            let attrs: Vec<KeyValue> = span_def
+                .attributes()
+                .iter()
+                .map(|(k, v)| KeyValue::new(k.to_string(), v.to_string()))
+                .collect();
+            let span = tracer
+                .span_builder(name)
+                .with_attributes(attrs)
+                .start(tracer);
+            return span.enter();
+        }
+    }
+    // No-op guard — does nothing on drop
+    struct NoopGuard;
+    impl Drop for NoopGuard {
+        fn drop(&mut self) {}
+    }
+    let _ = (name, span_def);
+    NoopGuard
+}
+
 // ─── Initialization (feature-gated) ───────────────────────────────────────
 
 #[cfg(feature = "otel-tracing")]

@@ -2,11 +2,8 @@
  * WebdriverIO Tauri E2E configuration for ZANPOS.
  *
  * Prerequisites:
- *   - Tauri app built in debug mode: `cargo build` from src-tauri/
- *   - No existing ZANPOS instance running on the test machine
- *
- * The WebDriver protocol connects to Tauri's built-in automation support.
- * On Windows, the app binary path must resolve to the debug or release build.
+ *   - Tauri app built: cargo build from src-tauri/
+ *   - @wdio/tauri-service installed
  */
 
 import { join } from "node:path";
@@ -23,17 +20,26 @@ const DEBUG =
 
 const BINARY = join(DEBUG, "zanpos.exe");
 
-export const config: WebdriverIO.Config = {
+export const config = {
   runner: "local",
   specs: ["./specs/**/*.ts"],
   maxInstances: 1,
+  services: [
+    [
+      "@wdio/tauri-service",
+      {
+        appBinaryPath: BINARY,
+        driverProvider: "official",
+        autoInstallTauriDriver: true,
+      },
+    ],
+  ],
   capabilities: [
     {
       browserName: "tauri",
       "tauri:options": {
         application: BINARY,
         args: [],
-        webviewOptions: {},
       },
     },
   ],
@@ -45,7 +51,6 @@ export const config: WebdriverIO.Config = {
     timeout: 60000,
   },
   before: async () => {
-    // Allow time for the Tauri app to spawn and the WebView to load.
     await browser.pause(5000);
   },
 };

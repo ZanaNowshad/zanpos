@@ -41,10 +41,10 @@ export default function LineDiscountModal({ line, onApply, onCancel }: Props) {
           Qty: {line.quantity} · Unit: {fmt(line.unit_price_minor)} · Line: {fmt(total)}
         </p>
 
-        <label className="line-edit-label">{t("discountAmount")}</label>
+        <label htmlFor="a11y-wrap-LineDiscountModal" className="line-edit-label">{t("discountAmount")}</label>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
           <span style={{ fontWeight: 700 }}>{cur}</span>
-          <input
+          <input id="a11y-wrap-LineDiscountModal"
             className="line-edit-qty-input"
             style={{ flex: 1 }}
             type="number"

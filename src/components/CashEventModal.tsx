@@ -175,10 +175,10 @@ export default function CashEventModal({ shiftId, userId, cashierName, onDone, o
           </div>
 
           {/* Note */}
-          <label className="ce-note-label">
+          <label htmlFor="a11y-wrap-CashEventModal" className="ce-note-label">
             {needsNote ? t("reasonRequired") : t("noteOptional")}
           </label>
-          <input
+          <input id="a11y-wrap-CashEventModal"
             ref={noteRef}
             className="ce-note-input"
             type="text"

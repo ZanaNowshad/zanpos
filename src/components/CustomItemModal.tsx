@@ -207,8 +207,8 @@ export default function CustomItemModal({ onAdd, onCancel }: Props) {
           )}
 
           {/* Description */}
-          <label className="ce-note-label">{t("description")} <span className="ce-label-optional">({t("optional")})</span></label>
-          <input
+          <label htmlFor="a11y-fix-CustomItemModal" className="ce-note-label">{t("description")} <span className="ce-label-optional">({t("optional")})</span></label>
+          <input id="a11y-fix-CustomItemModal"
             ref={nameRef}
             className="ce-note-input"
             type="text"

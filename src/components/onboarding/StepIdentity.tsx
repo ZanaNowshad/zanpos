@@ -111,7 +111,7 @@ export default function StepIdentity({ draft, onNext }: Props) {
       </select>
       <p className="setup-field-hint">Used for the public storefront and WhatsApp ordering.</p>
 
-      <label className="field-label">VAT</label>
+      <label htmlFor="a11y-wrap-StepIdentity" className="field-label">VAT</label>
       <div className="setup-vat-choices">
         <label htmlFor="a11y-input-5" className="bo-checkbox-label">
           <input id="a11y-input-5" type="radio" name="vat-choice" checked={form.vatChoice === "standard"}

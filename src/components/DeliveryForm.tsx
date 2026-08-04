@@ -117,10 +117,10 @@ export default function DeliveryForm({
           />
         </div>
         <div className="delivery-field" style={{ flex: 1 }}>
-          <label className="delivery-label">
+          <label htmlFor="a11y-wrap-DeliveryForm" className="delivery-label">
             {t("buildingHouse")} <span className="delivery-required">*</span>
           </label>
-          <input
+          <input id="a11y-wrap-DeliveryForm"
             className="delivery-input"
             placeholder="12"
             value={value.house_number ?? ""}
@@ -131,10 +131,10 @@ export default function DeliveryForm({
 
       {/* Road Number */}
       <div className="delivery-field">
-        <label className="delivery-label">
+        <label htmlFor="a11y-wrap-DeliveryForm" className="delivery-label">
           {t("roadNumber")} <span className="delivery-required">*</span>
         </label>
-        <input
+        <input id="a11y-wrap-DeliveryForm"
           className="delivery-input"
           placeholder={t("roadBlockNumber")}
           value={value.address_text ?? ""}

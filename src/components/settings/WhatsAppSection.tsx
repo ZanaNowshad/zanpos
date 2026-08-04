@@ -277,10 +277,10 @@ export default function WhatsAppSection({
         <div className="wa-import-result wa-import-result-err" role="alert">{saveError}</div>
       )}
 
-      <label className="bo-label" style={{ marginTop: "16px" }}>BenefitPay Number</label>
+      <label htmlFor="a11y-wrap-WhatsAppSection" className="bo-label" style={{ marginTop: "16px" }}>BenefitPay Number</label>
       <p className="settings-hint">Sent in delivery messages so customers can pay you.</p>
       <div className="wa-benefit-row">
-        <input
+        <input id="a11y-wrap-WhatsAppSection"
           className="bo-input"
           placeholder="e.g. +97333050666"
           value={benefitNum}

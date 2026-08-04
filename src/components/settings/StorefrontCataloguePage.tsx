@@ -287,7 +287,7 @@ export default function StorefrontCataloguePage({ sessionUserId, settings }: Pro
                     <input id="a11y-input-3" type="checkbox" checked={product.featured} disabled={updatingId !== null} onChange={event => void updateProduct(product.product_id, { featured: event.target.checked })} />
                     <Sparkles aria-hidden="true" /> Featured
                   </label>
-                  <label className="sf-order-field">Order<input type="number" min="0" disabled={updatingId !== null} value={product.sort_order} onChange={event => patchProduct(product.product_id, { sort_order: Number(event.target.value) })} onBlur={event => void updateProduct(product.product_id, { sort_order: Math.max(0, Number(event.target.value) || 0) })} /></label>
+                  <label htmlFor="a11y-wrap-StorefrontCataloguePage" className="sf-order-field">Order<input type="number" min="0" disabled={updatingId !== null} value={product.sort_order} onChange={event => patchProduct(product.product_id, { sort_order: Number(event.target.value) })} onBlur={event => void updateProduct(product.product_id, { sort_order: Math.max(0, Number(event.target.value) || 0) })} /></label>
                   {product.publish_error && <span className="sf-product-error">{product.publish_error}</span>}
                 </article>
               ))}

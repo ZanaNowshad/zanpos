@@ -241,7 +241,7 @@ export default function StorefrontSetupPage({
           <summary>Advanced · Custom publishing endpoint</summary>
           <div className="sf-field-grid">
             <label htmlFor="a11y-input-3">CDN / publish destination<input value={settings.publish_url} onChange={event => patchSettings({ publish_url: event.target.value })} placeholder="https://shop.example.com" /></label>
-            <label>
+            <label htmlFor="a11y-fix-StorefrontSetupPage">
               Publishing secret
               <input id="a11y-input-3" type="password" autoComplete="new-password" value={settings.publish_secret ?? ""} onChange={event => patchSettings({ publish_secret: event.target.value || undefined })} placeholder="Leave blank to keep the stored secret" />
               <small>Use this only for an existing custom deployment.</small>

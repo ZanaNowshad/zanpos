@@ -237,7 +237,7 @@ export default function NotificationModal({
   return (
     <>
     <button className="modal-overlay" type="button" onClick={handleClose}>
-      <div
+   <div tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }} 
         ref={modalRef}
         className="modal ghost-modal notif-modal"
         role="dialog"
@@ -442,8 +442,8 @@ export default function NotificationModal({
     </button>
 
     {viewing && (
-      <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="modal-overlay wa-view-overlay" onClick={() => setViewing(null)}>
-        <div
+      <div tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="modal-overlay wa-view-overlay" onClick={() => setViewing(null)}>
+    <div tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }} 
           className="modal wa-view-modal"
           role="dialog"
           aria-modal="true"

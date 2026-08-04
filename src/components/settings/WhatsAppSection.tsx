@@ -298,7 +298,7 @@ export default function WhatsAppSection({
 
       {status.connected && isManager && (
         <div className="wa-alerts-block">
-          <label className="bo-label" style={{ marginTop: "20px" }}>POS Alerts — Owner & Store Group</label>
+          <span className="bo-label" style={{ marginTop: "20px" }}>POS Alerts — Owner & Store Group</span>
           <p className="settings-hint">
             Messages from these two chats pop up as POS notifications at the till — so you never
             miss the owner or the store group while serving customers.

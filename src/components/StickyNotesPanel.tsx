@@ -120,7 +120,7 @@ export default function StickyNotesPanel({ onClose }: Props) {
   const nowInput = toLocalDateTimeInput(new Date());
 
   return (
-    <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="stickynotes-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+  <div tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }} className="stickynotes-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="stickynotes-panel" ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="stickynotes-title">
 
         {/* Header */}
@@ -258,7 +258,7 @@ export default function StickyNotesPanel({ onClose }: Props) {
                     </div>
                   </>
                 ) : (
-                  <div
+                  <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }} 
                     className="stickynote-body"
                     onClick={() => startEdit(note)}
                     title="Click to edit"

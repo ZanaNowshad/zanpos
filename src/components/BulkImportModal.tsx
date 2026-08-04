@@ -184,6 +184,9 @@ export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }
             </button>
             <div
               className="bulk-dropzone"
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileRef.current?.click(); } }}
               onDrop={handleDrop}
               onDragOver={e => e.preventDefault()}
               onClick={() => fileRef.current?.click()}

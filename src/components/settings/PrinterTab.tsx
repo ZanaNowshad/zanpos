@@ -62,11 +62,11 @@ export default function PrinterTab(props: PrinterTabProps) {
             )}
           </div>
           <div>
-            <label className="bo-label">
+            <label htmlFor="a11y-PrinterTab-65" className="bo-label">
               Baud Rate
               <span className="printer-baud-hint">(serial only)</span>
             </label>
-            <select className="bo-select" value={thermal.baud}
+            <select id="a11y-PrinterTab-65" className="bo-select" value={thermal.baud}
               onChange={e => setThermal(t => ({ ...t, baud: e.target.value }))}
               disabled={!thermal.enabled}>
               <option value="9600">9600</option>

@@ -87,7 +87,7 @@ export default function LineEditModal({
 
   return (
     <button className="modal-overlay" type="button" onClick={onClose}>
-      <div
+   <div tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }} 
         ref={modalRef}
         className="modal line-edit-modal"
         role="dialog"

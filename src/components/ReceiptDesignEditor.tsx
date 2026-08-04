@@ -207,7 +207,7 @@ export default function ReceiptDesignEditor({ storeName, storeAddress, storePhon
           <div className="rd-section-title">Paper & Layout</div>
 
           <div className="rd-field">
-            <label className="bo-label">Paper Width</label>
+            <span className="bo-label">Paper Width</span>
             <div className="rd-radio-group">
               {(["58mm", "80mm"] as const).map(w => (
                 <button
@@ -220,7 +220,7 @@ export default function ReceiptDesignEditor({ storeName, storeAddress, storePhon
           </div>
 
           <div className="rd-field">
-            <label className="bo-label">Text Alignment</label>
+            <span className="bo-label">Text Alignment</span>
             <div className="rd-radio-group">
               {(["left", "center"] as const).map(a => (
                 <button
@@ -233,7 +233,7 @@ export default function ReceiptDesignEditor({ storeName, storeAddress, storePhon
           </div>
 
           <div className="rd-field">
-            <label className="bo-label">Font Size</label>
+            <span className="bo-label">Font Size</span>
             <div className="rd-radio-group">
               {(["small", "medium", "large"] as const).map(s => (
                 <button
@@ -264,7 +264,7 @@ export default function ReceiptDesignEditor({ storeName, storeAddress, storePhon
           <div className="rd-section-title">Default Printer</div>
 
           <div className="rd-field">
-            <label className="bo-label">Print Mode</label>
+            <span className="bo-label">Print Mode</span>
             <div className="rd-radio-group">
               <button
                 className={`rd-radio-btn${design.print_mode === "thermal" ? " active" : ""}`}

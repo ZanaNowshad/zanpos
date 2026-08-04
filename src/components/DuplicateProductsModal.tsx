@@ -134,7 +134,7 @@ export default function DuplicateProductsModal({ sessionUserId, onClose, onResol
 
   return (
     <button className="modal-overlay" type="button" onClick={onClose}>
-      <div
+   <div tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }} 
         ref={modalRef}
         className="modal dup-modal"
         role="dialog"

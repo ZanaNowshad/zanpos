@@ -1065,7 +1065,7 @@ function WelcomeFilePicker({ onFile, isDragOver, compact }: { onFile: (p: string
 
   return (
     <div style={{ marginTop:14 }}>
-      <div
+      <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }} 
         onClick={handlePick}
         className={`mig-dropzone${isDragOver?" mig-dropzone--over":""}`}
         style={{ cursor:"pointer" }}

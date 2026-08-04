@@ -187,7 +187,6 @@ export default function CustomItemModal({ onAdd, onCancel }: Props) {
                   value={newSugName}
                   onChange={e => setNewSugName(e.target.value)}
                   onKeyDown={e => e.key === "Enter" && addSuggestion()}
-                  autoFocus
                 />
                 <input
                   className="ci-manage-input ci-manage-price-input"

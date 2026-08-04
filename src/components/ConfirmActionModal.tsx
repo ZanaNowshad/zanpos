@@ -54,7 +54,7 @@ export default function ConfirmActionModal({ preview, previews, expiresAt, onCon
 
   return (
     <button className="modal-overlay" type="button" onClick={onCancel}>
-      <div
+   <div tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }} 
         ref={modalRef}
         className="modal confirm-action-modal"
         role="dialog"

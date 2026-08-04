@@ -323,7 +323,7 @@ export default function PaymentModal({
           <div className="pm-method-guidance">{methodHint}</div>
 
           <div className="pm-step-label"><span>2</span> {dt("confirmAmount")}</div>
-          <div
+          <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }} 
             className={`pm-amount-box${showSplit ? " pm-amount-editable" : " pm-amount-locked"}${activeField?.kind === "amount" ? " pm-field-active" : ""}`}
             onClick={() => showSplit && setActiveField({ kind: "amount", lineId: mainLine.id })}
           >
@@ -335,7 +335,7 @@ export default function PaymentModal({
           </div>
 
           {mainLine.method === "cash" && (
-            <div
+            <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }} 
               className={`pm-amount-box pm-tendered-box${activeField?.kind === "tendered" ? " pm-field-active" : ""}`}
               onClick={() => setActiveField({ kind: "tendered", lineId: mainLine.id })}
             >
@@ -381,7 +381,7 @@ export default function PaymentModal({
                     <option value="wallet">{dt("wallet")}</option>
                     <option value="other">••• {dt("other")}</option>
                   </select>
-                  <div
+                  <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }} 
                     className={`pm-amount-box pm-split-amount${activeField?.kind === "amount" && activeField.lineId === line.id ? " pm-field-active" : ""}`}
                     onClick={() => setActiveField({ kind: "amount", lineId: line.id })}
                   >

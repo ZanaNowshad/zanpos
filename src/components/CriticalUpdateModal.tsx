@@ -32,7 +32,7 @@ export default function CriticalUpdateModal({
   const dismiss = requiredBeforeShift ? undefined : onRemindLater;
   return (
     <button className="modal-overlay" type="button" onClick={dismiss}>
-      <div
+   <div tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }} 
         className="modal critical-update-modal"
         onClick={(e) => e.stopPropagation()}
         role="dialog"

@@ -23,7 +23,7 @@ export default function OfficeAICommandPalette({ items, onSelect, onDismiss }: P
   }, [items, query]);
 
   return (
-    <div role="presentation" className="oa-modal-backdrop" onMouseDown={onDismiss}>
+  <div className="oa-modal-backdrop" onMouseDown={onDismiss}>
       <section className="oa-command-palette" role="dialog" aria-modal="true" aria-label={t("openWorkspace")} onMouseDown={event => event.stopPropagation()}>
         <div className="oa-command-search">
           <Search size={17} />

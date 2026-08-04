@@ -191,12 +191,12 @@ export default function QuranToggle() {
       >
         <span className={`quran-icon${loading ? " quran-icon-spin" : ""}`}>{icon}</span>
         <span className="quran-label">Quran</span>
-        <span className="quran-caret" onClick={(e) => { e.stopPropagation(); setShowMenu(m => !m); }}>▾</span>
+        <span role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="quran-caret" onClick={(e) => { e.stopPropagation(); setShowMenu(m => !m); }}>▾</span>
       </button>
 
       {showMenu && (
         <>
-          <div className="quran-menu-backdrop" onClick={() => setShowMenu(false)} />
+          <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="quran-menu-backdrop" onClick={() => setShowMenu(false)} />
           <div className="quran-menu" role="menu">
             <div className="quran-menu-title">Reciter</div>
             {RECITERS.map(r => (

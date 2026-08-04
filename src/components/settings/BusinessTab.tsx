@@ -297,11 +297,11 @@ export default function BusinessTab(props: BusinessTabProps) {
               </div>
               <div className="tax-rule-row-actions">
                 <button className="btn-secondary btn-sm"
-                  onClick={() => setEditingRule({ ...rule, rate_basis_points: rule.rate_basis_points })}>
+                  onClick={() => setEditingRule({ ...rule, rate_basis_points: rule.rate_basis_points })} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}>
                   Edit
                 </button>
                 <button className="btn-danger btn-sm"
-                  onClick={() => handleDeleteTaxRule(rule.tax_rule_id)}>
+                  onClick={() => handleDeleteTaxRule(rule.tax_rule_id)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}>
                   Delete
                 </button>
               </div>
@@ -310,7 +310,7 @@ export default function BusinessTab(props: BusinessTabProps) {
         </div>
 
         <button className="btn-secondary btn-sm" style={{ marginTop: "12px" }}
-          onClick={() => setEditingRule({ name: "", rate_basis_points: 0, inclusive: false, is_active: true })}>
+          onClick={() => setEditingRule({ name: "", rate_basis_points: 0, inclusive: false, is_active: true })} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}>
           + Add Tax Rule
         </button>
 
@@ -334,12 +334,12 @@ export default function BusinessTab(props: BusinessTabProps) {
             <label className="bo-label">Tax Method</label>
             <div className="tax-method-toggle">
               <button className={`tax-method-btn${!editingRule.inclusive ? " active" : ""}`}
-                onClick={() => setEditingRule(r => r ? { ...r, inclusive: false } : r)}>
+                onClick={() => setEditingRule(r => r ? { ...r, inclusive: false } : r)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}>
                 Exclusive
                 <span className="tax-method-hint">Tax added on top of price</span>
               </button>
               <button className={`tax-method-btn${editingRule.inclusive ? " active" : ""}`}
-                onClick={() => setEditingRule(r => r ? { ...r, inclusive: true } : r)}>
+                onClick={() => setEditingRule(r => r ? { ...r, inclusive: true } : r)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}>
                 Inclusive
                 <span className="tax-method-hint">Price already includes tax</span>
               </button>
@@ -361,7 +361,7 @@ export default function BusinessTab(props: BusinessTabProps) {
 
             <div className="tax-rule-editor-actions">
               <button className="btn-secondary btn-sm"
-                onClick={() => { setEditingRule(null); setTaxRuleError(null); }}>
+                onClick={() => { setEditingRule(null); setTaxRuleError(null); }} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}>
                 Cancel
               </button>
               <button className="btn-primary btn-sm" onClick={handleSaveTaxRule} disabled={savingRule}>

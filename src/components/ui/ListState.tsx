@@ -59,7 +59,7 @@ export default function ListState({
         <strong>{emptyTitle}</strong>
         {emptyHint && <span>{emptyHint}</span>}
         {emptyAction && (
-          <Button variant="primary" onClick={emptyAction.onAction}>{emptyAction.label}</Button>
+          <Button role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  variant="primary" onClick={emptyAction.onAction}>{emptyAction.label}</Button>
         )}
       </div>
     );

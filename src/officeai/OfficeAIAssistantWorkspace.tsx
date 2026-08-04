@@ -84,7 +84,7 @@ export default function OfficeAIAssistantWorkspace({
         />
       </div>
       {contextOpen && (
-        <div className="oa-sheet-backdrop" onMouseDown={() => setContextOpen(false)}>
+        <div role="presentation"  className="oa-sheet-backdrop" onMouseDown={() => setContextOpen(false)}>
           <aside
             id="oa-business-context"
             className="oa-context-sheet"

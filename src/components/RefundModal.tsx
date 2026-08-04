@@ -258,7 +258,7 @@ export default function RefundModal({ cashierUserId, onClose, onExchangeStarted 
 
   return (
     <button className="modal-overlay" type="button" onClick={onClose}>
-      <div className="modal refund-modal" onClick={e => e.stopPropagation()}>
+      <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="modal refund-modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <h2 className="modal-title">{t("refund")}</h2>
           <button className="modal-close" onClick={onClose} aria-label={t("close")}><X size={18} /></button>
@@ -459,8 +459,8 @@ export default function RefundModal({ cashierUserId, onClose, onExchangeStarted 
           </>
         )}
         {showPinEntry && (
-          <div className="modal-overlay pin-overlay" onClick={() => setShowPinEntry(false)}>
-            <div className="modal pin-modal" onClick={e => e.stopPropagation()}>
+          <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="modal-overlay pin-overlay" onClick={() => setShowPinEntry(false)}>
+            <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="modal pin-modal" onClick={e => e.stopPropagation()}>
               <div className="modal-header">
                 <h3>{t("managerOverrideRequired")}</h3>
                 <button className="modal-close" onClick={() => setShowPinEntry(false)} aria-label={t("close")}><X size={18} /></button>

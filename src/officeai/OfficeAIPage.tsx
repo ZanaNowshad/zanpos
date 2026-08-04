@@ -464,8 +464,8 @@ export default function OfficeAIPage({
       </OfficeAIShell>
 
       {dockOpen && tab !== "assistant" && (
-        <div className="oa-copilot-backdrop" onMouseDown={() => setDockOpen(false)}>
-          <div className="oa-copilot-sheet" onMouseDown={event => event.stopPropagation()}>
+        <div role="presentation"  className="oa-copilot-backdrop" onMouseDown={() => setDockOpen(false)}>
+          <div role="presentation"  className="oa-copilot-sheet" onMouseDown={event => event.stopPropagation()}>
             <CopilotDock
               ctrl={ctrl}
               userName={sessionUser.display_name}

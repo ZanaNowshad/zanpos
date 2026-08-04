@@ -79,7 +79,7 @@ export default function SyncConfidenceDrawer({ open, status, actorUserId, onClos
   if (!open) return null;
 
   return (
-    <div className="sync-confidence-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="sync-confidence-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
       <aside className="sync-confidence-drawer" aria-label="Sync confidence details">
         <header className="sync-confidence-header">
           <div>

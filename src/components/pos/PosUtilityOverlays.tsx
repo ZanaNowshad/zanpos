@@ -35,7 +35,7 @@ export default function PosUtilityOverlays({
       />
 
       {restockAlerts.length > 0 && (
-        <div className="restock-toast-overlay" onClick={onDismissRestockAlerts}>
+        <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="restock-toast-overlay" onClick={onDismissRestockAlerts}>
           {restockAlerts.map(alert => (
             <div key={alert.product_id} className="restock-toast">
               <span className="restock-toast-title">⚠ Low Stock</span>

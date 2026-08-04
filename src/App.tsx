@@ -398,7 +398,7 @@ export default function App() {
         )}
 
       {idleWarning && (
-        <div className="idle-warning-banner" onClick={() => setIdleWarning(false)}>
+        <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="idle-warning-banner" onClick={() => setIdleWarning(false)}>
           ⏱ Session locking in 60 seconds — tap anywhere to stay active
           <button className="idle-warning-dismiss" onClick={e => { e.stopPropagation(); setIdleWarning(false); }}>✕</button>
         </div>

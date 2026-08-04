@@ -442,7 +442,7 @@ export default function NotificationModal({
     </button>
 
     {viewing && (
-      <div className="modal-overlay wa-view-overlay" onClick={() => setViewing(null)}>
+      <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="modal-overlay wa-view-overlay" onClick={() => setViewing(null)}>
         <div
           className="modal wa-view-modal"
           role="dialog"

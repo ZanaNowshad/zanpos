@@ -242,7 +242,7 @@ function AiSettingsDrawer({ onClose, onSaved, sessionToken }: { onClose: () => v
 
   return (
     <>
-      <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", zIndex:40 }} />
+      <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", zIndex:40 }} />
       <div style={{ position:"fixed", top:0, right:0, bottom:0, width:340, background:"var(--surface)", borderLeft:"1px solid var(--border)", zIndex:41, display:"flex", flexDirection:"column", boxShadow:"-4px 0 24px rgba(0,0,0,0.3)" }}>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"14px 16px", borderBottom:"1px solid var(--border)" }}>
           <span style={{ fontWeight:700, fontSize:"0.95rem" }}>⚙ AI Model Settings</span>
@@ -373,7 +373,7 @@ function MappingDrawer({
 
   return (
     <>
-      <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:50 }} />
+      <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.5)", zIndex:50 }} />
       <div style={{ position:"fixed", top:0, right:0, bottom:0, width:"min(720px, 95vw)", background:"var(--surface)", borderLeft:"1px solid var(--border)", zIndex:51, display:"flex", flexDirection:"column", boxShadow:"-6px 0 32px rgba(0,0,0,0.35)" }}>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"14px 20px", borderBottom:"1px solid var(--border)", flexShrink:0 }}>
           <span style={{ fontWeight:700, fontSize:"1rem" }}>🗂 Review Column Mapping</span>
@@ -892,7 +892,7 @@ export default function MigrationAgentPage({ onDone, sessionUserId, sessionToken
       {/* DB Connection form */}
       {dbConnForm.open && (
         <>
-          <div onClick={() => setDbConnForm(f => ({ ...f, open: false }))} style={{ position:"fixed", inset:0, zIndex:30 }} />
+          <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  onClick={() => setDbConnForm(f => ({ ...f, open: false }))} style={{ position:"fixed", inset:0, zIndex:30 }} />
           <div style={{ position:"absolute", top:56, left:"50%", transform:"translateX(-50%)", zIndex:31, background:"var(--surface)", border:"1px solid var(--border)", borderRadius:10, padding:18, width:"min(440px, 90vw)", boxShadow:"0 8px 32px rgba(0,0,0,0.3)" }}>
             <div style={{ fontWeight:700, marginBottom:12, fontSize:"0.9rem" }}>🔌 Test DB Connection</div>
             <div style={{ display:"flex", gap:6, marginBottom:10 }}>
@@ -938,7 +938,7 @@ export default function MigrationAgentPage({ onDone, sessionUserId, sessionToken
       {/* Rollback confirm */}
       {showRollbackConfirm && (
         <>
-          <div onClick={() => setShowRollbackConfirm(false)} style={{ position:"fixed", inset:0, zIndex:30 }} />
+          <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  onClick={() => setShowRollbackConfirm(false)} style={{ position:"fixed", inset:0, zIndex:30 }} />
           <div style={{ position:"absolute", top:56, left:"50%", transform:"translateX(-50%)", zIndex:31, background:"var(--surface)", border:"1.5px solid #ef4444", borderRadius:10, padding:18, width:"min(420px, 90vw)", boxShadow:"0 8px 32px rgba(0,0,0,0.3)" }}>
             <div style={{ fontWeight:700, marginBottom:10, fontSize:"0.9rem", color:"#ef4444" }}>↩ Rollback Migration</div>
             <p style={{ margin:"0 0 12px", fontSize:"0.84rem", color:"var(--text-dim)", lineHeight:1.5 }}>

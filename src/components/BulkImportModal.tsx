@@ -164,7 +164,7 @@ export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }
   }
 
   return (
-    <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+    <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="bulk-modal">
         <div className="bulk-modal-header">
           <h2 className="bulk-modal-title">

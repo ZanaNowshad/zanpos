@@ -76,7 +76,7 @@ export default function StepRestore({ ownerUserId, onRestored, onSkip }: Props) 
           Nothing has been overwritten yet — that step is yours.
         </p>
         <div className="setup-actions">
-          <Button variant="secondary" onClick={onSkip}>Continue setup instead</Button>
+          <Button role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  variant="secondary" onClick={onSkip}>Continue setup instead</Button>
         </div>
       </div>
     );
@@ -100,8 +100,8 @@ export default function StepRestore({ ownerUserId, onRestored, onSkip }: Props) 
       </label>
       {error && <p className="setup-body" role="alert">{error}</p>}
       <div className="setup-actions">
-        <Button variant="primary" busy={busy} onClick={run}>Choose backup file</Button>
-        <Button variant="ghost" onClick={onSkip}>No, set up a new store</Button>
+        <Button role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  variant="primary" busy={busy} onClick={run}>Choose backup file</Button>
+        <Button role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  variant="ghost" onClick={onSkip}>No, set up a new store</Button>
       </div>
     </div>
   );

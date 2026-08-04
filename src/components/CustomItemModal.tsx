@@ -228,7 +228,7 @@ export default function CustomItemModal({ onAdd, onCancel }: Props) {
                 className="ci-field-input"
                 type="text"
                 inputMode="decimal"
-                tabIndex={1}
+                tabIndex={0}
                 value={price}
                 placeholder={`0.${"0".repeat(EXP)}`}
                 onFocus={() => setActiveField("price")}
@@ -249,7 +249,7 @@ export default function CustomItemModal({ onAdd, onCancel }: Props) {
                 className="ci-field-input"
                 type="text"
                 inputMode="numeric"
-                tabIndex={2}
+                tabIndex={0}
                 value={qty}
                 placeholder="1"
                 onFocus={() => setActiveField("qty")}
@@ -266,7 +266,7 @@ export default function CustomItemModal({ onAdd, onCancel }: Props) {
           </div>
 
           {/* Active field big display */}
-          <div className="ce-amount-block" onClick={() => {}}>
+          <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="ce-amount-block" onClick={() => {}}>
             {activeField === "price" ? (
               <>
                 <span className="ce-amount-cur">{cur}</span>
@@ -312,7 +312,7 @@ export default function CustomItemModal({ onAdd, onCancel }: Props) {
             <button
               ref={confirmRef}
               className="dialpad-confirm-btn"
-              tabIndex={3}
+              tabIndex={0}
               onClick={handleAdd}
               disabled={!canConfirm || loading}
             >

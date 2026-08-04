@@ -153,7 +153,7 @@ export default function ProductFormModal({
     <button className="modal-overlay" type="button" onClick={onClose}>
       <div ref={modalRef} className="modal bo-form-modal" role="dialog" aria-modal="true"
         aria-label={mode === "create" ? t("newProduct") : t("editProduct")}
-        onClick={e => e.stopPropagation()}>
+        onClick={e => e.stopPropagation()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}>
         <div className="bo-form-modal-header">
           <h2>{mode === "create" ? t("newProduct") : t("editProduct")}</h2>
           <button className="bo-form-modal-close" onClick={onClose}>✕</button>

@@ -154,7 +154,7 @@ export default function OfficeAIGrowthWorkspace({
 
         <section className="oa-two-column">
           <div className="oa-panel">
-            <div className="oa-panel-header"><h2>{t("topLoyaltyBalances")}</h2><button onClick={load} disabled={loading}>{t(loading ? "loading" : "refresh")}</button></div>
+            <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="oa-panel-header"><h2>{t("topLoyaltyBalances")}</h2><button onClick={load} disabled={loading}>{t(loading ? "loading" : "refresh")}</button></div>
             {loyaltyCustomers.length ? (
               <div className="oa-list">
                 {loyaltyCustomers.slice(0, 8).map(c => (
@@ -227,7 +227,7 @@ export default function OfficeAIGrowthWorkspace({
 
       <section className="oa-two-column">
         <div className="oa-panel">
-          <div className="oa-panel-header"><h2>{t("productSignals")}</h2><button onClick={load} disabled={loading}>{t(loading ? "loading" : "refresh")}</button></div>
+          <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="oa-panel-header"><h2>{t("productSignals")}</h2><button onClick={load} disabled={loading}>{t(loading ? "loading" : "refresh")}</button></div>
           {topProducts.length ? (
             <div className="oa-list">
               {topProducts.slice(0, 8).map(p => (

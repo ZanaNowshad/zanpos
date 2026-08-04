@@ -36,7 +36,7 @@ export default function TodayReportModal({ onClose, sessionUserId }: Props) {
 
   return (
     <button className="modal-overlay" type="button" onClick={onClose}>
-      <div className="modal report-modal" onClick={e => e.stopPropagation()}>
+      <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="modal report-modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <h2 className="modal-title">{t("todaysSales")} — {today}</h2>
           <button className="modal-close" onClick={onClose}>✕</button>

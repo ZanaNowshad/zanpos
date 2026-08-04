@@ -37,7 +37,7 @@ export default function PosStatusBanners({
           <GraduationCap size={16} strokeWidth={2} aria-hidden="true" />
           <strong>{t("trainingMode")}</strong>
           <span>{t("trainingNotice")}</span>
-          <Button variant="secondary" layoutClassName="pos-training-exit" onClick={onExitTraining}>
+          <Button role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  variant="secondary" layoutClassName="pos-training-exit" onClick={onExitTraining}>
             {t("exitTraining")}
           </Button>
         </div>
@@ -53,8 +53,8 @@ export default function PosStatusBanners({
             {recoverable.lineCount} item{recoverable.lineCount === 1 ? "" : "s"} were in the
             cart when the app last closed.
           </span>
-          <Button variant="primary" onClick={onRecoverCart}>Restore cart</Button>
-          <Button variant="ghost" onClick={onDismissRecovery}>Discard</Button>
+          <Button role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  variant="primary" onClick={onRecoverCart}>Restore cart</Button>
+          <Button role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  variant="ghost" onClick={onDismissRecovery}>Discard</Button>
         </div>
       )}
 

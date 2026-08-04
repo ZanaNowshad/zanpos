@@ -33,7 +33,7 @@ export default function XReportModal({ shiftId, actorUserId, onClose }: Props) {
 
   return (
     <button className="modal-overlay" type="button" onClick={onClose}>
-      <div className="modal xreport-modal" onClick={e => e.stopPropagation()}>
+      <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="modal xreport-modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <h2 className="modal-title">📊 {t("xReportMidShift")}</h2>
           <button className="modal-close" onClick={onClose}>✕</button>

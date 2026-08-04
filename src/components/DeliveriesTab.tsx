@@ -531,7 +531,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
                       </td>
                       <td className="dlv-td dlv-col-pay">{paymentBadge(row.payment_status)}</td>
                       <td className="dlv-td dlv-col-dlv">{deliveryBadge(row.delivery_status)}</td>
-                      <td className="dlv-td dlv-col-actions" onClick={e => e.stopPropagation()}>
+                      <td role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="dlv-td dlv-col-actions" onClick={e => e.stopPropagation()}>
                         <div className="dlv-quick-actions">
                           {/* Call — always visible when contact exists */}
                           {row.contact_number && (
@@ -587,7 +587,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
                     {isExpanded && (
                       <tr className="dlv-tr-detail">
                         <td colSpan={11}>
-                          <div className="dlv-detail" onClick={e => e.stopPropagation()}>
+                          <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="dlv-detail" onClick={e => e.stopPropagation()}>
 
                             {/* Left: address + info */}
                             <div className="dlv-detail-info">
@@ -765,8 +765,8 @@ export default function DeliveriesTab({ sessionUser }: Props) {
 
       {/* ── Cancel confirm dialog ── */}
       {cancelConfirm && (
-        <div className="settings-confirm-overlay" onClick={() => setCancelConfirm(null)}>
-          <div className="settings-confirm-dialog" onClick={e => e.stopPropagation()}>
+        <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="settings-confirm-overlay" onClick={() => setCancelConfirm(null)}>
+          <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="settings-confirm-dialog" onClick={e => e.stopPropagation()}>
             <div className="settings-confirm-header">Cancel Delivery</div>
             <p className="settings-confirm-msg">
               Cancel delivery <strong>#{cancelConfirm.receipt_number}</strong>?<br />

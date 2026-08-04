@@ -36,7 +36,7 @@ export default function AppConfirmModal({
         <p className="confirm-description">{description}</p>
         <p className="confirm-warning">{t("operatorWorkflowWarning")}</p>
         <div className="modal-actions">
-          <DialogClose onClick={onCancel}>
+          <DialogClose role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  onClick={onCancel}>
             <button className="btn-secondary" type="button">{t("cancel")}</button>
           </DialogClose>
           <button

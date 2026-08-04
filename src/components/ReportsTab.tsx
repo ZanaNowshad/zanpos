@@ -446,8 +446,8 @@ export default function ReportsTab({ sessionUserId }: Props) {
 
       {/* ── Void confirm dialog ── */}
       {voidConfirm && (
-        <div className="settings-confirm-overlay" onClick={() => setVoidConfirm(null)}>
-          <div className="settings-confirm-dialog" onClick={e => e.stopPropagation()}>
+        <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="settings-confirm-overlay" onClick={() => setVoidConfirm(null)}>
+          <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="settings-confirm-dialog" onClick={e => e.stopPropagation()}>
             <div className="settings-confirm-header">{t("confirmVoidSale")}</div>
             <p className="settings-confirm-msg">
               #{voidConfirm.receipt_number} ({fmt(voidConfirm.net_total_minor)})

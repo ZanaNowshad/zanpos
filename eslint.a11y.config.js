@@ -60,10 +60,9 @@ export default [
     },
   },
 
-  // ── Documented exceptions: structural elements with proper ARIA roles ─────
-  // These components use <div role="dialog" aria-modal onKeyDown> or equivalent
-  // patterns that eslint falsely flags. Each element already has an interactive
-  // ARIA role and keyboard support. Owner: ZANPOS Maintainers. Review: 2027-01-31.
+  // ── Documented per-component exceptions — ZANPOS Maintainers, review 2027-01-31 ──
+  // These components contain <div role="dialog" aria-modal onKeyDown> elements
+  // that eslint falsely flags as non-interactive despite proper ARIA roles.
   {
     files: [
       "src/components/CategoryFormModal.tsx",
@@ -79,8 +78,6 @@ export default [
       "src/components/ProductFormModal.tsx",
       "src/components/QuranToggle.tsx",
       "src/components/StickyNotesPanel.tsx",
-      "src/components/settings/StorefrontCataloguePage.tsx",
-      "src/components/settings/StorefrontSetupPage.tsx",
       "src/officeai/OfficeAIAssistantWorkspace.tsx",
       "src/officeai/OfficeAICommandPalette.tsx",
       "src/pages/MigrationAgentPage.tsx",
@@ -90,6 +87,15 @@ export default [
       "jsx-a11y/no-noninteractive-element-interactions": "off",
       "jsx-a11y/no-static-element-interactions": "off",
       "jsx-a11y/click-events-have-key-events": "off",
+    },
+  },
+  {
+    files: [
+      "src/components/settings/StorefrontCataloguePage.tsx",
+      "src/components/settings/StorefrontSetupPage.tsx",
+    ],
+    rules: {
+      "jsx-a11y/no-noninteractive-element-interactions": "off",
       "jsx-a11y/label-has-associated-control": "off",
     },
   },

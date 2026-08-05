@@ -38,14 +38,31 @@ mod inner {
             if text.is_ascii() {
                 return vec![];
             }
-            // Placeholder: real implementation requires:
-            // 1. Load font via rustybuzz::Face::from_slice(&self.font_data, 0)
-            // 2. Create rustybuzz::UnicodeBuffer from text
-            // 3. Set script/language/direction (Arabic, RTL)
-            // 4. Call rustybuzz::shape(&face, &features, &buffer)
-            // 5. Map glyph positions to ShapedGlyph structs
-            // For now, return empty — the feature gate prevents production use.
-            vec![]
+
+            let font_bytes = self.font_data.as_ref().unwrap();
+            let face = match rustybuzz::Face::from_slice(font_bytes, 0) {
+                Some(f) => f,
+                None => return vec![],
+            };
+
+            let mut buffer = rustybuzz::UnicodeBuffer::new();
+            buffer.push_str(text);
+            buffer.set_direction(rustybuzz::Direction::RightToLeft);
+
+            let features: [rustybuzz::Feature; 0] = [];
+            let glyph_infos = rustybuzz::shape(&face, &features, buffer);
+
+            glyph_infos
+                .glyph_infos()
+                .iter()
+                .zip(glyph_infos.glyph_positions().iter())
+                .map(|(info, pos)| ShapedGlyph {
+                    glyph_id: info.glyph_id as u16,
+                    x_offset: pos.x_offset,
+                    y_offset: pos.y_offset,
+                    x_advance: pos.x_advance,
+                })
+                .collect()
         }
 
         pub fn has_font(&self) -> bool {

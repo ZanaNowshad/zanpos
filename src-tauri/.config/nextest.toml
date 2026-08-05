@@ -17,7 +17,7 @@ leak-timeout = "2s"
 
 # JUnit output for CI artifact publication
 [profile.ci.junit]
-path = "target/nextest/ci/junit.xml"
+path = "ci/junit.xml"
 report-name = "zanpos-test-report"
 store-success-output = false
 store-failure-output = true

@@ -29,8 +29,7 @@ export const config = {
       "@wdio/tauri-service",
       {
         appBinaryPath: BINARY,
-        driverProvider: "official",
-        autoInstallTauriDriver: true,
+        driverProvider: "embedded",
       },
     ],
   ],

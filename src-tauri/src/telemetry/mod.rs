@@ -102,7 +102,7 @@ impl ZanposSpan {
 
 /// Instrument an operation with an OTel span (no-op when feature is disabled).
 #[inline]
-pub fn instrument(span_def: ZanposSpan) -> impl Drop {
+pub fn instrument(span_def: ZanposSpan) -> SpanGuard {
     let name = span_def.name().to_string();
     #[cfg(feature = "otel-tracing")]
     {
@@ -118,16 +118,35 @@ pub fn instrument(span_def: ZanposSpan) -> impl Drop {
                 .span_builder(name)
                 .with_attributes(attrs)
                 .start(tracer);
-            return span.enter();
+            return SpanGuard { span: Some(span) };
         }
     }
-    // No-op guard — does nothing on drop
-    struct NoopGuard;
-    impl Drop for NoopGuard {
-        fn drop(&mut self) {}
-    }
     let _ = (name, span_def);
-    NoopGuard
+    SpanGuard { span: None }
+}
+
+#[cfg(feature = "otel-tracing")]
+pub struct SpanGuard {
+    span: Option<opentelemetry_sdk::trace::Span>,
+}
+
+#[cfg(not(feature = "otel-tracing"))]
+pub struct SpanGuard {
+    span: Option<()>,
+}
+
+impl Drop for SpanGuard {
+    fn drop(&mut self) {
+        #[cfg(feature = "otel-tracing")]
+        {
+            use opentelemetry::trace::Span;
+            if let Some(mut span) = self.span.take() {
+                span.end();
+            }
+        }
+        #[cfg(not(feature = "otel-tracing"))]
+        let _ = self.span.take();
+    }
 }
 
 // ─── Initialization (feature-gated) ───────────────────────────────────────
@@ -140,7 +159,7 @@ mod inner {
     use opentelemetry_sdk::trace as sdktrace;
     use opentelemetry_sdk::Resource;
 
-    static TRACER: OnceLock<sdktrace::Tracer> = OnceLock::new();
+    pub(super) static TRACER: OnceLock<sdktrace::Tracer> = OnceLock::new();
 
     pub fn init(service_name: &str) -> Result<(), String> {
         let exporter = opentelemetry_otlp::SpanExporter::builder()

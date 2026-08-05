@@ -171,8 +171,12 @@ mod inner {
                 .map_err(|e| format!("mDNS daemon creation failed: {e}"))?;
             let daemon = Arc::new(daemon);
 
-            // Register our own service
-            let txt_properties: Vec<(&str, &str)> = vec![("txtvers", "1")];
+            // Register our own service with full metadata
+            let metadata = config.advertised_metadata();
+            let txt_properties: Vec<(&str, &str)> = metadata
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
             let service_info = mdns_sd::ServiceInfo::new(
                 SERVICE_TYPE,
                 &config.instance_id,

@@ -6,10 +6,8 @@
 
 title = "ZANPOS Gitleaks secret detection"
 
-# Default rules disabled — ZANPOS custom rules provide complete coverage.
-# The generic rules produced noise on lockfiles, test fixtures, and library artifacts.
-# [extend]
-# useDefault = true
+[extend]
+useDefault = true
 
 # ── Allowlist: documented non-secret paths / patterns ─────────────
 # Every entry documents: path/regex, reason, owner, review date (≤ 2027-01-31).
@@ -52,9 +50,11 @@ paths = [
   # Owner: ZANPOS Maintainers. Review by: 2027-01-31.
   '''tests[/\\]security[/\\]gitleaks[/\\]''',
 
-  # bundle.cjs WhatsApp protocol feature flags from baileys dependency
-  # reason: third-party bundled library; the API-key pattern is a Firebase config
-  #   constant from @whiskeysockets/baileys, not a ZANPOS credential
+  # bundle.cjs: compiled baileys WhatsApp Web library artifact (8.9 MB).
+  # Contains embedded Firebase API-key constants (AIzaSy...) from
+  # @whiskeysockets/baileys — these are third-party library configuration
+  # strings, NOT ZANPOS credentials. The pattern appears in minified
+  # JavaScript bundle code and cannot be narrowed to a single fingerprint.
   # Owner: ZANPOS Maintainers. Review by: 2027-01-31.
   '''src-tauri[/\\]sidecar[/\\]whatsapp-sidecar[/\\]bundle\.cjs''',
 ]

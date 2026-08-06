@@ -1,11 +1,9 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect } from "react";
 import { DEVICE } from "../types";
 import { formatMoney, parseMoney } from "../money";
 import { cashEventCreate, printReceiptRaw } from "../tauri/commands";
 import Dialpad, { applyDialpadKey } from "./Dialpad";
-import { useLanguage } from "../hooks/useLanguage";
-import { modalTranslator } from "../i18n/modalStrings";
-import { detailTranslator } from "../i18n/detailStrings";
+import { useTranslation } from "react-i18next";
 
 interface Props {
   shiftId:     string;
@@ -29,9 +27,8 @@ const TYPE_META = {
 } as const;
 
 export default function CashEventModal({ shiftId, userId, cashierName, onDone, onCancel }: Props) {
-  const { language } = useLanguage();
-  const t = useMemo(() => modalTranslator(language), [language]);
-  const dt = useMemo(() => detailTranslator(language), [language]);
+  const { t } = useTranslation("modal");
+  const { t: dt } = useTranslation("detail");
   const [eventType, setEventType] = useState<"paid_in" | "paid_out" | "safe_drop">("paid_in");
   const [amount, setAmount]       = useState("");
   const [note, setNote]           = useState("");

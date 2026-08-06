@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useLanguage } from "../hooks/useLanguage";
-import { operationsTranslator } from "../i18n/operationsStrings";
+import { useTranslation } from "react-i18next";
 import { Dialog, DialogContent, DialogClose } from "./ui";
 
 interface Props {
@@ -20,8 +19,7 @@ export default function AppConfirmModal({
   onConfirm,
   onCancel,
 }: Props) {
-  const { language } = useLanguage();
-  const t = operationsTranslator(language);
+  const { t } = useTranslation("operations");
   const confirmRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => { confirmRef.current?.focus(); }, []);

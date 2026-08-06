@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { AdminProduct } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney } from "../money";
 import JsBarcode from "jsbarcode";
-import { useLanguage } from "../hooks/useLanguage";
-import { modalTranslator } from "../i18n/modalStrings";
+import { useTranslation } from "react-i18next";
 
 interface Props {
   products: AdminProduct[];
@@ -63,8 +62,7 @@ function BarcodeLabel({ product, exp, currency }: LabelProps) {
 }
 
 export default function BarcodesPrintModal({ products, onClose }: Props) {
-  const { language } = useLanguage();
-  const t = useMemo(() => modalTranslator(language), [language]);
+  const { t } = useTranslation("modal");
   const exp = DEVICE.currency_exponent;
   const currency = DEVICE.currency;
 

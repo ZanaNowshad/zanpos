@@ -25,12 +25,18 @@ impl ReceiptRenderer for EscposRenderer {
             struct BytesDriver(Rc<RefCell<Vec<u8>>>);
 
             impl Driver for BytesDriver {
-                fn name(&self) -> String { "bytes".to_owned() }
+                fn name(&self) -> String {
+                    "bytes".to_owned()
+                }
                 fn write(&self, data: &[u8]) -> EscposResult<()> {
-                    self.0.borrow_mut().write_all(data)
+                    self.0
+                        .borrow_mut()
+                        .write_all(data)
                         .map_err(|e| PrinterError::Io(e.to_string()))
                 }
-                fn flush(&self) -> EscposResult<()> { Ok(()) }
+                fn flush(&self) -> EscposResult<()> {
+                    Ok(())
+                }
             }
 
             let buf = Rc::new(RefCell::new(Vec::new()));

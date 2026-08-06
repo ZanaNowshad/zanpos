@@ -34,7 +34,8 @@ mod inner {
 
         /// Try loading from the filesystem resource directory.
         fn load_resource_font() -> Option<Vec<u8>> {
-            let path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/arabic.ttf"));
+            let path =
+                std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/arabic.ttf"));
             std::fs::read(path).ok()
         }
 
@@ -185,14 +186,16 @@ mod tests {
 
     #[test]
     fn shaper_with_explicit_font_produces_glyphs() {
-        let font_data = std::fs::read(
-            concat!(env!("CARGO_MANIFEST_DIR"), "/resources/arabic.ttf")
-        ).expect("Arabic font should exist in resources");
+        let font_data = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/arabic.ttf"))
+            .expect("Arabic font should exist in resources");
         let shaper = ArabicShaper::new().with_font(font_data);
         let glyphs = shaper.shape("مرحبا", 12.0);
         assert!(!glyphs.is_empty(), "Shaped Arabic text must produce glyphs");
         // Arabic joining: the glyph count differs from the character count due to ligatures
-        assert!(glyphs.len() >= 2, "Arabic text should produce multiple positioned glyphs");
+        assert!(
+            glyphs.len() >= 2,
+            "Arabic text should produce multiple positioned glyphs"
+        );
     }
 
     #[test]

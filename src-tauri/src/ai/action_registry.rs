@@ -256,7 +256,10 @@ mod tests {
             "supplier_update",
             "supplier_delete",
         ];
-        let unexpected: Vec<_> = missing.iter().filter(|n| !known_internal.contains(n)).collect();
+        let unexpected: Vec<_> = missing
+            .iter()
+            .filter(|n| !known_internal.contains(n))
+            .collect();
         assert!(
             unexpected.is_empty(),
             "MUTATION_TOOLS entries missing from ActionRegistry (not known internals): {:?}",

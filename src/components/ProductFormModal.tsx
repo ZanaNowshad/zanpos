@@ -8,7 +8,7 @@ import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useLanguage } from "../hooks/useLanguage";
 import { modalTranslator } from "../i18n/modalStrings";
 import { detailTranslator } from "../i18n/detailStrings";
-import { productSchema } from "../forms";
+import { productSchema, useSubmitGuard } from "../forms";
 
 interface Props {
   mode: "create" | "edit";
@@ -33,6 +33,7 @@ export default function ProductFormModal({
   const dt = useMemo(() => detailTranslator(language), [language]);
   const modalRef = useRef<HTMLDivElement>(null);
   useFocusTrap(modalRef, onClose);
+  const [, tryLock, unlock] = useSubmitGuard();
   const exp = DEVICE.currency_exponent;
   const cur = DEVICE.currency;
 
@@ -104,6 +105,7 @@ export default function ProductFormModal({
   }
 
   async function save() {
+    if (!tryLock()) return; // Prevent double-submit
     const priceMinor = parseMoney(price, exp);
     const parsed = productSchema.safeParse({
       name: name.trim(),
@@ -114,6 +116,7 @@ export default function ProductFormModal({
     });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? t("nameCategoryRequired"));
+      unlock();
       return;
     }
     setSaving(true); setError(null);
@@ -142,7 +145,7 @@ export default function ProductFormModal({
       }
       onSaved();
     } catch (e: unknown) { setError(typeof e === "string" ? e : t("saveFailed")); }
-    finally { setSaving(false); }
+    finally { setSaving(false); unlock(); }
   }
 
   // Union-typed view: TS cannot .map() over ProductBarcodeRow[] | PendingBarcode[] directly.

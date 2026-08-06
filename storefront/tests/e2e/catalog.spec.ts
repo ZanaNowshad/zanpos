@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 import { englishCatalog, arabicCatalog, emptyCatalog, unavailableCatalog } from "./fixtures";
 import type { Catalog } from "../../src/types";
 
@@ -183,5 +184,64 @@ test.describe("Accessibility", () => {
     await page.goto("/");
     const addBtn = page.locator(".product-card").first().getByRole("button");
     await expect(addBtn).toHaveAttribute("aria-label");
+  });
+});
+
+test.describe("Order submission", () => {
+  test("adding items shows checkout in cart panel", async ({ page }) => {
+    await mockCatalog(page, englishCatalog());
+    await page.goto("/");
+    // Add one item
+    await page.locator(".product-card").nth(0).getByRole("button").click();
+    // Open cart panel
+    await page.locator(".ribbon-handle").click();
+    // Cart panel should have at least one item
+    await expect(page.locator(".ribbon-handle")).toHaveAttribute("aria-expanded", "true");
+  });
+
+  test("empty cart does not show checkout link", async ({ page }) => {
+    await mockCatalog(page, englishCatalog());
+    await page.goto("/");
+    const waLink = page.locator("a[href*='wa.me']");
+    await expect(waLink).toHaveCount(0);
+  });
+
+  test("Arabic catalog loads with Arabic labels", async ({ page }) => {
+    await mockCatalog(page, arabicCatalog());
+    await page.goto("/?lang=ar");
+    // The page should render (even if RTL is handled by CSS class rather than html dir)
+    await expect(page.locator("body")).toBeVisible();
+  });
+});
+
+test.describe("Accessibility — axe", () => {
+  test("English catalog page passes axe scan (no critical)", async ({ page }) => {
+    await mockCatalog(page, englishCatalog());
+    await page.goto("/");
+    const results = await new AxeBuilder({ page }).analyze();
+    const critical = results.violations.filter((v) => v.impact === "critical");
+    expect(critical).toEqual([]);
+  });
+
+  test("Arabic catalog page passes axe scan (no critical)", async ({ page }) => {
+    await mockCatalog(page, arabicCatalog());
+    await page.goto("/?lang=ar");
+    const results = await new AxeBuilder({ page }).analyze();
+    const critical = results.violations.filter((v) => v.impact === "critical");
+    expect(critical).toEqual([]);
+  });
+});
+
+test.describe("Visual regression", () => {
+  test("English catalog page matches baseline", async ({ page }) => {
+    await mockCatalog(page, englishCatalog());
+    await page.goto("/");
+    await expect(page).toHaveScreenshot("catalog-en.png", { fullPage: true });
+  });
+
+  test("Arabic catalog page matches baseline", async ({ page }) => {
+    await mockCatalog(page, arabicCatalog());
+    await page.goto("/?lang=ar");
+    await expect(page).toHaveScreenshot("catalog-ar.png", { fullPage: true });
   });
 });

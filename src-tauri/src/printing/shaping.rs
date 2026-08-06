@@ -20,7 +20,22 @@ mod inner {
 
     impl ArabicShaper {
         pub fn new() -> Self {
-            Self { font_data: None }
+            let font_data = Self::load_bundled_font().or_else(|| Self::load_resource_font());
+            Self { font_data }
+        }
+
+        /// Try loading from the compiled-in resource.
+        fn load_bundled_font() -> Option<Vec<u8>> {
+            // IBM Plex Sans Arabic or bundled Arabic font.
+            // When embedded via include_bytes!, add:
+            // Some(include_bytes!("../resources/arabic.ttf").to_vec())
+            None
+        }
+
+        /// Try loading from the filesystem resource directory.
+        fn load_resource_font() -> Option<Vec<u8>> {
+            let path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/arabic.ttf"));
+            std::fs::read(path).ok()
         }
 
         /// Load a font for Arabic shaping. Call once at startup.
@@ -158,11 +173,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shaper_accepts_arabic_text_without_panicking() {
+    fn shaper_handles_font_loading() {
         let shaper = ArabicShaper::new();
         let glyphs = shaper.shape("مرحبا", 12.0);
-        // Without a font, shaping returns empty — no panic, no crash
-        assert!(glyphs.is_empty());
+        // If a font was loaded (bundled or resource), shaping produces glyphs.
+        // If not, returns empty gracefully — no panic.
+        if shaper.has_font() {
+            assert!(!glyphs.is_empty(), "Arabic text must shape with font");
+        }
+    }
+
+    #[test]
+    fn shaper_with_explicit_font_produces_glyphs() {
+        let font_data = std::fs::read(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/resources/arabic.ttf")
+        ).expect("Arabic font should exist in resources");
+        let shaper = ArabicShaper::new().with_font(font_data);
+        let glyphs = shaper.shape("مرحبا", 12.0);
+        assert!(!glyphs.is_empty(), "Shaped Arabic text must produce glyphs");
+        // Arabic joining: the glyph count differs from the character count due to ligatures
+        assert!(glyphs.len() >= 2, "Arabic text should produce multiple positioned glyphs");
     }
 
     #[test]

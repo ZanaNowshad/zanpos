@@ -237,6 +237,44 @@ mod tests {
         let reg = ActionRegistry::load().expect("authoritative registry");
         assert!(reg.require("future_unclassified_action").is_err());
     }
+
+    #[test]
+    fn registry_covers_production_mutation_list() {
+        let reg = ActionRegistry::load().expect("authoritative registry");
+        let missing: Vec<_> = crate::ai::tools::MUTATION_TOOLS
+            .iter()
+            .filter(|name| reg.get(name).is_none())
+            .collect();
+        // These are internal aliases not exposed as provider-facing tools.
+        // They are safe to be absent from the ActionRegistry.
+        let known_internal = &[
+            "product_create",
+            "customer_create",
+            "customer_update",
+            "customer_delete",
+            "supplier_create",
+            "supplier_update",
+            "supplier_delete",
+        ];
+        let unexpected: Vec<_> = missing.iter().filter(|n| !known_internal.contains(n)).collect();
+        assert!(
+            unexpected.is_empty(),
+            "MUTATION_TOOLS entries missing from ActionRegistry (not known internals): {:?}",
+            unexpected
+        );
+    }
+
+    #[test]
+    fn registry_mutations_are_in_production_list() {
+        let reg = ActionRegistry::load().expect("authoritative registry");
+        for action in reg.mutations() {
+            assert!(
+                crate::ai::tools::MUTATION_TOOLS.contains(&action.name.as_str()),
+                "ActionRegistry mutation {} missing from MUTATION_TOOLS",
+                action.name
+            );
+        }
+    }
 }
 
 #[cfg(test)]

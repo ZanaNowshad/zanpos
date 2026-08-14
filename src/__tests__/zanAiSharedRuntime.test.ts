@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { reduceZanAiUiState, sameRuntimeIdentity } from "../zanai/zanAiState";
+import {
+  reduceZanAiUiState,
+  sameRuntimeIdentity,
+  selectSendContext,
+  serializeSurfaceContext,
+} from "../zanai/zanAiState";
 
 describe("shared ZanAI runtime identity", () => {
   it("keeps one runtime only for the same token, user, and branch", () => {
@@ -42,5 +47,44 @@ describe("shared ZanAI UI state", () => {
       widgetExpanded: true,
       unreadCount: 0,
     });
+  });
+});
+
+describe("surface-scoped sends", () => {
+  it("uses the explicit context supplied by the sending surface", () => {
+    const registered = { surface: "office" as const, summary: "Catalogue / Products" };
+    const explicit = { surface: "pos" as const, summary: "Till · 2 items" };
+
+    expect(selectSendContext(registered, explicit)).toBe(explicit);
+    expect(selectSendContext(registered)).toBe(registered);
+  });
+
+  it("preserves OfficeAI summaries and serializes structured POS context", () => {
+    expect(serializeSurfaceContext({ surface: "office", summary: "Catalogue / Products" })).toBe(
+      "Catalogue / Products",
+    );
+    expect(
+      serializeSurfaceContext({
+        surface: "pos",
+        summary: "Till · 2 items",
+        structured: {
+          surface: "pos",
+          captured_at: "2026-08-14T12:00:00Z",
+          branch: { id: "b1", name: "Main" },
+          device: { id: "d1" },
+          operator: { id: "u1", display_name: "Cashier" },
+          shift: { id: "s1", opened_at: "2026-08-14T08:00:00Z" },
+          cart: {
+            item_count: 2,
+            subtotal_minor: 1000,
+            discount_minor: 0,
+            tax_minor: 0,
+            total_minor: 1000,
+            lines: [],
+          },
+          connection: { online: true, pending_sync_count: 0 },
+        },
+      }),
+    ).toContain('"item_count":2');
   });
 });

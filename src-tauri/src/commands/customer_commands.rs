@@ -1,9 +1,10 @@
+use crate::commands::customer_scope::{actor_branch_id, customer_in_branch};
 use crate::commands::{rbac, sync_commands};
 use crate::db::repositories::audit_hash;
-use crate::errors::{AppError, AppResult};
+use crate::errors::AppError;
 use crate::AppState;
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
+use sqlx::{Row, SqlitePool};
 /// Customer management commands — CRUD + loyalty points.
 use tauri::State;
 use ulid::Ulid;
@@ -20,6 +21,16 @@ pub struct CustomerRow {
     pub loyalty_points: i64,
     pub created_at: String,
     pub notes: Option<String>,
+}
+
+/// One page of customers plus the branch-wide match count, so the UI can show
+/// how many rows exist without loading them.
+#[derive(Debug, Serialize)]
+pub struct CustomerPage {
+    pub items: Vec<CustomerRow>,
+    pub total: i64,
+    pub offset: i64,
+    pub limit: i64,
 }
 
 // ─── Input types ──────────────────────────────────────────────────────────────
@@ -45,17 +56,12 @@ pub struct CustomerUpdateInput {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-async fn active_branch_id(state: &AppState) -> AppResult<String> {
-    let row = sqlx::query(
-        "SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1",
-    )
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::NotFound("No active branch configured".into()))?;
-    Ok(row.get("branch_id"))
-}
+/// Paging bounds for `customer_list`. A supermarket's customer table is
+/// high-cardinality; an unbounded SELECT loaded every row on every keystroke.
+const CUSTOMER_LIST_DEFAULT_LIMIT: i64 = 50;
+pub(crate) const CUSTOMER_LIST_MAX_LIMIT: i64 = 200;
 
-fn map_row(r: &sqlx::sqlite::SqliteRow) -> CustomerRow {
+pub(crate) fn map_row(r: &sqlx::sqlite::SqliteRow) -> CustomerRow {
     CustomerRow {
         customer_id: r.get("customer_id"),
         branch_id: r.get("branch_id"),
@@ -82,35 +88,99 @@ fn clean_optional_text(value: Option<&str>) -> Option<String> {
 pub async fn customer_list(
     actor_user_id: String,
     search: String,
+    offset: Option<i64>,
+    limit: Option<i64>,
     state: State<'_, AppState>,
-) -> Result<Vec<CustomerRow>, AppError> {
+) -> Result<CustomerPage, AppError> {
+    customer_list_inner(&state.db, &actor_user_id, &search, offset, limit).await
+}
+
+async fn customer_list_inner(
+    pool: &SqlitePool,
+    actor_user_id: &str,
+    search: &str,
+    offset: Option<i64>,
+    limit: Option<i64>,
+) -> Result<CustomerPage, AppError> {
     // F-HIGH-04: customer records contain PII (phone, email) — require an active role.
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::require_any_role(pool, actor_user_id).await?;
+    let branch_id = actor_branch_id(pool, actor_user_id).await?;
+
+    let limit = limit
+        .unwrap_or(CUSTOMER_LIST_DEFAULT_LIMIT)
+        .clamp(1, CUSTOMER_LIST_MAX_LIMIT);
+    let offset = offset.unwrap_or(0).max(0);
+
+    // `name` is not unique, so ordering by it alone lets rows swap between
+    // pages. customer_id is the primary key and breaks every tie, which is
+    // what makes paging free of duplicates and gaps.
     let rows = if search.trim().is_empty() {
         sqlx::query(
             "SELECT customer_id, branch_id, name, phone, email, loyalty_points, created_at, notes
-             FROM customers ORDER BY name",
+             FROM customers
+             WHERE branch_id = ?
+             ORDER BY name, customer_id
+             LIMIT ? OFFSET ?",
         )
-        .fetch_all(&state.db)
+        .bind(&branch_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
         .await?
     } else {
+        // Search runs in SQL over the whole authorised branch, not over the
+        // page already loaded, so a match on page 40 is still reachable.
         let pattern = format!("%{}%", search.trim());
         sqlx::query(
             "SELECT customer_id, branch_id, name, phone, email, loyalty_points, created_at, notes
              FROM customers
-             WHERE name LIKE ? OR phone LIKE ?
-             ORDER BY name",
+             WHERE branch_id = ?
+               AND (name LIKE ? OR phone LIKE ? OR email LIKE ?)
+             ORDER BY name, customer_id
+             LIMIT ? OFFSET ?",
         )
+        .bind(&branch_id)
         .bind(&pattern)
         .bind(&pattern)
-        .fetch_all(&state.db)
+        .bind(&pattern)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
         .await?
     };
 
-    Ok(rows.iter().map(map_row).collect())
+    let total: i64 = if search.trim().is_empty() {
+        sqlx::query_scalar("SELECT COUNT(*) FROM customers WHERE branch_id = ?")
+            .bind(&branch_id)
+            .fetch_one(pool)
+            .await?
+    } else {
+        let pattern = format!("%{}%", search.trim());
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM customers
+             WHERE branch_id = ? AND (name LIKE ? OR phone LIKE ? OR email LIKE ?)",
+        )
+        .bind(&branch_id)
+        .bind(&pattern)
+        .bind(&pattern)
+        .bind(&pattern)
+        .fetch_one(pool)
+        .await?
+    };
+
+    Ok(CustomerPage {
+        items: rows.iter().map(map_row).collect(),
+        total,
+        offset,
+        limit,
+    })
 }
 
-/// Create a new customer, returning the created row.
+/// Branch-wide loyalty totals.
+///
+/// Aggregated in SQL rather than summed over a page: the directory is paginated,
+/// so a client-side total would silently describe only the rows on screen. Every
+/// figure here is a COUNT or SUM over the actor's whole branch.
 #[tauri::command]
 pub async fn customer_create(
     input: CustomerInput,
@@ -148,7 +218,11 @@ pub async fn customer_create(
     let email = clean_optional_text(input.email.as_deref());
     let notes = clean_optional_text(input.notes.as_deref());
 
-    let branch_id = active_branch_id(&state).await?;
+    // Stamped with the creator's branch so that create and list agree. These
+    // resolve identically on a single-branch install (both originate from
+    // `active_branch_id`), but on a multi-branch one a user must not create a
+    // customer they would then be unable to see.
+    let branch_id = actor_branch_id(&state.db, &input.actor_user_id).await?;
     let customer_id = Ulid::new().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     let device_id: String = sqlx::query_scalar(
@@ -234,6 +308,10 @@ pub async fn customer_update(
     state: State<'_, AppState>,
 ) -> Result<CustomerRow, AppError> {
     rbac::require_any_role(&state.db, &input.actor_user_id).await?;
+    // A customer_id belonging to another branch must not become writable
+    // simply by being sent; the scope check happens before any validation.
+    let actor_branch = actor_branch_id(&state.db, &input.actor_user_id).await?;
+    customer_in_branch(&state.db, &input.customer_id, &actor_branch).await?;
     let name = input.name.trim().to_string();
     if name.is_empty() {
         return Err(AppError::Validation("Customer name is required".into()));
@@ -363,11 +441,15 @@ pub async fn customer_get(
     state: State<'_, AppState>,
 ) -> Result<CustomerRow, AppError> {
     rbac::require_any_role(&state.db, &actor_user_id).await?;
+    let branch_id = actor_branch_id(&state.db, &actor_user_id).await?;
+    // Scoped in the WHERE clause, not checked after fetching: a foreign
+    // customer must never be loaded into memory in the first place.
     let row = sqlx::query(
         "SELECT customer_id, branch_id, name, phone, email, loyalty_points, created_at, notes
-         FROM customers WHERE customer_id = ?",
+         FROM customers WHERE customer_id = ? AND branch_id = ?",
     )
     .bind(&customer_id)
+    .bind(&branch_id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(|| AppError::NotFound(format!("Customer {} not found", customer_id)))?;
@@ -376,105 +458,5 @@ pub async fn customer_get(
 }
 
 /// Add loyalty points to a customer. Returns the new total.
-#[tauri::command]
-pub async fn customer_add_loyalty(
-    actor_user_id: String,
-    customer_id: String,
-    points: i64,
-    state: State<'_, AppState>,
-) -> Result<i64, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
-    if points == 0 {
-        return Err(AppError::Validation("Points delta must be non-zero".into()));
-    }
-
-    // Fetch current loyalty points for before-state and existence check
-    let existing = sqlx::query(
-        "SELECT loyalty_points, branch_id, origin_device_id
-         FROM customers WHERE customer_id = ?",
-    )
-    .bind(&customer_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::NotFound(format!("Customer {} not found", customer_id)))?;
-
-    let before_pts: i64 = existing.get("loyalty_points");
-    let existing_branch: String = existing.get("branch_id");
-    let existing_device: String = existing.get("origin_device_id");
-
-    // Guard: loyalty_points must not go negative
-    if points < 0 && before_pts + points < 0 {
-        return Err(AppError::Validation(
-            "Insufficient loyalty points for this deduction".into(),
-        ));
-    }
-
-    let now = chrono::Utc::now().to_rfc3339();
-    let affected = sqlx::query(
-        "UPDATE customers SET loyalty_points = loyalty_points + ?, updated_at = ?, sync_status = 'pending' WHERE customer_id = ?")
-        .bind(points)
-        .bind(&now)
-        .bind(&customer_id)
-        .execute(&state.db)
-        .await?
-        .rows_affected();
-
-    if affected == 0 {
-        return Err(AppError::NotFound(format!(
-            "Customer {} not found",
-            customer_id
-        )));
-    }
-
-    let row = sqlx::query(
-        "SELECT customer_id, branch_id, name, phone, email, loyalty_points, created_at, notes
-         FROM customers WHERE customer_id = ?",
-    )
-    .bind(&customer_id)
-    .fetch_one(&state.db)
-    .await?;
-
-    let customer = map_row(&row);
-    let new_total = customer.loyalty_points;
-
-    // sync_status='pending' is set explicitly in UPDATE — sync worker picks it up
-
-    // Audit trail
-    let before = serde_json::json!({ "loyalty_points": before_pts }).to_string();
-    let after = serde_json::json!({ "loyalty_points": new_total }).to_string();
-    if let Err(e) = audit_hash::insert_audit_entry(
-        &state.db,
-        "CUSTOMER_LOYALTY_ADJUSTED",
-        "customer",
-        &customer_id,
-        &actor_user_id,
-        "user",
-        &existing_device,
-        &existing_branch,
-        Some(&before),
-        Some(&after),
-        None,
-    )
-    .await
-    {
-        tracing::error!("AUDIT WRITE FAILED [CUSTOMER_LOYALTY_ADJUSTED]: {:?}", e);
-    }
-
-    sync_commands::schedule_immediate_sync(&state);
-    Ok(new_total)
-}
-
 #[cfg(test)]
-mod tests {
-    use super::clean_optional_text;
-
-    #[test]
-    fn clean_optional_text_trims_and_nulls_blanks() {
-        assert_eq!(
-            clean_optional_text(Some("  +97333112233  ")).as_deref(),
-            Some("+97333112233")
-        );
-        assert_eq!(clean_optional_text(Some("   ")), None);
-        assert_eq!(clean_optional_text(None), None);
-    }
-}
+mod tests;

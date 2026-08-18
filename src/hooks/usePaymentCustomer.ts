@@ -18,12 +18,15 @@ export function usePaymentCustomer(sessionUserId?: string) {
     let mounted = true;
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(async () => {
-      const rows = await customerList(sessionUserId ?? "", custSearch.trim()).catch((error: unknown) => {
-        console.warn("customerList failed:", error);
-        return [] as CustomerRow[];
-      });
+      // The picker only ever shows six, so ask the server for six rather than
+      // fetching a page and discarding most of it.
+      const page = await customerList(sessionUserId ?? "", custSearch.trim(), 0, 6)
+        .catch((error: unknown) => {
+          console.warn("customerList failed:", error);
+          return { items: [] as CustomerRow[], total: 0, offset: 0, limit: 6 };
+        });
       if (!mounted) return;
-      setCustResults(rows.slice(0, 6));
+      setCustResults(page.items);
       setShowCustDrop(true);
     }, 250);
     return () => {

@@ -80,13 +80,15 @@ pub async fn pos_add_item(
         .iter_mut()
         .find(|l| !l.voided && l.product_id.as_deref() == Some(product.product.product_id.as_str()))
     {
+        existing.image_path = product.product.image_path.clone();
         existing.quantity = crate::domain::money::add_decimal_qty_str(&existing.quantity, qty_str);
         existing.recalculate();
         return Ok(cart);
     }
 
     // No existing line — create a new one.
-    let line = CartLine::new(
+    let image_path = product.product.image_path.clone();
+    let mut line = CartLine::new(
         Some(product.product.product_id),
         product.product.name,
         product.product.sku,
@@ -97,6 +99,7 @@ pub async fn pos_add_item(
         product.tax_rate_basis_points,
         product.tax_inclusive,
     );
+    line.image_path = image_path;
     cart.lines.push(line);
     Ok(cart)
 }
@@ -136,13 +139,15 @@ pub async fn pos_add_item_by_barcode(
         .iter_mut()
         .find(|l| !l.voided && l.product_id.as_deref() == Some(product.product.product_id.as_str()))
     {
+        existing.image_path = product.product.image_path.clone();
         existing.quantity = crate::domain::money::add_decimal_qty_str(&existing.quantity, "1");
         existing.recalculate();
         return Ok(cart);
     }
 
     // No existing line — create a new one.
-    let line = CartLine::new(
+    let image_path = product.product.image_path.clone();
+    let mut line = CartLine::new(
         Some(product.product.product_id),
         product.product.name,
         product.product.sku,
@@ -153,6 +158,7 @@ pub async fn pos_add_item_by_barcode(
         product.tax_rate_basis_points,
         product.tax_inclusive,
     );
+    line.image_path = image_path;
     cart.lines.push(line);
     Ok(cart)
 }
@@ -234,14 +240,57 @@ pub async fn pos_set_line_price(
         return Err(AppError::Validation("Price must be positive".into()));
     }
     let mut cart = input.cart;
-    if let Some(line) = cart
+    let line = cart
         .lines
         .iter_mut()
         .find(|l| l.cart_line_id == input.cart_line_id && !l.voided)
-    {
-        line.unit_price_minor = input.price_minor;
-        line.recalculate();
-    }
+        .ok_or_else(|| AppError::NotFound("Cart line not found".into()))?;
+    let before_price = line.unit_price_minor;
+    line.unit_price_minor = input.price_minor;
+    line.recalculate();
+
+    sqlx::query(
+        "INSERT INTO pos_price_overrides
+         (cart_line_id, cart_id, product_id, price_minor, authorized_by_user_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(cart_line_id) DO UPDATE SET
+           cart_id = excluded.cart_id,
+           product_id = excluded.product_id,
+           price_minor = excluded.price_minor,
+           authorized_by_user_id = excluded.authorized_by_user_id,
+           created_at = excluded.created_at",
+    )
+    .bind(&line.cart_line_id)
+    .bind(&cart.cart_id)
+    .bind(&line.product_id)
+    .bind(input.price_minor)
+    .bind(&input.authorized_by_user_id)
+    .bind(chrono::Utc::now().to_rfc3339())
+    .execute(&state.db)
+    .await?;
+
+    let before_json = serde_json::json!({ "unit_price_minor": before_price }).to_string();
+    let after_json = serde_json::json!({
+        "unit_price_minor": input.price_minor,
+        "cart_id": &cart.cart_id,
+        "product_id": &line.product_id,
+    })
+    .to_string();
+    audit_hash::insert_audit_entry_override(
+        &state.db,
+        "POS_LINE_PRICE_OVERRIDDEN",
+        "cart_line",
+        &line.cart_line_id,
+        &input.authorized_by_user_id,
+        "user",
+        &cart.device_id,
+        &cart.branch_id,
+        Some(&before_json),
+        Some(&after_json),
+        Some("Manager-approved POS price change"),
+        true,
+    )
+    .await?;
     Ok(cart)
 }
 
@@ -258,6 +307,11 @@ pub async fn pos_remove_line(
 ) -> Result<Cart, AppError> {
     crate::commands::rbac::require_any_role(&state.db, &input.cart.cashier_user_id).await?;
     let mut cart = input.cart;
+    sqlx::query("DELETE FROM pos_price_overrides WHERE cart_id = ? AND cart_line_id = ?")
+        .bind(&cart.cart_id)
+        .bind(&input.cart_line_id)
+        .execute(&state.db)
+        .await?;
     cart.lines.retain(|l| l.cart_line_id != input.cart_line_id);
     Ok(cart)
 }
@@ -920,6 +974,11 @@ pub async fn pos_record_void(
     })
     .execute(&state.db)
     .await?;
+
+    sqlx::query("DELETE FROM pos_price_overrides WHERE cart_id = ?")
+        .bind(&cart_id)
+        .execute(&state.db)
+        .await?;
 
     Ok(())
 }

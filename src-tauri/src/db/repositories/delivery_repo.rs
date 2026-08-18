@@ -65,15 +65,24 @@ pub async fn create_delivery_in_tx(
             input.expected_payment_method
         )));
     }
-    // contact_number and address_text are required
+    // A delivery needs someone to call and somewhere to go. The house number is
+    // the one address part that is always knowable; flat and road are optional
+    // (a villa has no flat, and plenty of addresses here are a landmark the
+    // rider already knows), so requiring them only blocked real sales.
     if input.contact_number.trim().is_empty() {
         return Err(AppError::Validation(
             "contact_number is required for delivery".into(),
         ));
     }
-    if input.address_text.trim().is_empty() {
+    if input
+        .house_number
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .is_empty()
+    {
         return Err(AppError::Validation(
-            "address_text is required for delivery".into(),
+            "house_number is required for delivery".into(),
         ));
     }
     // customer_id is optional — a walk-in delivery can be placed without a registered customer.
@@ -85,11 +94,11 @@ pub async fn create_delivery_in_tx(
         "INSERT INTO delivery_orders
          (delivery_id, sale_id, receipt_number, customer_id, customer_name,
           contact_number, house_number, area, address_text, delivery_note,
-          delivery_staff_name, expected_payment_method, payment_status,
+          delivery_staff_name, rider_id, expected_payment_method, payment_status,
           amount_minor, currency, delivery_status,
           created_by_user_id, branch_id, device_id, origin_device_id, created_at, updated_at,
           sync_status, sync_attempts)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'unpaid',?,?,'pending',?,?,?,?,?,?,'pending',0)",
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'unpaid',?,?,'pending',?,?,?,?,?,?,'pending',0)",
     )
     .bind(&delivery_id)
     .bind(sale_id)
@@ -102,6 +111,7 @@ pub async fn create_delivery_in_tx(
     .bind(&input.address_text)
     .bind(&input.delivery_note)
     .bind(&input.delivery_staff_name)
+    .bind(&input.rider_id)
     .bind(&input.expected_payment_method)
     .bind(amount_minor)
     .bind(currency)

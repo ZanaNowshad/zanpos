@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyWidgetSuppression, clampWidgetRect } from "../zanai/widgetState";
+import { applyWidgetSuppression, clampLauncherPosition, clampWidgetRect } from "../zanai/widgetState";
 
 describe("POS ZanAI window geometry", () => {
   it("clamps size and position inside the viewport", () => {
@@ -25,6 +25,29 @@ describe("POS ZanAI window geometry", () => {
         { width: 1_200, height: 800 },
       ),
     ).toEqual({ x: 756, y: 216, width: 420, height: 560 });
+  });
+
+  it("keeps the draggable launcher fully inside the viewport", () => {
+    expect(clampLauncherPosition({ x: -20, y: 900 }, { width: 1_200, height: 800 }))
+      .toEqual({ x: 0, y: 752 });
+    expect(clampLauncherPosition({ x: 1_500, y: -10 }, { width: 1_200, height: 800 }))
+      .toEqual({ x: 1_084, y: 58 });
+  });
+
+  it("never parks the launcher on the POS top bar", () => {
+    // z-index 620 puts the launcher over the clock, sync chip and Quran toggle.
+    // The old default was y: 8, which covered the Quran toggle out of the box.
+    const viewport = { width: 1_280, height: 800 };
+    expect(clampLauncherPosition({ x: Number.NaN, y: Number.NaN }, viewport).y)
+      .toBeGreaterThanOrEqual(58);
+    expect(clampLauncherPosition({ x: 400, y: 12 }, viewport).y).toBe(58);
+  });
+
+  it("still fits a window too short for the top-bar clearance", () => {
+    // A 90px-tall window cannot honour both the clearance and the launcher
+    // height; staying inside the window wins.
+    expect(clampLauncherPosition({ x: 10, y: 0 }, { width: 400, height: 90 }))
+      .toEqual({ x: 10, y: 42 });
   });
 });
 

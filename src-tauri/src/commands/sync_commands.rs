@@ -31,22 +31,7 @@ pub(crate) fn schedule_immediate_sync(state: &AppState) {
 /// Prefers the app_config 'device_id' key written at setup time so the correct
 /// identity is returned even after other terminals' device records sync locally.
 pub(crate) async fn active_device_id(state: &AppState) -> AppResult<String> {
-    if let Ok(Some(id)) =
-        sqlx::query_scalar::<_, String>("SELECT value FROM app_config WHERE key = 'device_id'")
-            .fetch_optional(&state.db)
-            .await
-    {
-        if !id.is_empty() {
-            return Ok(id);
-        }
-    }
-    let row = sqlx::query(
-        "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1",
-    )
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::NotFound("No active device configured".into()))?;
-    Ok(row.get("device_id"))
+    crate::device_identity::current(&state.db).await
 }
 
 /// Tables that participate in sync (in FK-safe push order).
@@ -59,9 +44,11 @@ pub const SYNC_TABLES: &[&str] = &[
     "suppliers",
     "purchase_orders",
     "purchase_order_lines",
+    "po_receipts",
     "devices",
     "roles",
     "users",
+    "riders",
     "customers",
     "shifts",
     "sales",
@@ -89,6 +76,8 @@ pub fn table_pk(table: &str) -> &str {
         "suppliers" => "supplier_id",
         "purchase_orders" => "po_id",
         "purchase_order_lines" => "po_line_id",
+        "po_receipts" => "receipt_id",
+        "riders" => "rider_id",
         "devices" => "device_id",
         "roles" => "role_id",
         "users" => "user_id",
@@ -159,12 +148,13 @@ pub async fn sync_status(
     let online = is_hub || worker_online || configured;
 
     // Read last successful sync from watermark table
-    let last_sync: Option<String> =
+    let last_sync: Option<String> = crate::db::repositories::sync_repo::watermark_or_never(
         sqlx::query_scalar("SELECT last_pushed_at FROM sync_watermark WHERE table_name = 'sales'")
             .fetch_optional(&state.db)
             .await
             .ok()
-            .flatten();
+            .flatten(),
+    );
 
     let consecutive_failure_count = {
         let st = state.sync_worker.state.lock().await;
@@ -286,10 +276,12 @@ async fn clear_join_replica(pool: &sqlx::SqlitePool) -> AppResult<()> {
         "sale_items",
         "sales",
         "shifts",
+        "riders",
         "customers",
         "users",
         "roles",
         "devices",
+        "po_receipts",
         "purchase_order_lines",
         "purchase_orders",
         "suppliers",
@@ -876,12 +868,13 @@ pub async fn sync_diagnostics(
         || (hub_url.is_some()
             && crate::secure_store::get_secret("hub_store_token").is_some_and(|k| !k.is_empty()));
 
-    let last_sync: Option<String> =
+    let last_sync: Option<String> = crate::db::repositories::sync_repo::watermark_or_never(
         sqlx::query_scalar("SELECT last_pushed_at FROM sync_watermark WHERE table_name = 'sales'")
             .fetch_optional(&state.db)
             .await
             .ok()
-            .flatten();
+            .flatten(),
+    );
 
     let mut tables = Vec::new();
     let mut total_pending: i64 = 0;

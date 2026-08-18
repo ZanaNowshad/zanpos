@@ -1,9 +1,13 @@
+import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Eye, MessageCircle, Printer, ShoppingCart, X } from "lucide-react";
 import CheckoutConfidenceStrip from "./CheckoutConfidenceStrip";
 import type { SaleResult } from "../types";
 import type { CheckoutConfidenceItem, ReceiptConfidenceStatus } from "../utils/posConfidence";
 
 export type WhatsAppReceiptStatus = "not_available" | "ready" | "sending" | "sent" | "failed";
+
+/** Kept in step with the `--receipt-banner-life` countdown in App.css. */
+export const RECEIPT_BANNER_LIFE_MS = 12_000;
 
 interface Props {
   sale: SaleResult;
@@ -48,8 +52,36 @@ export default function ReceiptActionCenter({
   const disablePrint = receiptStatus === "printing";
   const disableWhatsApp = whatsappStatus === "not_available" || whatsappStatus === "sending";
 
+  /*
+   * The banner used to stay up until the next sale cleared it, which on a busy
+   * till meant it simply lived on screen. It now clears itself, but never while
+   * the cashier is reaching for one of its buttons — hovering or tabbing into
+   * it holds it open, and the countdown bar shows the time left. A print that
+   * is still running also holds it: that is the one state where the outcome is
+   * not yet known.
+   */
+  const [held, setHeld] = useState(false);
+  const dismissRef = useRef(onDismiss);
+  useEffect(() => { dismissRef.current = onDismiss; }, [onDismiss]);
+
+  useEffect(() => {
+    if (held || receiptStatus === "printing" || whatsappStatus === "sending") return;
+    const timer = setTimeout(() => dismissRef.current(), RECEIPT_BANNER_LIFE_MS);
+    return () => clearTimeout(timer);
+  }, [held, receiptStatus, whatsappStatus]);
+
   return (
-    <section className="receipt-action-center" role="status" aria-live="polite">
+    <section
+      className="receipt-action-center"
+      role="status"
+      aria-live="polite"
+      onMouseEnter={() => setHeld(true)}
+      onMouseLeave={() => setHeld(false)}
+      onFocusCapture={() => setHeld(true)}
+      onBlurCapture={event => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setHeld(false);
+      }}
+    >
       <div className="receipt-action-summary">
         <span className="receipt-action-icon" aria-hidden="true"><CheckCircle2 size={18} /></span>
         <div>

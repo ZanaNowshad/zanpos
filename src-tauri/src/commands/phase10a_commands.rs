@@ -111,6 +111,11 @@ pub async fn report_tax_by_day(
     state: State<'_, AppState>,
 ) -> Result<Vec<TaxDayRow>, AppError> {
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    // Caller-supplied `branch_id` is not trusted for branch-scoped data;
+    // the scope comes from the actor's own record. The parameter remains
+    // only to preserve the existing invoke contract.
+    let _ = branch_id;
+    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
     let (scope, origin_device_id) = report_scope(&state.db).await;
     let scope_str = scope.as_str();
     let rows = sqlx::query(

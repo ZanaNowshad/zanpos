@@ -1264,6 +1264,20 @@ kbd.kbd-primary {
 .np-method-btn:hover:not(:disabled) { background: var(--surface3); border-color: var(--accent); }
 .np-method-btn:disabled { opacity: 0.38; cursor: not-allowed; }
 .np-split-btn { color: var(--text-muted); }
+.np-journeys { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.np-journey-btn {
+  height: 66px;
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  grid-template-rows: 1fr 1fr;
+  align-items: end;
+  column-gap: 5px;
+  padding: 8px 7px;
+  text-align: left;
+}
+.np-journey-btn svg { grid-row: 1 / 3; align-self: center; color: var(--accent-h); }
+.np-journey-btn span { align-self: end; font-size: 0.78rem; line-height: 1; }
+.np-journey-btn small { align-self: start; color: var(--text-dim); font-size: 0.55rem; font-weight: 600; line-height: 1.2; }
 
 /* ── Dialpad keys inside numpad panel ── */
 /* dialpad fills all remaining vertical space in .numpad-top */
@@ -1503,7 +1517,11 @@ kbd.kbd-primary {
   align-items: center;
   gap: var(--space-5);
   padding: 0 var(--space-5);
-  height: 58px;
+  /* `height: 58px` is 2px less than the buttons need once the 2px top border is
+     counted in the border box, so the bottom of every action button was sliced
+     off against the window edge. Below 1600px a min-height rule already covered
+     this; above it the bar was fixed and the row was unreachable. */
+  min-height: 60px;
   background: var(--surface);
   border-top: 2px solid var(--border);
   flex-shrink: 0;
@@ -1739,6 +1757,18 @@ kbd.kbd-primary {
   z-index: var(--z-modal);
   animation: overlay-in 0.12s ease;
 }
+
+/* Full-bleed pointer target behind the dialog. Sits below .modal in paint
+   order, so clicks on the dialog itself never reach it. */
+.modal-overlay-dismiss {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: default;
+}
+.modal-overlay > .modal { position: relative; }
 
 @keyframes overlay-in {
   from { opacity: 0; }
@@ -2219,13 +2249,20 @@ kbd.kbd-primary {
   display: flex;
   align-items: center;
   background: var(--bg);
-  overflow: hidden;
+  /* Sideways stays clipped — the gold shapes below are meant to bleed off the
+     leading edge. Downwards must not: on a 600px-tall window the sign-in panel
+     is taller than the screen, and `overflow: hidden` was cutting ~300px off
+     the bottom with no way to scroll to it. */
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 /* Diagonal geometric border rectangles — gold glow on left side */
+/* `inset-inline-start`, not `left`: under RTL a negative `left` bleeds off the
+   trailing edge instead, which put 400px of phantom scroll width on the page. */
 .login-geo-1 {
   position: absolute;
-  left: -180px;
+  inset-inline-start: -180px;
   top: -140px;
   width: 560px;
   height: 820px;
@@ -2237,7 +2274,7 @@ kbd.kbd-primary {
 }
 .login-geo-2 {
   position: absolute;
-  left: -280px;
+  inset-inline-start: -280px;
   top: -80px;
   width: 640px;
   height: 900px;
@@ -2250,7 +2287,7 @@ kbd.kbd-primary {
 /* Subtle gold radial glow at intersection */
 .login-geo-glow {
   position: absolute;
-  left: 80px;
+  inset-inline-start: 80px;
   top: 30%;
   width: 260px;
   height: 260px;
@@ -2288,6 +2325,7 @@ kbd.kbd-primary {
   position: relative;
   z-index: 1;
   flex: 0 0 44%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -2454,6 +2492,7 @@ kbd.kbd-primary {
 /* Right side — floating card */
 .login-right {
   flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4893,6 +4932,21 @@ textarea.field-input { resize: vertical; }
   flex-shrink: 0;
   background: var(--surface2);
 }
+
+/* `.modal` is the generic 32px-padded dialog and it also pads every direct
+   child (`.modal > *`, specificity 0-2-0, which outranks the section rules
+   above). The three-section variant is meant to be flush: header and footer
+   reach the modal's rounded edges and the body scrolls between them. Left
+   alone, the sections were inset by 32px inside a white frame, the footer
+   floated with the form scrolling visibly behind it, and the paddings
+   compounded to 48px a side.
+
+   `:has()` keeps this off `.bo-form-modal` users that pass unstructured
+   children and still want the generic padding — WhatsAppOrdersModal is one. */
+.bo-form-modal:has(> .bo-form-modal-body) { padding: 0; }
+.bo-form-modal > .bo-form-modal-header { padding: 16px 24px; }
+.bo-form-modal > .bo-form-modal-body   { padding: 20px 24px; }
+.bo-form-modal > .bo-form-modal-footer { padding: 14px 24px; }
 .bo-form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -5286,18 +5340,26 @@ textarea.field-input { resize: vertical; }
 
 /* ── Inventory tab ────────────────────────────────────────────────────────────── */
 
+/* The inline inset lives on the layout, not on the toolbar. It used to sit only
+   on .inv-toolbar, so the search field was inset while the table and the
+   pagination bar ran hard into the right edge of the workspace. */
+/* `overflow: hidden` against a fixed height cut the last rows off with nothing
+   to scroll — on a 600px-tall window the Receive/Adjust/History buttons of the
+   bottom row were simply gone. The list owns its own scroll instead. */
 .inv-layout {
   display: flex;
   flex-direction: column;
   height: 100%;
-  overflow: hidden;
+  min-height: 0;
+  overflow: auto;
+  padding-inline: 16px;
 }
 
 .inv-toolbar {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 16px;
+  padding: 12px 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -5705,11 +5767,53 @@ textarea.field-input { resize: vertical; }
   color: var(--text-dim); font-size: 0.75rem;
 }
 .prod-image-btns    { display: flex; flex-direction: column; gap: 6px; }
+/* Typed image link sits under the picker: the two are alternatives, so they
+   share the field rather than competing for it. */
+.prod-image-url-row { display: flex; gap: 8px; margin-top: 8px; }
+.prod-image-url-row .bo-input { flex: 1; min-width: 0; }
+.prod-image-hint { margin-top: 4px; color: var(--text-muted); font-size: 0.75rem; }
 
-/* ── Products list — label button ── */
-.bo-list-row-wrap       { display: flex; align-items: stretch; }
-.bo-list-row-wrap .bo-list-row { flex: 1; }
-.bo-label-btn           { padding: 0 10px; font-size: 0.78rem; border-radius: 0 var(--radius) var(--radius) 0; border-left: 1px solid var(--border); }
+/* Product image proof: a fetched URL is immediately visible beside the exact
+   barcode/name evidence that produced it. The same control contracts into a
+   single row action in the catalogue. */
+.product-image-search { flex: 1; min-width: 0; }
+.product-image-search__proof { display: flex; align-items: center; gap: 10px; }
+.product-image-search__thumbnail,
+.product-image-search__placeholder {
+  width: 76px; height: 76px; flex: 0 0 76px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--surface2);
+}
+.product-image-search__thumbnail { object-fit: contain; }
+.product-image-search__placeholder {
+  display: grid; place-items: center; color: var(--text-muted); border-style: dashed;
+}
+.product-image-search__action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.product-image-search__evidence { display: flex; flex-direction: column; gap: 2px; margin-top: 7px; min-width: 0; }
+.product-image-search__evidence span,
+.product-image-search__source { color: var(--text-muted); font-size: 0.72rem; }
+.product-image-search__evidence strong { overflow: hidden; color: var(--text-dim); font-size: 0.75rem; text-overflow: ellipsis; white-space: nowrap; }
+.product-image-search__source { margin-top: 4px; }
+.product-image-search__error { max-width: 260px; margin-top: 5px; color: var(--error); font-size: 0.75rem; text-align: start; }
+.product-image-search__spinner { animation: product-image-spin 800ms linear infinite; }
+@keyframes product-image-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .product-image-search__spinner { animation: none; } }
+
+.product-catalogue-identity { display: flex; align-items: center; gap: 10px; min-width: 0; text-align: start; }
+.product-catalogue-identity > span:last-child { min-width: 0; }
+.product-catalogue-thumb {
+  position: relative; display: grid; width: 42px; height: 42px; flex: 0 0 42px;
+  place-items: center; overflow: hidden; color: var(--text-muted); background: var(--surface2);
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.product-catalogue-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: var(--surface); }
+.product-catalogue-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.product-image-search--compact { flex: 0 0 auto; }
+.product-image-search--compact .product-image-search__action { white-space: nowrap; }
+/* Stacking these into a column on a narrow window used to be the answer, but the
+   window is not what runs out of room — the table is. Both buttons drop their
+   labels together at the table's own breakpoint (see datatable.css), which keeps
+   the row one line tall at every width. */
+
 .bo-print-labels-btn    { padding: 6px 12px; font-size: 0.82rem; }
 
 /* ── Barcode print modal ── */
@@ -8053,7 +8157,6 @@ label {
 
 /* ── Void / print label buttons in BO ───────────────────────────────────── */
 .rpt-void-btn { padding: 8px 14px; min-height: 40px; }
-.bo-label-btn { padding: 0 14px; min-height: 52px; }
 
 /* ── BO form action buttons — 56 px ─────────────────────────────────────── */
 .bo-form-actions .btn-primary,
@@ -11035,6 +11138,54 @@ label {
 }
 
 /* ── Discount: bill reference row ───────────────────────────────────── */
+.discount-scope-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.discount-scope-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface2);
+  color: var(--text-dim);
+  text-align: start;
+}
+
+.discount-scope-tab-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--text);
+}
+
+.discount-scope-title { font-weight: 700; }
+.discount-scope-detail { font-size: 0.72rem; color: var(--text-dim); }
+
+.discount-item-picker {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 12px;
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.discount-item-picker select {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
 .discount-bill-ref {
   display: flex;
   align-items: center;
@@ -11393,7 +11544,11 @@ label {
   width: 95vw;
   max-width: 1400px;
   max-height: 92vh;
+  /* Each panel owns its own scroll; without this the shell's own content could
+     outgrow `max-height` and be cut by `overflow: hidden`. */
+  min-height: 0;
 }
+.pm-shell > * { min-height: 0; }
 
 /* Left panel */
 .pm-left {
@@ -11417,6 +11572,11 @@ label {
   gap: 12px;
   background: var(--surface2);
   align-items: stretch;
+  /* The other two panels already own their scroll. This one did not, so on a
+     very short window its content ran past the shell and was cut by the
+     shell's `overflow: hidden` — now that the dialpad is always mounted here,
+     that is the keypad itself. */
+  overflow-y: auto;
 }
 
 /* Header — total front and center */
@@ -11446,6 +11606,11 @@ label {
   display: flex;
   border: 2px solid var(--border);
   border-radius: var(--radius);
+  /* `overflow: hidden` is here to round the ends of the segmented control, not
+     to hide anything. Without `flex-shrink: 0` a short window squeezed the
+     picker and it clipped its own buttons — 20px off the bottom of Cash, Card
+     and Wallet. The column around it scrolls instead. */
+  flex-shrink: 0;
   overflow: hidden;
 }
 .pm-method {
@@ -12136,10 +12301,44 @@ label {
   min-height: 0;
   padding: 3px 6px 3px 8px;   /* was 5px 8px 5px 10px */
   display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  border-bottom: none;
+}
+.cart-line-image {
+  position: relative;
+  display: grid;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface2));
+}
+.cart-line-image-fallback {
+  color: var(--accent);
+  font-family: "Bricolage Grotesque", var(--font);
+  font-size: 1rem;
+  font-weight: 750;
+}
+.cart-line-image img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--surface);
+}
+.cart-line-copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
   flex-direction: column;
   align-items: flex-start;
   gap: 1px;
-  border-bottom: none;
 }
 .cart-line-name {
   font-size: 0.82rem;      /* was 1.05rem */
@@ -12242,9 +12441,13 @@ label {
 }
 
 
+/* `.login-screen` is a flex row, so the `grid-template-columns` that used to
+   sit in these two blocks never did anything. Removed rather than converted:
+   the split that ships is the one in operator-ux.css, and making these live
+   would squeeze the sign-in panel to a third of its width. */
 @media (max-width: 2000px) {
-  .login-screen {
-    grid-template-columns: minmax(0, 1fr) minmax(360px, 500px);
+  .login-right {
+    padding: 24px;
   }
   .login-brand {
     padding-inline: 48px;
@@ -12252,9 +12455,6 @@ label {
   .zanpos-boot-logo-wrap,
   .login-logo {
     font-size: clamp(3rem, 6vw, 4.6rem);
-  }
-  .login-right {
-    padding: 24px;
   }
   .login-panel {
     max-width: 460px;
@@ -12270,9 +12470,6 @@ label {
 }
 
 @media (max-width: 1400px) {
-  .login-screen {
-    grid-template-columns: minmax(0, 1fr) 440px;
-  }
   .login-right {
     padding: 16px;
   }
@@ -12359,12 +12556,22 @@ label {
 }
 
 /* iOS-style toggle switch */
+/* A <label>, not a <div>. The real input is `opacity: 0; width: 0; height: 0`
+   and the visible track is a sibling <span> painted over the whole box, so a
+   click landed on the span and did nothing at all — every business rule and
+   both report-scope options were unsettable by mouse or touch. Wrapping in a
+   label is what routes the click to the control. */
 .biz-toggle {
   position: relative;
   flex-shrink: 0;
   width: 52px;
   height: 28px;
   cursor: pointer;
+}
+/* The input itself is invisible, so keyboard focus has to show on the track. */
+.biz-toggle input:focus-visible + .biz-toggle-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .biz-toggle input {
   opacity: 0;
@@ -14467,6 +14674,10 @@ label {
 .top-bar-store-name {
   font-weight: 700;
   font-size: 0.88rem;
+  /* The inherited line-height matched the font size exactly, so `overflow:
+     hidden` (there for the ellipsis) cut the descenders off — the tail of the
+     "j" in "Amwaj" was missing. */
+  line-height: 1.35;
   color: var(--text);
   max-width: 240px;
   overflow: hidden;
@@ -14513,9 +14724,16 @@ label {
   border-radius: var(--radius-sm) !important;
 }
 
-/* Reserve right-edge space for window controls so they don't overlap buttons */
-.top-bar-right {
+/* Reserve right-edge space for window controls so they don't overlap buttons.
+   The buttons are painted at the physical top-right corner in both writing
+   directions, but the top bar mirrors: under RTL the *left* group (logo,
+   sidebar toggle) is what ends up beneath them, while this reservation moves
+   harmlessly to the far side. So it is stated per direction. */
+html:not([dir="rtl"]) .top-bar-right {
   padding-right: 142px; /* 3 × 46px + 4px breathing room */
+}
+[dir="rtl"] .top-bar-left {
+  padding-right: 142px;
 }
 
 /* ── Numpad panel layout ─────────────────────────────────────────────────────
@@ -14526,8 +14744,31 @@ label {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow: hidden; /* no scroll — dialpad keys shrink to fit */
+  /* The keys were supposed to shrink to fit, but `min-height: 56px` on
+     .dialpad-key (a deliberate touch-target floor) stops them — so on a short
+     window the pad stayed 341px tall inside a 148px box and `overflow: hidden`
+     silently ate the bottom rows: 1, 2, 3, C, 0 and backspace were gone with no
+     way to reach them. Scrolling is a poor last resort on a till, but it is
+     reachable; the media queries below make it rare. */
+  overflow-y: auto;
   gap: 5px;
+}
+
+/* Five rows of 56px plus the multiplier display need ~341px. Step the touch
+   target down on shorter windows so the pad still fits without scrolling —
+   44px is the WCAG 2.5.5 minimum, and 40px is only reached on windows too
+   short to do better. */
+@media (max-height: 900px) {
+  .numpad-panel .dialpad-key { min-height: 44px; }
+}
+/* Below 720px the keys are down to their intrinsic content height (~40px), so
+   lowering the floor further buys nothing without shrinking the digits. Take
+   what is left from the multiplier readout instead — it is not a touch target.
+   At 1024x700, the smallest window tauri.conf.json allows, this leaves the
+   `.`/`00` row about 24px below the fold, reachable by scrolling the pad. */
+@media (max-height: 720px) {
+  .numpad-panel .dialpad-key { min-height: 40px; }
+  .numpad-display { min-height: 38px; padding: 3px 14px; }
 }
 
 /* ── PIN keyboard hint ───────────────────────────────────────────────────────
@@ -15296,8 +15537,35 @@ label {
   border-radius: 16px;
   background: color-mix(in srgb, var(--surface) 92%, var(--success) 8%);
   box-shadow: 0 22px 70px rgba(0,0,0,0.34);
-  animation: bannerSlideIn 0.28s var(--ease-out) both;
+  /* Not `bannerSlideIn`. That keyframe was written for the full-width
+     .sale-banner and animates `transform: translateY(...)`, which replaces this
+     rule's `translateX(-50%)` outright — and `both` keeps the end frame applied
+     forever. The banner was therefore never centred: its left edge stayed at
+     `left: 50%`, so on a 1440px screen it ran 400px past the right edge and
+     took the close button with it. There was no way to dismiss it. */
+  animation: bannerSlideInCentred 0.28s var(--ease-out) both;
+  overflow: hidden;
 }
+
+@keyframes bannerSlideInCentred {
+  from { transform: translate(-50%, -100%); opacity: 0; }
+  to   { transform: translate(-50%, 0);     opacity: 1; }
+}
+
+/* Auto-dismiss countdown, same idiom as .sale-banner. Paused while the pointer
+   or keyboard focus is on the banner, so the actions cannot be pulled away
+   mid-reach. */
+.receipt-action-center::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  background: color-mix(in srgb, var(--success) 70%, transparent);
+  animation: bannerCountdown var(--receipt-banner-life, 12s) linear forwards;
+}
+.receipt-action-center:hover::after,
+.receipt-action-center:focus-within::after { animation-play-state: paused; }
 .receipt-action-summary {
   display: flex;
   align-items: center;
@@ -15900,6 +16168,70 @@ label {
   cursor: pointer;
 }
 
+/* ZanAI Tool Centre — a registry ledger, not a card gallery. The narrow risk
+   rail is the visual signature: operators can scan danger before reading IDs. */
+.zan-tool-centre { margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--border); }
+.zan-tool-centre__header { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
+.zan-tool-centre__eyebrow { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 5px; color: var(--accent); font: 600 0.7rem/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.zan-tool-centre__counts { display: flex; align-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
+.zan-tool-centre__counts span { display: inline-flex; align-items: center; gap: 4px; padding: 8px 10px; color: var(--text-muted); font-size: 0.7rem; white-space: nowrap; }
+.zan-tool-centre__counts span + span { border-inline-start: 1px solid var(--border); }
+.zan-tool-centre__counts strong { color: var(--text); font-family: var(--font-mono); font-size: 0.78rem; }
+.zan-tool-centre__controls { display: grid; grid-template-columns: minmax(240px, 1fr) auto; gap: 10px; margin: 14px 0 9px; }
+.zan-tool-centre__search { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 11px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
+.zan-tool-centre__search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent2); }
+.zan-tool-centre__search input { flex: 1; min-width: 0; border: 0; outline: 0; color: var(--text); background: transparent; }
+.zan-tool-centre__risk-filter { display: flex; align-items: center; gap: 7px; padding-inline-start: 10px; color: var(--text-muted); font-size: 0.75rem; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
+.zan-tool-centre__risk-filter select { min-height: 36px; padding: 0 28px 0 4px; border: 0; color: var(--text); background: transparent; }
+.zan-tool-centre__ledger { overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.zan-tool-centre__column-head,
+.zan-tool-row { display: grid; grid-template-columns: minmax(280px, 1.6fr) minmax(250px, 1fr) 100px; gap: 14px; align-items: center; }
+.zan-tool-centre__column-head { padding: 7px 14px; color: var(--text-muted); background: var(--surface2); font: 600 0.64rem/1 var(--font-mono); letter-spacing: 0.07em; text-transform: uppercase; }
+.zan-tool-centre__column-head span:last-child { text-align: end; }
+.zan-tool-row { position: relative; min-height: 70px; padding: 10px 14px 10px 17px; border-top: 1px solid var(--border2); }
+.zan-tool-row::before { position: absolute; inset-block: 0; inset-inline-start: 0; width: 3px; content: ""; background: var(--text-muted); }
+.zan-tool-row--medium::before { background: var(--accent); }
+.zan-tool-row--high::before { background: var(--warning); }
+.zan-tool-row--critical::before { background: var(--error); }
+.zan-tool-row__identity { min-width: 0; }
+.zan-tool-row__identity code { color: var(--text); font-size: 0.78rem; font-weight: 650; }
+.zan-tool-row__identity p { margin: 4px 0 0; overflow: hidden; color: var(--text-muted); font-size: 0.72rem; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.zan-tool-row__policy { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+.zan-tool-row__policy small { flex-basis: 100%; color: var(--text-muted); font-size: 0.65rem; }
+.zan-tool-badge { padding: 2px 6px; color: var(--text-dim); border: 1px solid var(--border); border-radius: 4px; font: 600 0.62rem/1.3 var(--font-mono); text-transform: uppercase; }
+.zan-tool-badge--medium { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 38%, var(--border)); }
+.zan-tool-badge--high { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 38%, var(--border)); }
+.zan-tool-badge--critical { color: var(--error); border-color: color-mix(in srgb, var(--error) 38%, var(--border)); }
+.zan-tool-row__switch { display: flex; align-items: center; justify-content: flex-end; gap: 7px; color: var(--text-dim); font-size: 0.7rem; cursor: pointer; }
+.zan-tool-row__switch input { width: 17px; height: 17px; accent-color: var(--accent); }
+.zan-tool-centre__empty,
+.zan-tool-centre__error { padding: 22px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 8px; text-align: center; }
+.zan-tool-centre__error { color: var(--error); }
+@media (max-width: 980px) {
+  .zan-tool-centre__header { align-items: flex-start; flex-direction: column; }
+  .zan-tool-centre__counts { max-width: 100%; overflow-x: auto; }
+  .zan-tool-centre__column-head { display: none; }
+  .zan-tool-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .zan-tool-row__policy { grid-column: 1; }
+  .zan-tool-row__switch { grid-column: 2; grid-row: 1 / span 2; }
+}
+@media (max-width: 620px) {
+  .zan-tool-centre__controls { grid-template-columns: 1fr; }
+  .zan-tool-centre__risk-filter { min-height: 38px; justify-content: space-between; }
+  .zan-tool-centre__counts { display: grid; grid-template-columns: 1fr 1fr; width: 100%; }
+  .zan-tool-centre__counts span:nth-child(3) { border-inline-start: 0; border-top: 1px solid var(--border); }
+  .zan-tool-centre__counts span:nth-child(4) { border-top: 1px solid var(--border); }
+}
+.zan-tool-metrics { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
+.zan-tool-metrics__table-wrap { margin-top: 12px; overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+.zan-tool-metrics__table { width: 100%; border-collapse: collapse; background: var(--surface); font-size: 0.75rem; }
+.zan-tool-metrics__table th { padding: 8px 11px; color: var(--text-muted); background: var(--surface2); font: 600 0.64rem/1 var(--font-mono); letter-spacing: 0.05em; text-align: start; text-transform: uppercase; }
+.zan-tool-metrics__table td { padding: 10px 11px; color: var(--text-dim); border-top: 1px solid var(--border2); white-space: nowrap; }
+.zan-tool-metrics__table td code,
+.zan-tool-metrics__table td strong { color: var(--text); }
+.zan-tool-metrics__table td svg { margin-inline-end: 4px; vertical-align: -2px; }
+.zan-tool-metrics__table td.is-attention { color: var(--error); }
+
 /* ═══════════════════════════════════════════════════════════════════════════
    Catalog import — invoice/price-list review modal
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -16104,7 +16436,12 @@ label {
   min-height: 34px;
 }
 .oa-sidebar-tool { font-size: 0.75rem; }
-.oa-back-btn { width: 100%; }
+/* Full width belongs to the sidebar footer, where the button is the only
+   child of a 208px rail. The header reuses the same class for "Till"; there
+   `width: 100%` made it fill the whole actions cluster (409px measured),
+   which pushed every other control out of the container and over the search
+   box. Scoped to the rail so the header button is content-sized. */
+.oa-primary-nav .oa-back-btn { width: 100%; }
 .oa-user-card { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--oa-line); border-radius: 8px; background: rgba(255,255,255,0.04); }
 .oa-user-avatar { width: 32px; height: 32px; border-radius: 7px; display: grid; place-items: center; background: var(--accent); color: #111; font-weight: 800; }
 .oa-user-meta { min-width: 0; }
@@ -16369,7 +16706,6 @@ label {
 .oa-health-summary span { margin-top: 4px; color: var(--oa-muted); font-size: 0.78rem; }
 .oa-health-row em { color: var(--oa-muted); font-size: 0.75rem; font-style: normal; }
 .oa-system-actions { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 10px; margin-bottom: 10px; }
-.oa-inline-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; margin-bottom: 12px; align-items: center; }
 .oa-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-items: center; }
 .oa-form-grid .btn-primary { min-height: 38px; }
 .oa-table { border: 1px solid var(--oa-line); border-radius: 8px; overflow: hidden; }
@@ -16420,12 +16756,6 @@ label {
   padding: 0 9px;
   cursor: pointer;
 }
-.oa-mini-input {
-  width: 86px;
-  min-height: 32px;
-  flex: 0 0 86px;
-}
-
 .oa-subnav-panel {
   display: flex;
   align-items: flex-start;
@@ -16539,7 +16869,6 @@ label {
   .oa-action-row .oa-action-buttons,
   .oa-workflow-row .oa-action-buttons { max-width: none; justify-content: flex-start; }
   .oa-system-actions { grid-template-columns: 1fr; }
-  .oa-inline-form,
   .oa-form-grid { grid-template-columns: 1fr; }
 }
 
@@ -17162,14 +17491,20 @@ label {
   transform: none;
 }
 
+/* Command tiles are actions, so they follow --accent, which is theme-aware.
+   These previously used the hardcoded --oa-blue, which painted the page's
+   primary action blue no matter which theme the user had selected. */
 .oa-command-tile:hover {
-  border-color: color-mix(in srgb, var(--oa-blue) 42%, var(--oa-line));
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--oa-line));
   background: var(--oa-surface-raised);
   transform: none;
 }
 
-.oa-command-tile > svg { color: var(--oa-blue); flex: 0 0 auto; }
-.oa-command-primary { border-color: color-mix(in srgb, var(--oa-blue) 38%, var(--oa-line)); background: var(--oa-blue-soft); }
+.oa-command-tile > svg { color: var(--accent); flex: 0 0 auto; }
+.oa-command-primary {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--oa-line));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
 .oa-command-tile strong { font-size: 0.8rem; font-weight: 650; }
 .oa-command-tile small { color: var(--oa-muted); font-size: 0.7rem; }
 
@@ -17307,7 +17642,17 @@ label {
   border-color: var(--oa-blue);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--oa-blue) 18%, transparent);
 }
-.oa-page :is(.btn-primary, .bo-btn-primary) { border-radius: 7px; border-color: var(--oa-blue); color: #fff; background: var(--oa-blue); }
+/* Primary business actions follow the gold accent. This rule previously forced
+   every .btn-primary inside .oa-page to --oa-blue, which is why surfaces still
+   using the legacy button class (Cashiers' "Run report", for one) rendered a
+   blue primary while migrated surfaces rendered gold. Blue is retired as an
+   action colour; it remains a focus/state token only. */
+.oa-page :is(.btn-primary, .bo-btn-primary) {
+  border-radius: 7px;
+  border-color: var(--accent);
+  color: var(--accent-t);
+  background: var(--accent);
+}
 .oa-page :is(.btn-secondary, .bo-btn-secondary) { border-radius: 7px; border-color: var(--oa-line); color: var(--oa-text); background: var(--oa-surface-raised); }
 .oa-page :is(table, .bo-table) { border-color: var(--oa-line); }
 .oa-page :is(th, .bo-table th) { color: var(--oa-faint); background: var(--oa-surface-soft); }
@@ -17362,6 +17707,36 @@ label {
   position: relative;
   overflow: hidden;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "DM Sans", sans-serif;
+}
+
+/* Skip link. Parked off-screen with the clip technique rather than a negative
+   offset: `left: -999px` reverses under RTL and pushed 999px of phantom width
+   onto every Arabic page, and it left the link with no way back on focus. */
+.oa-skip-link {
+  position: absolute;
+  top: 0;
+  inset-inline-start: 0;
+  z-index: 9999;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  background: var(--accent);
+  color: var(--accent-t);
+  border-radius: 0 0 4px 0;
+  text-decoration: none;
+}
+
+.oa-skip-link:focus-visible {
+  width: auto;
+  height: auto;
+  padding: 8px 16px;
+  overflow: visible;
+  clip-path: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 :is([data-theme="light"], [data-theme="sky"], [data-theme="sage"], [data-theme="blossom"]) .oa-page {
@@ -17553,15 +17928,23 @@ label {
 .oa-section-heading p { margin: 4px 0 0; color: var(--oa-muted); font-size: var(--type-office-caption); line-height: var(--leading-office-caption); }
 .oa-quiet-status { display: inline-flex; align-items: center; gap: 5px; color: var(--oa-muted); font-size: 0.7rem; }
 .oa-attention-list { border-top: 1px solid var(--oa-line); }
+/* Two columns, matching the two children the component actually renders
+   (.oa-attention-body + action button). The old three-column track assumed a
+   leading <svg> that is never emitted, so the text div landed in the 20px icon
+   column and wrapped one word per line while the button took the 1fr and
+   overlapped it. */
 .oa-attention-row {
   min-height: 66px;
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   padding: 10px 4px;
   border-bottom: 1px solid var(--oa-line);
 }
+
+.oa-attention-row > .oa-attention-body { min-width: 0; overflow-wrap: anywhere; }
+.oa-attention-row > button { justify-self: end; width: auto; }
 .oa-attention-row > svg { color: var(--oa-amber); }
 .oa-attention-critical > svg { color: var(--oa-red); }
 .oa-attention-info > svg { color: var(--oa-blue); }
@@ -17617,31 +18000,41 @@ label {
   background: rgba(0, 0, 0, 0.36);
   animation: oa-fade-in 160ms ease;
 }
+/* The command palette renders outside `.oa-page`, where the --oa-* tokens are
+   declared, so every unfallbacked reference resolved to nothing and the whole
+   declaration became invalid — its background computed to transparent, exactly
+   like the ZanAI sheet did. Verified in-browser: insideOaPage=false. */
+/* Flex column, so the results list gives up height to the search row and the
+   shortcut footer rather than pushing the footer out through `overflow:
+   hidden`. On a 600px-tall window the results' own 480px cap left the palette
+   48px taller than it was allowed to be, and the footer was simply gone. */
 .oa-command-palette {
+  display: flex;
+  flex-direction: column;
   width: min(620px, calc(100% - 32px));
   max-height: min(620px, calc(100% - 80px));
   margin: 72px auto 0;
   overflow: hidden;
-  border: 1px solid var(--oa-line-strong);
+  border: 1px solid var(--oa-line-strong, var(--border));
   border-radius: 8px;
-  color: var(--oa-text);
-  background: var(--oa-surface);
+  color: var(--oa-text, var(--text));
+  background: var(--oa-surface, var(--surface));
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
 }
-.oa-command-search { height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--oa-line); color: var(--oa-muted); }
-.oa-command-search input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; color: var(--oa-text); background: transparent; outline: 0; }
-.oa-command-search button { width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 6px; color: var(--oa-muted); background: transparent; cursor: pointer; }
-.oa-command-results { max-height: 480px; overflow: auto; padding: 7px; }
-.oa-command-results > button { width: 100%; min-height: 52px; display: flex; align-items: center; gap: 10px; padding: 7px 9px; border: 0; border-radius: 7px; color: var(--oa-text); background: transparent; text-align: left; cursor: pointer; }
-.oa-command-results > button:hover { background: var(--oa-surface-raised); }
-.oa-command-result-icon { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--oa-line); border-radius: 6px; color: var(--oa-blue); }
+.oa-command-search { flex: 0 0 auto; height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--oa-line, var(--border)); color: var(--oa-muted, var(--text-dim)); }
+.oa-command-search input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; color: var(--oa-text, var(--text)); background: transparent; outline: 0; }
+.oa-command-search button { width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 6px; color: var(--oa-muted, var(--text-dim)); background: transparent; cursor: pointer; }
+.oa-command-results { flex: 1 1 auto; min-height: 0; max-height: 480px; overflow: auto; padding: 7px; }
+.oa-command-results > button { width: 100%; min-height: 52px; display: flex; align-items: center; gap: 10px; padding: 7px 9px; border: 0; border-radius: 7px; color: var(--oa-text, var(--text)); background: transparent; text-align: left; cursor: pointer; }
+.oa-command-results > button:hover { background: var(--oa-surface-raised, var(--surface2)); }
+.oa-command-result-icon { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--oa-line, var(--border)); border-radius: 6px; color: var(--oa-blue, var(--accent)); }
 .oa-command-results strong,
 .oa-command-results small { display: block; }
 .oa-command-results strong { font-size: 0.78rem; }
-.oa-command-results small { margin-top: 2px; color: var(--oa-muted); font-size: 0.68rem; }
-.oa-command-empty { padding: 28px; color: var(--oa-muted); text-align: center; }
-.oa-command-palette footer { min-height: 34px; display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 0 12px; border-top: 1px solid var(--oa-line); color: var(--oa-faint); font-size: 0.64rem; }
-.oa-command-palette kbd { padding: 2px 5px; border: 1px solid var(--oa-line); border-radius: 4px; }
+.oa-command-results small { margin-top: 2px; color: var(--oa-muted, var(--text-dim)); font-size: 0.68rem; }
+.oa-command-empty { padding: 28px; color: var(--oa-muted, var(--text-dim)); text-align: center; }
+.oa-command-palette footer { min-height: 34px; display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 0 12px; border-top: 1px solid var(--oa-line, var(--border)); color: var(--oa-faint, var(--text-muted)); font-size: 0.64rem; }
+.oa-command-palette kbd { padding: 2px 5px; border: 1px solid var(--oa-line, var(--border)); border-radius: 4px; }
 
 .oa-context-sheet,
 .oa-copilot-sheet {
@@ -17650,13 +18043,18 @@ label {
   right: 0;
   bottom: 0;
   width: min(390px, calc(100% - 64px));
-  border-left: 1px solid var(--oa-line-strong);
-  color: var(--oa-text);
-  background: var(--oa-surface);
+  /* The --oa-* tokens are declared on `.oa-page`. This sheet can mount outside
+     that scope, and an unresolved custom property makes the whole declaration
+     invalid — so `background` computed to transparent and the navy rail showed
+     straight through the assistant, text over text. Base tokens are declared on
+     :root and always resolve, so they are the fallback. */
+  border-left: 1px solid var(--oa-line-strong, var(--border));
+  color: var(--oa-text, var(--text));
+  background: var(--oa-surface, var(--surface));
   box-shadow: -18px 0 48px rgba(0, 0, 0, 0.28);
   animation: oa-sheet-in 160ms ease;
 }
-.oa-sheet-header { min-height: 56px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px 8px 16px; border-bottom: 1px solid var(--oa-line); }
+.oa-sheet-header { min-height: 56px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px 8px 16px; border-bottom: 1px solid var(--oa-line, var(--border)); background: var(--oa-surface, var(--surface)); }
 .oa-sheet-header strong,
 .oa-sheet-header span { display: block; }
 .oa-sheet-header strong { font-size: 0.85rem; }
@@ -17665,7 +18063,7 @@ label {
 .oa-context-list { display: grid; gap: 5px; margin-bottom: 10px; }
 .oa-context-list button { min-height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--oa-line); border-radius: 7px; color: var(--oa-text); background: var(--oa-surface-soft); cursor: pointer; }
 .oa-context-note { display: flex; gap: 8px; margin: 10px 0; padding: 10px; color: var(--oa-muted); font-size: 0.7rem; line-height: 1.4; }
-.oa-copilot-sheet .oa-dock { width: 100%; min-width: 0; height: 100%; border: 0; background: var(--oa-surface); }
+.oa-copilot-sheet .oa-dock { width: 100%; min-width: 0; height: 100%; border: 0; background: var(--oa-surface, var(--surface)); }
 @keyframes oa-fade-in { from { opacity: 0; } }
 @keyframes oa-sheet-in { from { transform: translateX(24px); opacity: 0.7; } }
 
@@ -17707,4 +18105,166 @@ label {
   .oa-signal { padding: 12px; }
   .oa-home-partial { align-items: flex-start; flex-wrap: wrap; }
   .oa-home-partial button { margin-left: 24px; }
+}
+
+/* ── Primary navigation is a brand surface ────────────────────────────────────
+   The rail stays deep navy in every theme, which is what the reference designs
+   show and what keeps the product recognisable when a shopkeeper switches to a
+   light theme under shop lighting. It is deliberately NOT wired to --oa-nav-bg:
+   that token follows the theme, and following it turned the rail white and
+   dissolved the shell's structure.
+   Text/icon colours are pinned here too, because the surrounding light theme
+   would otherwise hand the rail dark-on-dark foreground tokens. */
+.oa-primary-nav {
+  --oa-nav-ink:        #eef2ff;
+  --oa-nav-ink-dim:    rgba(238, 242, 255, 0.62);
+  --oa-nav-line:       rgba(255, 255, 255, 0.10);
+  background: #101a3a;
+  border-right-color: var(--oa-nav-line);
+  color: var(--oa-nav-ink);
+}
+
+.oa-primary-nav .oa-nav-wordmark { color: var(--oa-nav-ink); }
+.oa-primary-nav .oa-nav-store,
+.oa-primary-nav .oa-sidebar-tool { color: var(--oa-nav-ink-dim); }
+
+.oa-primary-nav .oa-nav-item {
+  color: var(--oa-nav-ink-dim);
+  border-color: transparent;
+}
+.oa-primary-nav .oa-nav-item .oa-nav-icon { color: var(--oa-nav-ink-dim); }
+
+.oa-primary-nav .oa-nav-item:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--oa-nav-ink);
+}
+.oa-primary-nav .oa-nav-item:hover .oa-nav-icon { color: var(--oa-nav-ink); }
+
+/* Active is a solid accent pill, as in the references — not a faint gradient. */
+.oa-primary-nav .oa-nav-item-active,
+.oa-primary-nav .oa-nav-item-active:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-t);
+  font-weight: 600;
+}
+.oa-primary-nav .oa-nav-item-active .oa-nav-icon,
+.oa-primary-nav .oa-nav-item-active:hover .oa-nav-icon { color: var(--accent-t); }
+
+/* The collapse control and the footer button both inherited light-theme
+   surfaces, which read as a white blob and near-invisible text once the rail
+   became navy. Both are pinned to the rail's own palette. */
+.oa-primary-nav .oa-icon-btn {
+  color: var(--oa-nav-ink-dim);
+  background: transparent;
+  border-color: var(--oa-nav-line);
+}
+.oa-primary-nav .oa-icon-btn:hover {
+  color: var(--oa-nav-ink);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.oa-primary-nav .oa-nav-footer { border-top-color: var(--oa-nav-line); }
+
+.oa-primary-nav .oa-back-btn {
+  color: var(--accent);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.oa-primary-nav .oa-back-btn:hover {
+  color: var(--accent-t);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.oa-primary-nav .oa-back-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Focus must stay visible against navy in every theme. */
+.oa-primary-nav :is(.oa-nav-item, .oa-icon-btn):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Today composition ────────────────────────────────────────────────────────
+   The reference puts the day's numbers and the exception list side by side, so
+   "how is trade" and "what needs me" are answered in one glance rather than by
+   scrolling. Signals take the wider column; attention is a fixed companion. */
+.oa-home-greeting {
+  margin: 2px 0 6px;
+  font-size: 1.75rem;
+  font-weight: 680;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--text);
+}
+
+.oa-home-summary {
+  margin: 0;
+  max-width: 68ch;
+  color: var(--text-dim);
+  font-size: 0.9375rem;
+}
+
+.oa-home-updated { margin: 4px 0 0; color: var(--text-muted); font-size: 0.75rem; }
+
+.oa-home-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+  gap: 16px;
+  align-items: start;
+}
+
+.oa-home-split .oa-signal-grid { margin: 0; }
+.oa-home-split .oa-attention { margin: 0; }
+
+/* Below 1280 the companion column would squeeze the numbers, so it stacks
+   rather than compressing — the same rule the other list/detail pages use. */
+@media (max-width: 1279px) {
+  .oa-home-split { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* The section heading is a two-up row (title left, hint right) that only fits
+   a full-width section. In the narrow companion column it collided with its
+   own hint, so inside the split it stacks. */
+.oa-home-split .oa-section-heading {
+  display: block;
+}
+.oa-home-split .oa-section-heading h3 { margin: 0 0 2px; }
+.oa-home-split .oa-section-heading small {
+  display: block;
+  color: var(--text-muted);
+}
+
+/* Give both columns the same card treatment the reference uses, so the two
+   halves read as deliberate panels rather than loose content. */
+.oa-home-split > section {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--surface);
+}
+
+/* ── Header action cluster ────────────────────────────────────────────────────
+   The cluster must keep its intrinsic width and let the ask bar give up space
+   instead. It previously carried `flex-wrap: wrap` inside a fixed 56px header:
+   wrapping there cannot produce a second row, so the overflow rendered on top
+   of the search trigger with `justify-content: flex-end` pushing it leftwards. */
+.oa-topbar-actions {
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+
+/* "Till" is a normal action button in the header, not a full-width rail item. */
+.oa-topbar .oa-back-btn {
+  width: auto;
+  flex: 0 0 auto;
+  padding-inline: 16px;
+}
+
+/* The ask bar is the only element allowed to absorb the remaining width. */
+.oa-topbar .oa-command-trigger {
+  flex: 1 1 auto;
+  min-width: 0;
 }

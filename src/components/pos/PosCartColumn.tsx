@@ -29,10 +29,7 @@ interface Props {
   setError: ReturnType<typeof useCart>["setError"];
   addProduct: ReturnType<typeof useCart>["addProduct"];
   addCustomItem: ReturnType<typeof useCart>["addCustomItem"];
-  updateQuantity: ReturnType<typeof useCart>["updateQuantity"];
   removeLine: ReturnType<typeof useCart>["removeLine"];
-  applyLineDiscount: ReturnType<typeof useCart>["applyLineDiscount"];
-  setLineNote: ReturnType<typeof useCart>["setLineNote"];
   bumpLine: ReturnType<typeof useCart>["bumpLine"];
   onBarcode: (barcode: string) => void;
   onPaySplit: () => void;
@@ -58,10 +55,7 @@ export default function PosCartColumn({
   setError,
   addProduct,
   addCustomItem,
-  updateQuantity,
   removeLine,
-  applyLineDiscount,
-  setLineNote,
   bumpLine,
   onBarcode,
   onPaySplit,
@@ -138,10 +132,14 @@ export default function PosCartColumn({
         cart={cart}
         netTotal={netTotal}
         taxTotal={taxTotal}
-        onUpdateQty={updateQuantity}
         onRemove={removeLine}
-        onApplyLineDiscount={applyLineDiscount}
-        onSetLineNote={setLineNote}
+        onEditPrice={line => setActiveModal({
+          kind: "priceInput",
+          mode: "setExisting",
+          lineId: line.cart_line_id,
+          productName: line.product_name,
+          currentPriceMinor: line.unit_price_minor,
+        })}
         onPaySplit={onPaySplit}
         onPayFast={onPayFast}
         onPayDirect={onPayDirect}

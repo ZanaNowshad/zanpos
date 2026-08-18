@@ -8,6 +8,7 @@ use crate::commands::purchasing_commands::{
 use crate::domain::ai_admin::{ToolPreview, ToolPreviewField};
 use crate::errors::{AppError, AppResult};
 use sqlx::{Row, SqlitePool};
+use ulid::Ulid;
 
 fn prev(name: &str, desc: &str, fields: Vec<(&str, String)>) -> ToolPreview {
     ToolPreview {
@@ -297,6 +298,13 @@ pub async fn execute(
                     po_id: po_id.clone(),
                     actor_user_id: actor_id.clone(),
                     lines,
+                    // A fresh key per execution. Replay protection for this
+                    // path lives one layer up: an `ai_actions` row carries the
+                    // operation identity and its status transitions from
+                    // prepared to executed, so a confirmed action cannot be
+                    // executed twice. The key here records the receipt; it is
+                    // not what prevents the replay.
+                    idempotency_key: Ulid::new().to_string(),
                 },
                 &branch_id,
                 &device_id,

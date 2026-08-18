@@ -4,6 +4,10 @@ import * as cmd from "../tauri/commands";
 import { useLanguage } from "../hooks/useLanguage";
 import { modalTranslator } from "../i18n/modalStrings";
 import { detailTranslator } from "../i18n/detailStrings";
+import {
+  CATEGORY_TEMPLATE_CSV, PRODUCT_TEMPLATE_CSV,
+  downloadCsv, parseCSV, rowsToCategories, rowsToProducts,
+} from "../csv/productsCsv";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -14,75 +18,6 @@ interface Props {
   sessionUserId: string;
   onClose: () => void;
   onDone: () => void; // refresh parent list after import
-}
-
-// ── CSV helpers ───────────────────────────────────────────────────────────────
-
-function parseCSV(text: string): string[][] {
-  const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-  return lines
-    .filter(l => l.trim() !== "")
-    .map(line => {
-      const cols: string[] = [];
-      let cur = "";
-      let inQuote = false;
-      for (let i = 0; i < line.length; i++) {
-        const ch = line[i];
-        if (ch === '"') {
-          if (inQuote && line[i + 1] === '"') { cur += '"'; i++; }
-          else { inQuote = !inQuote; }
-        } else if (ch === "," && !inQuote) {
-          cols.push(cur); cur = "";
-        } else {
-          cur += ch;
-        }
-      }
-      cols.push(cur);
-      return cols.map(c => c.trim());
-    });
-}
-
-function rowsToCategories(rows: string[][]): BulkCategoryRow[] {
-  if (rows.length < 2) return [];
-  const header = rows[0].map(h => h.toLowerCase());
-  const nameIdx = header.findIndex(h => h === "name");
-  const orderIdx = header.findIndex(h => h.includes("sort") || h.includes("order"));
-  if (nameIdx < 0) return [];
-  return rows.slice(1).map(r => ({
-    name: r[nameIdx] ?? "",
-    sort_order: orderIdx >= 0 && r[orderIdx] ? parseInt(r[orderIdx]) || undefined : undefined,
-  }));
-}
-
-function rowsToProducts(rows: string[][]): BulkProductRow[] {
-  if (rows.length < 2) return [];
-  const header = rows[0].map(h => h.toLowerCase().replace(/[^a-z_]/g, "_"));
-  const col = (names: string[]) => names.reduce((acc, n) => acc >= 0 ? acc : header.findIndex(h => h.includes(n)), -1);
-
-  const nameIdx      = col(["name"]);
-  const catIdx       = col(["category"]);
-  const priceIdx     = col(["price"]);
-  const skuIdx       = col(["sku"]);
-  // `barcodes` (plural, pipe-separated) takes priority over single `barcode`
-  const barcodesIdx  = header.findIndex(h => h === "barcodes");
-  const barcodeIdx   = barcodesIdx >= 0 ? -1 : col(["barcode"]);
-  const trackIdx     = col(["track", "inventory"]);
-  const taxIdx       = col(["tax"]);
-
-  if (nameIdx < 0 || catIdx < 0 || priceIdx < 0) return [];
-
-  return rows.slice(1).map(r => ({
-    name:             r[nameIdx] ?? "",
-    category_name:    catIdx >= 0  ? (r[catIdx] ?? "")    : "",
-    price:            priceIdx >= 0 ? (r[priceIdx] ?? "0") : "0",
-    sku:              skuIdx >= 0   ? (r[skuIdx] || undefined)      : undefined,
-    barcode:          barcodeIdx >= 0 ? (r[barcodeIdx] || undefined) : undefined,
-    barcodes:         barcodesIdx >= 0 ? (r[barcodesIdx] || undefined) : undefined,
-    track_inventory:  trackIdx >= 0
-      ? !["false", "0", "no"].includes((r[trackIdx] ?? "").toLowerCase())
-      : undefined,
-    tax_rule_name:    taxIdx >= 0   ? (r[taxIdx] || undefined)     : undefined,
-  }));
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -100,28 +35,11 @@ export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }
 
   const isProducts = mode === "products";
 
-  const TEMPLATE_PRODUCTS =
-    "name,category_name,price,sku,barcodes,track_inventory,tax_rule_name\n" +
-    "Coca-Cola 330ml,Drinks,0.400,COLA-330,5449000000996,true,VAT 10%\n" +
-    "Pepsi 330ml,Drinks,0.350,PEPS-330,1234567890|9876543210,true,VAT 10%\n" +
-    "Water 500ml,Drinks,0.250,WATR-500,,true,Zero Rate\n" +
-    "Sandwich,Food,0.800,,,true,";
-
-  const TEMPLATE_CATEGORIES =
-    "name,sort_order\n" +
-    "Drinks,1\n" +
-    "Food,2\n" +
-    "Misc,3";
-
   function downloadTemplate() {
-    const content = isProducts ? TEMPLATE_PRODUCTS : TEMPLATE_CATEGORIES;
-    const blob = new Blob([content], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = isProducts ? "products_template.csv" : "categories_template.csv";
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadCsv(
+      isProducts ? "products_template.csv" : "categories_template.csv",
+      isProducts ? PRODUCT_TEMPLATE_CSV : CATEGORY_TEMPLATE_CSV,
+    );
   }
 
   function handleFile(file: File) {

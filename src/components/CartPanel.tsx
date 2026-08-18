@@ -2,17 +2,15 @@ import { memo, useEffect, useRef, useState } from "react";
 import { ShoppingCart } from "lucide-react";
 import type { Cart, CartLine } from "../types";
 import { formatMoney } from "../money";
+import { productImageSrc } from "../productImage";
 import { DEVICE } from "../types";
-import LineEditModal from "./LineEditModal";
 
 interface Props {
   cart: Cart;
   netTotal: number;
   taxTotal: number;
-  onUpdateQty: (line_id: string, qty: string) => void;
   onRemove: (line_id: string) => void;
-  onApplyLineDiscount: (line_id: string, discount_minor: number, reason: string) => void;
-  onSetLineNote: (line_id: string, note: string | null) => void;
+  onEditPrice: (line: CartLine) => void;
   onPaySplit: () => void;
   onPayFast: () => void;
   onPayDirect: (method: "cash" | "card" | "wallet") => void;
@@ -29,11 +27,10 @@ interface Props {
 // cart/callbacks haven't changed.
 export default memo(function CartPanel({
   cart, netTotal, taxTotal,
-  onUpdateQty, onRemove, onApplyLineDiscount, onSetLineNote,
+  onRemove, onEditPrice,
   onPaySplit, onPayFast, onPayDirect, payFastLoading,
   paymentStarted, recentLineId, onBumpLine, compact,
 }: Props) {
-  const [editingLine, setEditingLine] = useState<CartLine | null>(null);
   const [saleFlash, setSaleFlash] = useState(false);
   const activeLines = cart.lines.filter(l => !l.voided);
 
@@ -86,7 +83,7 @@ export default memo(function CartPanel({
             line={line}
             isRecent={line.cart_line_id === recentLineId}
             disabled={isPaymentLocked}
-            onEdit={() => setEditingLine(line)}
+            onEdit={() => onEditPrice(line)}
             onIncrement={() => onBumpLine(line.cart_line_id, 1)}
             onDecrement={() => onBumpLine(line.cart_line_id, -1)}
             onRemove={() => onRemove(line.cart_line_id)}
@@ -168,16 +165,6 @@ export default memo(function CartPanel({
       )}
 
 
-{editingLine && (
-        <LineEditModal
-          line={editingLine}
-          onUpdateQty={onUpdateQty}
-          onApplyLineDiscount={onApplyLineDiscount}
-          onSetLineNote={onSetLineNote}
-          onRemove={onRemove}
-          onClose={() => setEditingLine(null)}
-        />
-      )}
     </div>
   );
 });
@@ -201,6 +188,8 @@ const CartLineRow = memo(function CartLineRow({
 }) {
   const fmt = (n: number) => formatMoney(n, DEVICE.currency_exponent);
   const hasDiscount = line.line_discount_minor > 0;
+  const imageSrc = productImageSrc(line.image_path);
+  const imageFallback = line.product_name.trim().charAt(0).toUpperCase() || "•";
 
   return (
     <div className={`cart-line-wrap ${isRecent ? "cart-line-recent" : ""}`}>
@@ -209,11 +198,24 @@ const CartLineRow = memo(function CartLineRow({
         className="cart-line-name-btn"
         onClick={onEdit}
         disabled={disabled}
-        title="Tap to edit quantity, discount, or note"
+        title="Change item price"
       >
-        <span className="cart-line-name">{line.product_name}</span>
-        <span className="cart-line-sku">{line.sku || line.barcode || "Custom item"}</span>
-        {line.note && <span className="cart-line-note">{line.note}</span>}
+        <span className="cart-line-image" aria-hidden="true">
+          <span className="cart-line-image-fallback">{imageFallback}</span>
+          {imageSrc && (
+            <img
+              src={imageSrc}
+              alt=""
+              loading="lazy"
+              onError={event => { event.currentTarget.style.display = "none"; }}
+            />
+          )}
+        </span>
+        <span className="cart-line-copy">
+          <span className="cart-line-name">{line.product_name}</span>
+          <span className="cart-line-sku">{line.sku || line.barcode || "Custom item"}</span>
+          {line.note && <span className="cart-line-note">{line.note}</span>}
+        </span>
       </button>
 
       {/* Controls: − qty + | total | × */}

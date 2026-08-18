@@ -160,6 +160,14 @@ pub async fn filtered_tool_definitions(pool: &SqlitePool) -> AppResult<Vec<ToolD
     crate::ai::tool_policy::filter_enabled_definitions(pool, all_tool_definitions()).await
 }
 
+pub async fn filtered_tool_definitions_for_role(
+    pool: &SqlitePool,
+    role_name: &str,
+) -> AppResult<Vec<ToolDef>> {
+    let enabled = filtered_tool_definitions(pool).await?;
+    crate::ai::tool_policy::filter_definitions_for_role(&enabled, role_name)
+}
+
 #[allow(dead_code)]
 async fn get_toggle(pool: &SqlitePool, key: &str, default: bool) -> bool {
     let row = sqlx::query("SELECT value FROM app_config WHERE key = ?")
@@ -515,9 +523,36 @@ pub async fn execute_read_tool(
     branch_id: &str,
     currency_exp: u32,
 ) -> AppResult<String> {
+    let started = std::time::Instant::now();
+    let result = execute_read_tool_inner(pool, tool_name, input, branch_id, currency_exp).await;
+    let estimated_tokens = result
+        .as_ref()
+        .map(|content| (content.chars().count() as i64 + 3) / 4)
+        .unwrap_or(0);
+    if let Err(error) = crate::db::repositories::ai_admin_repo::record_tool_metric(
+        pool,
+        tool_name,
+        result.is_ok(),
+        started.elapsed().as_millis().min(i64::MAX as u128) as i64,
+        estimated_tokens,
+    )
+    .await
+    {
+        tracing::warn!(tool = tool_name, %error, "failed to record ZanAI tool metric");
+    }
+    result
+}
+
+async fn execute_read_tool_inner(
+    pool: &SqlitePool,
+    tool_name: &str,
+    input: &Value,
+    branch_id: &str,
+    currency_exp: u32,
+) -> AppResult<String> {
     match tool_name {
         "request_full_tool_access" => Ok(
-            "The full mutation-tool catalogue will be available on the next step. Re-evaluate the operator's request before choosing a mutation, and retain confirmation-before-mutate."
+            "The full mutation-tool catalogue will be available on the next step. Re-evaluate the operator's request before choosing a mutation; the runtime will enforce the configured confirmation policy."
                 .into(),
         ),
         "report_expiring_stock" => {
@@ -550,7 +585,7 @@ pub async fn execute_read_tool(
                 ));
             }
             lines.push(
-                "Suggestions are advisory. Any markdown is a price mutation and requires explicit confirmation."
+                "Suggestions are advisory. Any markdown is a price mutation governed by the runtime confirmation policy."
                     .into(),
             );
             Ok(lines.join("\n"))
@@ -589,7 +624,7 @@ pub async fn execute_read_tool(
                 }
             }
             lines.push(
-                "Any shelf-price change is a mutation and requires explicit confirmation.".into(),
+                "Any shelf-price change is a mutation governed by the runtime confirmation policy.".into(),
             );
             Ok(lines.join("\n"))
         }
@@ -786,7 +821,7 @@ pub async fn execute_read_tool(
         }
         "search_products" => {
             let query = input.get("query").and_then(|v| v.as_str()).unwrap_or("");
-            let products = product_repo::search_products(pool, query, 20).await?;
+            let products = product_repo::search_products_indexed(pool, query, 20).await?;
             if products.is_empty() {
                 return Ok(format!("No products found matching '{}'.", query));
             }
@@ -2584,6 +2619,7 @@ pub async fn execute_read_tool(
                 "deliveries",
                 "customers",
                 "users",
+                "purchasing",
                 "settings",
                 "audit",
                 "devices",
@@ -3843,6 +3879,32 @@ fn validate_mutation_input(tool_name: &str, input: &Value) -> AppResult<()> {
 }
 
 pub(super) async fn execute_mutation_raw(
+    pool: &SqlitePool,
+    tool_name: &str,
+    input: &Value,
+    currency_exp: u32,
+) -> AppResult<MutationResult> {
+    let started = std::time::Instant::now();
+    let result = execute_mutation_raw_inner(pool, tool_name, input, currency_exp).await;
+    let estimated_tokens = result
+        .as_ref()
+        .map(|mutation| (mutation.description.chars().count() as i64 + 3) / 4)
+        .unwrap_or(0);
+    if let Err(error) = crate::db::repositories::ai_admin_repo::record_tool_metric(
+        pool,
+        tool_name,
+        result.is_ok(),
+        started.elapsed().as_millis().min(i64::MAX as u128) as i64,
+        estimated_tokens,
+    )
+    .await
+    {
+        tracing::warn!(tool = tool_name, %error, "failed to record ZanAI mutation metric");
+    }
+    result
+}
+
+async fn execute_mutation_raw_inner(
     pool: &SqlitePool,
     tool_name: &str,
     input: &Value,
@@ -5654,6 +5716,24 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn purchasing_navigation_is_accepted_by_the_executor() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_lazy("sqlite::memory:")
+            .unwrap();
+        let result = execute_read_tool_inner(
+            &pool,
+            "open_tab",
+            &serde_json::json!({"tab": "purchasing"}),
+            "branch",
+            3,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result, r#"{"ok":true,"tab":"purchasing"}"#);
+    }
+
+    #[tokio::test]
     async fn stock_levels_tool_bounds_large_catalogue_results() {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
@@ -5761,6 +5841,87 @@ mod tests {
                     .any(|definition| definition.name == *provider_name),
                 "Mutation executor '{name}' has no provider definition"
             );
+        }
+    }
+
+    fn schema_fixture(schema: &Value) -> Value {
+        if let Some(first) = schema
+            .get("enum")
+            .and_then(Value::as_array)
+            .and_then(|v| v.first())
+        {
+            return first.clone();
+        }
+        match schema
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("object")
+        {
+            "object" => {
+                let required = schema
+                    .get("required")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                let properties = schema
+                    .get("properties")
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default();
+                let mut result = serde_json::Map::new();
+                for name in required.iter().filter_map(Value::as_str) {
+                    let property = properties.get(name).cloned().unwrap_or_else(|| json!({}));
+                    result.insert(name.to_owned(), schema_fixture(&property));
+                }
+                Value::Object(result)
+            }
+            "array" => Value::Array(vec![]),
+            "integer" | "number" => json!(1),
+            "boolean" => json!(false),
+            _ => json!("seed-fixture"),
+        }
+    }
+
+    /// Exercises the two-phase mutation boundary against a fully migrated,
+    /// seeded SQLite database for every registered mutation. Domain validation
+    /// may reject synthetic references, but no mutation may fall through to an
+    /// unknown executor/preview arm.
+    #[tokio::test]
+    async fn seeded_database_routes_every_mutation_tool() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let registry = crate::ai::tool_registry::ToolRegistry::global().unwrap();
+        assert!(MUTATION_TOOLS.len() >= 101);
+
+        for tool_name in MUTATION_TOOLS {
+            let provider_name = if *tool_name == "product_create" {
+                "create_product"
+            } else {
+                tool_name
+            };
+            let descriptor = registry
+                .get(provider_name)
+                .unwrap_or_else(|| panic!("{tool_name} missing from authoritative registry"));
+            if descriptor.execution == crate::ai::tool_registry::ExecutionPath::Run {
+                let operation = crate::ai::engine::ops::operation_registry()
+                    .find(provider_name)
+                    .unwrap_or_else(|| panic!("{tool_name} has no run executor"));
+                let input = schema_fixture(&operation.schema());
+                let _ = operation.validate(&pool, &input).await;
+            } else {
+                let input = schema_fixture(&descriptor.schema);
+                if let Err(error) = dry_run_mutation(&pool, provider_name, &input, 3).await {
+                    let detail = error.to_string();
+                    assert!(
+                        !detail.contains("Unknown mutation tool"),
+                        "{tool_name} has no dry-run executor: {detail}"
+                    );
+                }
+            }
         }
     }
 

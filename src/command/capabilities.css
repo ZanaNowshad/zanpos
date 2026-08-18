@@ -1,0 +1,91 @@
+/* Capability strip — Today (compact) and System → Health (full). */
+
+.zp-caps {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--border2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  overflow: hidden;
+}
+
+/* Compact: two columns of one-liners. Dense enough to read at a glance,
+   never a wall of cards. */
+.zp-caps-compact { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.zp-caps-full    { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+.zp-cap {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface);
+}
+
+.zp-caps-full .zp-cap { min-height: 104px; padding: 14px; }
+
+.zp-cap-icon { display: inline-flex; flex: 0 0 auto; padding-top: 1px; }
+
+.zp-cap-ok      .zp-cap-icon { color: var(--success); }
+.zp-cap-info    .zp-cap-icon { color: var(--info); }
+.zp-cap-muted   .zp-cap-icon { color: var(--text-muted); }
+.zp-cap-warn    .zp-cap-icon { color: var(--warning); }
+.zp-cap-danger  .zp-cap-icon { color: var(--error); }
+
+.zp-cap-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.zp-cap-name {
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.zp-cap-state {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.zp-cap-note {
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  overflow-wrap: anywhere;
+}
+
+.zp-cap-meta { color: var(--text-muted); font-size: 0.6563rem; }
+
+.zp-cap-action {
+  flex: 0 0 auto;
+  align-self: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--text);
+  background: var(--surface2);
+  font: inherit;
+  font-size: 0.6875rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.zp-cap-action:hover { border-color: var(--accent); }
+.zp-cap-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@media (max-width: 1279px) {
+  .zp-caps-compact, .zp-caps-full { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 1024px) {
+  .zp-caps-compact, .zp-caps-full { grid-template-columns: minmax(0, 1fr); }
+  .zp-cap-action { min-height: 44px; }
+}

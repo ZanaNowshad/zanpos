@@ -4,6 +4,10 @@ import type { PosAiContext, PosAiContextLine } from "./zanAiTypes";
 
 const MAX_CONTEXT_LINES = 40;
 
+function bounded(value: string, maxCharacters: number): string {
+  return Array.from(value).slice(0, maxCharacters).join("");
+}
+
 export interface BuildPosAiContextInput {
   cart: Cart;
   shift: Shift;
@@ -20,9 +24,9 @@ export function buildPosAiContext(input: BuildPosAiContextInput): PosAiContext {
   const activeLines = input.cart.lines.filter(line => !line.voided);
   const copiedLines: PosAiContextLine[] = activeLines.slice(0, MAX_CONTEXT_LINES).map(line => ({
     product_id: line.product_id,
-    name: line.product_name,
-    barcode: line.barcode,
-    quantity: line.quantity,
+    name: bounded(line.product_name, 120),
+    barcode: line.barcode ? bounded(line.barcode, 64) : null,
+    quantity: bounded(line.quantity, 24),
     unit_price_minor: line.unit_price_minor,
     line_total_minor: line.line_total_minor,
   }));
@@ -35,9 +39,12 @@ export function buildPosAiContext(input: BuildPosAiContextInput): PosAiContext {
   return {
     surface: "pos",
     captured_at: input.capturedAt,
-    branch: { id: input.user.branch_id, name: input.branchName },
-    device: { id: input.deviceId },
-    operator: { id: input.user.user_id, display_name: input.user.display_name },
+    branch: { id: bounded(input.user.branch_id, 64), name: bounded(input.branchName, 120) },
+    device: { id: bounded(input.deviceId, 64) },
+    operator: {
+      id: bounded(input.user.user_id, 64),
+      display_name: bounded(input.user.display_name, 120),
+    },
     shift: { id: input.shift.shift_id, opened_at: input.shift.opened_at },
     cart: {
       item_count: activeLines.length,

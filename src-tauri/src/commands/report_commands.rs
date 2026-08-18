@@ -5,9 +5,11 @@ use crate::domain::report::TodaySummary;
 use crate::errors::{AppError, AppResult};
 use crate::sync::scope::report_scope;
 use crate::AppState;
-use serde::Serialize;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 use tauri::State;
+use tokio::io::AsyncWriteExt;
 
 // ─── Range report types ───────────────────────────────────────────────────────
 
@@ -83,6 +85,45 @@ pub struct SaleListPage {
     pub limit: i64,
 }
 
+#[derive(Debug, Serialize)]
+pub struct SaleCursorPage {
+    pub items: Vec<SaleListRow>,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SaleCursor {
+    sold_at: String,
+    sale_id: String,
+}
+
+fn encode_sale_cursor(sold_at: &str, sale_id: &str) -> AppResult<String> {
+    let bytes = serde_json::to_vec(&SaleCursor {
+        sold_at: sold_at.to_owned(),
+        sale_id: sale_id.to_owned(),
+    })
+    .map_err(|error| AppError::Internal(format!("Failed to encode sales cursor: {error}")))?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+fn decode_sale_cursor(value: &str) -> AppResult<SaleCursor> {
+    let bytes = URL_SAFE_NO_PAD
+        .decode(value)
+        .map_err(|_| AppError::Validation("Invalid sales cursor".into()))?;
+    serde_json::from_slice(&bytes).map_err(|_| AppError::Validation("Invalid sales cursor".into()))
+}
+
+fn csv_cell(value: &str) -> String {
+    let trimmed = value.trim_start();
+    let safe = if matches!(trimmed.chars().next(), Some('=' | '+' | '-' | '@')) {
+        format!("'{value}")
+    } else {
+        value.to_owned()
+    };
+    format!("\"{}\"", safe.replace('"', "\"\""))
+}
+
 #[tauri::command]
 pub async fn report_today(
     actor_user_id: String,
@@ -91,6 +132,12 @@ pub async fn report_today(
     state: State<'_, AppState>,
 ) -> Result<TodaySummary, AppError> {
     rbac::require_any_role(&state.db, &actor_user_id).await?;
+    // The `branch_id` argument is caller-supplied and therefore not trusted:
+    // reports expose financial data, so the scope is resolved from the actor's
+    // own record and the incoming value is discarded. The parameter stays in
+    // the signature only to keep the existing invoke contract.
+    let _ = branch_id;
+    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
     report_repo::today_summary(&state.db, &branch_id, &business_date).await
 }
 
@@ -105,6 +152,12 @@ pub async fn report_date_range(
     state: State<'_, AppState>,
 ) -> Result<RangeSummary, AppError> {
     rbac::require_any_role(&state.db, &actor_user_id).await?;
+    // The `branch_id` argument is caller-supplied and therefore not trusted:
+    // reports expose financial data, so the scope is resolved from the actor's
+    // own record and the incoming value is discarded. The parameter stays in
+    // the signature only to keep the existing invoke contract.
+    let _ = branch_id;
+    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
     // M6: Run the 5 independent range aggregation queries concurrently.
     // E: apply the device-scope filter uniformly: scope='all' short-circuits
     // the OR; scope='origin' requires origin_device_id to match this device.
@@ -209,6 +262,12 @@ pub async fn report_top_products(
     state: State<'_, AppState>,
 ) -> Result<Vec<TopProduct>, AppError> {
     rbac::require_any_role(&state.db, &actor_user_id).await?;
+    // The `branch_id` argument is caller-supplied and therefore not trusted:
+    // reports expose financial data, so the scope is resolved from the actor's
+    // own record and the incoming value is discarded. The parameter stays in
+    // the signature only to keep the existing invoke contract.
+    let _ = branch_id;
+    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
     let pool = &state.db;
     let (scope, origin_device_id) = report_scope(pool).await;
     let rows = sqlx::query(
@@ -253,6 +312,12 @@ pub async fn report_margin(
     state: State<'_, AppState>,
 ) -> Result<MarginSummary, AppError> {
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    // The `branch_id` argument is caller-supplied and therefore not trusted:
+    // reports expose financial data, so the scope is resolved from the actor's
+    // own record and the incoming value is discarded. The parameter stays in
+    // the signature only to keep the existing invoke contract.
+    let _ = branch_id;
+    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
     report_margin_inner(&state.db, &branch_id, &from_date, &to_date).await
 }
 
@@ -266,6 +331,12 @@ pub async fn report_product_margin(
     state: State<'_, AppState>,
 ) -> Result<Vec<ProductMarginRow>, AppError> {
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    // The `branch_id` argument is caller-supplied and therefore not trusted:
+    // reports expose financial data, so the scope is resolved from the actor's
+    // own record and the incoming value is discarded. The parameter stays in
+    // the signature only to keep the existing invoke contract.
+    let _ = branch_id;
+    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
     report_product_margin_inner(
         &state.db,
         &branch_id,
@@ -403,6 +474,12 @@ pub async fn report_sales_list(
     state: State<'_, AppState>,
 ) -> Result<SaleListPage, AppError> {
     rbac::require_any_role(&state.db, &actor_user_id).await?;
+    // The `branch_id` argument is caller-supplied and therefore not trusted:
+    // reports expose financial data, so the scope is resolved from the actor's
+    // own record and the incoming value is discarded. The parameter stays in
+    // the signature only to keep the existing invoke contract.
+    let _ = branch_id;
+    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
     let limit = limit.unwrap_or(200).clamp(1, 500);
     let offset = offset.unwrap_or(0).max(0);
 
@@ -480,6 +557,212 @@ pub async fn report_sales_list(
     })
 }
 
+async fn fetch_sales_cursor_page(
+    pool: &SqlitePool,
+    branch_id: &str,
+    from_date: &str,
+    to_date: &str,
+    scope: &str,
+    origin_device_id: &str,
+    cursor: Option<&SaleCursor>,
+    limit: i64,
+) -> AppResult<SaleCursorPage> {
+    let fetch_limit = limit.clamp(1, 1_000) + 1;
+    let rows = if let Some(cursor) = cursor {
+        sqlx::query(
+            "SELECT s.sale_id, s.receipt_number, s.sold_at,
+                    s.net_total_minor, s.discount_total_minor, s.status,
+                    COALESCE(u.display_name, '(deleted)') AS cashier_name,
+                    GROUP_CONCAT(DISTINCT p.payment_method) AS payment_methods
+             FROM sales s
+             LEFT JOIN users u ON u.user_id = s.cashier_user_id
+             LEFT JOIN payments p ON p.sale_id = s.sale_id
+             WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
+               AND (? = 'all' OR s.origin_device_id = ?)
+               AND s.status != 'voided'
+               AND (s.sold_at < ? OR (s.sold_at = ? AND s.sale_id < ?))
+             GROUP BY s.sale_id
+             ORDER BY s.sold_at DESC, s.sale_id DESC
+             LIMIT ?",
+        )
+        .bind(branch_id)
+        .bind(from_date)
+        .bind(to_date)
+        .bind(scope)
+        .bind(origin_device_id)
+        .bind(&cursor.sold_at)
+        .bind(&cursor.sold_at)
+        .bind(&cursor.sale_id)
+        .bind(fetch_limit)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query(
+            "SELECT s.sale_id, s.receipt_number, s.sold_at,
+                    s.net_total_minor, s.discount_total_minor, s.status,
+                    COALESCE(u.display_name, '(deleted)') AS cashier_name,
+                    GROUP_CONCAT(DISTINCT p.payment_method) AS payment_methods
+             FROM sales s
+             LEFT JOIN users u ON u.user_id = s.cashier_user_id
+             LEFT JOIN payments p ON p.sale_id = s.sale_id
+             WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
+               AND (? = 'all' OR s.origin_device_id = ?)
+               AND s.status != 'voided'
+             GROUP BY s.sale_id
+             ORDER BY s.sold_at DESC, s.sale_id DESC
+             LIMIT ?",
+        )
+        .bind(branch_id)
+        .bind(from_date)
+        .bind(to_date)
+        .bind(scope)
+        .bind(origin_device_id)
+        .bind(fetch_limit)
+        .fetch_all(pool)
+        .await?
+    };
+
+    let has_more = rows.len() as i64 > limit.clamp(1, 1_000);
+    let mut items: Vec<SaleListRow> = rows
+        .into_iter()
+        .take(limit.clamp(1, 1_000) as usize)
+        .map(|row| SaleListRow {
+            sale_id: row.get("sale_id"),
+            receipt_number: row.get("receipt_number"),
+            sold_at: row.get("sold_at"),
+            cashier_name: row.get("cashier_name"),
+            net_total_minor: row.get("net_total_minor"),
+            discount_total_minor: row.get("discount_total_minor"),
+            status: row.get("status"),
+            payment_methods: row
+                .get::<Option<String>, _>("payment_methods")
+                .unwrap_or_default(),
+        })
+        .collect();
+    let next_cursor = if has_more {
+        items
+            .last()
+            .map(|last| encode_sale_cursor(&last.sold_at, &last.sale_id))
+            .transpose()?
+    } else {
+        None
+    };
+
+    Ok(SaleCursorPage {
+        items: std::mem::take(&mut items),
+        next_cursor,
+        has_more,
+    })
+}
+
+/// Keyset pagination stays O(page size) even deep into million-row reports.
+#[tauri::command]
+pub async fn report_sales_cursor(
+    actor_user_id: String,
+    branch_id: String,
+    from_date: String,
+    to_date: String,
+    cursor: Option<String>,
+    limit: Option<i64>,
+    state: State<'_, AppState>,
+) -> Result<SaleCursorPage, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    let _ = branch_id;
+    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
+    let decoded = cursor.as_deref().map(decode_sale_cursor).transpose()?;
+    let (scope, origin_device_id) = report_scope(&state.db).await;
+    fetch_sales_cursor_page(
+        &state.db,
+        &branch_id,
+        &from_date,
+        &to_date,
+        scope.as_str(),
+        &origin_device_id,
+        decoded.as_ref(),
+        limit.unwrap_or(200),
+    )
+    .await
+}
+
+/// Writes rows incrementally in bounded keyset pages. The complete report is
+/// never materialized in the webview or Rust heap.
+#[tauri::command]
+pub async fn report_sales_export_csv(
+    actor_user_id: String,
+    branch_id: String,
+    from_date: String,
+    to_date: String,
+    dest_path: String,
+    state: State<'_, AppState>,
+) -> Result<i64, AppError> {
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    let _ = branch_id;
+    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
+    let path = std::path::Path::new(&dest_path);
+    if !path.is_absolute()
+        || path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(str::to_ascii_lowercase)
+            != Some("csv".into())
+    {
+        return Err(AppError::Validation(
+            "Choose an absolute destination ending in .csv".into(),
+        ));
+    }
+    let mut file = tokio::fs::File::create(path)
+        .await
+        .map_err(|error| AppError::Internal(format!("Could not create CSV export: {error}")))?;
+    file.write_all(
+        b"\xEF\xBB\xBF\"receipt\",\"sold_at\",\"cashier\",\"payment_methods\",\"discount_minor\",\"net_total_minor\",\"status\"\r\n",
+    )
+    .await
+    .map_err(|error| AppError::Internal(format!("Could not write CSV export: {error}")))?;
+
+    let (scope, origin_device_id) = report_scope(&state.db).await;
+    let mut cursor: Option<SaleCursor> = None;
+    let mut exported = 0_i64;
+    loop {
+        let page = fetch_sales_cursor_page(
+            &state.db,
+            &branch_id,
+            &from_date,
+            &to_date,
+            scope.as_str(),
+            &origin_device_id,
+            cursor.as_ref(),
+            500,
+        )
+        .await?;
+        let mut chunk = String::with_capacity(page.items.len() * 160);
+        for sale in &page.items {
+            let fields = [
+                csv_cell(&sale.receipt_number),
+                csv_cell(&sale.sold_at),
+                csv_cell(&sale.cashier_name),
+                csv_cell(&sale.payment_methods),
+                sale.discount_total_minor.to_string(),
+                sale.net_total_minor.to_string(),
+                csv_cell(&sale.status),
+            ];
+            chunk.push_str(&fields.join(","));
+            chunk.push_str("\r\n");
+        }
+        file.write_all(chunk.as_bytes())
+            .await
+            .map_err(|error| AppError::Internal(format!("Could not write CSV export: {error}")))?;
+        exported += page.items.len() as i64;
+        match page.next_cursor {
+            Some(next) => cursor = Some(decode_sale_cursor(&next)?),
+            None => break,
+        }
+    }
+    file.flush()
+        .await
+        .map_err(|error| AppError::Internal(format!("Could not finish CSV export: {error}")))?;
+    Ok(exported)
+}
+
 // ─── Sales by cashier ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -506,6 +789,12 @@ pub async fn report_by_cashier(
     state: State<'_, AppState>,
 ) -> Result<Vec<CashierSummaryRow>, AppError> {
     rbac::require_any_role(&state.db, &actor_user_id).await?;
+    // The `branch_id` argument is caller-supplied and therefore not trusted:
+    // reports expose financial data, so the scope is resolved from the actor's
+    // own record and the incoming value is discarded. The parameter stays in
+    // the signature only to keep the existing invoke contract.
+    let _ = branch_id;
+    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
     let pool = &state.db;
     let (scope, origin_device_id) = report_scope(pool).await;
     let scope_str = scope.as_str();
@@ -912,6 +1201,12 @@ pub async fn report_eod_cashup(
     state: State<'_, AppState>,
 ) -> Result<EodCashupReport, AppError> {
     rbac::require_any_role(&state.db, &actor_user_id).await?;
+    // The `branch_id` argument is caller-supplied and therefore not trusted:
+    // reports expose financial data, so the scope is resolved from the actor's
+    // own record and the incoming value is discarded. The parameter stays in
+    // the signature only to keep the existing invoke contract.
+    let _ = branch_id;
+    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
     report_eod_cashup_inner(&state.db, &branch_id, &date, &date).await
 }
 
@@ -1142,6 +1437,26 @@ mod tests {
         shift_id
     }
 
+    #[test]
+    fn sales_cursor_is_opaque_round_trip_and_rejects_tampering() {
+        let encoded = encode_sale_cursor("2026-08-15T12:30:00Z", "SALE-42").unwrap();
+        assert!(!encoded.contains("SALE-42"));
+        let decoded = decode_sale_cursor(&encoded).unwrap();
+        assert_eq!(decoded.sold_at, "2026-08-15T12:30:00Z");
+        assert_eq!(decoded.sale_id, "SALE-42");
+        assert!(decode_sale_cursor("not-a-valid-cursor").is_err());
+    }
+
+    #[test]
+    fn csv_export_quotes_values_and_neutralizes_spreadsheet_formulas() {
+        assert_eq!(csv_cell("Amwaj \"Main\""), "\"Amwaj \"\"Main\"\"\"");
+        assert_eq!(
+            csv_cell("=HYPERLINK(\"bad\")"),
+            "\"'=HYPERLINK(\"\"bad\"\")\""
+        );
+        assert_eq!(csv_cell("  +SUM(1,1)"), "\"'  +SUM(1,1)\"");
+    }
+
     // ── T10. EOD cashup report shows correct cashier name (not empty) ─────────
     #[tokio::test]
     async fn test_eod_cashup_cashier_name_populated() {
@@ -1161,6 +1476,7 @@ mod tests {
             product_name: "Water 500ml".into(),
             sku: Some("WATR500".into()),
             barcode: None,
+            image_path: None,
             quantity: "1".to_string(),
             unit_price_minor: 250,
             line_discount_minor: 0,
@@ -1245,6 +1561,7 @@ mod tests {
             product_name: "Water 500ml".into(),
             sku: Some("WATR500".into()),
             barcode: None,
+            image_path: None,
             quantity: "2".to_string(),
             unit_price_minor: 250,
             line_discount_minor: 0,

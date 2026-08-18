@@ -6,11 +6,15 @@ pub struct DeliveryInput {
     pub customer_id: Option<String>,
     pub customer_name: Option<String>,
     pub contact_number: String, // E.164: +97333050666, validated by frontend
-    pub house_number: Option<String>,
-    pub area: Option<String>,
-    pub address_text: String, // required
+    pub house_number: Option<String>, // required — see delivery_repo::create
+    pub area: Option<String>,   // flat, optional: a villa has none
+    #[serde(default)]
+    pub address_text: String, // road or landmark, optional
     pub delivery_note: Option<String>,
     pub delivery_staff_name: Option<String>,
+    /// Roster entry that took the drop, when one was chosen at checkout.
+    #[serde(default)]
+    pub rider_id: Option<String>,
     pub expected_payment_method: String, // cash | card | wallet
 }
 

@@ -14,10 +14,16 @@ import {
   adminSaveAiConfig,
   adminGetFeatureToggles,
   adminSaveFeatureToggles,
+  adminListAiTools,
+  adminSetAiToolEnabled,
+  adminListAiToolMetrics,
   systemHealthApplyFix,
   systemHealthCheck,
 } from "../../tauri/commands";
 import AppConfirmModal from "../AppConfirmModal";
+import { AiConfirmationPolicyToggle } from "./AiConfirmationPolicyToggle";
+import { ZanAiToolCentre, type ZanAiToolCentreRow } from "./ZanAiToolCentre";
+import { ZanAiToolMetrics, type ZanAiToolMetricRow } from "./ZanAiToolMetrics";
 
 interface Props { sessionUserId: string; sessionToken: string; }
 
@@ -46,6 +52,13 @@ export default function AITab({ sessionUserId, sessionToken }: Props) {
   const [healthFixing, setHealthFixing] = useState<string | null>(null);
   const [healthMessage, setHealthMessage] = useState<string | null>(null);
   const [healthFixConfirm, setHealthFixConfirm] = useState<string | null>(null);
+  const [tools, setTools] = useState<ZanAiToolCentreRow[]>([]);
+  const [toolsLoading, setToolsLoading] = useState(true);
+  const [toolsError, setToolsError] = useState<string | null>(null);
+  const [toolSavingName, setToolSavingName] = useState<string | null>(null);
+  const [toolMetrics, setToolMetrics] = useState<ZanAiToolMetricRow[]>([]);
+  const [toolMetricsLoading, setToolMetricsLoading] = useState(true);
+  const [toolMetricsError, setToolMetricsError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -93,6 +106,47 @@ export default function AITab({ sessionUserId, sessionToken }: Props) {
   }, [sessionToken]);
 
   useEffect(() => { loadToggles(); }, [loadToggles]);
+
+  const loadTools = useCallback(async () => {
+    setToolsLoading(true);
+    setToolsError(null);
+    try {
+      setTools(await adminListAiTools(sessionToken));
+    } catch (e: unknown) {
+      setToolsError(String(e));
+    } finally {
+      setToolsLoading(false);
+    }
+  }, [sessionToken]);
+
+  useEffect(() => { void loadTools(); }, [loadTools]);
+
+  const loadToolMetrics = useCallback(async () => {
+    setToolMetricsLoading(true);
+    setToolMetricsError(null);
+    try {
+      setToolMetrics(await adminListAiToolMetrics(sessionToken));
+    } catch (e: unknown) {
+      setToolMetricsError(String(e));
+    } finally {
+      setToolMetricsLoading(false);
+    }
+  }, [sessionToken]);
+
+  useEffect(() => { void loadToolMetrics(); }, [loadToolMetrics]);
+
+  const handleToolEnabledChange = async (row: ZanAiToolCentreRow, enabled: boolean) => {
+    setToolSavingName(row.name);
+    setToolsError(null);
+    try {
+      await adminSetAiToolEnabled(sessionToken, row.name, enabled);
+      await loadTools();
+    } catch (e: unknown) {
+      setToolsError(String(e));
+    } finally {
+      setToolSavingName(null);
+    }
+  };
 
   const handleSaveToggles = async () => {
     if (!toggles) return;
@@ -455,6 +509,19 @@ export default function AITab({ sessionUserId, sessionToken }: Props) {
             </section>
           )}
 
+          <ZanAiToolCentre
+            rows={tools}
+            loading={toolsLoading}
+            error={toolsError}
+            savingName={toolSavingName}
+            onEnabledChange={(row, enabled) => { void handleToolEnabledChange(row, enabled); }}
+          />
+          <ZanAiToolMetrics
+            rows={toolMetrics}
+            loading={toolMetricsLoading}
+            error={toolMetricsError}
+          />
+
           {/* ── Parameters section ─────────────────────────────────────────── */}
           {aiConfig && (
             <section>
@@ -462,6 +529,25 @@ export default function AITab({ sessionUserId, sessionToken }: Props) {
               <p className="settings-hint">
                 Fine-tune AI behaviour. Changes take effect on the next chat message — no restart needed.
               </p>
+              <AiConfirmationPolicyToggle
+                checked={aiConfig.confirm_non_destructive_actions}
+                onChange={checked => updateAiConfig({ confirm_non_destructive_actions: checked })}
+              />
+              <label className="ai-param-row ai-sensitive-protection">
+                <span>Sensitive action protection</span>
+                <select
+                  className="bo-select"
+                  value={aiConfig.sensitive_protection_level}
+                  onChange={event => updateAiConfig({
+                    sensitive_protection_level: event.target.value as AiConfigPayload["sensitive_protection_level"],
+                  })}
+                >
+                  <option value="standard">Standard — refunds, negative stock, payouts and outbound WhatsApp</option>
+                  <option value="enhanced">Enhanced — all stock, cash, payment and price actions</option>
+                  <option value="maximum">Maximum — confirm every mutation</option>
+                </select>
+                <small className="settings-hint">Destructive deletion and removal actions always require confirmation at every level.</small>
+              </label>
               <div className="ai-params-grid">
                 <label htmlFor="a11y-input-2" className="ai-param-row">
                   <span>Anthropic Max Tokens</span>
@@ -507,6 +593,16 @@ export default function AITab({ sessionUserId, sessionToken }: Props) {
                   <span>Bulk Batch Size</span>
                   <input id="a11y-input-10" type="number" className="field-input" min="1" max="500" value={aiConfig.bulk_batch_size}
                     onChange={e => updateAiConfig({ bulk_batch_size: Number(e.target.value) })} />
+                </label>
+                <label htmlFor="ai-tool-result-max-chars" className="ai-param-row">
+                  <span>Tool Result Limit (chars)</span>
+                  <input id="ai-tool-result-max-chars" type="number" className="field-input" min="4000" max="100000" value={aiConfig.tool_result_max_chars}
+                    onChange={e => updateAiConfig({ tool_result_max_chars: Number(e.target.value) })} />
+                </label>
+                <label htmlFor="ai-turn-tool-results-max-chars" className="ai-param-row">
+                  <span>Turn Tool Results Limit (chars)</span>
+                  <input id="ai-turn-tool-results-max-chars" type="number" className="field-input" min="8000" max="250000" value={aiConfig.turn_tool_results_max_chars}
+                    onChange={e => updateAiConfig({ turn_tool_results_max_chars: Number(e.target.value) })} />
                 </label>
               </div>
               <div className="ai-provider-actions" style={{ marginTop: 16 }}>

@@ -12,6 +12,10 @@ import {
 } from "../tauri/commands";
 import { clearAdminChat } from "../adminChatClear";
 import type { ChatState, DisplayMessage, KpiSnapshot, RunState, ToolCallEntry } from "./officeAiTypes";
+import type { ZanAiSurfaceContext } from "../zanai/zanAiTypes";
+import { selectSendContext, serializeSurfaceContext } from "../zanai/zanAiState";
+import { appendBoundedMessages, boundLoadedMessages } from "../zanai/messageRetention";
+import { shouldAutoExecuteRun } from "../zanai/confirmationPolicy";
 
 const MAX_HISTORY = 40;
 
@@ -58,7 +62,7 @@ export interface ChatController {
   dismissError: () => void;
   fetchKpi: () => Promise<void>;
   dismissAlert: (alertId: string) => Promise<void>;
-  handleSend: (overrideText?: string) => Promise<void>;
+  handleSend: (overrideText?: string, sendContext?: ZanAiSurfaceContext) => Promise<void>;
   handleStop: () => Promise<void>;
   handleConfirm: () => Promise<void>;
   handleCancel: () => Promise<void>;
@@ -160,7 +164,7 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
           setStreamingMsgId(null);
           setStreamStartTime(null);
           setChatState("idle");
-          setMessages(prev => [...prev, { id: crypto.randomUUID(), role: "system" as const, text: "Action expired.", timestamp: new Date() }]);
+          setMessages(prev => appendBoundedMessages(prev, [{ id: crypto.randomUUID(), role: "system" as const, text: "Action expired.", timestamp: new Date() }]));
         }
       }, 1000);
     }
@@ -182,7 +186,7 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
 
   const addMessage = useCallback((msg: Omit<DisplayMessage, "id" | "timestamp">): DisplayMessage => {
     const full = { ...msg, id: crypto.randomUUID(), timestamp: new Date() };
-    setMessages(prev => [...prev, full]);
+    setMessages(prev => appendBoundedMessages(prev, [full]));
     return full;
   }, []);
 
@@ -198,7 +202,7 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
           setSessionId(crypto.randomUUID());
           return;
         }
-        setMessages(loaded
+        setMessages(boundLoadedMessages(loaded
           .filter(m => m.role === "user" || m.role === "assistant")
           .map(m => ({
             id: m.message_id,
@@ -208,7 +212,7 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
             feedbackReady: m.role === "assistant",
             aiSessionId: m.session_id,
           }))
-        );
+        ));
         setHistory(loaded
           .filter(m => m.role === "user" || m.role === "assistant")
           .map(m => ({ role: m.role as "user" | "assistant", content: m.content }))
@@ -353,8 +357,33 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
     });
   }, [sessionUser.branch_id, sessionUser.session_token]);
 
+  const executeRun = useCallback(async (run: RunState) => {
+    setRunState(run);
+    setChatState("run_executing");
+    const onEvent = new Channel<StreamEvent>();
+    onEvent.onmessage = (event: StreamEvent) => {
+      if (!isMountedRef.current) return;
+      if (event.type === "run_progress") {
+        setRunState(prev => prev ? { ...prev, done: event.done, phase: "executing" } : prev);
+      } else if (event.type === "run_done") {
+        setRunState(prev => prev ? { ...prev, phase: "done" } : prev);
+        setChatState("idle");
+        setTimeout(() => { fetchKpi(); onMutationApplied(); }, 500);
+      } else if (event.type === "run_failed") {
+        setRunState(prev => prev ? { ...prev, phase: "failed", error: event.error } : prev);
+        setChatState("idle");
+      }
+    };
+    try {
+      await aiRunExecute(sessionUser.session_token, run.runId, onEvent);
+    } catch (error) {
+      setRunState(prev => prev ? { ...prev, phase: "failed", error: String(error) } : prev);
+      setChatState("idle");
+    }
+  }, [fetchKpi, onMutationApplied, sessionUser.session_token]);
+
   // ── Send ────────────────────────────────────────────────────────────────────
-  const handleSend = useCallback(async (overrideText?: string) => {
+  const handleSend = useCallback(async (overrideText?: string, sendContext?: ZanAiSurfaceContext) => {
     // Block until history loads so we never save the first message to a
     // brand-new session that hasn't been seeded with the historical sessionId.
     if (!sessionId) return;
@@ -421,12 +450,17 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
           // AI steered the workspace via the open_tab tool — caller validates RBAC.
           onNavigate(event.tab);
         } else if (event.type === "run_preview") {
-          setRunState({
+          const run: RunState = {
             runId: event.run_id, opId: event.op_id,
             description: event.description, count: event.count,
             done: 0, phase: "preview",
-          });
-          setChatState("run_confirm");
+          };
+          if (shouldAutoExecuteRun(event.requires_confirmation)) {
+            void executeRun({ ...run, phase: "executing" });
+          } else {
+            setRunState(run);
+            setChatState("run_confirm");
+          }
         } else if (event.type === "run_progress") {
           setRunState(prev => prev ? { ...prev, done: event.done, phase: "executing" } : prev);
         } else if (event.type === "run_done") {
@@ -468,7 +502,7 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
         } else if (event.type === "mutation_executed") {
           const currentId = assistantMsgIdRef.current;
           setMessages(prev => prev.map(message => message.id === currentId
-            ? { ...message, undoId: event.undo_id }
+            ? { ...message, undoId: event.undo_id ?? undefined }
             : message));
           setTimeout(() => { fetchKpi(); onMutationApplied(); }, 500);
         } else if (event.type === "done") {
@@ -490,7 +524,9 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
           // Do NOT override "confirm" state — a mutation_pending event may have set it
           // just before the stream ended. Resetting to "idle" would hide the ConfirmActionModal
           // before the user can approve or deny the pending action.
-          setChatState(prev => (prev === "confirm" || prev === "run_confirm") ? prev : "idle");
+          setChatState(prev => (
+            prev === "confirm" || prev === "run_confirm" || prev === "run_executing"
+          ) ? prev : "idle");
           if (finalText) {
             // Keep in-memory context bounded at 60 entries (30 exchanges)
             setHistory(prev => {
@@ -554,7 +590,10 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
           message: text,
           branch_id: sessionUser.branch_id,
           currency_exponent: DEVICE.currency_exponent,
-          ui_context: getUiContext(),
+          ui_context: serializeSurfaceContext(selectSendContext(
+            { surface: "office", summary: getUiContext() },
+            sendContext,
+          )),
           ...(attachment ? { image_base64: attachment.base64, image_media_type: attachment.mediaType } : {}),
         },
         onEvent
@@ -580,7 +619,7 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
       setChatState("idle");
       setErrorMessage(friendly);
     }
-  }, [input, chatState, history, sessionId, sessionUser.branch_id, sessionUser.session_token, addMessage, getUiContext, onNavigate, fetchKpi, onMutationApplied, setImageAttachment]);
+  }, [input, chatState, history, sessionId, sessionUser.branch_id, sessionUser.session_token, addMessage, executeRun, getUiContext, onNavigate, fetchKpi, onMutationApplied, setImageAttachment]);
 
   const handleStop = useCallback(async () => {
     const requestId = activeRequestIdRef.current;
@@ -701,29 +740,8 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
   // ── Run handlers ────────────────────────────────────────────────────────────
   const handleRunExecute = useCallback(async () => {
     if (!runState || runState.phase !== "preview") return;
-    setRunState(prev => prev ? { ...prev, phase: "executing" } : prev);
-    setChatState("run_executing");
-    const onEvent = new Channel<StreamEvent>();
-    onEvent.onmessage = (event: StreamEvent) => {
-      if (!isMountedRef.current) return;
-      if (event.type === "run_progress") {
-        setRunState(prev => prev ? { ...prev, done: event.done, phase: "executing" } : prev);
-      } else if (event.type === "run_done") {
-        setRunState(prev => prev ? { ...prev, phase: "done" } : prev);
-        setChatState("idle");
-        setTimeout(() => { fetchKpi(); onMutationApplied(); }, 500);
-      } else if (event.type === "run_failed") {
-        setRunState(prev => prev ? { ...prev, phase: "failed", error: event.error } : prev);
-        setChatState("idle");
-      }
-    };
-    try {
-      await aiRunExecute(sessionUser.session_token, runState.runId, onEvent);
-    } catch (e) {
-      setRunState(prev => prev ? { ...prev, phase: "failed", error: String(e) } : prev);
-      setChatState("idle");
-    }
-  }, [runState, sessionUser.session_token, fetchKpi, onMutationApplied]);
+    await executeRun({ ...runState, phase: "executing" });
+  }, [executeRun, runState]);
 
   const handleRunCancel = useCallback(async () => {
     if (!runState || runState.phase === "executing") return;

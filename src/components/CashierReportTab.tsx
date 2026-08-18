@@ -5,6 +5,8 @@ import { formatMoney } from "../money";
 import { reportByCashier } from "../tauri/commands";
 import { useLanguage } from "../hooks/useLanguage";
 import { backOfficeTranslator } from "../i18n/backOfficeStrings";
+import { PageTemplate, EmptyState, LoadingSkeleton } from "./templates";
+import { Users } from "lucide-react";
 
 const EXP = DEVICE.currency_exponent;
 const CUR = DEVICE.currency;
@@ -41,26 +43,33 @@ export default function CashierReportTab({ sessionUserId }: { sessionUserId: str
   const totalTx  = rows.reduce((s, r) => s + r.transaction_count, 0);
 
   return (
-    <div className="tab-content cashier-report-tab">
-      <h3 className="tab-title">{t("cashierReport")}</h3>
-
-      <div className="report-filters">
-        <label htmlFor="a11y-input-1" className="field-label">{t("from")}</label>
-        <input id="a11y-input-1" className="field-input date-input" type="date" value={from} onChange={e => setFrom(e.target.value)} />
-        <label htmlFor="a11y-input-2" className="field-label">{t("to")}</label>
-        <input id="a11y-input-2" className="field-input date-input" type="date" value={to} onChange={e => setTo(e.target.value)} />
-        <button className="btn-primary" onClick={load} disabled={loading}>
-          {loading ? t("loading") : t("runReport")}
-        </button>
-      </div>
-
+    <PageTemplate
+      header={{
+        title: t("cashierReport"),
+        icon: <Users size={18} strokeWidth={1.7} aria-hidden="true" />,
+      }}
+      toolbar={
+        <div className="report-filters">
+          <label htmlFor="a11y-input-1" className="field-label">{t("from")}</label>
+          <input id="a11y-input-1" className="field-input date-input" type="date" value={from} onChange={e => setFrom(e.target.value)} />
+          <label htmlFor="a11y-input-2" className="field-label">{t("to")}</label>
+          <input id="a11y-input-2" className="field-input date-input" type="date" value={to} onChange={e => setTo(e.target.value)} />
+          <button className="btn-primary" onClick={load} disabled={loading}>
+            {loading ? t("loading") : t("runReport")}
+          </button>
+        </div>
+      }
+    >
       {error && <div className="modal-error">{error}</div>}
 
-      {loaded && rows.length === 0 && (
-        <div className="report-empty">{t("noSalesPeriod")}</div>
-      )}
-
-      {rows.length > 0 && (
+      {loading ? (
+        <LoadingSkeleton variant="table" count={4} />
+      ) : loaded && rows.length === 0 ? (
+        <EmptyState
+          title={t("noSalesPeriod")}
+          description={t("adjustDateRange")}
+        />
+      ) : rows.length > 0 ? (
         <>
           <div className="cashier-totals-bar">
             <span>{t("transactions")}: {totalTx}</span>
@@ -110,7 +119,7 @@ export default function CashierReportTab({ sessionUserId }: { sessionUserId: str
             </table>
           </div>
         </>
-      )}
-    </div>
+      ) : null}
+    </PageTemplate>
   );
 }

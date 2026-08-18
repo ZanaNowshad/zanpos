@@ -3,6 +3,8 @@ import type { StockLevel, StockMovementRow } from "../types";
 import * as cmd from "../tauri/commands";
 import { useLanguage } from "../hooks/useLanguage";
 import { backOfficeTranslator, inventoryMovementTypeText } from "../i18n/backOfficeStrings";
+import { LoadingSkeleton, EmptyState } from "./templates";
+import { Boxes } from "lucide-react";
 
 interface Props {
   sessionUserId: string;
@@ -65,7 +67,7 @@ export default function InventoryTab({ sessionUserId }: Props) {
   // Reload when search or offset changes
   useEffect(() => {
     fetchPage(search, offset);
-  }, [search, offset]); 
+  }, [search, offset, fetchPage]);
 
   // ── Detail views (togglable — click again to collapse) ───────────────────
 
@@ -249,11 +251,13 @@ export default function InventoryTab({ sessionUserId }: Props) {
       )}
 
       {loading && levels.length === 0 ? (
-        <div className="bo-empty">{t("loadingInventory")}</div>
+        <LoadingSkeleton variant="table" count={6} />
       ) : levels.length === 0 ? (
-        <div className="bo-empty">
-          {search ? t("noProductsMatch") : t("noTrackedProducts")}
-        </div>
+        <EmptyState
+          icon={<Boxes size={36} strokeWidth={1.5} />}
+          title={search ? t("noProductsMatch") : t("noTrackedProducts")}
+          description={search ? undefined : "Add products with tracked stock to see inventory levels here."}
+        />
       ) : (
         <table className="rpt-table inv-table">
           <thead>

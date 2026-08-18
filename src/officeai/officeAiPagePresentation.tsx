@@ -1,7 +1,7 @@
 import { Bot, ClipboardCheck, HeartPulse, Wifi } from "lucide-react";
 import type { OfficeAiTranslator } from "../i18n/officeAiStrings";
 import type { OfficeAiActionQueueItem, OfficeAiOverviewSnapshot } from "./officeAiTypes";
-import type { OfficePulseItem } from "./OfficeAIShell";
+import type { OfficePulseItem } from "./officeAiTypes";
 
 interface PulseInput {
   overview: OfficeAiOverviewSnapshot;

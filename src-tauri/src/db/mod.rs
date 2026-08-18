@@ -1,4 +1,6 @@
 pub mod helpers;
+#[cfg(test)]
+mod million_row_tests;
 pub mod repositories;
 
 use crate::errors::AppResult;
@@ -133,6 +135,8 @@ pub async fn init_db(db_path: &str) -> AppResult<SqlitePool> {
         "delivery_orders",
         "product_prices",
         "cash_events",
+        "po_receipts",
+        "riders",
     ] {
         let sql = format!(
             "UPDATE {table} SET sync_attempts = 0, \

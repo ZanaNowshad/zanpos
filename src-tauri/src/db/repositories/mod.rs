@@ -1,3 +1,4 @@
+pub mod ai_admin_actions_repo;
 pub mod ai_admin_repo;
 pub mod ai_chat_history_repo;
 pub mod audit_hash;

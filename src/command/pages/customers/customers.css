@@ -1,0 +1,232 @@
+/* Customers workspace layout. Component-scoped (`zp-`).
+
+   Deliberately self-contained: Purchasing's detail-pane rules live in
+   purchasing.css, which only loads with the lazily-imported Purchasing chunk.
+   Borrowing `zp-po-*` here would leave the detail pane unstyled for anyone who
+   opens Customers first. The visual language is matched, the coupling is not. */
+
+.zp-cust-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.zp-cust-workspace.has-selection {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+}
+
+.zp-cust-detail {
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface);
+}
+
+.zp-cust-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.zp-cust-name {
+  min-width: 0;
+  color: var(--text);
+  font-size: 0.9375rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.zp-cust-close {
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--text-dim);
+  background: transparent;
+  font: inherit;
+  font-size: 0.6875rem;
+  cursor: pointer;
+}
+
+.zp-cust-close:hover { color: var(--text); border-color: var(--accent); }
+.zp-cust-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.zp-cust-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 16px;
+  margin: 0 0 14px;
+  padding: 12px 0;
+  border-block: 1px solid var(--border2);
+}
+
+.zp-cust-facts > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.zp-cust-facts dt { color: var(--text-muted); font-size: 0.6875rem; }
+
+.zp-cust-facts dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.8125rem;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+
+.zp-cust-notes {
+  margin: 0 0 14px;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.zp-cust-section-title {
+  margin: 0 0 8px;
+  color: var(--text);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+/* One number, stated plainly. There is no ledger to chart and no tier to badge,
+   so the balance is the whole of the loyalty state. */
+.zp-cust-loyalty {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border2);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface2, transparent);
+}
+
+.zp-cust-balance {
+  color: var(--accent);
+  font-size: 1.5rem;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.zp-cust-balance-label { color: var(--text-muted); font-size: 0.6875rem; }
+
+.zp-cust-note {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+}
+
+.zp-cust-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+/* Programme totals read as one band of four, not four floating cards. */
+.zp-loyalty-facts {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 20px;
+  padding-block: 14px;
+}
+
+.zp-loyalty-facts .zp-cust-balance { font-size: 1.375rem; }
+
+/* A points balance is a quantity, not a success. It takes the accent that ties
+   it to the detail pane's balance, not the green reserved for good outcomes. */
+.zp-cust-points { color: var(--accent); }
+
+.zp-cust-link {
+  padding: 0;
+  border: 0;
+  color: var(--accent);
+  background: none;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.zp-cust-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.zp-cust-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--error) 35%, var(--border));
+  border-radius: var(--radius-sm, 6px);
+  background: color-mix(in srgb, var(--error) 8%, transparent);
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.zp-cust-field-error { color: var(--error); font-size: 0.6875rem; }
+
+/* An invalid field has to look invalid, not merely carry a message underneath.
+   The border is the only cue available while the field is unfocused, since the
+   focus ring is a separate, theme-owned token. */
+.zp-drawer .zp-field input[aria-invalid="true"] {
+  border-color: var(--error);
+}
+
+.zp-cust-current {
+  margin-bottom: 14px;
+  color: var(--text-dim);
+  font-size: 0.8125rem;
+}
+
+.zp-cust-current strong { color: var(--text); font-weight: 650; }
+
+/* Award / redeem. A segmented control, not a signed number field: the sign is
+   the single most consequential part of this form and must be visible, not
+   typed. */
+.zp-cust-seg-label {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  font-weight: 550;
+}
+
+.zp-cust-seg {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface2, transparent);
+}
+
+.zp-cust-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-sm, 4px);
+  color: var(--text-dim);
+  background: transparent;
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.zp-cust-seg-btn.is-on {
+  color: var(--bg);
+  background: var(--accent);
+  font-weight: 600;
+}
+
+.zp-cust-seg-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@media (max-width: 1279px) {
+  .zp-cust-workspace.has-selection { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 1024px) {
+  .zp-loyalty-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .zp-cust-close { min-height: 44px; }
+  .zp-cust-actions button { min-height: 44px; }
+  .zp-cust-seg-btn { min-height: 44px; }
+}

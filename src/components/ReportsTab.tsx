@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BarChart2, Receipt } from "lucide-react";
+import { BarChart2, BarChart3, Calculator, Receipt, Trophy } from "lucide-react";
+import { save } from "@tauri-apps/plugin-dialog";
 import type { RangeSummary, SaleListRow, SaleListPage, TopProduct } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney } from "../money";
@@ -11,8 +12,11 @@ import {
   reportSaleStatusText,
 } from "../i18n/backOfficeStrings";
 import ReportSummaryCard from "./ReportSummaryCard";
+import { reportCsvExports } from "./reportCsvExports";
+import { EmptyState } from "./templates";
 
 const BRANCH_ID = DEVICE.branch_id;
+const TAB_ICON  = { size: 14, strokeWidth: 1.75, "aria-hidden": true } as const;
 const EXP       = DEVICE.currency_exponent;
 const CUR       = DEVICE.currency;
 
@@ -57,6 +61,7 @@ export default function ReportsTab({ sessionUserId }: Props) {
   const [voidingId, setVoidingId]   = useState<string | null>(null);
   const [voidConfirm, setVoidConfirm] = useState<SaleListRow | null>(null);
   const [stockWarning, setStockWarning] = useState<string | null>(null);
+  const [exportingSales, setExportingSales] = useState(false);
 
   const applyPreset = useCallback((p: Preset) => {
     const today = new Date();
@@ -135,66 +140,48 @@ export default function ReportsTab({ sessionUserId }: Props) {
     URL.revokeObjectURL(url);
   }
 
-  const handleExportCSV = () => {
-    const header = [t("receipt"), t("date"), t("cashier"), t("payment"), t("discounts"), t("total"), t("status")];
-    const rows = sales.map(s => [
-      `#${s.receipt_number}`,
-      new Date(s.sold_at).toLocaleString(),
-      s.cashier_name,
-      reportPaymentMethodsText(language, s.payment_methods),
-      formatMoney(s.discount_total_minor, EXP),
-      formatMoney(s.net_total_minor, EXP),
-      reportSaleStatusText(language, s.status),
-    ]);
-    downloadCSV(`zanpos-sales-${from}-${to}.csv`, [header, ...rows]);
-  };
-
-  const handleExportProductsCSV = () => {
-    const header = ["#", t("product"), t("quantitySold"), t("transactions"), t("revenue")];
-    const rows = topProducts.map((p, i) => [
-      i + 1,
-      p.product_name,
-      parseFloat(p.total_quantity),
-      p.transaction_count,
-      formatMoney(p.revenue_minor, EXP),
-    ]);
-    downloadCSV(`zanpos-top-products-${from}-${to}.csv`, [header, ...rows]);
-  };
-
-  const handleExportTaxCSV = () => {
-    const header = [t("date"), t("transactions"), t("vatCollected"), t("cumulativeVat")];
-    const rows = taxRows.map(r => [
-      r.day,
-      r.transaction_count,
-      formatMoney(r.tax_minor, EXP),
-      formatMoney(r.cumulative_minor, EXP),
-    ]);
-    const totalRow = [t("total"), taxTxCount, formatMoney(taxTotal, EXP), ""];
-    downloadCSV(`zanpos-tax-${from}-${to}.csv`, [header, ...rows, totalRow]);
-  };
-
-  const handleExportSummaryCSV = () => {
-    if (!summary) return;
-    const rows: (string | number)[][] = [
-      [t("metric"), t("value")],
-      [t("period"), `${from} ${t("to")} ${to}`],
-      [t("transactions"), summary.transaction_count],
-      [t("grossSales"), formatMoney(summary.gross_total_minor, EXP)],
-      [t("discounts"), formatMoney(summary.discount_total_minor, EXP)],
-      [t("taxReport"), formatMoney(summary.tax_total_minor, EXP)],
-      [t("netRevenue"), formatMoney(summary.net_total_minor, EXP)],
-      [t("cash"), formatMoney(summary.cash_total_minor, EXP)],
-      [t("card"), formatMoney(summary.card_total_minor, EXP)],
-      [t("refunds"), `${summary.refund_count} (${formatMoney(summary.refund_total_minor, EXP)})`],
-    ];
-    downloadCSV(`zanpos-summary-${from}-${to}.csv`, rows);
+  const handleExportCSV = async () => {
+    const dest = await save({
+      defaultPath: `zanpos-sales-${from}-${to}.csv`,
+      filters: [{ name: "CSV", extensions: ["csv"] }],
+    });
+    if (!dest) return;
+    setExportingSales(true);
+    setLoadError(null);
+    try {
+      await cmd.reportSalesExportCsv(sessionUserId, BRANCH_ID, from, to, dest);
+    } catch (error: unknown) {
+      setLoadError(typeof error === "string" ? error : t("failedLoadReport"));
+    } finally {
+      setExportingSales(false);
+    }
   };
 
   const taxTotal = taxRows.reduce((s, r) => s + r.tax_minor, 0);
   const taxTxCount = taxRows.reduce((s, r) => s + r.transaction_count, 0);
 
+  const { handleExportProductsCSV, handleExportTaxCSV, handleExportSummaryCSV } =
+    reportCsvExports(
+      { t, downloadCSV, from, to, currencyExponent: EXP },
+      { topProducts, taxRows, taxTxCount, taxTotal, summary },
+    );
+
   return (
     <div className="rpt-layout">
+      {/* Reports previously opened straight into a filter bar with no page
+          heading, so the domain had no <h1> and screen-reader users landed on
+          a control strip. The header matches the shell's grammar without
+          restructuring the report body. */}
+      <header className="oa-topbar rpt-topbar">
+        <div className="oa-title-block">
+          <span className="oa-title-icon"><BarChart3 size={18} strokeWidth={1.7} aria-hidden="true" /></span>
+          <div>
+            <h1 className="oa-title">{t("reports")}</h1>
+            <p className="oa-subtitle">{from} → {to}</p>
+          </div>
+        </div>
+      </header>
+
       {/* ── Controls bar ── */}
       <div className="rpt-controls">
         <div className="rpt-presets2">
@@ -218,7 +205,9 @@ export default function ReportsTab({ sessionUserId }: Props) {
             {loading ? t("loading") : `▶ ${t("runReport")}`}
           </button>
           {activeSection === "sales" && sales.length > 0 && (
-            <button className="btn-secondary rpt-export-btn2" onClick={handleExportCSV}>↓ {t("exportCsv")}</button>
+            <button className="btn-secondary rpt-export-btn2" onClick={handleExportCSV} disabled={exportingSales}>
+              ↓ {exportingSales ? t("loading") : t("exportCsv")}
+            </button>
           )}
           {activeSection === "products" && topProducts.length > 0 && (
             <button className="btn-secondary rpt-export-btn2" onClick={handleExportProductsCSV}>↓ {t("exportCsv")}</button>
@@ -239,10 +228,11 @@ export default function ReportsTab({ sessionUserId }: Props) {
             className={`rpt-tab2 ${activeSection === s ? "rpt-tab2-active" : ""}`}
             onClick={() => setActiveSection(s)}
           >
-            {s === "summary" ? `📊 ${t("reportSummary")}`
-              : s === "products" ? `🏆 ${t("topProducts")}`
-              : s === "sales" ? `🧾 ${t("salesList")}`
-              : `🧮 ${t("taxReport")}`}
+            {/* lucide, matching every other tab strip in the shell */}
+            {s === "summary" ? <><BarChart3 {...TAB_ICON} /> {t("reportSummary")}</>
+              : s === "products" ? <><Trophy {...TAB_ICON} /> {t("topProducts")}</>
+              : s === "sales" ? <><Receipt {...TAB_ICON} /> {t("salesList")}</>
+              : <><Calculator {...TAB_ICON} /> {t("taxReport")}</>}
             {s === "sales" && sales.length > 0 && (
               <span className="rpt-tab2-badge">{sales.length}</span>
             )}
@@ -265,7 +255,18 @@ export default function ReportsTab({ sessionUserId }: Props) {
           </div>
         )}
         {/* ── Summary cards ── */}
-        {activeSection === "summary" && summary && (
+        {/* A period with no sales is not a period of zero performance. Eight
+            zero cards read as a result; this states plainly that nothing was
+            sold in the selected range. */}
+        {activeSection === "summary" && summary && summary.transaction_count === 0 && (
+          <EmptyState
+            variant="no-results"
+            title={t("noSalesPeriod")}
+            description={t("adjustDateRange")}
+          />
+        )}
+
+        {activeSection === "summary" && summary && summary.transaction_count > 0 && (
           <div className="rpt-summary2">
             <ReportSummaryCard metric="transactions" label={t("transactions")} value={String(summary.transaction_count)} accent />
             <ReportSummaryCard metric="grossSales" label={t("grossSales")} value={fmt(summary.gross_total_minor)} />

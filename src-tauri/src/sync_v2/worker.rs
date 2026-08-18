@@ -17,6 +17,46 @@ use tokio::time::Duration;
 
 pub const TRANSIENT_TAG: &str = "[TRANSIENT]";
 const BATCH_SIZE: i64 = 50;
+/// Overlap subtracted from the stored watermark when asking the hub for rows.
+///
+/// Terminal clocks are never exactly aligned, so a row can be committed with a
+/// timestamp fractionally behind one we have already passed. The watermark only
+/// moves forward, so without an overlap that row is never offered again.
+const PULL_LOOKBACK_SECS: i64 = 2;
+
+/// Parse a timestamp in either format this codebase writes.
+///
+/// Most code writes RFC3339 via chrono; the catalogue importer and several SQL
+/// defaults write `datetime('now')`, which has a space instead of a `T` and no
+/// zone. Text comparison ranks `T` (0x54) above a space (0x20), so the two
+/// formats do not sort against each other correctly.
+fn parse_ts(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(raw) {
+        return Some(dt.with_timezone(&chrono::Utc));
+    }
+    chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S")
+        .ok()
+        .map(|naive| naive.and_utc())
+}
+
+/// The `since` value to send the hub: the stored watermark, less the overlap.
+fn pull_since(stored: &str) -> String {
+    match parse_ts(stored) {
+        Some(dt) => (dt - chrono::Duration::seconds(PULL_LOOKBACK_SECS)).to_rfc3339(),
+        None => stored.to_string(),
+    }
+}
+
+/// True when `candidate` is a strictly later instant than `current`.
+fn ts_after(candidate: &str, current: &str) -> bool {
+    match (parse_ts(candidate), parse_ts(current)) {
+        (Some(a), Some(b)) => a > b,
+        // Unparseable on either side — fall back to text so the watermark can
+        // still advance rather than stalling the table forever.
+        _ => candidate > current,
+    }
+}
+
 /// Terminal→hub cycle default. LAN traffic is free; 10 s gives near-real-time stock.
 const DEFAULT_INTERVAL_SECS: u64 = 10;
 /// Hub housekeeping cadence default (mark-synced + daily-prune check).
@@ -34,10 +74,12 @@ const PUSH_ORDER: &[&str] = &[
     "suppliers",
     "purchase_orders",
     "purchase_order_lines",
+    "po_receipts",
     "devices",
     "roles",
     "users",
     "customers",
+    "riders",
     "shifts",
     "sales",
     "sale_items",
@@ -62,10 +104,12 @@ const PULL_ORDER: &[&str] = &[
     "suppliers",
     "purchase_orders",
     "purchase_order_lines",
+    "po_receipts",
     "devices",
     "roles",
     "users",
     "customers",
+    "riders",
     "shifts",
     "sales",
     "sale_items",
@@ -832,11 +876,19 @@ impl SyncWorker {
         for table in PULL_ORDER {
             let mut table_error: Option<String> = None;
             let mut table_failed_row: Option<String> = None;
-            let mut query_watermark = self.get_watermark(table).await.unwrap_or_default();
-            if query_watermark.is_empty() {
-                query_watermark = "1970-01-01T00:00:00Z".to_string();
+            let mut stored_watermark = self.get_watermark(table).await.unwrap_or_default();
+            if stored_watermark.is_empty() {
+                stored_watermark = "1970-01-01T00:00:00Z".to_string();
             }
-            let mut max_applied_ts = query_watermark.clone();
+            // Ask for a little before the watermark. Two terminals' clocks are
+            // never exactly aligned, and a row can be committed with a timestamp
+            // fractionally behind one we have already passed; without an overlap
+            // it would never be offered again. Re-delivery is safe — LWW ignores
+            // an older row and the append-only path treats a repeat as a replay.
+            let query_watermark = pull_since(&stored_watermark);
+            // Anchored to the *stored* value, never the reduced one, or the
+            // watermark would walk backwards by the overlap on every idle cycle.
+            let mut max_applied_ts = stored_watermark.clone();
             let mut table_completed = false;
 
             // Offset tracking for pagination within same-timestamp rows.
@@ -892,7 +944,7 @@ impl SyncWorker {
                             // BUG-SYNC-4: Only advance watermark past rows that were
                             // successfully applied — never skip past a failed row.
                             if let Some(ts) = row.get("updated_at").and_then(|v| v.as_str()) {
-                                if ts > max_applied_ts.as_str() {
+                                if ts_after(ts, &max_applied_ts) {
                                     max_applied_ts = ts.to_string();
                                 }
                             }
@@ -917,7 +969,7 @@ impl SyncWorker {
                                 );
                                 applied += 1;
                                 if let Some(ts) = row.get("updated_at").and_then(|v| v.as_str()) {
-                                    if ts > max_applied_ts.as_str() {
+                                    if ts_after(ts, &max_applied_ts) {
                                         max_applied_ts = ts.to_string();
                                     }
                                 }
@@ -936,7 +988,7 @@ impl SyncWorker {
                                         if let Some(ts) =
                                             row.get("updated_at").and_then(|v| v.as_str())
                                         {
-                                            if ts > max_applied_ts.as_str() {
+                                            if ts_after(ts, &max_applied_ts) {
                                                 max_applied_ts = ts.to_string();
                                             }
                                         }
@@ -961,7 +1013,7 @@ impl SyncWorker {
                                             if let Some(ts) =
                                                 row.get("updated_at").and_then(|v| v.as_str())
                                             {
-                                                if ts > max_applied_ts.as_str() {
+                                                if ts_after(ts, &max_applied_ts) {
                                                     max_applied_ts = ts.to_string();
                                                 }
                                             }
@@ -1214,7 +1266,10 @@ impl SyncWorker {
 
 #[cfg(test)]
 mod tests {
-    use super::{finish_pull, next_pull_offset, pending_push_sql, PULL_ORDER, PUSH_ORDER};
+    use super::{
+        finish_pull, next_pull_offset, parse_ts, pending_push_sql, pull_since, ts_after,
+        PULL_LOOKBACK_SECS, PULL_ORDER, PUSH_ORDER,
+    };
 
     #[test]
     fn pending_push_query_keeps_retrying_high_attempt_rows() {
@@ -1265,5 +1320,55 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("products: missing category"));
+    }
+
+    // The two timestamp formats in the schema do not sort against each other as
+    // text: 'T' (0x54) outranks the space (0x20), so an RFC3339 row always looks
+    // later than an importer-format one regardless of the actual instant.
+    #[test]
+    fn watermark_advances_by_instant_not_by_text() {
+        // Same instant, both formats — neither is "after" the other.
+        assert!(!ts_after("2026-01-01 10:00:00", "2026-01-01T10:00:00Z"));
+        assert!(!ts_after("2026-01-01T10:00:00Z", "2026-01-01 10:00:00"));
+
+        // An importer row an hour later must win, though text ranks it lower.
+        assert!(ts_after("2026-01-01 11:00:00", "2026-01-01T10:00:00Z"));
+        assert!(
+            "2026-01-01 11:00:00" < "2026-01-01T10:00:00Z",
+            "text disagrees"
+        );
+
+        // And an RFC3339 row an hour earlier must lose, though text ranks it higher.
+        assert!(!ts_after("2026-01-01T09:00:00Z", "2026-01-01 10:00:00"));
+    }
+
+    #[test]
+    fn ts_after_is_strict() {
+        assert!(!ts_after("2026-01-01T10:00:00Z", "2026-01-01T10:00:00Z"));
+        assert!(ts_after(
+            "2026-01-01T10:00:00.500Z",
+            "2026-01-01T10:00:00.400Z"
+        ));
+    }
+
+    // The overlap must reach back, and must never be applied to the value we
+    // store — anchoring max_applied_ts to the reduced figure would walk the
+    // watermark backwards by two seconds on every idle cycle.
+    #[test]
+    fn pull_since_reaches_back_without_moving_the_stored_watermark() {
+        let stored = "2026-01-01T10:00:10Z";
+        let since = pull_since(stored);
+        assert!(
+            ts_after(stored, &since),
+            "the query must start before the stored watermark"
+        );
+        let gap = parse_ts(stored).unwrap() - parse_ts(&since).unwrap();
+        assert_eq!(gap.num_seconds(), PULL_LOOKBACK_SECS);
+    }
+
+    #[test]
+    fn pull_since_handles_both_formats_and_passes_through_junk() {
+        assert!(parse_ts(&pull_since("2026-01-01 10:00:10")).is_some());
+        assert_eq!(pull_since("not-a-timestamp"), "not-a-timestamp");
     }
 }

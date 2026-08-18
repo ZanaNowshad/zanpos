@@ -363,3 +363,32 @@
   .sf-toggle-track::after { transition: none; }
   .cf-route-line i { animation: none; }
 }
+
+/* Actionable failure guidance — a recoverable account setting is not an error.
+   See guidanceFor() in StorefrontSetupPage.tsx. */
+.zp-sf-guidance { display: flex; flex-direction: column; gap: 6px; }
+
+.zp-sf-stillworks { color: var(--text-muted); font-size: 0.75rem; }
+
+.zp-sf-link {
+  align-self: flex-start;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  margin-top: 2px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--accent-t);
+  background: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.zp-sf-link:hover { background: var(--accent-h); border-color: var(--accent-h); }
+.zp-sf-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.zp-sf-detail { margin-top: 4px; color: var(--text-muted); font-size: 0.6875rem; }
+.zp-sf-detail summary { cursor: pointer; }
+.zp-sf-detail code { display: block; margin-top: 4px; overflow-wrap: anywhere; }

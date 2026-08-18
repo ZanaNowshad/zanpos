@@ -8,6 +8,7 @@ import type { usePosReceipt } from "./usePosReceipt";
 import { useConfirmPayment } from "./useConfirmPayment";
 import { buildExchangePayments } from "../utils/posExchange";
 import { openCashDrawer } from "../tauri/commands";
+import type { PaymentJourney } from "../components/PaymentModal";
 
 interface ExchangeBalance {
   amountDueMinor: number;
@@ -99,17 +100,22 @@ export function usePosPaymentActions({
 
   const openPayDirect = useCallback((method: PaymentInput["method"]) => {
     if (lineCount === 0 || payableTotal <= 0) return;
-    setActiveModal({ kind: "payment", method, split: false });
+    setActiveModal({ kind: "payment", journey: "receipt", method, split: false });
   }, [lineCount, payableTotal, setActiveModal]);
 
   const openPaySplit = useCallback(() => {
     if (lineCount === 0 || payableTotal <= 0) return;
-    setActiveModal({ kind: "payment", method: undefined, split: true });
+    setActiveModal({ kind: "payment", journey: "receipt", method: undefined, split: true });
   }, [lineCount, payableTotal, setActiveModal]);
 
   const openPay = useCallback(() => {
     if (lineCount === 0 || payableTotal <= 0) return;
-    setActiveModal({ kind: "payment", method: undefined, split: false });
+    setActiveModal({ kind: "payment", journey: "receipt", method: undefined, split: false });
+  }, [lineCount, payableTotal, setActiveModal]);
+
+  const openPaymentJourney = useCallback((journey: PaymentJourney) => {
+    if (lineCount === 0 || payableTotal <= 0) return;
+    setActiveModal({ kind: "payment", journey, method: "cash", split: false });
   }, [lineCount, payableTotal, setActiveModal]);
 
   const handleConfirmPayment = useConfirmPayment({
@@ -172,6 +178,7 @@ export function usePosPaymentActions({
     openPayDirect,
     openPaySplit,
     openPay,
+    openPaymentJourney,
     handleConfirmPayment,
     handleCompleteCoveredExchange,
   } as const;

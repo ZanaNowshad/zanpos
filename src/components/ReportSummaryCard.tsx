@@ -1,3 +1,8 @@
+import {
+  Banknote, CreditCard, ClipboardList, Receipt, Scooter, Tag, TrendingUp, Undo2,
+} from "lucide-react";
+import type { ReactNode } from "react";
+
 export type ReportMetric =
   | "transactions"
   | "grossSales"
@@ -9,16 +14,24 @@ export type ReportMetric =
   | "refunds"
   | "pendingDeliveries";
 
-const META: Record<ReportMetric, { icon: string; color: string }> = {
-  transactions: { icon: "🧾", color: "var(--accent)" },
-  grossSales: { icon: "💵", color: "var(--success, #22c55e)" },
-  discounts: { icon: "🏷️", color: "var(--warning, #f59e0b)" },
-  tax: { icon: "📋", color: "var(--text-dim)" },
-  netRevenue: { icon: "✅", color: "var(--success, #22c55e)" },
-  cash: { icon: "💵", color: "var(--text)" },
-  card: { icon: "💳", color: "var(--text)" },
-  refunds: { icon: "↩️", color: "var(--error, #ef4444)" },
-  pendingDeliveries: { icon: "🛵", color: "var(--warning, #f59e0b)" },
+/**
+ * Metric icons come from lucide, the icon set every other workspace uses.
+ * These cards previously rendered literal emoji, which changed shape with the
+ * platform font, ignored the theme's colour tokens, and were the most visible
+ * remnant of the pre-redesign reporting screen.
+ */
+const ICON = { size: 16, strokeWidth: 1.75, "aria-hidden": true } as const;
+
+const META: Record<ReportMetric, { icon: ReactNode; color: string }> = {
+  transactions:      { icon: <Receipt {...ICON} />,       color: "var(--accent)" },
+  grossSales:        { icon: <Banknote {...ICON} />,      color: "var(--success, #22c55e)" },
+  discounts:         { icon: <Tag {...ICON} />,           color: "var(--warning, #f59e0b)" },
+  tax:               { icon: <ClipboardList {...ICON} />, color: "var(--text-dim)" },
+  netRevenue:        { icon: <TrendingUp {...ICON} />,    color: "var(--success, #22c55e)" },
+  cash:              { icon: <Banknote {...ICON} />,      color: "var(--text)" },
+  card:              { icon: <CreditCard {...ICON} />,    color: "var(--text)" },
+  refunds:           { icon: <Undo2 {...ICON} />,         color: "var(--error, #ef4444)" },
+  pendingDeliveries: { icon: <Scooter {...ICON} />,       color: "var(--warning, #f59e0b)" },
 };
 
 export default function ReportSummaryCard({

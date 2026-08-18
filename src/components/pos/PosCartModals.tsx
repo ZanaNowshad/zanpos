@@ -1,11 +1,10 @@
 import type { Dispatch, SetStateAction } from "react";
 import { Trash2 } from "lucide-react";
-import type { Cart, CartLine } from "../../types";
+import type { Cart } from "../../types";
 import { DEVICE } from "../../types";
 import { parseMoney } from "../../money";
 import CustomItemModal from "../CustomItemModal";
 import DiscountModal from "../DiscountModal";
-import LineDiscountModal from "../LineDiscountModal";
 import PriceInputModal from "../PriceInputModal";
 import type { ActiveModal } from "./posModalState";
 
@@ -14,7 +13,6 @@ interface Props {
   setActiveModal: Dispatch<SetStateAction<ActiveModal>>;
   cart: Cart;
   lineCount: number;
-  discountLine?: CartLine;
   addCustomItem: (name: string, priceMajor: string, quantity: string) => Promise<void>;
   setLinePrice: (lineId: string, priceMinor: number) => Promise<unknown>;
   applyBillDiscount: (discountMinor: number, reason: string) => Promise<unknown>;
@@ -30,7 +28,6 @@ export default function PosCartModals({
   setActiveModal,
   cart,
   lineCount,
-  discountLine,
   addCustomItem,
   setLinePrice,
   applyBillDiscount,
@@ -88,6 +85,9 @@ export default function PosCartModals({
           productName={activeModal.mode === "setExisting"
             ? activeModal.productName
             : activeModal.itemName}
+          currentPriceMinor={activeModal.mode === "setExisting"
+            ? activeModal.currentPriceMinor
+            : undefined}
           onConfirm={async priceMajor => {
             if (activeModal.mode === "setExisting") {
               const priceMinor = parseMoney(priceMajor, DEVICE.currency_exponent);
@@ -105,20 +105,15 @@ export default function PosCartModals({
       {activeModal.kind === "discount" && (
         <DiscountModal
           grossMinor={cart.lines.filter(line => !line.voided).reduce((sum, line) => sum + line.line_total_minor, 0)}
-          currentDiscountMinor={cart.bill_discount_minor}
-          onApply={async (discountMinor, reason) => {
+          currentBillDiscountMinor={cart.bill_discount_minor}
+          lines={cart.lines.filter(line => !line.voided)}
+          initialLineId={activeModal.lineId}
+          onApplyBill={async (discountMinor, reason) => {
             await applyBillDiscount(discountMinor, reason);
             close();
           }}
-          onCancel={close}
-        />
-      )}
-
-      {discountLine && (
-        <LineDiscountModal
-          line={discountLine}
-          onApply={async (discountMinor, reason) => {
-            await applyLineDiscount(discountLine.cart_line_id, discountMinor, reason);
+          onApplyLine={async (lineId, discountMinor, reason) => {
+            await applyLineDiscount(lineId, discountMinor, reason);
             close();
           }}
           onCancel={close}

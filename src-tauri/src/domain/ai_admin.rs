@@ -175,7 +175,7 @@ pub enum StreamEvent {
     MutationExecuted {
         action_id: String,
         tool_name: String,
-        undo_id: String,
+        undo_id: Option<String>,
         description: String,
     },
     Navigate {
@@ -187,6 +187,7 @@ pub enum StreamEvent {
         description: String,
         count: i64,
         samples: Vec<Value>,
+        requires_confirmation: bool,
     },
     RunProgress {
         run_id: String,
@@ -326,4 +327,48 @@ pub struct AiConfigPayload {
     pub stream_timeout_secs: u64,
     pub action_expiry_minutes: i64,
     pub bulk_batch_size: usize,
+    pub tool_result_max_chars: usize,
+    pub turn_tool_results_max_chars: usize,
+    pub confirm_non_destructive_actions: bool,
+    pub sensitive_protection_level: String,
+}
+
+/// Display-safe projection of `AiAction` for the Review queue.
+///
+/// Deliberately omits `confirmation_token` (a secret) and `tool_input_hash`
+/// (an integrity value the client has no use for and must not be able to
+/// influence). `preview_text` is the human-readable description already
+/// prepared when the action was created, so the queue never renders raw JSON.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiActionSummary {
+    pub action_id: String,
+    pub session_user_id: String,
+    pub branch_id: String,
+    pub tool_name: String,
+    pub preview_text: String,
+    pub status: String,
+    pub prepared_at: String,
+    pub confirmed_at: Option<String>,
+    pub executed_at: Option<String>,
+    pub expires_at: String,
+    pub result_json: Option<String>,
+    pub error_message: Option<String>,
+}
+
+/// Whether an executed action can still be reversed.
+///
+/// Deliberately omits `snapshot_json` and `rollback_input_json`: those are the
+/// rollback payload, and the client has no legitimate use for them — undo is
+/// executed by id, exactly like confirmation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UndoAvailability {
+    pub undo_id: String,
+    pub action_id: String,
+    pub entity_type: String,
+    pub entity_id: String,
+    /// "available" | "undone"
+    pub status: String,
+    pub available: bool,
+    pub created_at: String,
+    pub undone_at: Option<String>,
 }

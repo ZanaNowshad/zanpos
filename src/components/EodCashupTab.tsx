@@ -5,6 +5,8 @@ import { formatMoney } from "../money";
 import { reportEodCashup } from "../tauri/commands";
 import { useLanguage } from "../hooks/useLanguage";
 import { backOfficeTranslator } from "../i18n/backOfficeStrings";
+import { PageTemplate, EmptyState, LoadingSkeleton } from "./templates";
+import { CalendarClock } from "lucide-react";
 
 const EXP = DEVICE.currency_exponent;
 const CUR = DEVICE.currency;
@@ -36,26 +38,31 @@ export default function EodCashupTab({ sessionUserId }: { sessionUserId: string 
   };
 
   return (
-    <div className="tab-content eod-cashup-tab">
-      <h3 className="tab-title">{t("endOfDayCashup")}</h3>
-
-      <div className="report-filters">
-        <label htmlFor="a11y-input-1" className="field-label">{t("businessDate")}</label>
-        <input id="a11y-input-1" className="field-input date-input" type="date" value={date} onChange={e => setDate(e.target.value)} />
-        <button className="btn-primary" onClick={load} disabled={loading}>
-          {loading ? t("loading") : t("runReport")}
-        </button>
-      </div>
-
+    <PageTemplate
+      header={{
+        title: t("endOfDayCashup"),
+        icon: <CalendarClock size={18} strokeWidth={1.7} aria-hidden="true" />,
+      }}
+      toolbar={
+        <div className="report-filters">
+          <label htmlFor="a11y-input-1" className="field-label">{t("businessDate")}</label>
+          <input id="a11y-input-1" className="field-input date-input" type="date" value={date} onChange={e => setDate(e.target.value)} />
+          <button className="btn-primary" onClick={load} disabled={loading}>
+            {loading ? t("loading") : t("runReport")}
+          </button>
+        </div>
+      }
+    >
       {error && <div className="modal-error">{error}</div>}
 
-      {report && report.shifts.length === 0 && (
-        <div className="report-empty">{t("noShiftsForDate")} {report.date}.</div>
-      )}
-
-      {report && report.shifts.length > 0 && (
+      {loading ? (
+        <LoadingSkeleton variant="detail" count={3} />
+      ) : report && report.shifts.length === 0 ? (
+        <EmptyState
+          title={`${t("noShiftsForDate")} ${report.date}.`}
+        />
+      ) : report && report.shifts.length > 0 ? (
         <>
-          {/* Summary banner */}
           <div className="eod-summary-banner">
             <div className="eod-summary-item">
               <div className="eod-summary-label">{t("totalNetSales")}</div>
@@ -82,7 +89,6 @@ export default function EodCashupTab({ sessionUserId }: { sessionUserId: string 
             </div>
           </div>
 
-          {/* Per-shift breakdown */}
           <div className="eod-shifts">
             {report.shifts.map(s => (
               <div key={s.shift_id} className="eod-shift-card">
@@ -158,7 +164,7 @@ export default function EodCashupTab({ sessionUserId }: { sessionUserId: string 
             ))}
           </div>
         </>
-      )}
-    </div>
+      ) : null}
+    </PageTemplate>
   );
 }

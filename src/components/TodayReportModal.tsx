@@ -1,117 +1,100 @@
 import { useEffect, useMemo, useState } from "react";
-import type { TodaySummary } from "../types";
+import { Banknote, BarChart3, Printer, X } from "lucide-react";
+import type { CashDrawerSummary, TodaySummary } from "../types";
 import { DEVICE } from "../types";
-import { reportToday } from "../tauri/commands";
+import { cashXReport, reportToday } from "../tauri/commands";
 import { formatMoney } from "../money";
 import { useLanguage } from "../hooks/useLanguage";
-import { backOfficeTranslator } from "../i18n/backOfficeStrings";
+import { backOfficeTranslator, cashEventTypeText } from "../i18n/backOfficeStrings";
 
 interface Props {
   onClose: () => void;
   sessionUserId: string;
+  shiftId: string;
+  actorUserId: string;
+  includeCashDrawer?: boolean;
 }
 
-export default function TodayReportModal({ onClose, sessionUserId }: Props) {
+export default function TodayReportModal({ onClose, sessionUserId, shiftId, actorUserId, includeCashDrawer = true }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => backOfficeTranslator(language), [language]);
-  const [summary, setSummary] = useState<TodaySummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  // FIX: use Bahrain timezone — toISOString() returns UTC date which is wrong
-  // between midnight and 03:00 Bahrain time (UTC+3)
+  const [sales, setSales] = useState<TodaySummary | null>(null);
+  const [drawer, setDrawer] = useState<CashDrawerSummary | null>(null);
+  const [salesError, setSalesError] = useState<string | null>(null);
+  const [drawerError, setDrawerError] = useState<string | null>(null);
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" });
+  const generatedAt = new Date().toLocaleString(language === "ar" ? "ar-BH" : "en-BH", { dateStyle: "medium", timeStyle: "short" });
 
   useEffect(() => {
     let cancelled = false;
     reportToday(sessionUserId, DEVICE.branch_id, today)
-      .then(data => { if (!cancelled) setSummary(data); })
-      .catch(() => { if (!cancelled) setError(t("failedLoadReport")); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+      .then(value => { if (!cancelled) setSales(value); })
+      .catch(() => { if (!cancelled) setSalesError(t("failedLoadReport")); });
+    if (includeCashDrawer) {
+      cashXReport(shiftId, actorUserId)
+        .then(value => { if (!cancelled) setDrawer(value); })
+        .catch(error => { if (!cancelled) setDrawerError(typeof error === "string" ? error : t("failedLoadReport")); });
+    }
     return () => { cancelled = true; };
-  }, [today, sessionUserId, t]);
+  }, [actorUserId, includeCashDrawer, sessionUserId, shiftId, t, today]);
 
-  const fmt = (minor: number) =>
-    `${DEVICE.currency} ${formatMoney(minor, DEVICE.currency_exponent)}`;
+  const fmt = (minor: number) => `${DEVICE.currency} ${formatMoney(minor, DEVICE.currency_exponent)}`;
 
   return (
     <button className="modal-overlay" type="button" onClick={onClose}>
-      <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="modal report-modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2 className="modal-title">{t("todaysSales")} — {today}</h2>
-          <button className="modal-close" onClick={onClose}>✕</button>
+      <div className="modal pos-reports-modal" role="dialog" aria-modal="true" aria-labelledby="pos-reports-title" onClick={event => event.stopPropagation()}>
+        <div className="modal-header pos-reports-header">
+          <div><span>Live shift snapshot</span><h2 id="pos-reports-title" className="modal-title">POS reports</h2><small>{today} · generated {generatedAt}</small></div>
+          <button className="modal-close" onClick={onClose} aria-label="Close reports"><X size={18} /></button>
         </div>
 
-        {loading && <div className="report-loading">{t("loading")}</div>}
-        {error && <div className="modal-error">{error}</div>}
-
-        {summary && (
-          <div className="report-body">
-            <div className="report-section">
-              <div className="report-row">
-                <span>{t("transactions")}</span>
-                <strong>{summary.transaction_count}</strong>
-              </div>
-              <div className="report-row">
-                <span>{t("grossSales")}</span>
-                <strong>{fmt(summary.gross_total_minor)}</strong>
-              </div>
-              <div className="report-row">
-                <span>{t("discounts")}</span>
-                <strong className="report-negative">{fmt(summary.discount_total_minor)}</strong>
-              </div>
-              <div className="report-row">
-                <span>{t("taxCollected")}</span>
-                <strong>{fmt(summary.tax_total_minor)}</strong>
-              </div>
-              <div className="report-row report-row-total">
-                <span>{t("netRevenue")}</span>
-                <strong>{fmt(summary.net_total_minor)}</strong>
-              </div>
-            </div>
-
-            <div className="report-section">
-              <div className="report-section-title">{t("byPaymentMethod")}</div>
-              <div className="report-row">
-                <span>{t("cash")}</span>
-                <strong>{fmt(summary.cash_total_minor)}</strong>
-              </div>
-              <div className="report-row">
-                <span>{t("card")}</span>
-                <strong>{fmt(summary.card_total_minor)}</strong>
-              </div>
-            </div>
-
-            {summary.pending_delivery_count > 0 && (
-              <div className="report-section report-section-warning">
-                <div className="report-section-title">⏳ {t("pendingDeliveries")}</div>
-                <div className="report-row">
-                  <span>{t("pendingOrders")}</span>
-                  <strong>{summary.pending_delivery_count}</strong>
+        <div className={`pos-reports-grid${includeCashDrawer ? "" : " pos-reports-grid-single"}`}>
+          <section className="pos-report-column" aria-labelledby="sales-report-title">
+            <div className="pos-report-column-title"><BarChart3 size={18} /><div><h3 id="sales-report-title">Today’s sales</h3><span>Revenue and tenders</span></div></div>
+            {!sales && !salesError && <div className="report-loading">{t("loading")}</div>}
+            {salesError && <div className="modal-error">{salesError}</div>}
+            {sales && (
+              <div className="report-body">
+                <div className="report-section">
+                  <div className="report-row"><span>{t("transactions")}</span><strong>{sales.transaction_count}</strong></div>
+                  <div className="report-row"><span>{t("grossSales")}</span><strong>{fmt(sales.gross_total_minor)}</strong></div>
+                  <div className="report-row"><span>{t("discounts")}</span><strong className="report-negative">−{fmt(sales.discount_total_minor)}</strong></div>
+                  <div className="report-row"><span>{t("taxCollected")}</span><strong>{fmt(sales.tax_total_minor)}</strong></div>
+                  <div className="report-row report-row-total"><span>{t("netRevenue")}</span><strong>{fmt(sales.net_total_minor)}</strong></div>
                 </div>
-                <div className="report-row">
-                  <span>{t("pendingRevenue")}</span>
-                  <strong className="report-warning">{fmt(summary.pending_delivery_minor)}</strong>
+                <div className="report-section">
+                  <div className="report-section-title">{t("byPaymentMethod")}</div>
+                  <div className="report-row"><span>{t("cash")}</span><strong>{fmt(sales.cash_total_minor)}</strong></div>
+                  <div className="report-row"><span>{t("card")}</span><strong>{fmt(sales.card_total_minor)}</strong></div>
                 </div>
-                <div className="report-hint">{t("pendingExcludedNote")}</div>
+                {sales.pending_delivery_count > 0 && <div className="report-section report-section-warning"><div className="report-row"><span>{t("pendingDeliveries")}</span><strong>{sales.pending_delivery_count}</strong></div><div className="report-row"><span>{t("pendingRevenue")}</span><strong>{fmt(sales.pending_delivery_minor)}</strong></div></div>}
+                {sales.refund_count > 0 && <div className="report-section"><div className="report-section-title">{t("refunds")}</div><div className="report-row"><span>{t("refundCount")}</span><strong>{sales.refund_count}</strong></div><div className="report-row"><span>{t("refundTotal")}</span><strong className="report-negative">−{fmt(sales.refund_total_minor)}</strong></div></div>}
               </div>
             )}
+          </section>
 
-            {summary.refund_count > 0 && (
-              <div className="report-section">
-                <div className="report-section-title">{t("refunds")}</div>
-                <div className="report-row">
-                  <span>{t("refundCount")}</span>
-                  <strong>{summary.refund_count}</strong>
-                </div>
-                <div className="report-row">
-                  <span>{t("refundTotal")}</span>
-                  <strong className="report-negative">{fmt(summary.refund_total_minor)}</strong>
-                </div>
+          {includeCashDrawer && <section className="pos-report-column" aria-labelledby="drawer-report-title">
+            <div className="pos-report-column-title"><Banknote size={18} /><div><h3 id="drawer-report-title">Cash drawer</h3><span>Expected balance this shift</span></div></div>
+            {!drawer && !drawerError && <div className="report-loading">{t("loading")}</div>}
+            {drawerError && <div className="modal-error">{drawerError}</div>}
+            {drawer && (
+              <div className="xreport-body">
+                <table className="xreport-table"><tbody>
+                  <tr><td>{t("openingFloat")}</td><td className="xreport-val">{fmt(drawer.opening_minor)}</td></tr>
+                  <tr className="xreport-plus"><td>+ {t("cashSales")}</td><td className="xreport-val">{fmt(drawer.cash_sales_minor)}</td></tr>
+                  {drawer.pending_delivery_cash_minor > 0 && <tr className="xreport-pending-delivery"><td>{t("pendingDeliveryCash")}</td><td className="xreport-val xreport-warning">{fmt(drawer.pending_delivery_cash_minor)}</td></tr>}
+                  <tr className="xreport-minus"><td>− {t("cashRefunds")}</td><td className="xreport-val">{fmt(drawer.cash_refunds_minor)}</td></tr>
+                  <tr className="xreport-plus"><td>+ {t("paidIn")}</td><td className="xreport-val">{fmt(drawer.paid_in_minor)}</td></tr>
+                  <tr className="xreport-minus"><td>− {t("paidOut")}</td><td className="xreport-val">{fmt(drawer.paid_out_minor)}</td></tr>
+                  <tr className="xreport-expected"><td><strong>{t("expectedInDrawer")}</strong></td><td className="xreport-val"><strong>{fmt(drawer.expected_minor)}</strong></td></tr>
+                </tbody></table>
+                {drawer.events.length > 0 && <><div className="xreport-events-title">{t("cashEvents")}</div><div className="xreport-events">{drawer.events.map(event => <div key={event.cash_event_id} className="xreport-event-row"><span className={`xreport-event-type ${event.event_type === "paid_in" ? "xreport-in" : "xreport-out"}`}>{event.event_type === "paid_in" ? "+" : "−"} {fmt(event.amount_minor)}</span><span className="xreport-event-note">{event.note ?? cashEventTypeText(language, event.event_type)}</span><span className="xreport-event-time">{new Date(event.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span></div>)}</div></>}
               </div>
             )}
-          </div>
-        )}
+          </section>}
+        </div>
+
+        <div className="modal-actions pos-reports-actions"><button className="btn-secondary" onClick={() => window.print()}><Printer size={15} /> {t("print")}</button><button className="btn-primary" onClick={onClose}>{t("close")}</button></div>
       </div>
     </button>
   );

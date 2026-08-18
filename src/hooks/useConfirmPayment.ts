@@ -11,6 +11,7 @@ import { openCashDrawer } from "../tauri/commands";
 import type { ExchangeCredit } from "../components/pos/posModalState";
 import { buildExchangePayments } from "../utils/posExchange";
 import { dispatchPostSaleWhatsApp } from "../utils/postSaleWhatsApp";
+import type { PaymentCompletionOptions } from "../components/PaymentModal";
 
 interface Options {
   confirmingRef: { current: boolean };
@@ -24,7 +25,7 @@ interface Options {
     deliveryInput?: DeliveryInput,
     cartOverride?: Cart,
   ) => Promise<SaleResult>;
-  printSaleNow: (sale: SaleResult, isReprint: boolean, trigger: "auto") => Promise<boolean>;
+  printSaleNow: (sale: SaleResult, isReprint: boolean, trigger: "auto" | "manual") => Promise<boolean>;
   onCommitted: (result: SaleResult) => void;
   onReady: (result: SaleResult) => void;
   onPairingRequired: () => void;
@@ -47,6 +48,7 @@ export function useConfirmPayment({
     customerId?: string,
     deliveryInput?: DeliveryInput,
     selectedCustomer?: CustomerRow,
+    completionOptions?: PaymentCompletionOptions,
   ) => {
     if (confirmingRef.current) return;
     confirmingRef.current = true;
@@ -58,12 +60,19 @@ export function useConfirmPayment({
         openCashDrawer(sessionUser.user_id)
           .catch((error: unknown) => console.warn("Cash drawer open failed:", error));
       }
-      void printSaleNow(result, false, "auto");
+      if (completionOptions?.printReceipt) {
+        void printSaleNow(result, false, "manual");
+      } else if (!completionOptions) {
+        // Compatibility for callers that do not yet expose a per-sale choice.
+        void printSaleNow(result, false, "auto");
+      }
       onReady(result);
       dispatchPostSaleWhatsApp({
         result,
         deliveryInput,
         selectedCustomer,
+        checkoutContactNumber: completionOptions?.whatsappNumber,
+        rider: completionOptions?.rider,
         sessionUser,
         onPairingRequired,
       });

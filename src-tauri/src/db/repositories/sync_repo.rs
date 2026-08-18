@@ -25,7 +25,9 @@ const SYNC_TABLES: &[&str] = &[
     "suppliers",
     "purchase_orders",
     "purchase_order_lines",
+    "po_receipts",
     "customers",
+    "riders",
     "shifts",
     "sales",
     "sale_items",
@@ -76,6 +78,7 @@ pub async fn get_sync_status(pool: &SqlitePool, device_id: &str) -> AppResult<Sy
     let hub_configured = hub_mode.as_deref() == Some("1")
         || (hub_url.as_deref().is_some_and(|u| !u.is_empty()) && !token.is_empty());
 
+    let last_sync = watermark_or_never(last_sync);
     let days_since_last_sync = last_sync.as_deref().and_then(|ts| {
         chrono::DateTime::parse_from_rfc3339(ts)
             .ok()
@@ -91,4 +94,57 @@ pub async fn get_sync_status(pool: &SqlitePool, device_id: &str) -> AppResult<Sy
         last_error: None,
         device_id: device_id.to_string(),
     })
+}
+
+/// The sync watermark is seeded `NOT NULL DEFAULT '1970-01-01T00:00:00Z'`, so a
+/// store that has never synced still returns a parseable timestamp rather than
+/// NULL. Every consumer then rendered "1 Jan 1970, 03:00" — an epoch sentinel
+/// displayed as though it were a real sync — and `days_since_last_sync` came
+/// out around 20,000.
+///
+/// Normalising here means the "never synced" case is expressed as absence, which
+/// is what the UI's existing null-guards already handle correctly.
+pub(crate) fn watermark_or_never(ts: Option<String>) -> Option<String> {
+    ts.filter(|t| {
+        chrono::DateTime::parse_from_rfc3339(t)
+            .map(|d| d.timestamp() > 0)
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(test)]
+mod watermark_tests {
+    use super::watermark_or_never;
+
+    #[test]
+    fn the_seeded_epoch_sentinel_means_never_synced() {
+        // migrations/0001_initial.sql seeds this exact value for every table.
+        assert_eq!(
+            watermark_or_never(Some("1970-01-01T00:00:00Z".into())),
+            None
+        );
+        assert_eq!(
+            watermark_or_never(Some("1970-01-01T00:00:00+00:00".into())),
+            None
+        );
+        // Same instant expressed in Bahrain time, which is how it reached the UI.
+        assert_eq!(
+            watermark_or_never(Some("1970-01-01T03:00:00+03:00".into())),
+            None
+        );
+    }
+
+    #[test]
+    fn a_real_sync_time_is_preserved() {
+        let real = "2026-08-12T09:15:00Z".to_string();
+        assert_eq!(watermark_or_never(Some(real.clone())), Some(real));
+    }
+
+    #[test]
+    fn absent_or_unparseable_stays_absent() {
+        assert_eq!(watermark_or_never(None), None);
+        // Garbage must not be presented as a sync time either.
+        assert_eq!(watermark_or_never(Some("not a date".into())), None);
+        assert_eq!(watermark_or_never(Some(String::new())), None);
+    }
 }

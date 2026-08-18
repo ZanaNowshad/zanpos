@@ -1,46 +1,51 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { Check, ChevronDown, ChevronUp, Truck, X } from "lucide-react";
-import type { CustomerRow, DeliveryInput, PaymentInput } from "../types";
+import { Check, MessageCircle, Printer, ReceiptText, Truck, X } from "lucide-react";
+import type { CustomerRow, DeliveryInput, PaymentInput, RiderRow } from "../types";
 import { formatMoney, parseMoney } from "../money";
 import { DEVICE } from "../types";
 import DeliveryForm from "./DeliveryForm";
+import { normalizePhone } from "./DeliveryForm";
 import { applyDialpadKey } from "./Dialpad";
+import { typeIntoFocusedField } from "./paymentFieldTyping";
+import { buildPaymentInputs, canConfirmPayment, paymentBlockReason } from "./paymentValidation";
+import { mkLine, type ActiveField, type PaymentLine } from "./paymentLines";
 import { PaymentCommandPanel, PaymentMethodPicker } from "./PaymentExperience";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { usePaymentCustomer } from "../hooks/usePaymentCustomer";
-import PaymentCustomerSelector from "./PaymentCustomerSelector";
+import PaymentContactField from "./PaymentContactField";
+import RiderPicker from "./RiderPicker";
 import { useLanguage } from "../hooks/useLanguage";
 import { detailTranslator } from "../i18n/detailStrings";
+import { systemKeyboardOpen } from "../tauri/commands";
+export type PaymentJourney = "receipt" | "delivery" | "digital";
+
+export interface PaymentCompletionOptions {
+  journey: PaymentJourney;
+  printReceipt: boolean;
+  whatsappNumber?: string;
+  /** Chosen at checkout, if any. Carried here rather than on DeliveryInput so
+   *  the phone number needed to message them survives the round trip — the
+   *  delivery row stores only the rider's id and name. */
+  rider?: RiderRow;
+}
+
 interface Props {
   netTotal: number;
-  onConfirm: (payments: PaymentInput[], customerId?: string, delivery?: DeliveryInput, selectedCustomer?: CustomerRow) => void;
+  onConfirm: (payments: PaymentInput[], customerId?: string, delivery?: DeliveryInput, selectedCustomer?: CustomerRow, options?: PaymentCompletionOptions) => void;
   onCancel: () => void;
   loading?: boolean;
   initialMethod?: PaymentInput["method"];
   splitMode?: boolean;
   sessionUserId?: string;
+  journey?: PaymentJourney;
+  defaultPrintReceipt?: boolean;
 }
 
-interface PaymentLine {
-  id: number;
-  method: PaymentInput["method"];
-  amountStr: string;
-  tenderedStr: string;
-}
 
-type ActiveField =
-  | { kind: "amount";   lineId: number }
-  | { kind: "tendered"; lineId: number }
-  | { kind: "phone" }
-  | null;
-
-let lineIdCounter = 200;
-const mkLine = (method: PaymentInput["method"] = "cash"): PaymentLine =>
-  ({ id: lineIdCounter++, method, amountStr: "", tenderedStr: "" });
 
 export default function PaymentModal({
   netTotal, onConfirm, onCancel, loading,
-  initialMethod, splitMode, sessionUserId,
+  initialMethod, splitMode, sessionUserId, journey = "receipt", defaultPrintReceipt = false,
 }: Props) {
   const { language } = useLanguage();
   const dt = useMemo(() => detailTranslator(language), [language]);
@@ -62,7 +67,9 @@ export default function PaymentModal({
   });
 
   const [activeField, setActiveField] = useState<ActiveField>(
-    () => splitMode
+    () => journey !== "receipt"
+      ? { kind: "phone" }
+      : splitMode
       ? { kind: "amount", lineId: lines[0].id }
       : lines[0].method === "cash"
         ? { kind: "tendered", lineId: lines[0].id }
@@ -70,16 +77,34 @@ export default function PaymentModal({
   );
 
   const {
-    showCust, custSearch, custResults, selectedCust, showCustDrop,
-    toggleCustomer, changeCustomerSearch, blurCustomerSearch, selectCustomer, removeCustomer,
+    custResults, selectedCust, showCustDrop,
+    changeCustomerSearch, blurCustomerSearch, selectCustomer, removeCustomer,
   } = usePaymentCustomer(sessionUserId);
 
-  const [showDelivery, setShowDelivery] = useState(false);
   const [deliveryData, setDeliveryData] = useState<Partial<DeliveryInput>>({});
   const [phoneRaw, setPhoneRaw]       = useState("");
   const [phoneError, setPhoneError]   = useState<string | null>(null);
+  const [printReceipt, setPrintReceipt] = useState(defaultPrintReceipt);
+  const requiresContact = journey !== "receipt";
+  const isDelivery = journey === "delivery";
 
   const [showSplit, setShowSplit] = useState(splitMode ?? false);
+  const [rider, setRider] = useState<RiderRow | null>(null);
+  const [keyboardError, setKeyboardError] = useState<string | null>(null);
+
+  /* Raising the OS keyboard moves focus to it, so the field the cashier was in
+     has to be put back — otherwise the keys would go nowhere. */
+  const openSystemKeyboard = useCallback(() => {
+    const target = document.activeElement;
+    setKeyboardError(null);
+    systemKeyboardOpen()
+      .then(() => {
+        if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+          setTimeout(() => target.focus(), 250);
+        }
+      })
+      .catch(() => setKeyboardError(dt("onScreenKeyboardFailed")));
+  }, [dt]);
 
   const updateLine = useCallback((id: number, patch: Partial<PaymentLine>) =>
     setLines(prev => prev.map(l => l.id === id ? { ...l, ...patch } : l)), []);
@@ -110,40 +135,8 @@ export default function PaymentModal({
   const remainingMinor = netTotal - allocatedMinor;
 
   const handleDialpadKey = useCallback((key: string) => {
-    // If a real <input> or <textarea> is focused, write to it directly
-    const el = document.activeElement;
-    if (el && (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
-      if (key === "⌫") {
-        const start = el.selectionStart ?? el.value.length;
-        if (start > 0) {
-          el.setSelectionRange(start - 1, start);
-          // Fire input event so React onChange handlers pick up the change
-          el.dispatchEvent(new Event("input", { bubbles: true }));
-        }
-        // Let the native backspace-delete handle removal via the selection
-        // we just set (next keydown will delete the selected char). For immediate
-        // deletion we use execCommand which works across all modern browsers:
-        document.execCommand("delete", false);
-      } else if (key === "C") {
-        // Treat "C" as clear: select all then delete
-        el.select();
-        el.dispatchEvent(new Event("input", { bubbles: true }));
-        document.execCommand("delete", false);
-      } else if (key === "." || key === "00") {
-        // Insert as-is (phone/phone fields may use these)
-        const v = key === "00" ? "00" : ".";
-        const start = el.selectionStart ?? el.value.length;
-        const end = el.selectionEnd ?? el.value.length;
-        el.setRangeText(v, start, end, "end");
-        el.dispatchEvent(new Event("input", { bubbles: true }));
-      } else if (key >= "0" && key <= "9") {
-        const start = el.selectionStart ?? el.value.length;
-        const end = el.selectionEnd ?? el.value.length;
-        el.setRangeText(key, start, end, "end");
-        el.dispatchEvent(new Event("input", { bubbles: true }));
-      }
-      return;
-    }
+    // A focused text field wins over the virtual display fields below.
+    if (typeIntoFocusedField(key)) return;
     // Fall through to virtual-display-field logic
     if (!activeField) return;
     if (activeField.kind === "amount" || activeField.kind === "tendered") {
@@ -180,7 +173,6 @@ export default function PaymentModal({
       else if (k === "c" || e.key === "F1") { e.preventDefault(); selectMethod("cash"); }
       else if (k === "a" || e.key === "F2") { e.preventDefault(); selectMethod("card"); }
       else if (k === "w" || e.key === "F3") { e.preventDefault(); selectMethod("wallet"); }
-      else if (e.key === "F4") { e.preventDefault(); selectMethod("other"); }
       else if (k === "e") {
         e.preventDefault();
         const due = formatMoney(netTotal, EXP);
@@ -208,37 +200,30 @@ export default function PaymentModal({
     setActiveField({ kind: "tendered", lineId: cashLine.id });
   };
 
-  const canConfirm = (() => {
-    if (!lines.length) return false;
-    for (const l of lines) {
-      if (parseMoney(l.amountStr, EXP) <= 0) return false;
-      if (l.method === "cash") {
-        const t = parseMoney(l.tenderedStr || l.amountStr, EXP);
-        if (t < parseMoney(l.amountStr, EXP)) return false;
-      }
-    }
-    if (Math.abs(allocatedMinor - netTotal) > 1) return false;
-    if (showDelivery) {
-      if (!deliveryData.contact_number) return false;
-      if (!deliveryData.house_number?.trim()) return false;
-      if (!deliveryData.address_text?.trim()) return false;
-    }
-    return true;
-  })();
+  const validationInput = {
+    lines, netTotal, allocatedMinor, remainingMinor,
+    currencyExponent: EXP, requiresContact, isDelivery, deliveryData, loading,
+  };
+  const canConfirm = canConfirmPayment(validationInput);
 
   const handleConfirm = () => {
-    const payments: PaymentInput[] = lines.map(l => {
-      const amount = parseMoney(l.amountStr, EXP);
-      if (l.method === "cash") {
-        const tendered = Math.max(parseMoney(l.tenderedStr || l.amountStr, EXP), amount);
-        return { method: l.method, amount_minor: amount, tendered_minor: tendered };
-      }
-      return { method: l.method, amount_minor: amount };
-    });
-    const delivery: DeliveryInput | undefined = showDelivery
-      ? { ...(deliveryData as DeliveryInput), customer_id: selectedCust?.customer_id, expected_payment_method: lines[0]?.method ?? "cash" }
+    const payments = buildPaymentInputs(lines, EXP);
+    const delivery: DeliveryInput | undefined = isDelivery
+      ? {
+          ...(deliveryData as DeliveryInput),
+          address_text: deliveryData.address_text ?? "",
+          customer_id: selectedCust?.customer_id,
+          expected_payment_method: lines[0]?.method ?? "cash",
+          rider_id: rider?.rider_id,
+          delivery_staff_name: rider?.name ?? deliveryData.delivery_staff_name,
+        }
       : undefined;
-    onConfirm(payments, selectedCust?.customer_id, delivery, selectedCust ?? undefined);
+    onConfirm(payments, selectedCust?.customer_id, delivery, selectedCust ?? undefined, {
+      journey,
+      printReceipt,
+      whatsappNumber: requiresContact ? deliveryData.contact_number : undefined,
+      rider: rider ?? undefined,
+    });
   };
   // Keep ref current so Enter-key handler always calls the latest handleConfirm
   useEffect(() => { handleConfirmRef.current = handleConfirm; });
@@ -267,7 +252,7 @@ export default function PaymentModal({
   const methodName =
     mainLine?.method === "cash" ? dt("cash") :
     mainLine?.method === "card" ? dt("card") :
-    mainLine?.method === "wallet" ? dt("wallet") :
+    mainLine?.method === "wallet" ? (journey === "receipt" ? dt("wallet") : "BenefitPay") :
     dt("other");
   const methodHint =
     mainLine?.method === "cash" ? dt("cashGuidance") :
@@ -279,24 +264,7 @@ export default function PaymentModal({
     mainLine?.method === "wallet" ? dt("confirmWalletReceived") :
     dt("confirmPaymentReceived");
   const showNumericEntry = showSplit || mainLine?.method === "cash" || activeField?.kind === "phone";
-  const confirmBlockReason = (() => {
-    if (loading) return dt("recordingPayment");
-    if (!lines.length || lines.some(line => parseMoney(line.amountStr, EXP) <= 0)) return dt("everyPaymentAmount");
-    const shortCash = lines.find(line =>
-      line.method === "cash"
-      && parseMoney(line.tenderedStr || line.amountStr, EXP) < parseMoney(line.amountStr, EXP)
-    );
-    if (shortCash) {
-      const short = parseMoney(shortCash.amountStr, EXP) - parseMoney(shortCash.tenderedStr || shortCash.amountStr, EXP);
-      return `${DEVICE.currency} ${fmt(short)} ${dt("moreCashNeeded")}`;
-    }
-    if (remainingMinor > 1) return `${DEVICE.currency} ${fmt(remainingMinor)} ${dt("stillDue")}`;
-    if (remainingMinor < -1) return `${dt("reducePaymentsBy")} ${DEVICE.currency} ${fmt(-remainingMinor)}.`;
-    if (showDelivery && !deliveryData.contact_number) return dt("validDeliveryContact");
-    if (showDelivery && !deliveryData.house_number?.trim()) return dt("deliveryBuilding");
-    if (showDelivery && !deliveryData.address_text?.trim()) return dt("deliveryAddress");
-    return null;
-  })();
+  const confirmBlockReason = paymentBlockReason(validationInput, dt, fmt);
   const completionLabel = loading
     ? dt("completingSale")
     : language === "en" ? `Complete ${methodName.toLowerCase()} sale · ${DEVICE.currency} ${fmt(netTotal)}`
@@ -304,12 +272,15 @@ export default function PaymentModal({
 
   return (
     <button className="modal-overlay" type="button" onClick={e => e.target === e.currentTarget && onCancel()}>
-      <div className="pm-shell pm-shell-calm" role="dialog" aria-modal="true" aria-labelledby="pm-dialog-title" ref={containerRef}>
+      <div className={`pm-shell pm-shell-calm${requiresContact ? " pm-shell-contact" : ""}`} role="dialog" aria-modal="true" aria-labelledby="pm-dialog-title" ref={containerRef}>
 
         <div className="pm-left">
           <div className="pm-header">
             <div className="pm-header-copy">
-              <span className="pm-title">{dt("collectPayment")}</span>
+              <span className={`pm-journey-tag pm-journey-${journey}`}>
+                {journey === "receipt" ? <ReceiptText size={14} /> : journey === "delivery" ? <Truck size={14} /> : <MessageCircle size={14} />}
+                {journey === "receipt" ? "Receipt sale" : journey === "delivery" ? "Delivery order" : "Digital receipt"}
+              </span>
               <h2 id="pm-dialog-title">{dt("amountDue")}</h2>
             </div>
             <span className="pm-total-badge">{DEVICE.currency} {fmt(netTotal)}</span>
@@ -319,7 +290,7 @@ export default function PaymentModal({
           </div>
 
           <div className="pm-step-label"><span>1</span> {dt("choosePaymentMethod")}</div>
-          <PaymentMethodPicker selected={mainLine.method} onSelect={selectMethod} />
+          <PaymentMethodPicker selected={mainLine.method} onSelect={selectMethod} walletLabel={journey === "receipt" ? undefined : "BenefitPay"} />
           <div className="pm-method-guidance">{methodHint}</div>
 
           <div className="pm-step-label"><span>2</span> {dt("confirmAmount")}</div>
@@ -379,7 +350,6 @@ export default function PaymentModal({
                     <option value="card">{dt("card")}</option>
                     <option value="cash">{dt("cash")}</option>
                     <option value="wallet">{dt("wallet")}</option>
-                    <option value="other">••• {dt("other")}</option>
                   </select>
                   <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }} 
                     className={`pm-amount-box pm-split-amount${activeField?.kind === "amount" && activeField.lineId === line.id ? " pm-field-active" : ""}`}
@@ -410,12 +380,11 @@ export default function PaymentModal({
           )}
         </div>
 
-        <div className="pm-mid">
-          <div className="pm-step-label pm-step-muted"><span>3</span> {dt("optionalDetails")}</div>
-          <div className="pm-mid-title">{dt("optionalOrderDetails")}</div>
+        <div className={`pm-mid pm-mid-${journey}`}>
+          <div className="pm-step-label pm-step-muted"><span>3</span> {requiresContact ? "Order contact" : "Receipt options"}</div>
+          <div className="pm-mid-title">{requiresContact ? (isDelivery ? "Delivery details" : "Digital receipt destination") : "Finish the receipt"}</div>
 
-          {/* Split payment toggle */}
-          {!showSplit && (
+          {journey === "receipt" && !showSplit && (
             <button
               className="pm-split-toggle"
               onClick={() => {
@@ -423,55 +392,70 @@ export default function PaymentModal({
                 const rem = formatMoney(remainingMinor, EXP);
                 const newLine = mkLine("card");
                 if (remainingMinor > 0) newLine.amountStr = rem;
-                setLines(p => [...p, newLine]);
+                setLines(previous => [...previous, newLine]);
               }}
             >
               {dt("splitPayment")}
             </button>
           )}
 
-          <PaymentCustomerSelector
-            selectedCustomer={selectedCust}
-            open={showCust}
-            search={custSearch}
-            results={custResults}
-            showResults={showCustDrop}
-            onToggle={toggleCustomer}
-            onSearchChange={changeCustomerSearch}
-            onSearchBlur={blurCustomerSearch}
-            onSelect={selectCustomer}
-            onRemove={removeCustomer}
-          />
+          {requiresContact && (
+            <PaymentContactField
+              phoneRaw={phoneRaw}
+              phoneError={phoneError}
+              selectedCustomer={selectedCust}
+              suggestions={custResults}
+              showSuggestions={showCustDrop}
+              sessionUserId={sessionUserId}
+              onFocus={() => setActiveField({ kind: "phone" })}
+              onPhoneBlur={blurCustomerSearch}
+              onPhoneChange={raw => {
+                const normalized = normalizePhone(raw);
+                setPhoneRaw(raw);
+                setPhoneError(raw && !normalized ? "Enter 8 digits" : null);
+                setDeliveryData(previous => ({ ...previous, contact_number: normalized ?? "" }));
+                changeCustomerSearch(raw);
+              }}
+              onSelect={customer => {
+                const raw = (customer.phone ?? "").replace(/\D/g, "").replace(/^(00)?973/, "").slice(-8);
+                const normalized = normalizePhone(raw);
+                selectCustomer(customer);
+                setPhoneRaw(raw);
+                setPhoneError(normalized ? null : "This customer does not have a valid Bahrain mobile number");
+                setDeliveryData(previous => ({ ...previous, contact_number: normalized ?? "" }));
+              }}
+              onClearCustomer={() => {
+                removeCustomer();
+                setPhoneRaw("");
+                setPhoneError(null);
+                setDeliveryData(previous => ({ ...previous, contact_number: "" }));
+              }}
+            />
+          )}
 
-          {/* Delivery section */}
-          <div className="pm-section">
-            <button
-              className={`pm-section-hdr${showDelivery ? " pm-section-hdr-open pm-section-hdr-active" : ""}`}
-              onClick={() => setShowDelivery(v => !v)}
-            >
-              <span className="pm-section-title"><Truck size={15} /> {dt("delivery")}</span>
-              <span className="pm-chevron">{showDelivery ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</span>
-            </button>
-            {showDelivery && (
-              <div className="pm-section-body pm-delivery-body">
-                <DeliveryForm
-                  value={deliveryData}
-                  onChange={setDeliveryData}
-                  selectedCustomer={selectedCust}
-                  expectedPaymentMethod={lines[0]?.method ?? "cash"}
-                  actorUserId={sessionUserId ?? DEVICE.device_id}
-                  phoneRaw={phoneRaw}
-                  phoneError={phoneError}
-                  onPhoneChange={(raw, normalized, err) => {
-                    setPhoneRaw(raw);
-                    setPhoneError(err);
-                    setDeliveryData(prev => ({ ...prev, contact_number: normalized ?? "" }));
-                  }}
-                  onPhoneFocus={() => setActiveField({ kind: "phone" })}
-                />
-              </div>
-            )}
-          </div>
+          {journey === "digital" && (
+            <div className="pm-digital-guide">
+              <MessageCircle size={20} />
+              <div><strong>Send it straight to WhatsApp</strong><span>Enter a mobile number or choose a saved customer. The receipt is sent after payment.</span></div>
+            </div>
+          )}
+
+          {isDelivery && (
+            <>
+              <DeliveryForm value={deliveryData} onChange={setDeliveryData} expectedPaymentMethod={lines[0]?.method ?? "cash"} />
+              <RiderPicker
+                sessionUserId={sessionUserId}
+                selectedId={rider?.rider_id ?? null}
+                onSelect={setRider}
+              />
+            </>
+          )}
+
+          <label className="pm-print-option">
+            <input type="checkbox" checked={printReceipt} onChange={event => setPrintReceipt(event.target.checked)} />
+            <Printer size={17} />
+            <span><strong>Print receipt now</strong><small>Print immediately after payment</small></span>
+          </label>
         </div>
 
         {/* ── PANEL 3: Numpad + save ──────────────────────────────────── */}
@@ -488,7 +472,9 @@ export default function PaymentModal({
           canConfirm={canConfirm}
           loading={loading}
           completionLabel={completionLabel}
+          keyboardError={keyboardError}
           onKey={handleDialpadKey}
+          onOpenKeyboard={openSystemKeyboard}
           onConfirm={handleConfirm}
           onCancel={onCancel}
         />

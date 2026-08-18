@@ -1,0 +1,140 @@
+/* Side drawer for secondary workflows. Component-scoped (`zp-`). */
+
+.zp-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.zp-drawer {
+  position: fixed;
+  inset-block: 0;
+  inset-inline-end: 0;
+  z-index: 61;
+  display: flex;
+  flex-direction: column;
+  width: min(100%, var(--zp-drawer-w, 460px));
+  border-inline-start: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.24);
+}
+
+.zp-drawer-md { --zp-drawer-w: 460px; }
+.zp-drawer-lg { --zp-drawer-w: 640px; }
+
+.zp-drawer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 0 0 auto;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.zp-drawer-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.zp-drawer-desc {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.zp-drawer-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--text-dim);
+  background: transparent;
+  cursor: pointer;
+}
+
+.zp-drawer-close:hover { color: var(--text); border-color: var(--accent); }
+.zp-drawer-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.zp-drawer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.zp-drawer-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--surface2);
+}
+
+/* Stacked form grammar shared by the drawer workflows. */
+.zp-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+
+.zp-field label {
+  color: var(--text-dim);
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.zp-field input,
+.zp-field select,
+.zp-field textarea {
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
+  font-size: 0.8125rem;
+}
+
+.zp-field input:focus-visible,
+.zp-field select:focus-visible,
+.zp-field textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.zp-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.zp-field-hint { color: var(--text-muted); font-size: 0.6875rem; }
+
+/* Supplier rows inside the drawer. */
+.zp-supplier-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border2);
+}
+
+.zp-supplier-row:last-child { border-bottom: 0; }
+.zp-supplier-main { flex: 1 1 auto; min-width: 0; }
+.zp-supplier-name { display: block; color: var(--text); font-size: 0.8125rem; font-weight: 550; }
+.zp-supplier-sub { display: block; color: var(--text-muted); font-size: 0.7188rem; }
+
+@media (max-width: 1024px) {
+  .zp-drawer { width: 100%; }
+  .zp-field input, .zp-field select, .zp-field textarea { min-height: 44px; }
+  .zp-drawer-close { width: 44px; height: 44px; }
+  .zp-field-row { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zp-drawer, .zp-drawer-overlay { animation: none; transition: none; }
+}

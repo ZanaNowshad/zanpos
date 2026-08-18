@@ -91,15 +91,30 @@ pub async fn finalize_sale(
             .map(|_| "?")
             .collect::<Vec<_>>()
             .join(",");
-        // Subquery: for each product_id, pick the most recent effective price.
+        // Subquery: for each product_id, pick the price row currently in force.
+        //
+        // Every timestamp goes through datetime() before it is compared.
+        // effective_from is stored in two formats — datetime('now') by the
+        // importer and RFC3339 by the admin edit — and raw text comparison
+        // ranks 'T' above ' ', so an RFC3339 row reads as not-yet-effective
+        // while a closed row reads as still open. This must stay identical to
+        // the predicate product_repo uses to price the cart in the first place;
+        // any divergence rejects a correct payment.
         let sql = format!(
             "SELECT pp.product_id, pp.price_minor
              FROM product_prices pp
              WHERE pp.product_id IN ({placeholders})
-               AND pp.effective_from <= datetime('now')
-               AND (pp.effective_to IS NULL OR pp.effective_to >= datetime('now'))
-             GROUP BY pp.product_id
-             HAVING pp.effective_from = MAX(pp.effective_from)"
+               AND pp.price_id = (
+                   SELECT candidate.price_id FROM product_prices candidate
+                   WHERE candidate.product_id = pp.product_id
+                     AND candidate.branch_id IS NULL
+                     AND candidate.price_type = 'selling'
+                     AND datetime(candidate.effective_from) <= datetime('now')
+                     AND (candidate.effective_to IS NULL
+                          OR datetime(candidate.effective_to) > datetime('now'))
+                   ORDER BY datetime(candidate.effective_from) DESC, candidate.price_id DESC
+                   LIMIT 1
+               )"
         );
         let mut q = sqlx::query(&sql);
         for pid in &price_product_ids {
@@ -116,8 +131,33 @@ pub async fn finalize_sale(
             .collect()
     };
 
-    // Map from active_lines index → corrected price when the cart line is stale.
-    // The cashier scanned before a price change landed; we silently use the current DB price.
+    // A changed cart price is accepted only when the manager-only price command
+    // recorded an exact server-side match for this cart line. Cart payload fields
+    // alone are not authorization because IPC input can be crafted.
+    let approved_price_overrides: std::collections::HashMap<String, (Option<String>, i64)> =
+        sqlx::query(
+            "SELECT cart_line_id, product_id, price_minor
+         FROM pos_price_overrides
+         WHERE cart_id = ?",
+        )
+        .bind(&cart.cart_id)
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(|row: sqlx::sqlite::SqliteRow| {
+            let line_id: String = row.get("cart_line_id");
+            let product_id: Option<String> = row.get("product_id");
+            let price: i64 = row.get("price_minor");
+            (line_id, (product_id, price))
+        })
+        .collect();
+
+    // Map from active_lines index → the catalogue price when the cart line is
+    // stale, i.e. the cashier scanned before a price change landed. The sale is
+    // then priced from the catalogue, which necessarily disagrees with what the
+    // till collected, so the payment guard below rejects it. The correction is
+    // not silent — it is what makes the sale fail — and the operator is told
+    // which item to re-scan rather than being shown a payment arithmetic error.
     let mut price_corrections: Vec<(usize, i64)> = Vec::new();
 
     for (i, line) in active_lines.iter().enumerate() {
@@ -130,7 +170,15 @@ pub async fn finalize_sale(
         if let Some(ref product_id) = line.product_id {
             if let Some(&db_p) = db_prices.get(product_id.as_str()) {
                 if line.unit_price_minor != db_p {
-                    price_corrections.push((i, db_p));
+                    let override_matches = approved_price_overrides
+                        .get(&line.cart_line_id)
+                        .is_some_and(|(product_id, price)| {
+                            product_id.as_deref() == line.product_id.as_deref()
+                                && *price == line.unit_price_minor
+                        });
+                    if !override_matches {
+                        price_corrections.push((i, db_p));
+                    }
                 }
             }
         }
@@ -178,6 +226,18 @@ pub async fn finalize_sale(
     // Cash overpayment is captured in tendered_minor/change_minor — NOT in amount_minor.
     let total_paid: i64 = payments.iter().map(|p| p.amount_minor).sum();
     if total_paid != server_net {
+        // A repriced line is the likely cause whenever one is present: the
+        // catalogue price moved after the item was scanned, so the till is
+        // showing a total the server no longer agrees with. Name the item —
+        // "payment amounts must sum to net total" sends the cashier hunting
+        // through the payment screen for a fault that is in the cart.
+        if let Some((&i, &db_price)) = corrected_price.iter().next() {
+            return Err(AppError::Validation(format!(
+                "The price of '{}' changed to {} after it was added to the cart. \
+                 Remove the item and scan it again, then take payment.",
+                active_lines[i].product_name, db_price
+            )));
+        }
         return Err(AppError::Validation(format!(
             "Payment amounts ({}) must sum exactly to net total ({}). \
              Use tendered_minor for cash overpayment.",
@@ -593,6 +653,11 @@ pub async fn finalize_sale(
         }
     }
 
+    sqlx::query("DELETE FROM pos_price_overrides WHERE cart_id = ?")
+        .bind(&cart.cart_id)
+        .execute(&mut *tx)
+        .await?;
+
     tx.commit().await?;
     tracing::info!("Sale finalized: {} ({})", sale_id, receipt_number);
 
@@ -740,6 +805,7 @@ mod tests {
             product_name: "Coca-Cola 330ml".into(),
             sku: Some("COLA330".into()),
             barcode: None,
+            image_path: None,
             quantity: qty.to_string(),
             unit_price_minor: 400,
             line_discount_minor: 0,
@@ -764,6 +830,7 @@ mod tests {
             product_name: "Water 500ml".into(),
             sku: Some("WATR500".into()),
             barcode: None,
+            image_path: None,
             quantity: qty.to_string(),
             unit_price_minor: 250,
             line_discount_minor: 0,
@@ -807,6 +874,311 @@ mod tests {
         assert_eq!(result.payments.len(), 1);
         assert_eq!(result.payments[0].change_minor, Some(120));
         assert_eq!(result.items.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_finalize_sale_honors_recorded_price_override() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+
+        sqlx::query(
+            "INSERT INTO product_prices
+             (price_id, product_id, price_minor, currency, effective_from, created_by_user_id, created_at)
+             VALUES ('PRICE-COLA', '01JPROD00000000000COLA001', 400, 'BHD', datetime('now', '-1 minute'), ?, datetime('now'))",
+        )
+        .bind(CASHIER)
+        .execute(&pool)
+        .await
+        .expect("seed catalogue price");
+
+        let mut cart = Cart::new(BRANCH.into(), DEVICE.into(), shift_id, CASHIER.into());
+        let mut line = cola_line("1");
+        line.unit_price_minor = 500;
+        line.recalculate();
+
+        sqlx::query(
+            "INSERT INTO pos_price_overrides
+             (cart_id, cart_line_id, product_id, price_minor, authorized_by_user_id, created_at)
+             VALUES (?, ?, ?, ?, ?, datetime('now'))",
+        )
+        .bind(&cart.cart_id)
+        .bind(&line.cart_line_id)
+        .bind(&line.product_id)
+        .bind(line.unit_price_minor)
+        .bind(CASHIER)
+        .execute(&pool)
+        .await
+        .expect("record approved override");
+        cart.lines.push(line);
+
+        let payments = vec![PaymentInput {
+            method: "cash".into(),
+            amount_minor: 550,
+            tendered_minor: Some(550),
+            external_reference: None,
+        }];
+
+        let result = finalize_sale(
+            &pool,
+            &cart,
+            payments,
+            "idem-price-override",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("approved price override must finalize");
+
+        assert_eq!(result.net_total_minor, 550);
+        assert_eq!(result.items[0].unit_price_minor, 500);
+        let remaining: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM pos_price_overrides WHERE cart_id = ?")
+                .bind(&cart.cart_id)
+                .fetch_one(&pool)
+                .await
+                .expect("count consumed overrides");
+        assert_eq!(remaining, 0, "a completed sale consumes its override proof");
+    }
+
+    // Regression: an admin price change blocked every subsequent sale of that
+    // product with "Payment amounts must sum exactly to net total".
+    //
+    // product_prices.effective_from is written in two formats by different
+    // paths: `datetime('now')` ("2026-08-18 05:33:00") by the importer, and
+    // `Utc::now().to_rfc3339()` ("2026-08-18T05:33:00.123+00:00") by the admin
+    // edit. Compared as raw text, 'T' (0x54) sorts above ' ' (0x20), so an
+    // RFC3339 row never satisfies `effective_from <= datetime('now')` and a
+    // closed row's RFC3339 effective_to still looks open. The till priced the
+    // cart through product_repo, which wraps both sides in datetime(), so the
+    // two disagreed and the guard rejected a correct payment. Both sides must
+    // normalise before comparing.
+    #[tokio::test]
+    async fn test_finalize_sale_accepts_price_changed_through_admin() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+
+        // Original price, written the way the catalogue importer writes it.
+        sqlx::query(
+            "INSERT INTO product_prices
+             (price_id, product_id, price_type, price_minor, currency, effective_from, created_by_user_id, created_at)
+             VALUES ('PRICE-COLA-OLD', '01JPROD00000000000COLA001', 'selling', 400, 'BHD', datetime('now', '-1 day'), ?, datetime('now', '-1 day'))",
+        )
+        .bind(CASHIER)
+        .execute(&pool)
+        .await
+        .expect("seed original catalogue price");
+
+        // Admin raises the price: close the old row, open a new one — both
+        // stamped RFC3339, exactly as admin_commands::product_update does.
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "UPDATE product_prices SET effective_to = ?
+             WHERE product_id = '01JPROD00000000000COLA001' AND effective_to IS NULL",
+        )
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .expect("close old price");
+        sqlx::query(
+            "INSERT INTO product_prices
+             (price_id, product_id, price_type, price_minor, currency, effective_from, created_by_user_id, created_at)
+             VALUES ('PRICE-COLA-NEW', '01JPROD00000000000COLA001', 'selling', 500, 'BHD', ?, ?, ?)",
+        )
+        .bind(&now)
+        .bind(CASHIER)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .expect("insert new catalogue price");
+
+        // Cashier scans the item after the change; the till reads 500.
+        let mut cart = Cart::new(BRANCH.into(), DEVICE.into(), shift_id, CASHIER.into());
+        let mut line = cola_line("1");
+        line.unit_price_minor = 500;
+        line.recalculate();
+        cart.lines.push(line);
+
+        let payments = vec![PaymentInput {
+            method: "cash".into(),
+            amount_minor: 550, // 500 + 10% VAT
+            tendered_minor: Some(550),
+            external_reference: None,
+        }];
+
+        let result = finalize_sale(
+            &pool,
+            &cart,
+            payments,
+            "idem-price-change",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("a sale at the newly set catalogue price must finalize");
+
+        assert_eq!(result.net_total_minor, 550);
+        assert_eq!(result.items[0].unit_price_minor, 500);
+    }
+
+    // The closed row must lose even when it sorts above the open one as raw
+    // text — importer format ("2026-08-18 06:00:00") beats RFC3339 of the same
+    // instant, so picking the newest price by string comparison picks the
+    // superseded one.
+    #[tokio::test]
+    async fn test_finalize_sale_ignores_superseded_price_row() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+
+        sqlx::query(
+            "INSERT INTO product_prices
+             (price_id, product_id, price_type, price_minor, currency, effective_from, effective_to, created_by_user_id, created_at)
+             VALUES ('PRICE-COLA-OLD', '01JPROD00000000000COLA001', 'selling', 400, 'BHD',
+                     datetime('now', '-1 hour'), datetime('now', '-30 minutes'), ?, datetime('now', '-1 hour'))",
+        )
+        .bind(CASHIER)
+        .execute(&pool)
+        .await
+        .expect("seed superseded price");
+        sqlx::query(
+            "INSERT INTO product_prices
+             (price_id, product_id, price_type, price_minor, currency, effective_from, created_by_user_id, created_at)
+             VALUES ('PRICE-COLA-NEW', '01JPROD00000000000COLA001', 'selling', 500, 'BHD', ?, ?, ?)",
+        )
+        .bind(
+            (chrono::Utc::now() - chrono::Duration::minutes(30))
+                .to_rfc3339(),
+        )
+        .bind(CASHIER)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(&pool)
+        .await
+        .expect("seed current price");
+
+        let mut cart = Cart::new(BRANCH.into(), DEVICE.into(), shift_id, CASHIER.into());
+        let mut line = cola_line("1");
+        line.unit_price_minor = 500;
+        line.recalculate();
+        cart.lines.push(line);
+
+        let payments = vec![PaymentInput {
+            method: "cash".into(),
+            amount_minor: 550,
+            tendered_minor: Some(550),
+            external_reference: None,
+        }];
+
+        let result = finalize_sale(
+            &pool,
+            &cart,
+            payments,
+            "idem-superseded-price",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("the open price row wins over the closed one");
+
+        assert_eq!(result.items[0].unit_price_minor, 500);
+    }
+
+    // A price that genuinely moves while the item sits in the cart still has to
+    // be rejected, but the cashier is told which item to re-scan.
+    #[tokio::test]
+    async fn test_finalize_sale_names_the_repriced_item() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+
+        sqlx::query(
+            "INSERT INTO product_prices
+             (price_id, product_id, price_type, price_minor, currency, effective_from, created_by_user_id, created_at)
+             VALUES ('PRICE-COLA', '01JPROD00000000000COLA001', 'selling', 450, 'BHD', datetime('now', '-1 minute'), ?, datetime('now'))",
+        )
+        .bind(CASHIER)
+        .execute(&pool)
+        .await
+        .expect("seed catalogue price");
+
+        // Cart still holds the pre-change 400 with no manager override.
+        let mut cart = Cart::new(BRANCH.into(), DEVICE.into(), shift_id, CASHIER.into());
+        cart.lines.push(cola_line("1"));
+
+        let payments = vec![PaymentInput {
+            method: "cash".into(),
+            amount_minor: 440,
+            tendered_minor: Some(440),
+            external_reference: None,
+        }];
+
+        let err = finalize_sale(
+            &pool,
+            &cart,
+            payments,
+            "idem-stale-price",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect_err("a stale cart price must not finalize");
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Coca-Cola 330ml"),
+            "message names the item: {msg}"
+        );
+        assert!(msg.contains("450"), "message gives the new price: {msg}");
+    }
+
+    // A 'cost' row must never be mistaken for the shelf price.
+    #[tokio::test]
+    async fn test_finalize_sale_ignores_non_selling_price_rows() {
+        let pool = make_pool().await;
+        let shift_id = insert_shift(&pool).await;
+
+        sqlx::query(
+            "INSERT INTO product_prices
+             (price_id, product_id, price_type, price_minor, currency, effective_from, created_by_user_id, created_at)
+             VALUES
+             ('PRICE-COLA-SELL', '01JPROD00000000000COLA001', 'selling', 400, 'BHD', datetime('now', '-1 hour'), ?, datetime('now')),
+             ('PRICE-COLA-COST', '01JPROD00000000000COLA001', 'cost',    100, 'BHD', datetime('now'),            ?, datetime('now'))",
+        )
+        .bind(CASHIER)
+        .bind(CASHIER)
+        .execute(&pool)
+        .await
+        .expect("seed selling and cost rows");
+
+        let mut cart = Cart::new(BRANCH.into(), DEVICE.into(), shift_id, CASHIER.into());
+        cart.lines.push(cola_line("1"));
+
+        let payments = vec![PaymentInput {
+            method: "cash".into(),
+            amount_minor: 440,
+            tendered_minor: Some(440),
+            external_reference: None,
+        }];
+
+        let result = finalize_sale(
+            &pool,
+            &cart,
+            payments,
+            "idem-cost-row",
+            None,
+            false,
+            None,
+            false,
+        )
+        .await
+        .expect("the cost row must not price the sale");
+
+        assert_eq!(result.items[0].unit_price_minor, 400);
     }
 
     #[tokio::test]

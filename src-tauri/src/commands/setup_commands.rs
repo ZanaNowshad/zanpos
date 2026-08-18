@@ -323,7 +323,9 @@ pub async fn setup_wizard_complete(
     .execute(&mut *tx)
     .await?;
 
-    // Device reactivation safety-net (inside transaction)
+    // Device reactivation safety-net (inside transaction). Prefer the row this
+    // terminal already claims as its identity; fall back to the seeded row on a
+    // database that has not been re-keyed yet.
     let active_device_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE is_active = 1")
             .fetch_one(&mut *tx)
@@ -332,8 +334,10 @@ pub async fn setup_wizard_complete(
     if active_device_count == 0 {
         let candidate: Option<String> = sqlx::query_scalar(
             "SELECT device_id FROM devices
-             WHERE device_code = 'POS01' OR device_id = '01JDEVICE0000000000000001'
-             ORDER BY created_at LIMIT 1",
+              WHERE device_id = (SELECT value FROM app_config WHERE key = 'device_id')
+                 OR device_code = 'POS01'
+                 OR device_id = '01JDEVICE0000000000000001'
+              ORDER BY created_at LIMIT 1",
         )
         .fetch_optional(&mut *tx)
         .await
@@ -351,32 +355,18 @@ pub async fn setup_wizard_complete(
         }
     }
 
-    // Persist this terminal's identity key inside the transaction so it is
-    // atomic with setup_complete. Ensures sync worker and RBAC resolve the
-    // correct device_id even after pulling other terminals' records from Supabase.
-    // Moved inside tx so a crash between commit and this write cannot leave the
-    // device_id entry missing.
-    let this_device_id: Option<String> = sqlx::query_scalar(
-        "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1",
-    )
-    .fetch_optional(&mut *tx)
-    .await
-    .ok()
-    .flatten();
-
-    if let Some(ref did) = this_device_id {
-        let _ = sqlx::query(
-            "INSERT INTO app_config(key, value, updated_at) VALUES ('device_id',?,?)
-             ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-        )
-        .bind(did)
-        .bind(&now)
-        .execute(&mut *tx)
-        .await;
-    }
-
     tx.commit().await?;
     tracing::info!("setup_wizard_complete: transaction committed");
+
+    // Give this terminal an identity of its own. Every fresh database is seeded
+    // with the same device row, and receipt_number embeds device_code, so a
+    // second install left on the seed would mint receipt numbers a sibling has
+    // already used. Runs after the commit rather than inside it because it opens
+    // its own transaction; it is idempotent and also runs at startup, so a crash
+    // in between is repaired on the next launch rather than leaving no identity.
+    if let Err(e) = crate::device_identity::ensure(&state.db).await {
+        tracing::error!("setup_wizard_complete: could not establish device identity: {e}");
+    }
     sync_commands::schedule_immediate_sync(&state);
 
     // Return updated config with owner user_id so the frontend can

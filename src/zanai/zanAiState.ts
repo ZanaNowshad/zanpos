@@ -1,4 +1,9 @@
-import type { ZanAiRuntimeIdentity, ZanAiUiAction, ZanAiUiState } from "./zanAiTypes";
+import type {
+  ZanAiRuntimeIdentity,
+  ZanAiSurfaceContext,
+  ZanAiUiAction,
+  ZanAiUiState,
+} from "./zanAiTypes";
 
 export function sameRuntimeIdentity(
   left: ZanAiRuntimeIdentity,
@@ -24,4 +29,20 @@ export function reduceZanAiUiState(state: ZanAiUiState, action: ZanAiUiAction): 
         ? { ...state, unreadCount: state.unreadCount + 1 }
         : state;
   }
+}
+
+export function selectSendContext(
+  registered: ZanAiSurfaceContext,
+  explicit?: ZanAiSurfaceContext,
+): ZanAiSurfaceContext {
+  return explicit ?? registered;
+}
+
+export function serializeSurfaceContext(context: ZanAiSurfaceContext): string {
+  if (context.structured === undefined) return context.summary;
+  return JSON.stringify({
+    surface: context.surface,
+    summary: context.summary,
+    context: context.structured,
+  });
 }

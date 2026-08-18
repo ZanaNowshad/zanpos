@@ -1,0 +1,117 @@
+/* Review workspace — component-scoped (`zp-`). */
+
+.zp-review-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.zp-review-workspace.has-selection {
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
+}
+
+.zp-review-detail {
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface);
+}
+
+.zp-review-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.zp-review-detail-title { color: var(--text); font-size: 0.9375rem; font-weight: 650; }
+
+.zp-review-preview {
+  margin: 0 0 12px;
+  color: var(--text-dim);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.zp-review-detail-tech { margin-top: 12px; color: var(--text-muted); font-size: 0.6875rem; }
+.zp-review-detail-tech summary { cursor: pointer; }
+.zp-review-detail-tech code { display: block; margin-top: 6px; overflow-wrap: anywhere; }
+
+/* Selected filter chip: weight + fill, not colour alone. */
+.zp-chip-clear.is-on {
+  border-color: var(--accent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  font-weight: 600;
+}
+
+@media (max-width: 1279px) {
+  .zp-review-workspace.has-selection { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 1024px) {
+  .zp-chip-clear { min-height: 44px; }
+  .zp-review-detail .zp-po-detail-actions button { min-height: 44px; }
+}
+
+/* When the detail pane is open the list column is far narrower than the
+   viewport implies, so viewport-based column priorities are not enough and the
+   status header clipped. Drop the lower-priority columns while a row is
+   selected — container-driven, not viewport-driven. */
+.zp-review-workspace.has-selection .zp-col-p2,
+.zp-review-workspace.has-selection .zp-col-p3 { display: none; }
+
+.zp-review-workspace.has-selection .zp-review-detail { min-width: 0; }
+
+/* Section tabs — Actions / Conflicts / History. A quiet underline rather than
+   a second row of pills, so the domain reads as one workspace. */
+.zp-review-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.zp-review-tab {
+  position: relative;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 0;
+  color: var(--text-muted);
+  background: transparent;
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.zp-review-tab:hover { color: var(--text); }
+.zp-review-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Weight + underline, never colour alone. */
+.zp-review-tab.is-on { color: var(--text); font-weight: 600; }
+
+.zp-review-tab.is-on::after {
+  content: "";
+  position: absolute;
+  inset-inline: 10px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+}
+
+.zp-review-readonly {
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border2);
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+}
+
+@media (max-width: 1024px) {
+  .zp-review-tab { min-height: 44px; }
+}

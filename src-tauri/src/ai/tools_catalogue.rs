@@ -70,7 +70,7 @@ fn defs_core_and_inventory() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "update_product_price".into(),
-            description: "Update the selling price of a product. Requires admin confirmation.".into(),
+            description: "Update the selling price of a product.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -83,7 +83,7 @@ fn defs_core_and_inventory() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "set_product_active".into(),
-            description: "Enable or disable a product. Disabled products don't appear in POS. Requires admin confirmation.".into(),
+            description: "Enable or disable a product. Disabled products do not appear in POS.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -95,7 +95,7 @@ fn defs_core_and_inventory() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "update_product_name".into(),
-            description: "Rename a product. Requires admin confirmation.".into(),
+            description: "Rename a product.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -118,7 +118,7 @@ fn defs_core_and_inventory() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "adjust_stock".into(),
-            description: "Apply a positive or negative quantity adjustment to a product's stock. Use for corrections, write-offs, or manual receives. Requires admin confirmation.".into(),
+            description: "Apply a positive or negative quantity adjustment to a product's stock. Use for corrections, write-offs, or manual receives.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -131,7 +131,7 @@ fn defs_core_and_inventory() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "stock_take".into(),
-            description: "Set a product's stock to an exact counted quantity (full stock take). Requires admin confirmation.".into(),
+            description: "Set a product's stock to an exact counted quantity from a physical stock take.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -287,7 +287,7 @@ fn defs_core_and_inventory() -> Vec<ToolDef> {
         // ── Mutation: update reorder point ────────────────────────────────────
         ToolDef {
             name: "update_reorder_point".into(),
-            description: "Update the reorder point (low-stock threshold) for a product. When stock falls to or below this number, a low-stock alert fires. Requires admin confirmation.".into(),
+            description: "Update the reorder point (low-stock threshold) for a product. When stock falls to or below this number, a low-stock alert fires.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -300,7 +300,7 @@ fn defs_core_and_inventory() -> Vec<ToolDef> {
         // ── Mutation: create product ──────────────────────────────────────────
         ToolDef {
             name: "create_product".into(),
-            description: "Create a new product in the catalog with a name, price, and category. Requires admin confirmation.".into(),
+            description: "Create a new product in the catalog with a name, price, and category.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -344,7 +344,7 @@ fn defs_customers_web() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "create_customer".into(),
-            description: "Create a new customer record. Requires admin confirmation.".into(),
+            description: "Create a new customer record.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -358,7 +358,7 @@ fn defs_customers_web() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "update_customer".into(),
-            description: "Update an existing customer's contact details or notes. Requires admin confirmation.".into(),
+            description: "Update an existing customer's contact details or notes.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -386,7 +386,7 @@ fn defs_customers_web() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "advance_delivery_status".into(),
-            description: "Advance a delivery order to the next status (pending → in_transit → delivered). Requires admin confirmation.".into(),
+            description: "Advance a delivery order to the next status (pending → in_transit → delivered).".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -399,7 +399,7 @@ fn defs_customers_web() -> Vec<ToolDef> {
         // ── Bulk stock take ───────────────────────────────────────────────────
         ToolDef {
             name: "bulk_stock_take".into(),
-            description: "Set exact stock counts for multiple products at once from a physical count. More efficient than individual stock_take calls. Requires admin confirmation.".into(),
+            description: "Set exact stock counts for multiple products at once from a physical count. More efficient than individual stock_take calls.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -576,7 +576,7 @@ fn defs_roles_users_tax() -> Vec<ToolDef> {
         // ── Category mutations ──────────────────────────────────────────────────
         ToolDef {
             name: "create_category".into(),
-            description: "Create a new product category. Requires admin confirmation.".into(),
+            description: "Create a new product category.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -588,7 +588,7 @@ fn defs_roles_users_tax() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "update_category".into(),
-            description: "Update an existing category's name, sort order, or active status. Requires admin confirmation.".into(),
+            description: "Update an existing category's name, sort order, or active status.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -603,7 +603,7 @@ fn defs_roles_users_tax() -> Vec<ToolDef> {
         // ── User/staff mutations ────────────────────────────────────────────────
         ToolDef {
             name: "create_user".into(),
-            description: "Create a new staff account (cashier, manager, or owner). PIN must be 4+ digits. Requires admin confirmation.".into(),
+            description: "Create a new staff account (cashier, manager, or owner). PIN must be 4+ digits.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -617,7 +617,7 @@ fn defs_roles_users_tax() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "update_user".into(),
-            description: "Update a staff account: change display name, role, active status, or reset PIN. Requires admin confirmation.".into(),
+            description: "Update a staff account: change display name, role, active status, or reset PIN.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -633,7 +633,7 @@ fn defs_roles_users_tax() -> Vec<ToolDef> {
         // ── Tax rule mutations ─────────────────────────────────────────────────
         ToolDef {
             name: "create_tax_rule".into(),
-            description: "Create a new tax rule (e.g. 10% VAT inclusive). Requires admin confirmation.".into(),
+            description: "Create a new tax rule (for example, 10% VAT inclusive).".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -646,7 +646,7 @@ fn defs_roles_users_tax() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "update_tax_rule".into(),
-            description: "Update an existing tax rule's name, rate, inclusive flag, or active status. Requires admin confirmation.".into(),
+            description: "Update an existing tax rule's name, rate, inclusive flag, or active status.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -662,7 +662,7 @@ fn defs_roles_users_tax() -> Vec<ToolDef> {
         // ── Holistic product update ────────────────────────────────────────────
         ToolDef {
             name: "update_product_full".into(),
-            description: "Update all product fields at once: name, category, SKU, barcode, price, tax_rule, inventory tracking, reorder point, active status. Use this instead of calling multiple individual mutations. Requires admin confirmation.".into(),
+            description: "Update all product fields at once: name, category, SKU, barcode, price, tax rule, inventory tracking, reorder point, and active status. Use this instead of multiple individual product mutations.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -692,7 +692,7 @@ fn defs_settings_sync() -> Vec<ToolDef> {
         // ── Store settings mutation ────────────────────────────────────────────
         ToolDef {
             name: "update_store_settings".into(),
-            description: "Update the active store/branch settings: name, address, phone, tax number, CR number, receipt header/footer. Requires admin confirmation.".into(),
+            description: "Update the active store or branch settings: name, address, phone, tax number, CR number, and receipt header or footer.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -711,7 +711,7 @@ fn defs_settings_sync() -> Vec<ToolDef> {
         // ── Business rules mutation ────────────────────────────────────────────
         ToolDef {
             name: "update_business_rules".into(),
-            description: "Update business operation rules (toggles). Requires admin confirmation.".into(),
+            description: "Update business-operation rule toggles.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -726,7 +726,7 @@ fn defs_settings_sync() -> Vec<ToolDef> {
         // ── Delivery payment management ────────────────────────────────────────
         ToolDef {
             name: "confirm_delivery_payment".into(),
-            description: "Confirm that a customer has paid for a delivery order. Marks the delivery as paid. Requires admin confirmation.".into(),
+            description: "Record that a customer has paid for a delivery order and mark the delivery as paid.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -739,7 +739,7 @@ fn defs_settings_sync() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "cancel_delivery".into(),
-            description: "Cancel a delivery order. The delivery status will be set to cancelled. Requires admin confirmation.".into(),
+            description: "Cancel a delivery order by setting its status to cancelled.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -757,7 +757,7 @@ fn defs_settings_sync() -> Vec<ToolDef> {
         // ── DB backup ──────────────────────────────────────────────────────────
         ToolDef {
             name: "backup_database".into(),
-            description: "Trigger a full database backup to the system's backup directory. Use before making bulk changes or at end of day. Requires admin confirmation.".into(),
+            description: "Create a full database backup in the system backup directory. Use before risky bulk changes or when required by a recovery workflow.".into(),
             input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
         },
         // ── Smart barcode lookup (OFFF + web fallback) ─────────────────────────
@@ -1000,7 +1000,7 @@ fn defs_extensions() -> Vec<ToolDef> {
         ToolDef { name: "add_product_barcode".into(), description: "Register an additional barcode for a product.".into(), input_schema: json!({"type":"object","properties":{"product_id":{"type":"string"},"barcode":{"type":"string"}},"required":["product_id","barcode"]}) },
         ToolDef { name: "remove_product_barcode".into(), description: "Remove a barcode registration by barcode_id.".into(), input_schema: json!({"type":"object","properties":{"barcode_id":{"type":"string"}},"required":["barcode_id"]}) },
         ToolDef { name: "trigger_sync_now".into(), description: "Reset sync retry counters so the background sync worker picks up pending rows in the next cycle (within 30 seconds).".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "apply_system_health_fix".into(), description: "Apply a fix action recommended by get_system_health_check: reset_stuck_sync, clear_stuck_ai_runs, clear_stuck_ai_actions, reconcile_stock_drift, trigger_sync_now. Requires admin confirmation.".into(), input_schema: json!({"type":"object","properties":{"fix_action":{"type":"string","enum":["reset_stuck_sync","clear_stuck_ai_runs","clear_stuck_ai_actions","reconcile_stock_drift","trigger_sync_now"]}},"required":["fix_action"]}) },
+        ToolDef { name: "apply_system_health_fix".into(), description: "Apply a fix recommended by get_system_health_check: reset_stuck_sync, clear_stuck_ai_runs, clear_stuck_ai_actions, reconcile_stock_drift, or trigger_sync_now.".into(), input_schema: json!({"type":"object","properties":{"fix_action":{"type":"string","enum":["reset_stuck_sync","clear_stuck_ai_runs","clear_stuck_ai_actions","reconcile_stock_drift","trigger_sync_now"]}},"required":["fix_action"]}) },
         ToolDef { name: "force_full_resync".into(), description: "Force a complete resync: marks all synced rows as pending and resets all watermarks to epoch. Use when data is inconsistent with the hub.".into(), input_schema: json!({"type":"object","properties":{}}) },
         ToolDef { name: "revert_delivery_payment".into(), description: "Reverse a delivery payment — set delivery payment_status from 'paid' back to 'unpaid'.".into(), input_schema: json!({"type":"object","properties":{"delivery_id":{"type":"string"},"reason":{"type":"string"}},"required":["delivery_id"]}) },
         ToolDef { name: "update_branch_settings".into(), description: "Update branch/store configuration. All fields optional; only provided fields are changed.".into(), input_schema: json!({"type":"object","properties":{"name":{"type":"string"},"timezone":{"type":"string"},"address":{"type":"string"},"phone":{"type":"string"},"receipt_header":{"type":"string"},"receipt_footer":{"type":"string"},"tax_number":{"type":"string"},"cr_number":{"type":"string"}}}) },
@@ -1014,7 +1014,7 @@ fn defs_extensions() -> Vec<ToolDef> {
         ToolDef { name: "reprint_receipt".into(), description: "Reprint a past receipt by receipt_number to the configured thermal printer.".into(), input_schema: json!({"type":"object","properties":{"receipt_number":{"type":"string"}},"required":["receipt_number"]}) },
         ToolDef { name: "delete_held_cart".into(), description: "Permanently delete a held/parked cart by held_cart_id.".into(), input_schema: json!({"type":"object","properties":{"held_cart_id":{"type":"string"}},"required":["held_cart_id"]}) },
         ToolDef { name: "update_benefit_number".into(), description: "Update the Benefit/Sadad payment phone number stored in app config.".into(), input_schema: json!({"type":"object","properties":{"benefit_number":{"type":"string"}},"required":["benefit_number"]}) },
-        ToolDef { name: "open_tab".into(), description: "Navigate the admin's workspace to a specific tab: products, categories, inventory, reports, cashier, eod, deliveries, customers, users, settings, audit, devices.".into(), input_schema: json!({"type":"object","properties":{"tab":{"type":"string","enum":["products","categories","inventory","reports","cashier","eod","deliveries","customers","users","settings","audit","devices"]}},"required":["tab"]}) },
+        ToolDef { name: "open_tab".into(), description: "Navigate the admin workspace to a destination accepted by the tab schema.".into(), input_schema: json!({"type":"object","properties":{"tab":{"type":"string","enum":["products","categories","inventory","reports","cashier","eod","deliveries","customers","users","purchasing","settings","audit","devices"]}},"required":["tab"]}) },
         ToolDef { name: "get_product_detail".into(), description: "Get full details of a single product including prices and stock levels.".into(), input_schema: json!({"type":"object","properties":{"product_id":{"type":"string"}},"required":["product_id"]}) },
         ToolDef { name: "get_sales_report".into(), description: "Get sales report for a date range with totals and breakdowns.".into(), input_schema: json!({"type":"object","properties":{"from_date":{"type":"string"},"to_date":{"type":"string"}},"required":["from_date","to_date"]}) },
         ToolDef { name: "get_cash_status".into(), description: "Current cash drawer status: paid in/out, safe drops.".into(), input_schema: json!({"type":"object","properties":{}}) },
@@ -1108,7 +1108,7 @@ fn defs_bulk_system_analytics() -> Vec<ToolDef> {
         ToolDef { name: "reassign_delivery_rider".into(), description: "Change the rider assigned to an active delivery.".into(), input_schema: json!({"type":"object","properties":{"delivery_id":{"type":"string"},"rider_name":{"type":"string"}},"required":["delivery_id","rider_name"]}) },
         ToolDef { name: "batch_dispatch_deliveries".into(), description: "Set multiple pending deliveries to dispatched status in one call. Provide a list of delivery_ids.".into(), input_schema: json!({"type":"object","properties":{"delivery_ids":{"type":"array","minItems":1,"items":{"type":"string"}}},"required":["delivery_ids"]}) },
         // ── Workflow loader ──────────────────────────────────────────────────
-        ToolDef { name: "load_workflow".into(), description: "Load a detailed step-by-step workflow guide for complex multi-step tasks. Use when facing a task matching a known pattern: whatsapp_message, ghost_barcode, low_stock_restock, delivery_lifecycle, cash_discrepancy, sync_recovery, eod_reconciliation, db_maintenance, proactive_alerts, daily_briefing, supplier_invoice, customer_message, bulk_operations, expiry_management, margin_erosion, dead_stock_clearance, seasonal_demand, vat_filing, cash_flow_forecast, basket_placement, customer_winback. Do NOT call for simple single-tool questions.".into(), input_schema: json!({"type":"object","properties":{"workflow_name":{"type":"string","enum":["whatsapp_message","ghost_barcode","low_stock_restock","delivery_lifecycle","cash_discrepancy","sync_recovery","eod_reconciliation","db_maintenance","proactive_alerts","daily_briefing","supplier_invoice","customer_message","bulk_operations","expiry_management","margin_erosion","dead_stock_clearance","seasonal_demand","vat_filing","cash_flow_forecast","basket_placement","customer_winback"]}},"required":["workflow_name"]}) },
+        ToolDef { name: "load_workflow".into(), description: "Load a detailed step-by-step guide for a supported complex workflow. Use a workflow_name accepted by the current schema; do not call this for a simple single-tool question.".into(), input_schema: json!({"type":"object","properties":{"workflow_name":{"type":"string","enum":crate::ai::workflows::workflow_names()}},"required":["workflow_name"]}) },
         // ── System ─────────────────────────────────────────────────────────────
         ToolDef { name: "vacuum_database".into(), description: "Run SQLite VACUUM to reclaim disk space and defragment the database. Safe to run at any time.".into(), input_schema: json!({"type":"object","properties":{}}) },
         ToolDef { name: "export_product_catalog".into(), description: "Return the full product catalog as a formatted text table — useful for review, printing, or sharing.".into(), input_schema: json!({"type":"object","properties":{"include_inactive":{"type":"boolean"}}}) },
@@ -1117,25 +1117,25 @@ fn defs_bulk_system_analytics() -> Vec<ToolDef> {
         ToolDef { name: "check_foreign_key_integrity".into(), description: "Run PRAGMA foreign_key_check to find orphaned references. Returns PASS or lists broken foreign-key relationships.".into(), input_schema: json!({"type":"object","properties":{}}) },
         ToolDef { name: "run_quick_integrity_check".into(), description: "Run PRAGMA quick_check — a faster alternative to full integrity_check for routine database health monitoring.".into(), input_schema: json!({"type":"object","properties":{}}) },
         ToolDef { name: "get_database_fragmentation".into(), description: "Report database fragmentation: page count, freelist count, page size, and a recommendation (Healthy / Moderate / High fragmentation).".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "reindex_database".into(), description: "Rebuild all database indexes (REINDEX on all user tables). Restores query performance when indexes become fragmented. Requires admin confirmation.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "force_wal_checkpoint".into(), description: "Force a WAL checkpoint (TRUNCATE) to shrink oversized write-ahead log files and ensure crash consistency. Requires admin confirmation.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "reindex_database".into(), description: "Rebuild all database indexes (REINDEX on all user tables) to restore query performance when indexes become fragmented.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "force_wal_checkpoint".into(), description: "Run a truncating WAL checkpoint to shrink an oversized write-ahead log and flush committed pages to the database.".into(), input_schema: json!({"type":"object","properties":{}}) },
         // ── Ghost barcode management ───────────────────────────────────────
         ToolDef { name: "list_ghost_barcodes".into(), description: "List unresolved (unrecognised) barcodes that have been scanned but not yet linked to a product.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "resolve_ghost_barcode".into(), description: "Link an unresolved ghost barcode to an existing product. Provide the ghost barcode_id and the target product_id. Requires admin confirmation.".into(), input_schema: json!({"type":"object","properties":{"barcode_id":{"type":"string"},"product_id":{"type":"string"}},"required":["barcode_id","product_id"]}) },
+        ToolDef { name: "resolve_ghost_barcode".into(), description: "Link an unresolved ghost barcode to an existing product using barcode_id and product_id.".into(), input_schema: json!({"type":"object","properties":{"barcode_id":{"type":"string"},"product_id":{"type":"string"}},"required":["barcode_id","product_id"]}) },
         // ── Sync conflict management ──────────────────────────────────────
         ToolDef { name: "list_sync_conflicts".into(), description: "List unresolved multi-terminal sync conflicts. Each entry shows the conflicting table, entity, and local vs remote version.".into(), input_schema: json!({"type":"object","properties":{}}) },
-        ToolDef { name: "resolve_sync_conflict".into(), description: "Resolve a multi-terminal data conflict. Provide the conflict_id and resolution action (retry, pull_hub_truth, reconcile_stock, or dismiss). Requires admin confirmation.".into(), input_schema: json!({"type":"object","properties":{"conflict_id":{"type":"string"},"action":{"type":"string","enum":["retry","pull_hub_truth","reconcile_stock","dismiss"]}},"required":["conflict_id","action"]}) },
+        ToolDef { name: "resolve_sync_conflict".into(), description: "Resolve a multi-terminal data conflict by retrying, pulling hub truth, reconciling stock, or dismissing it.".into(), input_schema: json!({"type":"object","properties":{"conflict_id":{"type":"string"},"action":{"type":"string","enum":["retry","pull_hub_truth","reconcile_stock","dismiss"]}},"required":["conflict_id","action"]}) },
         // ── Database maintenance ────────────────────────────────────────────
-        ToolDef { name: "clear_ghost_sync_records".into(), description: "Find and clear orphan sync records — rows where sync_status='pending' but the parent entity no longer exists. Safe: only marks them as synced if orphaned. Requires admin confirmation.".into(), input_schema: json!({"type":"object","properties":{}}) },
+        ToolDef { name: "clear_ghost_sync_records".into(), description: "Find orphaned pending sync records whose parent entity no longer exists and mark only those orphaned records as synced.".into(), input_schema: json!({"type":"object","properties":{}}) },
         ToolDef { name: "run_diagnostics_and_fix".into(), description: "Run system diagnostics and auto-fix common issues: DB integrity check, clear stuck AI runs (>5 min), clear stuck AI actions (>10 min). Returns a summary report.".into(), input_schema: json!({"type":"object","properties":{}}) },
         // ── Bulk imports ────────────────────────────────────────────────────
         ToolDef { name: "get_task_ledger".into(), description: "Read the persistent task ledger — your saved progress state for the current multi-step task. ALWAYS call this first when the admin says 'continue', 'complete all', or after any error/restart, instead of re-searching the database to rediscover progress.".into(), input_schema: json!({"type":"object","properties":{}}) },
         ToolDef { name: "set_task_ledger".into(), description: "Save/update the persistent task ledger. Call this whenever you start a multi-step task and after each completed step (e.g. description: 'Importing 27 Mixto products', state: '{\"done\":12,\"remaining_barcodes\":[…]}'). Pass {\"clear\":true} when the task is fully complete.".into(), input_schema: json!({"type":"object","properties":{"description":{"type":"string"},"state":{"type":"string"},"clear":{"type":"boolean"}}}) },
-        ToolDef { name: "create_products".into(), description: "BEST tool for creating multiple products (2–500) in ONE confirmed action from a structured JSON array — no CSV or base64 needed. Each item: name (required), price_minor & cost_minor in integer fils (BHD 0.225 = 225), optional sku/barcode, category_id OR category_name (exact), tax_rule_id OR tax_rule_name (exact), reorder_point. Duplicate barcodes (in the batch or already in the DB) are skipped and reported. One admin confirmation covers the whole batch.".into(), input_schema: json!({"type":"object","properties":{"products":{"type":"array","minItems":1,"maxItems":500,"items":{"type":"object","properties":{"name":{"type":"string"},"sku":{"type":"string"},"barcode":{"type":"string"},"category_id":{"type":"string"},"category_name":{"type":"string"},"tax_rule_id":{"type":"string"},"tax_rule_name":{"type":"string"},"price_minor":{"type":"integer"},"cost_minor":{"type":"integer"},"reorder_point":{"type":"number"}},"required":["name","price_minor","cost_minor"]}}},"required":["products"]}) },
-        ToolDef { name: "bulk_import_products".into(), description: "Import products from a base64-encoded CSV file (use when the admin supplies an actual CSV file; for AI-built batches prefer create_products). Header row required; columns in order: name, sku, barcode, category_name, tax_rule_name, price_minor, cost_minor, reorder_point. price_minor/cost_minor are integer fils (BHD 0.225 = 225). category_name/tax_rule_name must match existing names exactly. Duplicate barcodes are skipped and reported. Requires admin confirmation once for the whole file.".into(), input_schema: json!({"type":"object","properties":{"csv_base64":{"type":"string"}},"required":["csv_base64"]}) },
-        ToolDef { name: "bulk_import_categories".into(), description: "Import categories from a base64-encoded CSV. One column: name. Requires admin confirmation.".into(), input_schema: json!({"type":"object","properties":{"csv_base64":{"type":"string"}},"required":["csv_base64"]}) },
+        ToolDef { name: "create_products".into(), description: "Create 1–500 products from a structured JSON array without CSV or base64. Each item requires name, price_minor, and cost_minor in integer fils (BHD 0.225 = 225), and may include sku, barcode, category_id or exact category_name, tax_rule_id or exact tax_rule_name, and reorder_point. Duplicate barcodes within the batch or already in the database are skipped and reported.".into(), input_schema: json!({"type":"object","properties":{"products":{"type":"array","minItems":1,"maxItems":500,"items":{"type":"object","properties":{"name":{"type":"string"},"sku":{"type":"string"},"barcode":{"type":"string"},"category_id":{"type":"string"},"category_name":{"type":"string"},"tax_rule_id":{"type":"string"},"tax_rule_name":{"type":"string"},"price_minor":{"type":"integer"},"cost_minor":{"type":"integer"},"reorder_point":{"type":"number"}},"required":["name","price_minor","cost_minor"]}}},"required":["products"]}) },
+        ToolDef { name: "bulk_import_products".into(), description: "Import products from a base64-encoded CSV supplied by the administrator. The header row is required; columns are name, sku, barcode, category_name, tax_rule_name, price_minor, cost_minor, and reorder_point. Money fields use integer fils; category and tax-rule names must match exactly. Duplicate barcodes are skipped and reported.".into(), input_schema: json!({"type":"object","properties":{"csv_base64":{"type":"string"}},"required":["csv_base64"]}) },
+        ToolDef { name: "bulk_import_categories".into(), description: "Import categories from a base64-encoded CSV containing a name column.".into(), input_schema: json!({"type":"object","properties":{"csv_base64":{"type":"string"}},"required":["csv_base64"]}) },
         // ── WhatsApp receipt delivery ───────────────────────────────────────
-        ToolDef { name: "send_receipt_via_whatsapp".into(), description: "Send a sale receipt as a PDF via WhatsApp. Provide the receipt number and destination phone number (with country code). Requires admin confirmation.".into(), input_schema: json!({"type":"object","properties":{"receipt_number":{"type":"string"},"phone":{"type":"string"}},"required":["receipt_number","phone"]}) },
+        ToolDef { name: "send_receipt_via_whatsapp".into(), description: "Send a sale receipt PDF via WhatsApp to the supplied country-code-qualified phone number.".into(), input_schema: json!({"type":"object","properties":{"receipt_number":{"type":"string"},"phone":{"type":"string"}},"required":["receipt_number","phone"]}) },
         // ── Supplier CRUD (complete) ───────────────────────────────────────────
         ToolDef { name: "get_supplier".into(), description: "Get a single supplier record with contact details and summary of linked products and purchase orders.".into(), input_schema: json!({"type":"object","properties":{"supplier_id":{"type":"string"}},"required":["supplier_id"]}) },
         ToolDef { name: "delete_supplier".into(), description: "Delete a supplier. Blocked if they have purchase orders or products linked to them.".into(), input_schema: json!({"type":"object","properties":{"supplier_id":{"type":"string"}},"required":["supplier_id"]}) },
@@ -1210,11 +1210,11 @@ fn finish_tool_definitions(mut tools: Vec<ToolDef>) -> Vec<ToolDef> {
     ];
     for operation in engine_ops {
         let description = if operation.id() == "bulk_stock_set" {
-            "Set the exact stock quantity for every inventory-tracked product matched by a compact selector. Use this for uniform large-catalogue stock takes without enumerating product IDs. Always previews the matched count and requires explicit confirmation."
+            "Set the exact stock quantity for every inventory-tracked product matched by a compact selector. Use this for uniform large-catalogue stock takes without enumerating product IDs. Preview returns the matched count before execution."
                 .into()
         } else {
             format!(
-                "Deterministic operation '{}'. Always preview and require explicit confirmation before execution.",
+                "Deterministic operation '{}'. Preview its affected records before execution.",
                 operation.id()
             )
         };
@@ -1343,12 +1343,79 @@ mod tests {
             .unwrap();
 
         assert!(definition.description.contains("exact stock quantity"));
-        assert!(definition.description.contains("explicit confirmation"));
+        assert!(definition
+            .description
+            .contains("Preview returns the matched count"));
         assert!(
             definition.input_schema["properties"]["selector"]["properties"]
                 .get("track_inventory")
                 .is_some()
         );
         assert!(definition.input_schema["properties"].get("items").is_none());
+    }
+
+    #[test]
+    fn tool_descriptions_define_semantics_without_duplicating_runtime_authorization() {
+        for definition in all_tool_definitions() {
+            let description = definition.description.to_ascii_lowercase();
+            assert!(
+                !description.contains("confirmation")
+                    && !description.contains("after approval")
+                    && !description.contains("requires admin"),
+                "{} duplicates runtime authorization policy in its description: {}",
+                definition.name,
+                definition.description
+            );
+        }
+    }
+
+    #[test]
+    fn create_products_contract_matches_its_schema_and_duplicate_behavior() {
+        let definition = all_tool_definitions()
+            .into_iter()
+            .find(|definition| definition.name == "create_products")
+            .unwrap();
+
+        assert_eq!(
+            definition.input_schema["properties"]["products"]["minItems"],
+            1
+        );
+        assert_eq!(
+            definition.input_schema["properties"]["products"]["maxItems"],
+            500
+        );
+        assert!(definition.description.contains("1–500"));
+        assert!(definition.description.contains("Duplicate barcodes"));
+        assert!(definition.description.contains("skipped and reported"));
+    }
+
+    #[test]
+    fn navigation_schema_accepts_the_existing_purchasing_workspace() {
+        let definition = all_tool_definitions()
+            .into_iter()
+            .find(|definition| definition.name == "open_tab")
+            .unwrap();
+        let tabs = definition.input_schema["properties"]["tab"]["enum"]
+            .as_array()
+            .unwrap();
+
+        assert!(tabs.iter().any(|tab| tab == "purchasing"));
+    }
+
+    #[test]
+    fn workflow_loader_schema_is_generated_from_the_canonical_workflow_registry() {
+        let definition = all_tool_definitions()
+            .into_iter()
+            .find(|definition| definition.name == "load_workflow")
+            .unwrap();
+        let advertised = definition.input_schema["properties"]["workflow_name"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(advertised, crate::ai::workflows::workflow_names());
+        assert!(!definition.description.contains("whatsapp_message"));
     }
 }

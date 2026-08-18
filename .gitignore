@@ -14,5 +14,21 @@ src-tauri/sidecar/**/.npm-cache/
 # Repo Cognition layer — derived state with machine-specific paths.
 # Remove this line to commit it and share architectural memory with the team.
 .repo-cognition/
+
+# Agent tooling scratch state — machine-local, regenerated on demand.
+.claude-flow/
+.superpowers/
+.zcode/
+.claude/proven-config.json
+.claude/.proven-config-version
+
+# QA screenshots. The harness scripts (qa/*.mjs) are committed; the images they
+# produce are build output — a few hundred PNGs that churn on every run.
+qa/layout/
+qa/parity/
+qa-artifacts/
 zanpos.key
 zanpos.key.pub
+
+# Playwright run state — regenerated on every run.
+storefront/test-results/

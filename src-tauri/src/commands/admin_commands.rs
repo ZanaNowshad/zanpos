@@ -1,9 +1,12 @@
 use crate::commands::{rbac, sync_commands};
 use crate::db::repositories::{audit_hash, auth_repo, product_dedup_repo};
 use crate::errors::{AppError, AppResult};
+use crate::product_image_search::{
+    search_product_image, ProductImageSearchRequest, ProductImageSearchResult,
+};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
+use sqlx::{Row, SqlitePool};
 /// Back-office administration commands.
 /// Products, categories, tax rules, users, and roles.
 use tauri::State;
@@ -32,14 +35,7 @@ async fn active_branch_id(state: &AppState) -> AppResult<String> {
 
 /// Resolve the active device_id from the database at runtime.
 async fn active_device_id(state: &AppState) -> String {
-    sqlx::query_scalar(
-        "SELECT device_id FROM devices WHERE is_active=1 ORDER BY device_code LIMIT 1",
-    )
-    .fetch_optional(&state.db)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or_else(|| "unknown".to_string())
+    crate::device_identity::current_or_unknown(&state.db).await
 }
 
 // ─── Response types ───────────────────────────────────────────────────────────
@@ -154,6 +150,45 @@ pub struct AdminProductPage {
     pub limit: i64,
 }
 
+/// A product image is either a local file path from the picker or a URL a user
+/// typed. This field is also written by the AI catalogue tools and by CSV
+/// import, so the check lives here rather than in the form: a `javascript:` or
+/// `data:` value reaching the catalogue would be rendered by every screen that
+/// shows the product.
+pub(crate) fn validate_image_path(value: Option<&str>) -> AppResult<Option<String>> {
+    let trimmed = match value.map(str::trim) {
+        None | Some("") => return Ok(None),
+        Some(v) => v,
+    };
+    // Anything with a scheme is treated as a URL and must be http(s). A bare
+    // path (including a Windows drive letter) is a local file and passes.
+    let looks_like_url =
+        trimmed.contains("://") || (trimmed.contains(':') && !is_windows_drive_path(trimmed));
+    if looks_like_url {
+        let lower = trimmed.to_ascii_lowercase();
+        if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+            return Err(AppError::Validation(
+                "Product image links must start with http:// or https://".into(),
+            ));
+        }
+        if trimmed.len() > 2_048 {
+            return Err(AppError::Validation(
+                "Product image link is too long".into(),
+            ));
+        }
+    }
+    Ok(Some(trimmed.to_string()))
+}
+
+/// `C:\images\milk.png` has a colon but is a path, not a URL.
+fn is_windows_drive_path(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() > 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
+}
+
 #[tauri::command]
 pub async fn admin_list_products(
     actor_user_id: String,
@@ -239,6 +274,91 @@ pub async fn admin_list_products(
     })
 }
 
+/// Search is a manager catalogue action. It is intentionally server-side:
+/// ZANPOS keeps a strict frontend CSP and never exposes arbitrary HTTP fetching
+/// to the WebView.
+#[tauri::command]
+pub async fn admin_search_product_image(
+    actor_user_id: String,
+    request: ProductImageSearchRequest,
+    state: State<'_, AppState>,
+) -> Result<ProductImageSearchResult, AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    search_product_image(request).await
+}
+
+/// Update only the image column. This must stay separate from
+/// `admin_update_product`: a catalogue-row image fetch does not carry the full
+/// form and therefore must never null cost, description, supplier or tax data.
+pub(crate) async fn persist_product_image(
+    pool: &SqlitePool,
+    product_id: &str,
+    image_url: &str,
+) -> AppResult<Option<String>> {
+    let image_url = validate_image_path(Some(image_url))?
+        .ok_or_else(|| AppError::Validation("Product image URL is required".into()))?;
+    if !(image_url.starts_with("https://") || image_url.starts_with("http://")) {
+        return Err(AppError::Validation(
+            "Fetched product images must use an http:// or https:// URL".into(),
+        ));
+    }
+    let previous = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT image_path FROM products WHERE product_id = ? AND deleted_at IS NULL",
+    )
+    .bind(product_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound("Product not found".into()))?;
+
+    sqlx::query(
+        "UPDATE products
+         SET image_path = ?, updated_at = ?, version = version + 1,
+             sync_status = 'pending', sync_attempts = 0
+         WHERE product_id = ? AND deleted_at IS NULL",
+    )
+    .bind(image_url)
+    .bind(chrono::Utc::now().to_rfc3339())
+    .bind(product_id)
+    .execute(pool)
+    .await?;
+    Ok(previous)
+}
+
+#[tauri::command]
+pub async fn admin_set_product_image(
+    actor_user_id: String,
+    product_id: String,
+    image_url: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let previous = persist_product_image(&state.db, &product_id, &image_url).await?;
+    sync_commands::schedule_immediate_sync(&state);
+
+    let device_id = active_device_id(&state).await;
+    let branch_id = active_branch_id(&state).await?;
+    let before = serde_json::json!({ "image_path": previous }).to_string();
+    let after = serde_json::json!({ "image_path": image_url }).to_string();
+    if let Err(error) = audit_hash::insert_audit_entry(
+        &state.db,
+        "PRODUCT_IMAGE_UPDATED",
+        "product",
+        &product_id,
+        &actor_user_id,
+        "user",
+        &device_id,
+        &branch_id,
+        Some(&before),
+        Some(&after),
+        Some("Product image fetched from an external catalogue search"),
+    )
+    .await
+    {
+        tracing::error!("AUDIT WRITE FAILED [PRODUCT_IMAGE_UPDATED]: {:?}", error);
+    }
+    Ok(())
+}
+
 #[derive(Deserialize)]
 pub struct CreateProductInput {
     pub category_id: String,
@@ -321,7 +441,7 @@ pub async fn admin_create_product(
     .bind(input.allow_decimal_quantity as i64)
     .bind(&input.tax_rule_id)
     .bind(input.reorder_point)
-    .bind(input.image_path.as_deref().filter(|s| !s.is_empty()))
+    .bind(validate_image_path(input.image_path.as_deref())?)
     .bind(input.cost_minor)
     .bind(input.description.as_deref().filter(|s| !s.is_empty()))
     .bind(
@@ -519,7 +639,7 @@ pub async fn admin_update_product(
     .bind(input.allow_decimal_quantity as i64)
     .bind(input.reorder_point)
     .bind(input.is_active as i64)
-    .bind(input.image_path.as_deref().filter(|s| !s.is_empty()))
+    .bind(validate_image_path(input.image_path.as_deref())?)
     .bind(input.cost_minor)
     .bind(input.description.as_deref().filter(|s| !s.is_empty()))
     .bind(
@@ -1685,12 +1805,76 @@ pub struct CreateUserInput {
     pub actor_user_id: String,
 }
 
+/// Guard for user-administration writes.
+///
+/// `manager_or_owner` alone is not enough for anything that touches a role.
+/// `admin_update_user` writes `role_id` straight from its input, so a manager
+/// could previously grant the owner role — to another user or to themselves —
+/// and could deactivate the real owner. Both are privilege escalation performed
+/// entirely through a permitted command; hiding the control in the UI is not a
+/// defence, because the command is reachable directly.
+///
+/// The rules, using the roles that already exist:
+///   * only an owner may grant or remove the owner role;
+///   * only an owner may modify an account that is currently an owner;
+///   * the target must be in the actor's branch.
+///
+/// Everything else a manager could already do is unchanged.
+async fn authorize_user_admin(
+    pool: &SqlitePool,
+    actor_user_id: &str,
+    target_user_id: Option<&str>,
+    target_role_id: &str,
+) -> Result<(), AppError> {
+    rbac::manager_or_owner(pool, actor_user_id).await?;
+
+    let actor_is_owner = rbac::owner_only(pool, actor_user_id).await.is_ok();
+    let actor_branch = rbac::actor_branch_id(pool, actor_user_id).await?;
+
+    let target_role_is_owner: bool =
+        sqlx::query_scalar("SELECT name = 'owner' FROM roles WHERE role_id = ?")
+            .bind(target_role_id)
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or(false);
+    if target_role_is_owner && !actor_is_owner {
+        return Err(AppError::Permission(
+            "Only an owner can grant the owner role".into(),
+        ));
+    }
+
+    if let Some(user_id) = target_user_id {
+        let existing: Option<(String, bool)> = sqlx::query_as(
+            "SELECT u.branch_id, r.name = 'owner'
+             FROM users u JOIN roles r ON r.role_id = u.role_id
+             WHERE u.user_id = ?",
+        )
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?;
+        let (target_branch, target_is_owner) =
+            existing.ok_or_else(|| AppError::NotFound(format!("User {user_id} not found")))?;
+
+        if target_branch != actor_branch {
+            // NotFound rather than Permission: confirming the account exists in
+            // another branch is itself a disclosure.
+            return Err(AppError::NotFound(format!("User {user_id} not found")));
+        }
+        if target_is_owner && !actor_is_owner {
+            return Err(AppError::Permission(
+                "Only an owner can modify an owner account".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn admin_create_user(
     input: CreateUserInput,
     state: State<'_, AppState>,
 ) -> Result<AdminUserRow, AppError> {
-    rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
+    authorize_user_admin(&state.db, &input.actor_user_id, None, &input.role_id).await?;
     if input.pin.len() < 4 {
         return Err(AppError::Validation("PIN must be at least 4 digits".into()));
     }
@@ -1951,7 +2135,13 @@ pub async fn admin_update_user(
     input: UpdateUserInput,
     state: State<'_, AppState>,
 ) -> Result<AdminUserRow, AppError> {
-    rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
+    authorize_user_admin(
+        &state.db,
+        &input.actor_user_id,
+        Some(&input.user_id),
+        &input.role_id,
+    )
+    .await?;
     // FIX: prevent self-demotion or self-deactivation — an owner who deactivates
     // themselves locks out the system permanently.
     if input.user_id == input.actor_user_id && !input.is_active {
@@ -2144,4 +2334,337 @@ pub async fn admin_run_diagnostics(state: State<'_, AppState>) -> AppResult<Diag
         issues_fixed,
         note,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- Team user administration (D1) ----------------------------------------
+
+    const ROLE_OWNER: &str = "01JROLES000000000000000001";
+    const ROLE_MANAGER: &str = "01JROLES000000000000000002";
+    const ROLE_CASHIER: &str = "01JROLES000000000000000003";
+    const BRANCH_MAIN: &str = "01JBRANCH0000000000000001";
+    const BRANCH_OTHER: &str = "01JBRANCH0000000000000009";
+
+    async fn team_pool() -> SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("pool");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("migrations");
+        sqlx::query("UPDATE branches SET is_active = 1 WHERE branch_id = ?")
+            .bind(BRANCH_MAIN)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT OR IGNORE INTO branches
+               (branch_id, branch_code, name, is_active, created_at, updated_at, version)
+             VALUES (?, 'OTH', 'Other', 1, datetime('now'), datetime('now'), 1)",
+        )
+        .bind(BRANCH_OTHER)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        for (id, branch, role, uname) in [
+            ("u_owner", BRANCH_MAIN, ROLE_OWNER, "owner1"),
+            ("u_manager", BRANCH_MAIN, ROLE_MANAGER, "mgr1"),
+            ("u_cashier", BRANCH_MAIN, ROLE_CASHIER, "cash1"),
+            ("u_other_branch", BRANCH_OTHER, ROLE_CASHIER, "cash2"),
+        ] {
+            sqlx::query(
+                "INSERT INTO users (user_id, branch_id, display_name, username, pin_hash,
+                                    role_id, is_active, created_at, updated_at, version)
+                 VALUES (?, ?, ?, ?, 'PLAIN:1234', ?, 1, datetime('now'), datetime('now'), 1)",
+            )
+            .bind(id)
+            .bind(branch)
+            .bind(uname)
+            .bind(uname)
+            .bind(role)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        pool
+    }
+
+    #[tokio::test]
+    async fn a_manager_cannot_grant_the_owner_role() {
+        let pool = team_pool().await;
+        // Promoting a cashier to owner -- straightforward escalation.
+        let err = authorize_user_admin(&pool, "u_manager", Some("u_cashier"), ROLE_OWNER)
+            .await
+            .expect_err("a manager must not mint owners");
+        assert!(matches!(err, AppError::Permission(_)), "got {err:?}");
+
+        // And promoting themselves, which is the same hole from the inside.
+        let err = authorize_user_admin(&pool, "u_manager", Some("u_manager"), ROLE_OWNER)
+            .await
+            .expect_err("a manager must not promote themselves");
+        assert!(matches!(err, AppError::Permission(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn a_manager_cannot_touch_an_owner_account() {
+        let pool = team_pool().await;
+        // Even demoting an owner to cashier -- the target's current role is
+        // what matters, not the role being written.
+        let err = authorize_user_admin(&pool, "u_manager", Some("u_owner"), ROLE_CASHIER)
+            .await
+            .expect_err("a manager must not modify an owner");
+        assert!(matches!(err, AppError::Permission(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn an_owner_may_still_administer_everyone() {
+        let pool = team_pool().await;
+        authorize_user_admin(&pool, "u_owner", Some("u_cashier"), ROLE_OWNER)
+            .await
+            .expect("an owner may grant the owner role");
+        authorize_user_admin(&pool, "u_owner", Some("u_manager"), ROLE_CASHIER)
+            .await
+            .expect("an owner may change any role");
+    }
+
+    #[tokio::test]
+    async fn a_manager_may_still_do_ordinary_team_work() {
+        let pool = team_pool().await;
+        // The fix must not break what managers legitimately did before.
+        authorize_user_admin(&pool, "u_manager", Some("u_cashier"), ROLE_CASHIER)
+            .await
+            .expect("a manager may edit a cashier");
+        authorize_user_admin(&pool, "u_manager", None, ROLE_MANAGER)
+            .await
+            .expect("a manager may create a manager");
+    }
+
+    #[tokio::test]
+    async fn user_administration_cannot_cross_a_branch() {
+        let pool = team_pool().await;
+        let err = authorize_user_admin(&pool, "u_manager", Some("u_other_branch"), ROLE_CASHIER)
+            .await
+            .expect_err("cross-branch mutation must be refused");
+        // NotFound, not Permission -- confirming the account exists elsewhere
+        // is itself a disclosure.
+        assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+
+        let err = authorize_user_admin(&pool, "u_owner", Some("u_other_branch"), ROLE_CASHIER)
+            .await
+            .expect_err("even an owner is scoped to their own branch here");
+        assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn a_cashier_or_forged_actor_is_refused_outright() {
+        let pool = team_pool().await;
+        for actor in ["u_cashier", "nobody", "' OR 1=1 --", ""] {
+            assert!(
+                authorize_user_admin(&pool, actor, Some("u_cashier"), ROLE_CASHIER)
+                    .await
+                    .is_err(),
+                "{actor:?} must not administer users"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_deactivated_manager_loses_user_administration() {
+        let pool = team_pool().await;
+        sqlx::query("UPDATE users SET is_active = 0 WHERE user_id = 'u_manager'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            authorize_user_admin(&pool, "u_manager", Some("u_cashier"), ROLE_CASHIER)
+                .await
+                .is_err(),
+            "a deactivated account keeps no authority"
+        );
+    }
+}
+
+#[cfg(test)]
+mod image_path_tests {
+    use super::{persist_product_image, validate_image_path};
+    use sqlx::Row;
+
+    #[test]
+    fn accepts_https_and_http_links() {
+        assert_eq!(
+            validate_image_path(Some("https://cdn.example.com/milk.jpg")).unwrap(),
+            Some("https://cdn.example.com/milk.jpg".to_string())
+        );
+        assert!(validate_image_path(Some("http://example.com/a.png")).is_ok());
+    }
+
+    #[test]
+    fn rejects_schemes_that_are_not_web_links() {
+        // These are the values that would turn a catalogue field into a way of
+        // smuggling bytes or reading local files on every screen that renders it.
+        for bad in [
+            "javascript:alert(1)",
+            "data:image/svg+xml;base64,AAAA",
+            "file:///etc/passwd",
+            "ftp://example.com/a.png",
+        ] {
+            assert!(
+                validate_image_path(Some(bad)).is_err(),
+                "should reject {bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn keeps_local_paths_including_windows_drives() {
+        for good in [
+            "C:\\images\\milk.png",
+            "/home/super/images/milk.png",
+            "images/milk.png",
+        ] {
+            assert!(
+                validate_image_path(Some(good)).is_ok(),
+                "should accept {good}"
+            );
+        }
+    }
+
+    #[test]
+    fn blank_and_missing_values_clear_the_image() {
+        assert_eq!(validate_image_path(None).unwrap(), None);
+        assert_eq!(validate_image_path(Some("   ")).unwrap(), None);
+    }
+
+    #[test]
+    fn rejects_absurdly_long_links() {
+        let long = format!("https://example.com/{}.jpg", "a".repeat(2_100));
+        assert!(validate_image_path(Some(&long)).is_err());
+    }
+
+    #[tokio::test]
+    async fn image_only_update_preserves_all_other_product_fields() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO categories
+               (category_id, name, sort_order, is_active, created_at, updated_at, version)
+             VALUES ('cat-image', 'Dairy', 0, 1, datetime('now'), datetime('now'), 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO products
+               (product_id, category_id, name, sku, barcode, description, cost_minor,
+                default_supplier_id, currency, created_at, updated_at, version, sync_status)
+             VALUES ('prod-image', 'cat-image', 'Milk', 'MILK-1', '6281007023028',
+                     'One litre', 450, 'supplier-1', 'BHD', datetime('now'),
+                     datetime('now'), 7, 'synced')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        persist_product_image(&pool, "prod-image", "https://cdn.example.com/milk.jpg")
+            .await
+            .unwrap();
+
+        let row = sqlx::query(
+            "SELECT name, sku, barcode, description, cost_minor, default_supplier_id,
+                    image_path, version, sync_status
+             FROM products WHERE product_id = 'prod-image'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.get::<String, _>("name"), "Milk");
+        assert_eq!(row.get::<String, _>("sku"), "MILK-1");
+        assert_eq!(row.get::<String, _>("barcode"), "6281007023028");
+        assert_eq!(row.get::<String, _>("description"), "One litre");
+        assert_eq!(row.get::<i64, _>("cost_minor"), 450);
+        assert_eq!(row.get::<String, _>("default_supplier_id"), "supplier-1");
+        assert_eq!(
+            row.get::<String, _>("image_path"),
+            "https://cdn.example.com/milk.jpg"
+        );
+        assert_eq!(row.get::<i64, _>("version"), 8);
+        assert_eq!(row.get::<String, _>("sync_status"), "pending");
+    }
+}
+
+#[cfg(test)]
+mod product_image_search_contract_tests {
+    use crate::product_image_search::{
+        build_search_query, extract_bing_image_urls, validate_search_identity,
+        ProductImageSearchMode,
+    };
+
+    #[test]
+    fn extracts_unique_public_image_urls_from_bing_async_markup() {
+        let html = r#"
+          murl&amp;quot;:&amp;quot;https://cdn.example.com/milk-front.jpg&amp;quot;
+          murl&quot;:&quot;https://cdn.example.com/milk-front.jpg&quot;
+          murl&quot;:&quot;https://cdn.example.com/milk-side.png?size=large&amp;v=2&quot;
+          murl&quot;:&quot;http://127.0.0.1/private.jpg&quot;
+        "#;
+
+        assert_eq!(
+            extract_bing_image_urls(html, None),
+            vec![
+                "https://cdn.example.com/milk-front.jpg".to_string(),
+                "https://cdn.example.com/milk-side.png?size=large&v=2".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn change_search_is_more_specific_and_excludes_the_current_image() {
+        let fetch = build_search_query(
+            "Almarai Full Fat Milk",
+            Some("6281007023028"),
+            Some("MILK-1L"),
+            Some("Dairy"),
+            ProductImageSearchMode::Fetch,
+        );
+        let change = build_search_query(
+            "Almarai Full Fat Milk",
+            Some("6281007023028"),
+            Some("MILK-1L"),
+            Some("Dairy"),
+            ProductImageSearchMode::Change,
+        );
+
+        assert_eq!(fetch, "6281007023028 Almarai Full Fat Milk");
+        assert!(change.contains("Dairy"));
+        assert!(change.contains("MILK-1L"));
+        assert!(change.contains("product packaging front"));
+
+        let html = r#"
+          murl&quot;:&quot;https://cdn.example.com/current.jpg&quot;
+          murl&quot;:&quot;https://cdn.example.com/replacement.jpg&quot;
+        "#;
+        assert_eq!(
+            extract_bing_image_urls(html, Some("https://cdn.example.com/current.jpg")),
+            vec!["https://cdn.example.com/replacement.jpg".to_string()]
+        );
+    }
+
+    #[test]
+    fn image_search_requires_both_product_name_and_barcode() {
+        assert!(validate_search_identity("Almarai Full Fat Milk", Some("6281007023028")).is_ok());
+        assert!(validate_search_identity("Almarai Full Fat Milk", None).is_err());
+        assert!(validate_search_identity("Almarai Full Fat Milk", Some("   ")).is_err());
+        assert!(validate_search_identity("", Some("6281007023028")).is_err());
+    }
 }

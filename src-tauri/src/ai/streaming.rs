@@ -7,6 +7,7 @@ use crate::ai::engine::ops::Preview;
 use crate::ai::openai_client::{
     assistant_msg, tool_result_msg, user_msg, user_msg_with_image, OpenAIClient, OpenAIMessage,
 };
+use crate::ai::result_budget::ToolResultBudget;
 use crate::ai::tools;
 use crate::db::repositories::ai_admin_repo;
 use crate::domain::ai_admin::{
@@ -38,7 +39,7 @@ type ParsedToolCall = (String, String, Value);
 
 fn is_plain_read_tool(name: &str) -> bool {
     !tools::is_mutation_tool(name)
-        && !ENGINE_OPS.contains(&name)
+        && !crate::ai::engine::ops::is_registered_operation(name)
         && !crate::ai::intent_engine::INTENT_NAMES.contains(&name)
 }
 
@@ -71,48 +72,76 @@ enum PreparedRead {
     },
 }
 
+fn budget_tool_result_if_success(
+    budget: &mut ToolResultBudget,
+    tool_name: &str,
+    content: String,
+    is_error: bool,
+) -> String {
+    if is_error {
+        return content;
+    }
+    let result = budget.apply(tool_name, content);
+    if result.truncated {
+        tracing::warn!(
+            tool = tool_name,
+            original_chars = result.original_chars,
+            emitted_chars = result.emitted_chars,
+            reason = result.reason.as_deref().unwrap_or("unknown"),
+            "ZanAI tool result truncated by context budget"
+        );
+    }
+    result.content
+}
+
 async fn execute_plain_read_batch(
     pool: &SqlitePool,
     calls: Vec<ParsedToolCall>,
     branch_id: &str,
     currency_exponent: u32,
+    actor_role: &str,
 ) -> Vec<(String, PreparedRead)> {
     collect_bounded_ordered(
         calls,
         READ_TOOL_CONCURRENCY,
         |(id, name, input)| async move {
-            let prepared = match crate::ai::tool_policy::authorize_plan(
-                pool,
-                &name,
-                &input,
-                &crate::ai::tool_policy::ProvenanceState::default(),
-            )
-            .await
-            {
+            let role_result = crate::ai::tool_policy::require_role_allows_tool(actor_role, &name);
+            let prepared = match role_result {
                 Err(error) => PreparedRead::AuthorizationError(error.to_string()),
-                Ok(_) => {
-                    let (mut content, is_error) = match tools::execute_read_tool(
-                        pool,
-                        &name,
-                        &input,
-                        branch_id,
-                        currency_exponent,
-                    )
-                    .await
-                    {
-                        Ok(result) => (result, None),
-                        Err(error) => {
-                            let message = format!("Tool '{}' failed: {error}", name);
-                            tracing::error!("{message}");
-                            (message, Some(true))
+                Ok(()) => match crate::ai::tool_policy::authorize_plan(
+                    pool,
+                    &name,
+                    &input,
+                    &crate::ai::tool_policy::ProvenanceState::default(),
+                )
+                .await
+                {
+                    Err(error) => PreparedRead::AuthorizationError(error.to_string()),
+                    Ok(_) => {
+                        let (mut content, is_error) = match tools::execute_read_tool(
+                            pool,
+                            &name,
+                            &input,
+                            branch_id,
+                            currency_exponent,
+                        )
+                        .await
+                        {
+                            Ok(result) => (result, None),
+                            Err(error) => {
+                                let message = format!("Tool '{}' failed: {error}", name);
+                                tracing::error!("{message}");
+                                (message, Some(true))
+                            }
+                        };
+                        if is_error.is_none()
+                            && crate::ai::tool_policy::is_external_content_tool(&name)
+                        {
+                            content = crate::ai::tool_policy::tag_external_result(content);
                         }
-                    };
-                    if is_error.is_none() && crate::ai::tool_policy::is_external_content_tool(&name)
-                    {
-                        content = crate::ai::tool_policy::tag_external_result(content);
+                        PreparedRead::Result { content, is_error }
                     }
-                    PreparedRead::Result { content, is_error }
-                }
+                },
             };
             (id, prepared)
         },
@@ -126,6 +155,34 @@ async fn execute_plain_read_batch(
 struct CacheControl {
     #[serde(rename = "type")]
     kind: &'static str,
+    /// Omitted entirely for the 5-minute default. `Some("1h")` opts into the
+    /// extended TTL: the write costs 2x instead of 1.25x and needs three reads
+    /// to break even, which a back-office session clears easily.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ttl: Option<&'static str>,
+}
+
+/// Tools and the system prompt are both stable across a session, so they share
+/// the long TTL.
+const LONG_CACHE: CacheControl = CacheControl {
+    kind: "ephemeral",
+    ttl: Some("1h"),
+};
+
+/// Claude 4.7 and every later model **reject** `temperature`, `top_p`, and
+/// `top_k` with a 400 — they are not merely ignored. The parameter has to be
+/// omitted per-model rather than dropped wholesale, because the same request
+/// builder still serves older models an operator may have configured.
+fn model_rejects_sampling_params(model: &str) -> bool {
+    const REJECTING: &[&str] = &[
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "claude-fable-5",
+        "claude-mythos-5",
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+    ];
+    REJECTING.iter().any(|m| model.starts_with(m))
 }
 
 #[derive(Serialize)]
@@ -151,17 +208,26 @@ struct AnthropicStreamRequest<'a> {
     max_tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_config: Option<AnthropicOutputConfig>,
     system: Vec<AnthropicSystemBlock<'a>>,
     messages: Vec<AnthropicMsg>,
     tools: Vec<AnthropicToolDef<'a>>,
     stream: bool,
 }
 
+/// `effort` trades thinking depth against tokens and latency. It is GA (no beta
+/// header) on the current models and ignored by older ones.
+#[derive(Serialize)]
+struct AnthropicOutputConfig {
+    effort: String,
+}
+
 fn anthropic_system_blocks(system: &str) -> Vec<AnthropicSystemBlock<'_>> {
     vec![AnthropicSystemBlock {
         kind: "text",
         text: system,
-        cache_control: CacheControl { kind: "ephemeral" },
+        cache_control: LONG_CACHE,
     }]
 }
 
@@ -176,8 +242,7 @@ fn anthropic_tools_with_cache_control(
             name: &tool.name,
             description: &tool.description,
             input_schema: &tool.input_schema,
-            cache_control: (Some(index) == last_index)
-                .then_some(CacheControl { kind: "ephemeral" }),
+            cache_control: (Some(index) == last_index).then_some(LONG_CACHE),
         })
         .collect()
 }
@@ -270,9 +335,9 @@ fn openai_recoverable_tool_error(
 
 fn automatic_execution_allowed(
     decision: crate::ai::tool_policy::PlanDecision,
-    total_tool_calls: usize,
+    _total_tool_calls: usize,
 ) -> bool {
-    decision == crate::ai::tool_policy::PlanDecision::AutomaticEligible && total_tool_calls == 1
+    decision == crate::ai::tool_policy::PlanDecision::AutomaticEligible
 }
 
 fn automatic_mutation_content(result: &crate::ai::tool_policy::AutomaticMutationResult) -> String {
@@ -309,37 +374,6 @@ enum EngineTurnDecision {
     RecoverableError(String),
 }
 
-const ENGINE_OPS: &[&str] = &[
-    "bulk_price_adjust",
-    "bulk_stock_set",
-    "bulk_stock_variance_fix",
-    "bulk_promotion_apply",
-    "bulk_promotion_remove",
-    "bulk_supplier_price_sync",
-    "bulk_product_archive",
-    "bulk_reorder_point_update",
-    "create_product",
-];
-
-fn engine_registry() -> crate::ai::engine::ops::Registry {
-    use crate::ai::engine::ops::{
-        BulkPriceAdjust, BulkProductArchive, BulkPromotionApply, BulkPromotionRemove,
-        BulkReorderPointUpdate, BulkStockSet, BulkStockVarianceFix, BulkSupplierPriceSync,
-        ProductCreate, Registry,
-    };
-    let mut registry = Registry::new();
-    registry.register(Box::new(BulkPriceAdjust));
-    registry.register(Box::new(BulkStockSet));
-    registry.register(Box::new(BulkStockVarianceFix));
-    registry.register(Box::new(BulkPromotionApply));
-    registry.register(Box::new(BulkPromotionRemove));
-    registry.register(Box::new(BulkSupplierPriceSync));
-    registry.register(Box::new(BulkProductArchive));
-    registry.register(Box::new(BulkReorderPointUpdate));
-    registry.register(Box::new(ProductCreate));
-    registry
-}
-
 fn plan_engine_turn(
     validation_errors: &[Option<String>],
     total_tool_calls: usize,
@@ -366,7 +400,7 @@ async fn preflight_engine_turn(
     calls: Vec<(String, String, Value)>,
     total_tool_calls: usize,
 ) -> std::collections::HashMap<String, EngineTurnDecision> {
-    let registry = engine_registry();
+    let registry = crate::ai::engine::ops::operation_registry();
     let mut errors = Vec::with_capacity(calls.len());
     for (_, name, input) in &calls {
         let error = match registry.find(name) {
@@ -446,6 +480,7 @@ pub async fn run_streaming_chat(
     provider_name: &str,
     model_name: &str,
     tool_subsetting_enabled: bool,
+    actor_role: &str,
 ) -> AppResult<String> {
     let ev = on_event;
     let params = load_ai_params(pool).await;
@@ -460,6 +495,13 @@ pub async fn run_streaming_chat(
     let mut provenance = crate::ai::tool_policy::ProvenanceState::default();
     let mut full_tool_access = false;
     let mut mutation_executed = false;
+    // One user request may contain many internal model/tool rounds. Keep a
+    // single budget across the whole request so the context cannot grow by
+    // `max_turns * turn_tool_results_max_chars` on large datasets.
+    let mut tool_result_budget = ToolResultBudget::new(
+        params.tool_result_max_chars,
+        params.turn_tool_results_max_chars,
+    );
 
     // Fire-and-forget turn usage recorder — avoids adding .await at every exit point.
     let record_turn = |pool: &SqlitePool,
@@ -502,16 +544,23 @@ pub async fn run_streaming_chat(
             tracing::info!(
                 applied = subset.applied,
                 omitted_mutations = subset.omitted_mutations,
+                omitted_reads = subset.omitted_reads,
+                kept = subset.definitions.len(),
                 domains = ?subset.domains,
                 widened = full_tool_access,
                 "ZanAI mutation-tool subsetting decision"
             );
         }
         let turn_tool_defs = subset.definitions;
+        let rejects_sampling = model_rejects_sampling_params(&model);
         let request_body = AnthropicStreamRequest {
             model: model.clone(),
             max_tokens: params.anthropic_max_tokens,
-            temperature: Some(params.temperature),
+            // Sending this to a 4.7-or-later model is a 400, not a no-op.
+            temperature: (!rejects_sampling).then_some(params.temperature),
+            output_config: params.effort.as_ref().map(|effort| AnthropicOutputConfig {
+                effort: effort.clone(),
+            }),
             system: anthropic_system_blocks(system),
             messages: msgs.clone(),
             tools: anthropic_tools_with_cache_control(&turn_tool_defs),
@@ -784,9 +833,12 @@ pub async fn run_streaming_chat(
         }];
         let mut result_blocks: Vec<MsgContent> = vec![];
         let mut pending_mutations: Vec<BatchPendingAction> = Vec::new();
+        for (_, tool_name, _) in &parsed_tools {
+            crate::ai::tool_policy::require_role_allows_tool(actor_role, tool_name)?;
+        }
         let engine_calls: Vec<_> = parsed_tools
             .iter()
-            .filter(|(_, name, _)| ENGINE_OPS.contains(&name.as_str()))
+            .filter(|(_, name, _)| crate::ai::engine::ops::is_registered_operation(name))
             .cloned()
             .collect();
         let mut engine_preflight =
@@ -810,6 +862,12 @@ pub async fn run_streaming_chat(
                         result_blocks.push(tool_result);
                     }
                     PreparedRead::Result { content, is_error } => {
+                        let content = budget_tool_result_if_success(
+                            &mut tool_result_budget,
+                            tool_name,
+                            content,
+                            is_error.unwrap_or(false),
+                        );
                         if tool_name == "request_full_tool_access" {
                             full_tool_access = true;
                             tracing::info!("ZanAI tool catalogue widened for the next step");
@@ -861,7 +919,10 @@ pub async fn run_streaming_chat(
                     continue;
                 }
             };
-            if automatic_execution_allowed(plan_decision, parsed_tools.len()) {
+            if automatic_execution_allowed(plan_decision, parsed_tools.len())
+                && (tool_name == "create_product"
+                    || !crate::ai::engine::ops::is_registered_operation(tool_name))
+            {
                 let context = crate::ai::tool_policy::MutationExecutionContext {
                     actor_user_id: input.user_id.clone(),
                     branch_id: input.branch_id.clone(),
@@ -894,7 +955,7 @@ pub async fn run_streaming_chat(
                 continue;
             }
             // ── Engine ops ────────────────────────────────────────────────────
-            if ENGINE_OPS.contains(&tool_name.as_str()) {
+            if crate::ai::engine::ops::is_registered_operation(tool_name) {
                 if let Some(EngineTurnDecision::RecoverableError(message)) =
                     engine_preflight.remove(tool_id)
                 {
@@ -905,7 +966,7 @@ pub async fn run_streaming_chat(
                     continue;
                 }
                 use crate::ai::engine::{runs, selector::Selector};
-                let registry = engine_registry();
+                let registry = crate::ai::engine::ops::operation_registry();
 
                 if let Some(op) = registry.find(tool_name) {
                     match op.validate(pool, tool_input).await {
@@ -973,6 +1034,8 @@ pub async fn run_streaming_chat(
                                         description: preview.description,
                                         count,
                                         samples: preview.samples,
+                                        requires_confirmation: plan_decision
+                                            == crate::ai::tool_policy::PlanDecision::ConfirmationRequired,
                                     }
                                 );
                             } else {
@@ -1087,6 +1150,12 @@ pub async fn run_streaming_chat(
                     Ok(r) => {
                         let result_text =
                             serde_json::to_string(&r.data).unwrap_or_else(|_| "{}".into());
+                        let result_text = budget_tool_result_if_success(
+                            &mut tool_result_budget,
+                            tool_name,
+                            result_text,
+                            false,
+                        );
                         assist_blocks.push(MsgContent::ToolUse {
                             id: tool_id.clone(),
                             name: tool_name.clone(),
@@ -1167,6 +1236,7 @@ pub async fn run_streaming_chat(
                 parsed_tools[tool_index..read_end].to_vec(),
                 &input.branch_id,
                 input.currency_exponent,
+                actor_role,
             )
             .await;
             prepared_reads.extend(prepared);
@@ -1181,6 +1251,12 @@ pub async fn run_streaming_chat(
                     result_blocks.push(tool_result);
                 }
                 PreparedRead::Result { content, is_error } => {
+                    let content = budget_tool_result_if_success(
+                        &mut tool_result_budget,
+                        tool_name,
+                        content,
+                        is_error.unwrap_or(false),
+                    );
                     if tool_name == "request_full_tool_access" {
                         full_tool_access = true;
                         tracing::info!("ZanAI tool catalogue widened for the next step");
@@ -1306,6 +1382,7 @@ pub async fn run_streaming_chat_openai(
     provider_name: &str,
     model_name: &str,
     tool_subsetting_enabled: bool,
+    actor_role: &str,
 ) -> AppResult<String> {
     let ev = on_event;
     let params = load_ai_params(pool).await;
@@ -1313,6 +1390,11 @@ pub async fn run_streaming_chat_openai(
     let mut accumulated_text = String::new();
     let mut provenance = crate::ai::tool_policy::ProvenanceState::default();
     let mut full_tool_access = false;
+    // Share the same request-wide result ceiling as the Anthropic path.
+    let mut tool_result_budget = ToolResultBudget::new(
+        params.tool_result_max_chars,
+        params.turn_tool_results_max_chars,
+    );
     // Auto-continue budget for text turns cut off by the output-token limit
     // (finish_reason == "length"). Bounded so a runaway model can't loop.
     let mut length_continuations: u8 = 0;
@@ -1357,6 +1439,8 @@ pub async fn run_streaming_chat_openai(
             tracing::info!(
                 applied = subset.applied,
                 omitted_mutations = subset.omitted_mutations,
+                omitted_reads = subset.omitted_reads,
+                kept = subset.definitions.len(),
                 domains = ?subset.domains,
                 widened = full_tool_access,
                 "ZanAI mutation-tool subsetting decision"
@@ -1476,10 +1560,13 @@ pub async fn run_streaming_chat_openai(
         let mut acc_tool_calls: Vec<crate::ai::openai_client::OpenAIToolCall> = vec![];
         let mut acc_results: Vec<OpenAIMessage> = vec![];
         let mut pending_mutations: Vec<BatchPendingAction> = Vec::new();
+        for tool_call in &result.tool_calls {
+            crate::ai::tool_policy::require_role_allows_tool(actor_role, &tool_call.name)?;
+        }
         let engine_calls: Vec<_> = result
             .tool_calls
             .iter()
-            .filter(|call| ENGINE_OPS.contains(&call.name.as_str()))
+            .filter(|call| crate::ai::engine::ops::is_registered_operation(&call.name))
             .map(|call| (call.id.clone(), call.name.clone(), call.input.clone()))
             .collect();
         let mut engine_preflight =
@@ -1524,7 +1611,13 @@ pub async fn run_streaming_chat_openai(
                         acc_tool_calls.push(tool_call);
                         acc_results.push(tool_result);
                     }
-                    PreparedRead::Result { content, .. } => {
+                    PreparedRead::Result { content, is_error } => {
+                        let content = budget_tool_result_if_success(
+                            &mut tool_result_budget,
+                            tool_name,
+                            content,
+                            is_error.unwrap_or(false),
+                        );
                         if tool_name == "request_full_tool_access" {
                             full_tool_access = true;
                             tracing::info!("ZanAI tool catalogue widened for the next step");
@@ -1576,7 +1669,10 @@ pub async fn run_streaming_chat_openai(
                     continue;
                 }
             };
-            if automatic_execution_allowed(plan_decision, result.tool_calls.len()) {
+            if automatic_execution_allowed(plan_decision, result.tool_calls.len())
+                && (tool_name == "create_product"
+                    || !crate::ai::engine::ops::is_registered_operation(tool_name))
+            {
                 let context = crate::ai::tool_policy::MutationExecutionContext {
                     actor_user_id: input.user_id.clone(),
                     branch_id: input.branch_id.clone(),
@@ -1613,7 +1709,7 @@ pub async fn run_streaming_chat_openai(
             }
 
             // ── Engine ops ─────────────────────────────────────────────────
-            if ENGINE_OPS.contains(&tool_name.as_str()) {
+            if crate::ai::engine::ops::is_registered_operation(tool_name) {
                 if let Some(EngineTurnDecision::RecoverableError(message)) =
                     engine_preflight.remove(tool_id)
                 {
@@ -1624,7 +1720,7 @@ pub async fn run_streaming_chat_openai(
                     continue;
                 }
                 use crate::ai::engine::{runs, selector::Selector};
-                let registry = engine_registry();
+                let registry = crate::ai::engine::ops::operation_registry();
 
                 if let Some(op) = registry.find(tool_name) {
                     match op.validate(pool, tool_input).await {
@@ -1691,6 +1787,8 @@ pub async fn run_streaming_chat_openai(
                                         description: preview.description,
                                         count,
                                         samples: preview.samples,
+                                        requires_confirmation: plan_decision
+                                            == crate::ai::tool_policy::PlanDecision::ConfirmationRequired,
                                     }
                                 );
                             } else {
@@ -1807,6 +1905,12 @@ pub async fn run_streaming_chat_openai(
                     Ok(r) => {
                         let result_text =
                             serde_json::to_string(&r.data).unwrap_or_else(|_| "{}".into());
+                        let result_text = budget_tool_result_if_success(
+                            &mut tool_result_budget,
+                            tool_name,
+                            result_text,
+                            false,
+                        );
                         acc_tool_calls.push(crate::ai::openai_client::OpenAIToolCall {
                             id: tool_id.clone(),
                             kind: "function".into(),
@@ -1891,6 +1995,7 @@ pub async fn run_streaming_chat_openai(
                 read_calls,
                 &input.branch_id,
                 input.currency_exponent,
+                actor_role,
             )
             .await;
             prepared_reads.extend(prepared);
@@ -1904,7 +2009,13 @@ pub async fn run_streaming_chat_openai(
                     acc_tool_calls.push(tool_call);
                     acc_results.push(tool_result);
                 }
-                PreparedRead::Result { content, .. } => {
+                PreparedRead::Result { content, is_error } => {
+                    let content = budget_tool_result_if_success(
+                        &mut tool_result_budget,
+                        tool_name,
+                        content,
+                        is_error.unwrap_or(false),
+                    );
                     if tool_name == "request_full_tool_access" {
                         full_tool_access = true;
                         tracing::info!("ZanAI tool catalogue widened for the next step");
@@ -2156,7 +2267,7 @@ mod recoverable_tool_error_tests {
     fn anthropic_automatic_mutation_result_captures_undo_and_continues_as_tool_result() {
         let result = crate::ai::tool_policy::AutomaticMutationResult {
             action_id: "action-1".into(),
-            undo_id: "undo-1".into(),
+            undo_id: Some("undo-1".into()),
             description: "Price updated".into(),
         };
 
@@ -2175,7 +2286,7 @@ mod recoverable_tool_error_tests {
     fn openai_automatic_mutation_result_captures_undo_and_continues_as_tool_result() {
         let result = crate::ai::tool_policy::AutomaticMutationResult {
             action_id: "action-1".into(),
-            undo_id: "undo-1".into(),
+            undo_id: Some("undo-1".into()),
             description: "Product created".into(),
         };
 
@@ -2191,14 +2302,10 @@ mod recoverable_tool_error_tests {
     }
 
     #[test]
-    fn automatic_mutations_are_rejected_for_multi_tool_turns() {
+    fn automatic_mutations_are_allowed_for_multi_tool_turns() {
         assert!(automatic_execution_allowed(
             crate::ai::tool_policy::PlanDecision::AutomaticEligible,
-            1
-        ));
-        assert!(!automatic_execution_allowed(
-            crate::ai::tool_policy::PlanDecision::AutomaticEligible,
-            2
+            28
         ));
     }
 
@@ -2340,6 +2447,12 @@ pub(crate) fn append_runtime_context(message: &str, runtime_context: &str) -> St
     format!("{message}\n\n[ZANPOS_RUNTIME_CONTEXT]\n{runtime_context}\n[/ZANPOS_RUNTIME_CONTEXT]")
 }
 
+pub(crate) fn append_capability_context(message: &str, capability_context: &str) -> String {
+    format!(
+        "{message}\n\n[ZANAI_CAPABILITY_CONTEXT]\n{capability_context}\n[/ZANAI_CAPABILITY_CONTEXT]"
+    )
+}
+
 fn history_message_cost(message: &ChatMessage) -> usize {
     message
         .content
@@ -2436,6 +2549,17 @@ mod prompt_cache_tests {
         );
     }
 
+    #[test]
+    fn capability_context_is_appended_in_its_own_data_only_envelope() {
+        assert_eq!(
+            append_capability_context(
+                "question with runtime context",
+                r#"{"tool_count":3,"actor_role":"manager"}"#,
+            ),
+            "question with runtime context\n\n[ZANAI_CAPABILITY_CONTEXT]\n{\"tool_count\":3,\"actor_role\":\"manager\"}\n[/ZANAI_CAPABILITY_CONTEXT]"
+        );
+    }
+
     fn chat(role: &str, content: impl Into<String>) -> ChatMessage {
         ChatMessage {
             role: role.into(),
@@ -2507,6 +2631,30 @@ mod prompt_cache_tests {
         assert_eq!(plain_read_run_end(&calls, 0), 2);
         assert_eq!(plain_read_run_end(&calls, 2), 2);
         assert_eq!(plain_read_run_end(&calls, 3), 4);
+    }
+
+    #[test]
+    fn successful_provider_results_share_the_runtime_budget() {
+        let mut budget = crate::ai::result_budget::ToolResultBudget::new(4, 6);
+
+        let anthropic =
+            budget_tool_result_if_success(&mut budget, "anthropic_read", "abcdef".into(), false);
+        let openai =
+            budget_tool_result_if_success(&mut budget, "openai_read", "wxyz".into(), false);
+
+        assert!(anthropic.contains("per_result_limit"));
+        assert!(openai.contains("turn_limit"));
+    }
+
+    #[test]
+    fn provider_error_results_are_not_truncated() {
+        let mut budget = crate::ai::result_budget::ToolResultBudget::new(4, 4);
+        let error = "a detailed authorization error".to_string();
+
+        assert_eq!(
+            budget_tool_result_if_success(&mut budget, "blocked", error.clone(), true),
+            error
+        );
     }
 
     #[tokio::test]

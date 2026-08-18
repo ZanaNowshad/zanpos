@@ -1,6 +1,8 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 import type {
   AdminProduct,
+  AiActionSummary,
+  UndoAvailability,
   AdminUserRow,
   AiChatInput,
   AppConfig,
@@ -33,8 +35,10 @@ import type {
   RangeSummary,
   RefundItemInput,
   RefundResult,
+  RiderRow,
   RoleRow,
   SaleForRefund,
+  SaleListRow,
   SaleListPage,
   SaleResult,
   SessionUser,
@@ -431,6 +435,37 @@ export const poCreate = (actorUserId: string, input: PurchaseOrderCreateInput): 
 export const poReceive = (input: ReceivePurchaseOrderInput): Promise<ReceivePurchaseOrderResult> =>
   invoke("po_receive", { input });
 
+/**
+ * Recent cost changes, newest first. Manager/owner only and bounded server-side.
+ * Store-wide by nature — see ProductCostChange for why there is no branch here.
+ */
+export const productCostHistoryList = (
+  actorUserId: string, productId?: string, limit?: number,
+): Promise<import("../types").ProductCostChange[]> =>
+  invoke("product_cost_history_list", {
+    actorUserId, productId: productId ?? null, limit: limit ?? null,
+  });
+
+/**
+ * Persisted AI actions for the Review queue.
+ * Branch scope is applied server-side from the session token — the caller
+ * cannot request another branch.
+ */
+export const aiListActions = (
+  session_token: string,
+  statuses: string[],
+  limit = 50,
+  offset = 0,
+): Promise<AiActionSummary[]> =>
+  invoke("ai_list_actions", { sessionToken: session_token, statuses, limit, offset });
+
+/** Undo availability for one executed action. Branch scope is server-side. */
+export const aiUndoAvailability = (
+  session_token: string,
+  action_id: string,
+): Promise<UndoAvailability | null> =>
+  invoke("ai_undo_availability", { sessionToken: session_token, actionId: action_id });
+
 export const poCancel = (actorUserId: string, poId: string): Promise<void> =>
   invoke("po_cancel", { actorUserId, poId });
 
@@ -538,6 +573,15 @@ export const adminGetFeatureToggles = (sessionToken: string): Promise<import("..
 
 export const adminSaveFeatureToggles = (sessionToken: string, toggles: import("../types").FeatureToggles): Promise<void> =>
   invoke("admin_save_feature_toggles", { sessionToken, toggles });
+
+export const adminListAiTools = (sessionToken: string): Promise<import("../components/settings/ZanAiToolCentre").ZanAiToolCentreRow[]> =>
+  invoke("admin_list_ai_tools", { sessionToken });
+
+export const adminSetAiToolEnabled = (sessionToken: string, toolName: string, enabled: boolean): Promise<void> =>
+  invoke("admin_set_ai_tool_enabled", { sessionToken, toolName, enabled });
+
+export const adminListAiToolMetrics = (sessionToken: string, limit = 100): Promise<import("../components/settings/ZanAiToolMetrics").ZanAiToolMetricRow[]> =>
+  invoke("admin_list_ai_tool_metrics", { sessionToken, limit });
 
 export const adminSetAnthropicModel = (sessionToken: string, model: string): Promise<void> =>
   invoke("admin_set_anthropic_model", { sessionToken, model });
@@ -664,6 +708,60 @@ export const adminListProducts = (
     offset: opts?.offset ?? 0,
     limit: opts?.limit ?? 100,
   });
+
+export interface SaleCursorPage {
+  items: SaleListRow[];
+  next_cursor: string | null;
+  has_more: boolean;
+}
+
+export const reportSalesCursor = (
+  actorUserId: string,
+  branchId: string,
+  fromDate: string,
+  toDate: string,
+  cursor?: string | null,
+  limit = 200,
+): Promise<SaleCursorPage> =>
+  invoke("report_sales_cursor", { actorUserId, branchId, fromDate, toDate, cursor: cursor ?? null, limit });
+
+export const reportSalesExportCsv = (
+  actorUserId: string,
+  branchId: string,
+  fromDate: string,
+  toDate: string,
+  destPath: string,
+): Promise<number> =>
+  invoke("report_sales_export_csv", { actorUserId, branchId, fromDate, toDate, destPath });
+
+export interface ProductImageSearchRequest {
+  productName: string;
+  barcode?: string;
+  sku?: string;
+  categoryName?: string;
+  currentImageUrl?: string;
+  mode: "fetch" | "change";
+}
+
+export interface ProductImageSearchResult {
+  imageUrl: string;
+  source: string;
+  searchQuery: string;
+  alternateCount: number;
+}
+
+export const adminSearchProductImage = (
+  actor_user_id: string,
+  request: ProductImageSearchRequest,
+): Promise<ProductImageSearchResult> =>
+  invoke("admin_search_product_image", { actorUserId: actor_user_id, request });
+
+export const adminSetProductImage = (
+  actor_user_id: string,
+  productId: string,
+  imageUrl: string,
+): Promise<void> =>
+  invoke("admin_set_product_image", { actorUserId: actor_user_id, productId, imageUrl });
 
 export const adminCreateProduct = (input: {
   category_id: string; name: string; sku?: string; barcode?: string;
@@ -863,8 +961,28 @@ export const inventoryAdjustStock = (
 
 // ─── Phase 10b — Customers ────────────────────────────────────────────────────
 
-export const customerList = (actorUserId: string, search: string): Promise<CustomerRow[]> =>
-  invoke("customer_list", { actorUserId, search });
+export interface CustomerPage {
+  items: CustomerRow[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+/** Branch-scoped and paged server-side. `total` counts the whole branch match,
+ *  not the page, so the UI can report scale without loading it. */
+export const customerList = (
+  actorUserId: string, search: string, offset = 0, limit?: number,
+): Promise<CustomerPage> =>
+  invoke("customer_list", { actorUserId, search, offset, limit: limit ?? null });
+
+/** SQL aggregate over the actor's whole branch — never derived from a page. */
+export const customerLoyaltySummary = (actorUserId: string): Promise<{
+  outstanding_points: number; holders: number;
+  total_customers: number; contactable_holders: number;
+}> => invoke("customer_loyalty_summary", { actorUserId });
+
+export const customerTopBalances = (actorUserId: string, limit = 25): Promise<CustomerRow[]> =>
+  invoke("customer_top_balances", { actorUserId, limit });
 
 export const customerCreate = (input: {
   name: string; phone?: string; email?: string; notes?: string; actor_user_id: string;
@@ -894,6 +1012,12 @@ export const deviceCreate = (actorUserId: string, input: {
 
 export const deviceToggleActive = (actorUserId: string, deviceId: string, isActive: boolean): Promise<void> =>
   invoke("device_toggle_active", { deviceId, isActive, actorUserId });
+
+/** Soft delete — `device_id` is stamped on every sale and shift this terminal
+ *  recorded, and receipt numbering is per-device. Refused for the terminal
+ *  making the request and for any device with an open shift. */
+export const deviceDelete = (actorUserId: string, deviceId: string): Promise<void> =>
+  invoke("device_delete", { deviceId, actorUserId });
 
 // ─── Phase 10b — Product image picker ────────────────────────────────────────
 
@@ -1447,3 +1571,27 @@ export const startupHealthCheck = (): Promise<StartupComponentStatus[]> =>
 
 export const startupRestartSidecar = (): Promise<boolean> =>
   invoke("startup_restart_sidecar");
+
+/** Raise the OS on-screen keyboard. Resolves with "touch" for the Windows touch
+ *  keyboard or "osk" when it fell back to the accessibility one. */
+export const systemKeyboardOpen = (): Promise<"touch" | "osk"> =>
+  invoke("system_keyboard_open");
+
+// ── Delivery riders ───────────────────────────────────────────────────────────
+
+/** `activeOnly` is what the till asks for — a rider who has left should not be
+ *  offered a new drop, but stays in the admin list so the record can be fixed. */
+export const riderList = (actorUserId: string, activeOnly?: boolean): Promise<RiderRow[]> =>
+  invoke("rider_list", { actorUserId, activeOnly });
+
+export const riderCreate = (input: {
+  name: string; phone: string; notes?: string; actor_user_id: string;
+}): Promise<RiderRow> => invoke("rider_create", { input });
+
+export const riderUpdate = (input: {
+  rider_id: string; name: string; phone: string; notes?: string;
+  is_active: boolean; actor_user_id: string;
+}): Promise<RiderRow> => invoke("rider_update", { input });
+
+export const riderDelete = (riderId: string, actorUserId: string): Promise<void> =>
+  invoke("rider_delete", { riderId, actorUserId });

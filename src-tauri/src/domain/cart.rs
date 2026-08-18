@@ -14,6 +14,10 @@ pub struct CartLine {
     pub product_name: String,
     pub sku: Option<String>,
     pub barcode: Option<String>,
+    /// Catalogue image captured with the line so every POS add route can render it.
+    /// Default keeps carts created by older application versions compatible.
+    #[serde(default)]
+    pub image_path: Option<String>,
     /// Stored as string to support decimal quantities
     pub quantity: String,
     pub unit_price_minor: i64,
@@ -60,6 +64,7 @@ impl CartLine {
             product_name,
             sku,
             barcode,
+            image_path: None,
             quantity: quantity.to_string(),
             unit_price_minor,
             line_discount_minor: 0,

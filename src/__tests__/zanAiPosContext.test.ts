@@ -126,4 +126,13 @@ describe("POS ZanAI context", () => {
     expect(context.cart.lines[0]?.product_id).toBe("product-0");
     expect(context.cart.lines[39]?.product_id).toBe("product-39");
   });
+
+  it("bounds user-controlled text inside every copied cart line", () => {
+    const context = build({
+      cart: { ...cart, lines: [line({ product_name: "M".repeat(500), barcode: "6".repeat(200) })] },
+    });
+
+    expect(context.cart.lines[0]?.name).toHaveLength(120);
+    expect(context.cart.lines[0]?.barcode).toHaveLength(64);
+  });
 });

@@ -77,6 +77,8 @@ export interface CartLine {
   product_name: string;
   sku: string | null;
   barcode: string | null;
+  /** Catalogue image captured when the item enters the cart. */
+  image_path?: string | null;
   quantity: string;
   unit_price_minor: number;
   line_discount_minor: number;
@@ -302,6 +304,10 @@ export interface AiConfigPayload {
   stream_timeout_secs: number;
   action_expiry_minutes: number;
   bulk_batch_size: number;
+  tool_result_max_chars: number;
+  turn_tool_results_max_chars: number;
+  confirm_non_destructive_actions: boolean;
+  sensitive_protection_level: "standard" | "enhanced" | "maximum";
 }
 
 // ─── Phase 2: AI Admin types ──────────────────────────────────────────────────
@@ -420,7 +426,7 @@ export type StreamEvent =
       type: "mutation_executed";
       action_id: string;
       tool_name: string;
-      undo_id: string;
+      undo_id?: string | null;
       description: string;
     }
   | { type: "navigate"; tab: string }
@@ -431,6 +437,7 @@ export type StreamEvent =
       description: string;
       count: number;
       samples: unknown[];
+      requires_confirmation: boolean;
     }
   | { type: "run_progress"; run_id: string; done: number; total: number }
   | { type: "run_done"; run_id: string }
@@ -561,9 +568,32 @@ export interface PurchaseOrderCreateInput {
   lines: PurchaseOrderLineInput[];
 }
 
+/**
+ * One recorded change to a product's cost.
+ *
+ * Store-wide, not branch data: `products.cost_minor` — the value this tracks —
+ * has no branch dimension, and neither do products, suppliers or purchase
+ * orders. There is also no po_id on the row, so a change cannot be traced to
+ * the order that caused it, only to the supplier recorded at the time.
+ */
+export interface ProductCostChange {
+  cost_history_id: string;
+  product_id: string;
+  product_name: string;
+  old_cost_minor: number | null;
+  new_cost_minor: number;
+  supplier_id: string | null;
+  supplier_name: string | null;
+  source: string;
+  created_at: string;
+}
+
 export interface ReceivePurchaseOrderInput {
   po_id: string;
   actor_user_id: string;
+  /** One user-intended submission, reused across retries of that submission.
+   *  Enforced UNIQUE server-side, so a replay is refused rather than applied. */
+  idempotency_key: string;
   lines?: Array<{ po_line_id: string; received_qty: string; expiry_date?: string | null }> | null;
 }
 
@@ -600,6 +630,9 @@ export interface SaleListPage {
 
 export interface AdminProduct {
   product_id: string;
+  /** Returned by admin_list_products (see admin_commands.rs) but previously
+   *  missing from this type, so the catalogue could not show cost. */
+  cost_minor?: number | null;
   category_id: string;
   category_name: string;
   name: string;
@@ -965,12 +998,26 @@ export interface DeliveryInput {
   customer_id?: string;
   customer_name?: string;
   contact_number: string;       // E.164: +97333050666
-  house_number?: string;
-  area?: string;
-  address_text: string;         // required
+  house_number?: string;        // required — the one address part always knowable
+  area?: string;                // flat, optional
+  address_text: string;         // road or landmark, optional
   delivery_note?: string;
   delivery_staff_name?: string;
+  /** Roster entry that took the drop, when one was chosen at checkout. */
+  rider_id?: string;
   expected_payment_method: string; // cash | card | wallet
+}
+
+/** A delivery rider. Deliberately not a `SessionUser` — riders never sign in,
+ *  hold no role and have no PIN; see migrations/0050_riders.sql. */
+export interface RiderRow {
+  rider_id: string;
+  branch_id: string;
+  name: string;
+  phone: string;
+  notes: string | null;
+  is_active: boolean;
+  created_at: string;
 }
 
 export interface DeliveryRow {
@@ -1426,4 +1473,32 @@ export interface StartupComponentStatus {
   component: string;
   status: string;
   message: string;
+}
+
+/** Display-safe AI action row for the Review queue (see ai_list_actions). */
+export interface AiActionSummary {
+  action_id: string;
+  session_user_id: string;
+  branch_id: string;
+  tool_name: string;
+  preview_text: string;
+  status: string;
+  prepared_at: string;
+  confirmed_at: string | null;
+  executed_at: string | null;
+  expires_at: string;
+  result_json: string | null;
+  error_message: string | null;
+}
+
+/** Whether an executed AI action can still be reversed (see ai_undo_availability). */
+export interface UndoAvailability {
+  undo_id: string;
+  action_id: string;
+  entity_type: string;
+  entity_id: string;
+  status: string;
+  available: boolean;
+  created_at: string;
+  undone_at: string | null;
 }

@@ -18,6 +18,34 @@ export function applyDialpadKey(current: string, key: string): string {
   return current + key;
 }
 
+/**
+ * Apply a dialpad key to a real text field, honouring its selection.
+ *
+ * The virtual display fields above take a whole string and rewrite it, but a
+ * focused `<input>` has a caret and possibly a selection, and the cashier
+ * expects the key to land where the caret is. Kept pure so the caret arithmetic
+ * can be tested without a DOM.
+ */
+export function applyDialpadKeyToField(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+  key: string,
+): { value: string; caret: number } {
+  const start = Math.max(0, Math.min(selectionStart, value.length));
+  const end = Math.max(start, Math.min(selectionEnd, value.length));
+
+  if (key === "C") return { value: "", caret: 0 };
+  if (key === "⌫") {
+    // A selection is replaced by the delete; otherwise take the character
+    // before the caret, and do nothing at the very start of the field.
+    if (start !== end) return { value: value.slice(0, start) + value.slice(end), caret: start };
+    if (start === 0) return { value, caret: 0 };
+    return { value: value.slice(0, start - 1) + value.slice(start), caret: start - 1 };
+  }
+  return { value: value.slice(0, start) + key + value.slice(end), caret: start + key.length };
+}
+
 interface Props {
   onKey: (k: string) => void;
 }

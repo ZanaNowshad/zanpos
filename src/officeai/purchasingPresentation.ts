@@ -20,7 +20,13 @@ export function buildPurchasingCommandModel(
     supplierCount: suppliers.length,
     activeSupplierCount: suppliers.filter(s => s.is_active).length,
     openPoCount: openOrders.length,
-    receivingValueMinor: openOrders.reduce((sum, po) => sum + Math.max(0, po.ordered_total_minor - po.received_total_minor), 0),
+    // Coerce: a PO row that predates the totals columns (or any backend that
+    // omits them) yielded NaN here, which surfaced as "BHD NaN.NaN waiting to
+    // receive" on the Purchasing metrics strip.
+    receivingValueMinor: openOrders.reduce(
+      (sum, po) => sum + Math.max(0, (po.ordered_total_minor ?? 0) - (po.received_total_minor ?? 0)),
+      0,
+    ),
     unknownCostLineCount: margin?.unknown_cost_line_count ?? 0,
     marginWarning: (margin?.unknown_cost_line_count ?? 0) > 0 || (margin?.margin_basis_points ?? 10_000) < 2500,
   };

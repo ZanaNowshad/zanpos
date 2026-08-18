@@ -73,6 +73,64 @@ fn row_to_product(row: &sqlx::sqlite::SqliteRow) -> ProductWithPrice {
     }
 }
 
+/// Build an FTS5 MATCH expression from free user text.
+///
+/// FTS5 has its own query syntax, so raw input cannot be passed through: a bare
+/// `-` or `"` is a syntax error, not a no-match. Every token is quoted (which
+/// makes it a literal) and given a `*` prefix so typing "alma" still finds
+/// "Almarai". Returns None when nothing usable survives, which is the caller's
+/// signal to fall back.
+fn fts_match_query(raw: &str) -> Option<String> {
+    let terms: Vec<String> = raw
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|term| !term.is_empty())
+        .map(|term| format!("\"{}\"*", term.replace('"', "")))
+        .collect();
+    (!terms.is_empty()).then(|| terms.join(" "))
+}
+
+/// Full-text product search backed by the `product_search` FTS5 index.
+///
+/// This is the indexed replacement for the `LIKE '%term%'` scan. FTS5 matches
+/// whole-token prefixes rather than arbitrary substrings, so a mid-word query
+/// ("lmara") finds nothing here where LIKE would have matched — callers that
+/// need substring semantics fall back to [`search_products`].
+pub async fn search_products_fts(
+    pool: &SqlitePool,
+    query: &str,
+    limit: i64,
+) -> AppResult<Vec<ProductWithPrice>> {
+    let Some(match_query) = fts_match_query(query) else {
+        return Ok(Vec::new());
+    };
+    let sql = format!(
+        "{} AND p.rowid IN (SELECT rowid FROM product_search WHERE product_search MATCH ?)          ORDER BY p.name LIMIT ?",
+        PRODUCT_QUERY
+    );
+    let rows = sqlx::query(&sql)
+        .bind(&match_query)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+
+    Ok(rows.iter().map(row_to_product).collect())
+}
+
+/// Indexed search first, falling back to the scan only when the index returns
+/// nothing — so a mid-word query still behaves exactly as it did before, while
+/// the common prefix query never touches the full table.
+pub async fn search_products_indexed(
+    pool: &SqlitePool,
+    query: &str,
+    limit: i64,
+) -> AppResult<Vec<ProductWithPrice>> {
+    let hits = search_products_fts(pool, query, limit).await?;
+    if !hits.is_empty() {
+        return Ok(hits);
+    }
+    search_products(pool, query, limit).await
+}
+
 pub async fn search_products(
     pool: &SqlitePool,
     query: &str,
@@ -215,4 +273,109 @@ pub async fn list_all_active(
     };
 
     Ok(rows.iter().map(row_to_product).collect())
+}
+
+#[cfg(test)]
+mod fts_tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn pool_with_products(names: &[(&str, &str)]) -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let now = "2026-01-01T00:00:00Z";
+        sqlx::query("INSERT INTO categories (category_id, name, sort_order, is_active, created_at, updated_at) VALUES ('cat1','General',0,1,?,?)")
+            .bind(now).bind(now).execute(&pool).await.unwrap();
+        for (i, (name, sku)) in names.iter().enumerate() {
+            sqlx::query(
+                "INSERT INTO products (product_id, category_id, name, sku, is_active, created_at, updated_at) \
+                 VALUES (?,'cat1',?,?,1,?,?)",
+            )
+            .bind(format!("p{i}"))
+            .bind(name)
+            .bind(sku)
+            .bind(now)
+            .bind(now)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        pool
+    }
+
+    #[test]
+    fn free_text_becomes_a_safe_prefix_match() {
+        // Quoting makes each term a literal, so FTS5 operators in user input are
+        // data rather than syntax; the trailing * keeps prefix search working.
+        assert_eq!(fts_match_query("alma"), Some("\"alma\"*".into()));
+        assert_eq!(
+            fts_match_query("fresh milk"),
+            Some("\"fresh\"* \"milk\"*".into())
+        );
+        // A bare operator would be an FTS5 syntax error if passed through.
+        assert_eq!(fts_match_query("-"), None);
+        assert_eq!(fts_match_query("   "), None);
+        assert_eq!(fts_match_query("\"OR\""), Some("\"OR\"*".into()));
+    }
+
+    #[tokio::test]
+    async fn index_finds_products_by_token_prefix() {
+        let pool =
+            pool_with_products(&[("Almarai Fresh Milk", "SKU1"), ("Basmati Rice", "SKU2")]).await;
+
+        let hits = search_products_fts(&pool, "alma", 10).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].product.name, "Almarai Fresh Milk");
+
+        // Second token also matches — index covers the whole name.
+        let hits = search_products_fts(&pool, "milk", 10).await.unwrap();
+        assert_eq!(hits.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn triggers_keep_the_index_in_step_with_the_table() {
+        let pool = pool_with_products(&[("Almarai Fresh Milk", "SKU1")]).await;
+
+        // Rename: the old term must stop matching and the new one start.
+        sqlx::query("UPDATE products SET name='Nadec Laban' WHERE product_id='p0'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(search_products_fts(&pool, "almarai", 10)
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            search_products_fts(&pool, "nadec", 10).await.unwrap().len(),
+            1
+        );
+
+        // Soft delete removes it from the index.
+        sqlx::query("UPDATE products SET deleted_at='2026-01-02T00:00:00Z' WHERE product_id='p0'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(search_products_fts(&pool, "nadec", 10)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn mid_word_queries_still_work_through_the_fallback() {
+        let pool = pool_with_products(&[("Almarai Fresh Milk", "SKU1")]).await;
+
+        // FTS5 matches token prefixes, so a mid-word fragment misses the index...
+        assert!(search_products_fts(&pool, "lmarai", 10)
+            .await
+            .unwrap()
+            .is_empty());
+        // ...but the combined path preserves the old substring behaviour.
+        let hits = search_products_indexed(&pool, "lmarai", 10).await.unwrap();
+        assert_eq!(hits.len(), 1);
+    }
 }

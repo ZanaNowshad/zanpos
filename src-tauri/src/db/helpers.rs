@@ -13,15 +13,13 @@ pub async fn active_branch_id(pool: &SqlitePool) -> AppResult<String> {
     Ok(row.get("branch_id"))
 }
 
-/// Resolve the active device_id. Returns NotFound error if no active device.
+/// Resolve this terminal's device_id. Returns NotFound if identity is unset.
+///
+/// Delegates to [`crate::device_identity`] — the single resolver. Do not query
+/// `devices` directly for identity: it is a synced table, so once sibling
+/// terminals' rows arrive, any ordering over it can return *their* device.
 pub async fn active_device_id(pool: &SqlitePool) -> AppResult<String> {
-    let row = sqlx::query(
-        "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound("No active device configured".into()))?;
-    Ok(row.get("device_id"))
+    crate::device_identity::current(pool).await
 }
 
 /// Resolve both active branch_id and device_id in one call.

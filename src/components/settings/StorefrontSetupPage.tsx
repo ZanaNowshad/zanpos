@@ -35,6 +35,40 @@ function messageFrom(error: unknown, fallback: string) {
     : error instanceof Error ? error.message : fallback;
 }
 
+/**
+ * Some Cloudflare failures are not faults — they are an account setting the
+ * owner has not switched on yet. Presenting "R2 bucket creation failed" as a
+ * generic error leaves the user with a dead end, when the fix is two clicks in
+ * a dashboard we can link to directly.
+ */
+interface Guidance {
+  headline: string;
+  what: string;
+  stillWorks: string;
+  link?: { label: string; href: string };
+}
+
+function guidanceFor(message: string): Guidance | null {
+  const m = message.toLowerCase();
+  if (m.includes("10042") || (m.includes("r2") && m.includes("enable"))) {
+    return {
+      headline: "Cloudflare R2 storage is not enabled yet",
+      what: "Your online shop needs R2 storage to publish its pages and images. R2 is switched on once, per Cloudflare account.",
+      stillWorks: "Selling, printing and everything else in Command are unaffected. Nothing has been lost — publish again once R2 is on.",
+      link: { label: "Open Cloudflare R2 settings", href: "https://dash.cloudflare.com/?to=/:account/r2" },
+    };
+  }
+  if (m.includes("unauthorized") || m.includes("403") || m.includes("invalid api token")) {
+    return {
+      headline: "Cloudflare rejected the API token",
+      what: "The token is missing, expired, or lacks R2 and Workers permissions.",
+      stillWorks: "In-store selling is unaffected.",
+      link: { label: "Open Cloudflare API tokens", href: "https://dash.cloudflare.com/profile/api-tokens" },
+    };
+  }
+  return null;
+}
+
 export default function StorefrontSetupPage({
   sessionUserId,
   settings,
@@ -255,7 +289,33 @@ export default function StorefrontSetupPage({
           </button>
         </div>
         {connection && <p className={`sf-inline-result ${connection.ok ? "is-success" : "is-error"}`} role="status">{connection.message}{connection.latency_ms != null ? ` · ${connection.latency_ms} ms` : ""}</p>}
-        {error && <div className="sf-error-banner" role="alert"><strong>ZanShop setup needs attention</strong><span>{error}</span></div>}
+        {error && (() => {
+          const g = guidanceFor(error);
+          if (!g) {
+            return (
+              <div className="sf-error-banner" role="alert">
+                <strong>Storefront setup needs attention</strong>
+                <span>{error}</span>
+              </div>
+            );
+          }
+          return (
+            <div className="sf-error-banner zp-sf-guidance" role="alert">
+              <strong>{g.headline}</strong>
+              <span>{g.what}</span>
+              <span className="zp-sf-stillworks">{g.stillWorks}</span>
+              {g.link && (
+                <a className="zp-sf-link" href={g.link.href} target="_blank" rel="noreferrer noopener">
+                  {g.link.label}
+                </a>
+              )}
+              <details className="zp-sf-detail">
+                <summary>Technical detail</summary>
+                <code>{error}</code>
+              </details>
+            </div>
+          );
+        })()}
       </section>
 
       <StorefrontOrderCapture sessionUserId={sessionUserId} />

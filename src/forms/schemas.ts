@@ -13,15 +13,6 @@ export const productSchema = z.object({
 
 export type ProductFormValues = z.infer<typeof productSchema>;
 
-export const customerSchema = z.object({
-  name: z.string().min(1).max(200),
-  phone: z.string().max(30).optional(),
-  email: z.string().email().max(254).optional().or(z.literal("")),
-  notes: z.string().max(2000).optional(),
-});
-
-export type CustomerFormValues = z.infer<typeof customerSchema>;
-
 export const supplierSchema = z.object({
   name: z.string().min(1).max(200),
   contact_person: z.string().max(200).optional(),

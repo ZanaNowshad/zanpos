@@ -1,7 +1,7 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import type { AiHandoff, AppConfig, ProductPrefill, SessionUser, Shift, StartupComponentStatus } from "./types";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import type { AiHandoff, AppConfig, ProductPrefill, SessionUser, Shift } from "./types";
 import { DEVICE } from "./types";
-import { appConfigLoad, appConfigGetTimeout, authLogout, shiftGetActive, shiftOpen, startupHealthCheck, startupRestartSidecar } from "./tauri/commands";
+import { appConfigLoad, appConfigGetTimeout, authLogout, shiftGetActive, shiftOpen } from "./tauri/commands";
 import LoginScreen from "./pages/LoginScreen";
 import PosPage from "./pages/PosPage";
 import ShiftModal from "./components/ShiftModal";
@@ -9,11 +9,13 @@ import LockScreen from "./components/LockScreen";
 import WindowControls from "./components/WindowControls";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ReminderPopup from "./components/ReminderPopup";
+import { ZanAiProvider } from "./zanai/ZanAiProvider";
 import UpdateBanner from "./components/UpdateBanner";
 import CriticalUpdateModal from "./components/CriticalUpdateModal";
 import { useUpdatePromptLifecycle } from "./hooks/useUpdatePromptLifecycle";
 import type { OfficeTab } from "./officeai/officeAiTypes";
 import { useIdleTimer } from "./hooks/useIdleTimer";
+import { useStartupHealth } from "./hooks/useStartupHealth";
 import { useReminderChecker } from "./hooks/useReminderChecker";
 import { useTheme } from "./hooks/useTheme";
 import type { StickyNote } from "./utils/stickyNotes";
@@ -28,6 +30,8 @@ import "./operator-ux.css";
 const OfficeAIPage = lazy(() => import("./officeai/OfficeAIPage"));
 const SetupWizard = lazy(() => import("./pages/SetupWizard"));
 const MigrationAgentPage = lazy(() => import("./pages/MigrationAgentPage"));
+
+import { mockSession, uiMockEnabled } from "./dev/uiMockFlag";
 
 type View = "login" | "shift_check" | "shift_open" | "pos" | "office_ai";
 
@@ -57,68 +61,18 @@ export default function App() {
   // ── Migration mode (post-setup import flow) ───────────────────────────────
   const [migrationMode, setMigrationMode] = useState(false);
 
-  // ── Startup health check (after config loads, before login) ─────────────────
-  const [startupStatuses, setStartupStatuses] = useState<StartupComponentStatus[]>([]);
-  const [startupTicker, setStartupTicker] = useState(0);
-  const startupForceAttempted = useRef(false);
-
-  useEffect(() => {
-    if (configLoading || !appConfig || !appConfig.setup_complete) return;
-    let cancelled = false;
-    setStartupTicker(0);
-
-    const poll = async (): Promise<StartupComponentStatus[]> => {
-      if (cancelled) return [];
-      try {
-        const statuses = await startupHealthCheck();
-        if (cancelled) return [];
-        setStartupStatuses(statuses);
-        return statuses;
-      } catch {
-        return [];
-      }
-    };
-
-    const loop = async () => {
-      let statuses = await poll();
-      let elapsed = 0;
-      while (!cancelled) {
-        await new Promise((r) => setTimeout(r, 2000));
-        if (cancelled) return;
-        statuses = await poll();
-        elapsed += 2;
-        setStartupTicker(elapsed);
-
-        const allOk = statuses.every((s) => s.status === "ok" || s.status !== "starting");
-        if (allOk) return;
-
-        const sidecar = statuses.find((s) => s.component === "whatsapp_sidecar");
-        if (sidecar?.status === "starting" && elapsed >= 12 && !startupForceAttempted.current) {
-          startupForceAttempted.current = true;
-          await startupRestartSidecar().catch(() => {});
-          continue;
-        }
-        if (elapsed >= 30) return;
-      }
-    };
-
-    loop();
-    return () => { cancelled = true; };
-  }, [configLoading, appConfig]);
-
-  const allComponentsGreen =
-    startupStatuses.length > 0 &&
-    startupStatuses.every((s) => s.status === "ok");
-
-  const anyComponentError =
-    startupStatuses.length > 0 &&
-    startupStatuses.some((s) => s.status === "error");
-
-  const startupCheckDone = allComponentsGreen || (anyComponentError && startupTicker >= 14);
+  const {
+    startupStatuses, startupTicker, allComponentsGreen, anyComponentError, startupCheckDone,
+    proceedAnyway,
+  } = useStartupHealth(configLoading, appConfig);
 
   // ── Session state ──────────────────────────────────────────────────────────
-  const [view, setView]               = useState<View>("login");
-  const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
+  // Visual-QA mode (?uimock=1, dev only) lands straight in the back office so
+  // the shell can be inspected without a live database or a login round-trip.
+  const [view, setView]               = useState<View>(uiMockEnabled() ? "office_ai" : "login");
+  const [sessionUser, setSessionUser] = useState<SessionUser | null>(
+    uiMockEnabled() ? (mockSession() as SessionUser) : null,
+  );
   const [shift, setShift]             = useState<Shift | null>(null);
   const [locked, setLocked]           = useState(false);
   const [idleWarning, setIdleWarning] = useState(false);
@@ -295,7 +249,7 @@ export default function App() {
           <p className="startup-ready">All systems ready &#10003;</p>
         )}
         {anyComponentError && startupTicker >= 14 && (
-          <button className="startup-proceed" onClick={() => setStartupStatuses(s => s.map(i => ({...i, status: "ok"})))}>Proceed Anyway</button>
+          <button className="startup-proceed" onClick={proceedAnyway}>Proceed Anyway</button>
         )}
       </div>
     );
@@ -424,50 +378,62 @@ export default function App() {
         />
       )}
 
-      {view === "pos" && sessionUser && shift && (
-        <PosPage
+      {sessionUser && (view === "pos" || view === "office_ai") && (
+        <ZanAiProvider
+          key={`${sessionUser.session_token}:${sessionUser.user_id}:${sessionUser.branch_id}`}
           sessionUser={sessionUser}
-          shift={shift}
-          onLogout={handleLogout}
-          onLock={handleLock}
-          onShiftClose={async (updated) => {
-            if (updated) await handleShiftClosed();
-          }}
-          onOpenOfficeAI={
-            (sessionUser.role_name === "owner" || sessionUser.role_name === "manager")
-              ? (prefill) => { setOfficeAiPrefill(prefill ?? null); setOfficeAiInitialMessage(null); setOfficeAiInitialTab(undefined); setOfficeAiMaintenance(false); setView("office_ai"); }
-              : undefined
-          }
-          onAskOfficeAI={
-            (sessionUser.role_name === "owner" || sessionUser.role_name === "manager")
-              ? (handoff) => { setOfficeAiInitialMessage(handoff); setOfficeAiPrefill(null); setOfficeAiInitialTab(undefined); setOfficeAiMaintenance(false); setView("office_ai"); }
-              : undefined
-          }
-          theme={theme}
-          onToggleTheme={toggleTheme}
-        />
-      )}
+        >
+          {view === "pos" && shift && (
+            <PosPage
+              sessionUser={sessionUser}
+              shift={shift}
+              onLogout={handleLogout}
+              onLock={handleLock}
+              onShiftClose={async (updated) => {
+                if (updated) await handleShiftClosed();
+              }}
+              onOpenOfficeAI={
+                (sessionUser.role_name === "owner" || sessionUser.role_name === "manager")
+                  ? (prefill) => { setOfficeAiPrefill(prefill ?? null); setOfficeAiInitialMessage(null); setOfficeAiInitialTab(undefined); setOfficeAiMaintenance(false); setView("office_ai"); }
+                  : undefined
+              }
+              onAskOfficeAI={
+                (sessionUser.role_name === "owner" || sessionUser.role_name === "manager")
+                  ? (handoff) => { setOfficeAiInitialMessage(handoff); setOfficeAiPrefill(null); setOfficeAiInitialTab(undefined); setOfficeAiMaintenance(false); setView("office_ai"); }
+                  : undefined
+              }
+              theme={theme}
+              onToggleTheme={toggleTheme}
+            />
+          )}
 
-      {view === "office_ai" && sessionUser &&
-       (sessionUser.role_name === "owner" || sessionUser.role_name === "manager") && (
-        <Suspense fallback={<div className="app-splash"><div className="app-splash-spinner" /></div>}>
-          <OfficeAIPage
-            sessionUser={sessionUser}
-            onBackToPOS={() => {
-              setOfficeAiPrefill(null);
-              setOfficeAiInitialMessage(null);
-              setOfficeAiInitialTab(undefined);
-              setOfficeAiMaintenance(false);
-              setView(shift
-                ? "pos"
-                : updatePrompt.decision === "critical-required" ? "shift_check" : "login");
-            }}
-            initialProductPrefill={officeAiPrefill}
-            initialAiMessage={officeAiInitialMessage}
-            initialTab={officeAiInitialTab}
-            initialMaintenancePane={officeAiMaintenance}
-          />
-        </Suspense>
+          {view === "office_ai" &&
+           (sessionUser.role_name === "owner" || sessionUser.role_name === "manager") && (
+            <Suspense fallback={<div className="app-splash"><div className="app-splash-spinner" /></div>}>
+              <OfficeAIPage
+                sessionUser={sessionUser}
+                onBackToPOS={() => {
+                  setOfficeAiPrefill(null);
+                  setOfficeAiInitialMessage(null);
+                  setOfficeAiInitialTab(undefined);
+                  setOfficeAiMaintenance(false);
+                  setView(shift
+                    ? "pos"
+                    : updatePrompt.decision === "critical-required" ? "shift_check" : "login");
+                }}
+                initialProductPrefill={officeAiPrefill}
+                initialAiMessage={officeAiInitialMessage}
+                initialTab={officeAiInitialTab}
+                initialMaintenancePane={officeAiMaintenance}
+                onStartPractice={shift ? () => {
+                  try { sessionStorage.setItem("zanpos:start-practice", "1"); } catch { /* advisory */ }
+                  setOfficeAiInitialTab(undefined);
+                  setView("pos");
+                } : undefined}
+              />
+            </Suspense>
+          )}
+        </ZanAiProvider>
       )}
 
       {/* Fallback: if none of the above matched, go to login */}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { productImageSrc } from "../productImage";
 import type { DuplicateGroup, DuplicateProduct } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney } from "../money";
@@ -242,7 +242,7 @@ export default function DuplicateProductsModal({ sessionUserId, onClose, onResol
                         {p.image_path ? (
                           <img
                             className="dup-row-img"
-                            src={convertFileSrc(p.image_path)}
+                            src={productImageSrc(p.image_path) ?? ""}
                             alt=""
                             onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
                           />

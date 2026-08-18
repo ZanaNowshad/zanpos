@@ -64,14 +64,11 @@ pub async fn report_scope(pool: &SqlitePool) -> (DeviceScope, String) {
         .map(DeviceScope::from_str)
         .unwrap_or(DeviceScope::Origin);
 
-    let device_id: String = sqlx::query_scalar(
-        "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or_default();
+    // Must be this terminal's own identity: scoping reports by a sibling's
+    // device_id silently reports another till's takings as ours.
+    let device_id = crate::device_identity::current(pool)
+        .await
+        .unwrap_or_default();
 
     (scope, device_id)
 }

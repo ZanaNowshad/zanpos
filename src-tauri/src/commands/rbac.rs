@@ -244,4 +244,145 @@ mod tests {
             );
         }
     }
+
+    // ── Settings-reachable command policy ─────────────────────────────────────
+    //
+    // These assert the authorisation each Settings group depends on, exercised
+    // through the RBAC helpers directly — i.e. the adversarial path where the
+    // frontend is bypassed entirely and a Tauri command is invoked straight.
+    // Frontend visibility (settingsConfig.tsx) is not a security control.
+
+    const OWNER: &str = "01JUSER000000000000ADMIN1";
+    const CASHIER: &str = "01JUSER000000000000CASH01";
+
+    /// Settings → Store & legal: `settings_update_branch` is owner_only.
+    #[tokio::test]
+    async fn store_identity_mutation_is_owner_only() {
+        let pool = make_pool().await;
+        assert!(owner_only(&pool, OWNER).await.is_ok());
+        assert!(
+            matches!(
+                owner_only(&pool, CASHIER).await,
+                Err(AppError::Permission(_))
+            ),
+            "a cashier must not be able to rewrite store identity by calling the command directly"
+        );
+    }
+
+    /// Settings → Data & sync: `db_backup` is owner_only.
+    /// Settings → Advanced: `download_and_install_update` is owner_only.
+    #[tokio::test]
+    async fn backup_and_update_install_are_owner_only() {
+        let pool = make_pool().await;
+        assert!(owner_only(&pool, OWNER).await.is_ok());
+        assert!(matches!(
+            owner_only(&pool, CASHIER).await,
+            Err(AppError::Permission(_))
+        ));
+    }
+
+    /// Settings → Sales & receipts (tax rules, business flags) and
+    /// Hardware & printing (printer config, test print) are manager_or_owner.
+    #[tokio::test]
+    async fn business_and_hardware_mutations_need_manager_or_owner() {
+        let pool = make_pool().await;
+        assert!(manager_or_owner(&pool, OWNER).await.is_ok());
+        assert!(
+            matches!(
+                manager_or_owner(&pool, CASHIER).await,
+                Err(AppError::Permission(_))
+            ),
+            "a cashier must not change tax rules, business flags or printer configuration"
+        );
+    }
+
+    /// An unknown actor id is not merely unauthorised — it must not resolve at
+    /// all, so a fabricated identifier cannot be used to reach any command.
+    #[tokio::test]
+    async fn fabricated_actor_id_is_rejected() {
+        let pool = make_pool().await;
+        for id in ["", "not-a-user", "01JUSER000000000000FAKE01", "' OR 1=1 --"] {
+            assert!(
+                matches!(
+                    manager_or_owner(&pool, id).await,
+                    Err(AppError::Permission(_))
+                ),
+                "fabricated actor id {id:?} must be rejected"
+            );
+            assert!(matches!(
+                owner_only(&pool, id).await,
+                Err(AppError::Permission(_))
+            ));
+        }
+    }
+
+    /// Deactivating a user revokes access immediately, without needing the
+    /// frontend to notice.
+    #[tokio::test]
+    async fn deactivated_owner_loses_settings_access() {
+        let pool = make_pool().await;
+        assert!(owner_only(&pool, OWNER).await.is_ok());
+        sqlx::query("UPDATE users SET is_active = 0 WHERE user_id = ?")
+            .bind(OWNER)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            matches!(owner_only(&pool, OWNER).await, Err(AppError::Permission(_))),
+            "a deactivated owner must lose access on the next call"
+        );
+    }
+
+    #[tokio::test]
+    async fn actor_branch_id_resolves_from_the_database_only() {
+        let pool = make_pool().await;
+
+        // A real, active user resolves to the branch stored on their record.
+        let branch = actor_branch_id(&pool, "01JUSER000000000000ADMIN1")
+            .await
+            .expect("seed admin has a branch");
+        assert!(!branch.is_empty());
+
+        // Nothing the caller can send stands in for a real identity. This is the
+        // guarantee the report commands rely on when they discard their own
+        // `branch_id` argument.
+        for forged in ["", "' OR 1=1 --", "01JBRANCH0000000000000001", "unknown"] {
+            assert!(
+                actor_branch_id(&pool, forged).await.is_err(),
+                "{forged:?} must not resolve to a branch"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_deactivated_user_loses_branch_scope() {
+        let pool = make_pool().await;
+        sqlx::query("UPDATE users SET is_active = 0 WHERE user_id = '01JUSER000000000000ADMIN1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(actor_branch_id(&pool, "01JUSER000000000000ADMIN1")
+            .await
+            .is_err());
+    }
+}
+
+/// The branch an actor belongs to, resolved from the database.
+///
+/// Commands that take a `branch_id` parameter must not scope their queries with
+/// it: the frontend can send any value, so trusting it turns a role check into
+/// no protection at all for branch-scoped data. Resolve the scope here instead
+/// and ignore what arrived.
+///
+/// `users.branch_id` is NOT NULL and is populated from the active branch when a
+/// user is created, so this returns the same value the client would have sent
+/// on a single-branch install — it closes the hole without changing behaviour.
+pub async fn actor_branch_id(pool: &SqlitePool, actor_user_id: &str) -> Result<String, AppError> {
+    let row = sqlx::query("SELECT branch_id FROM users WHERE user_id = ? AND is_active = 1")
+        .bind(actor_user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("Branch lookup failed: {e}")))?
+        .ok_or_else(|| AppError::Permission("User not found or inactive".into()))?;
+    Ok(row.get("branch_id"))
 }

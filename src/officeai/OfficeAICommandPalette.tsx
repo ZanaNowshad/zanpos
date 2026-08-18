@@ -1,13 +1,19 @@
 import { Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { OfficeSubTab } from "./nav";
 import { useLanguage } from "../hooks/useLanguage";
 import { officeAiTranslator } from "../i18n/officeAiStrings";
 import { TAB_ICON } from "./nav";
 import type { OfficeTab } from "./officeAiTypes";
 
+/** A palette row. Built by OfficeAIPage from the canonical navigation config. */
+export interface PaletteItem {
+  id: OfficeTab;
+  label: string;
+  description: string;
+}
+
 interface Props {
-  items: OfficeSubTab[];
+  items: PaletteItem[];
   onSelect: (tab: OfficeTab) => void;
   onDismiss: () => void;
 }

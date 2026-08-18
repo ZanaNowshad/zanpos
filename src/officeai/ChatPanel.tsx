@@ -6,14 +6,18 @@ import { LiveActivityBar } from "./toolCards";
 import RunPanel from "./RunPanel";
 import { useLanguage } from "../hooks/useLanguage";
 import { officeAiTranslator, type OfficeAiStringKey } from "../i18n/officeAiStrings";
+import type { ZanAiSurfaceContext } from "../zanai/zanAiTypes";
 
 interface Props {
   ctrl: ChatController;
-  /** "full" = Assistant tab; "docked" = right-side copilot dock. */
-  variant: "docked" | "full";
+  /** "full" = Assistant tab; "docked" = side copilot; "pos" = floating till widget. */
+  variant: "docked" | "full" | "pos";
   userName: string;
   businessName: string;
   composerRef: RefObject<HTMLTextAreaElement | null>;
+  canMutate?: boolean;
+  getSendContext?: () => ZanAiSurfaceContext | undefined;
+  onComposerKeyDown?: (event: KeyboardEvent<HTMLTextAreaElement>) => boolean;
 }
 
 /**
@@ -27,7 +31,16 @@ const IMAGE_CHIPS = [
   { Icon: ImagePlus, labelKey: "shelfAudit", prompt: "What products are visible on this shelf? Which look low or out of stock?" },
 ] satisfies Array<{ Icon: typeof ReceiptText; labelKey: OfficeAiStringKey; prompt: string }>;
 
-export default function ChatPanel({ ctrl, variant, userName, businessName, composerRef }: Props) {
+export default function ChatPanel({
+  ctrl,
+  variant,
+  userName,
+  businessName,
+  composerRef,
+  canMutate = true,
+  getSendContext,
+  onComposerKeyDown,
+}: Props) {
   const { language } = useLanguage();
   const t = officeAiTranslator(language);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -41,8 +54,11 @@ export default function ChatPanel({ ctrl, variant, userName, businessName, compo
     }
   }, [ctrl.input, composerRef]);
 
-  const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ctrl.handleSend(); }
+  const send = (overrideText?: string) => ctrl.handleSend(overrideText, getSendContext?.());
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (onComposerKeyDown?.(e)) return;
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); }
   };
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -89,9 +105,9 @@ export default function ChatPanel({ ctrl, variant, userName, businessName, compo
         chatState={ctrl.chatState}
         streamingMsgId={ctrl.streamingMsgId}
         liveToolCalls={ctrl.liveToolCalls}
-        onUndo={ctrl.handleUndo}
+        onUndo={canMutate ? ctrl.handleUndo : undefined}
         onFeedback={ctrl.handleFeedback}
-        onChip={(text) => ctrl.handleSend(text)}
+        onChip={send}
         userName={userName}
         businessName={businessName}
       />
@@ -124,7 +140,7 @@ export default function ChatPanel({ ctrl, variant, userName, businessName, compo
         </div>
       )}
 
-      {ctrl.runState && (
+      {canMutate && ctrl.runState && (
         <RunPanel
           runState={ctrl.runState}
           onExecute={ctrl.handleRunExecute}
@@ -136,7 +152,7 @@ export default function ChatPanel({ ctrl, variant, userName, businessName, compo
       <div className="chat-footer-area">
         {ctrl.messages.length === 0 && ctrl.chatState === "idle" && variant === "full" && (
           <>
-            <QuickChipsBar onSelect={(text) => ctrl.handleSend(text)} />
+            <QuickChipsBar onSelect={(text) => void send(text)} />
             <div className="chat-img-chips-bar">
               {IMAGE_CHIPS.map(c => (
             <button key={c.labelKey} className="chat-img-chip" onClick={() => handleImageChip(c.prompt)}>
@@ -153,7 +169,7 @@ export default function ChatPanel({ ctrl, variant, userName, businessName, compo
           <div className="chat-continue-bar">
             <button
               className="chat-continue-chip"
-              onClick={() => ctrl.handleSend("Continue — pick up exactly where you left off and finish the remaining work.")}
+              onClick={() => void send("Continue — pick up exactly where you left off and finish the remaining work.")}
               title={t("continueTask")}
             >
               {t("continueAction")} <span className="icon-directional" aria-hidden="true">▸</span>
@@ -208,7 +224,7 @@ export default function ChatPanel({ ctrl, variant, userName, businessName, compo
           />
           <button
             className="chat-send-btn-v2"
-            onClick={() => ctrl.chatState === "thinking" && ctrl.canStop ? ctrl.handleStop() : ctrl.handleSend()}
+            onClick={() => ctrl.chatState === "thinking" && ctrl.canStop ? ctrl.handleStop() : send()}
             disabled={ctrl.chatState === "thinking" ? !ctrl.canStop : !canSend}
             title={ctrl.chatState === "thinking" ? (ctrl.canStop ? t("stopResponse") : t("startingResponse")) : t("sendMessage")}
           >

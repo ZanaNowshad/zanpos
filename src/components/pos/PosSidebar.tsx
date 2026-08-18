@@ -1,5 +1,5 @@
 import {
-  BarChart2, Bell, Building2, ClipboardList, GraduationCap, LogOut, Power,
+  BarChart2, Bell, Building2, LogOut, Power,
   ShoppingBag, ShoppingCart, StickyNote,
 } from "lucide-react";
 import type { PosStringKey } from "../../i18n/posStrings";
@@ -7,15 +7,11 @@ import type { PosStringKey } from "../../i18n/posStrings";
 interface Props {
   visible: boolean;
   t: (key: PosStringKey) => string;
-  trainingMode: boolean;
-  canViewXReport: boolean;
   canOpenBackOffice: boolean;
   commerceEnabled: boolean;
   notifCount: number;
   orderCount: number;
-  onStartTraining: () => void;
   onOpenReport: () => void;
-  onOpenXReport: () => void;
   onOpenOfficeAI: () => void;
   onOpenNotes: () => void;
   onOpenOrders: () => void;
@@ -38,8 +34,8 @@ function Badge({ count }: { count: number }) {
  * the sale logic itself.
  */
 export default function PosSidebar({
-  visible, t, trainingMode, canViewXReport, canOpenBackOffice, commerceEnabled,
-  notifCount, orderCount, onStartTraining, onOpenReport, onOpenXReport,
+  visible, t, canOpenBackOffice, commerceEnabled,
+  notifCount, orderCount, onOpenReport,
   onOpenOfficeAI, onOpenNotes, onOpenOrders, onOpenNotifications,
   onCloseShift, onLogout,
 }: Props) {
@@ -49,31 +45,15 @@ export default function PosSidebar({
         <ShoppingBag size={18} strokeWidth={1.75} aria-hidden="true" />
         <span>{t("sale")}</span>
       </button>
-      {!trainingMode && (
-        <button
-          className="pos-sidebar-item"
-          aria-label="Start training mode — practice sales that are not recorded"
-          onClick={onStartTraining}
-        >
-          <GraduationCap size={18} strokeWidth={1.75} aria-hidden="true" />
-          <span>{t("practice")}</span>
-        </button>
-      )}
       <div className="pos-sidebar-divider" />
-      <button className="pos-sidebar-item" aria-label="Today's Report" onClick={onOpenReport}>
+      <button className="pos-sidebar-item" aria-label="Reports — sales and cash drawer" onClick={onOpenReport}>
         <BarChart2 size={18} strokeWidth={1.75} aria-hidden="true" />
         <span>Reports</span>
       </button>
-      {canViewXReport && (
-        <button className="pos-sidebar-item" aria-label="X-Report — mid-shift drawer check" onClick={onOpenXReport}>
-          <ClipboardList size={18} strokeWidth={1.75} aria-hidden="true" />
-          <span>X-Report</span>
-        </button>
-      )}
       {canOpenBackOffice && (
-        <button className="pos-sidebar-item" aria-label="OfficeAI" onClick={onOpenOfficeAI}>
+        <button className="pos-sidebar-item" aria-label="Admin" onClick={onOpenOfficeAI}>
           <Building2 size={18} strokeWidth={1.75} aria-hidden="true" />
-          <span>OfficeAI</span>
+          <span>Admin</span>
         </button>
       )}
       {canOpenBackOffice && (

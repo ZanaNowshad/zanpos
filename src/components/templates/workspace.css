@@ -1,0 +1,105 @@
+/* Page-shell corrections found by looking at rendered screenshots, not the DOM.
+   Component-scoped (`zp-`); nothing here is redeclared in App.css. */
+
+/* 1. The workspace was `overflow: auto` with no vertical model, so a short
+      table left ~450px of dead canvas below a card that stopped abruptly.
+      A flex column lets the content region own the remaining height. */
+.zp-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.zp-workspace-content {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* 2. Primary actions follow the brand accent (warm gold), not the leftover
+      blue. Blue survives only as --info for informational status.
+
+      Scoped to the new component surfaces rather than `.zp-workspace` alone:
+      drawers render through a portal outside the workspace subtree, so a
+      workspace-only rule left drawer primaries un-branded. */
+.zp-workspace .oa-primary-mini,
+.zp-drawer .oa-primary-mini {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-t);
+  font-weight: 600;
+}
+
+.zp-workspace .oa-primary-mini:hover:not(:disabled),
+.zp-drawer .oa-primary-mini:hover:not(:disabled) {
+  border-color: var(--accent-h);
+  background: var(--accent-h);
+}
+
+.zp-workspace .oa-primary-mini:focus-visible,
+.zp-workspace .oa-tool-btn:focus-visible,
+.zp-drawer .oa-primary-mini:focus-visible,
+.zp-drawer .oa-tool-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 2b. Dialogs portal outside every workspace subtree too, so the confirm
+       button was still rendering blue. `btn-danger` keeps its red treatment —
+       a destructive confirmation must not be gold. */
+.confirm-dialog-actions .btn-primary:not(.btn-danger) {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-t);
+  font-weight: 600;
+}
+
+.confirm-dialog-actions .btn-primary:not(.btn-danger):hover:not(:disabled) {
+  border-color: var(--accent-h);
+  background: var(--accent-h);
+}
+
+.confirm-dialog-actions .btn-primary:focus-visible,
+.confirm-dialog-actions .btn-secondary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 3. The title had a decorative icon chip duplicating the rail icon. Pages
+      that still pass an icon get it de-emphasised rather than boxed. */
+.zp-workspace .oa-title-icon {
+  border: 0;
+  background: none;
+  padding: 0;
+}
+
+/* 4. Toolbar row: remove the leftover panel chrome around the filter line so
+      search + filters read as one control group, not a nested card. */
+.zp-workspace .oa-subnav-line {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+/* 5. Below tablet width the page header wrapped and the title centred itself.
+      Stack it left-aligned so title, then actions, read in the normal order. */
+@media (max-width: 1024px) {
+  .zp-workspace > .oa-topbar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    height: auto;
+    padding-inline-end: 0;
+  }
+
+  .zp-workspace .oa-title-block { text-align: start; }
+  .zp-workspace .oa-topbar-actions { flex-wrap: wrap; }
+}
+
+/* Empty states sat inside two nested containers. Flat content plus a single
+   dashed boundary is enough to say "nothing here yet". */
+.oa-embedded-tab-flat .oa-empty-state {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface);
+}

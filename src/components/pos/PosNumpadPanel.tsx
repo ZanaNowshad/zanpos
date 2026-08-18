@@ -3,6 +3,8 @@ import { DEVICE } from "../../types";
 import { formatMoney } from "../../money";
 import type { getExchangeBalance } from "../../utils/posExchange";
 import Dialpad from "../Dialpad";
+import { MessageCircle, ReceiptText, Truck } from "lucide-react";
+import type { PaymentJourney } from "../PaymentModal";
 import type { ExchangeCredit } from "./posModalState";
 
 interface Props {
@@ -19,14 +21,13 @@ interface Props {
   onCancelExchange: () => void;
   onCompleteCoveredExchange: () => void;
   onPayFast: () => void;
-  onPayDirect: (method: "cash" | "card" | "wallet") => void;
-  onPaySplit: () => void;
+  onOpenPaymentJourney: (journey: PaymentJourney) => void;
 }
 
 export default function PosNumpadPanel({
   cart, numpadValue, recentLineId, taxTotal, payableTotal, exchangeCredit,
   exchangeBalance, payFastLoading, paymentStarted, onNumpadKey,
-  onCancelExchange, onCompleteCoveredExchange, onPayFast, onPayDirect, onPaySplit,
+  onCancelExchange, onCompleteCoveredExchange, onPayFast, onOpenPaymentJourney,
 }: Props) {
   const activeLines = cart.lines.filter(line => !line.voided);
   const grossTotal = activeLines.reduce((sum, line) => sum + line.line_total_minor, 0);
@@ -105,11 +106,16 @@ export default function PosNumpadPanel({
           </button>
         )}
 
-        <div className="np-methods">
-          <button className="np-method-btn" disabled={!canPay} onClick={() => onPayDirect("cash")}>Cash</button>
-          <button className="np-method-btn" disabled={!canPay} onClick={() => onPayDirect("card")}>Card</button>
-          <button className="np-method-btn" disabled={!canPay} onClick={() => onPayDirect("wallet")}>Wallet</button>
-          <button className="np-method-btn np-split-btn" disabled={!canPay} onClick={onPaySplit}>Split</button>
+        <div className="np-methods np-journeys" aria-label="Checkout type">
+          <button className="np-method-btn np-journey-btn" disabled={!canPay} onClick={() => onOpenPaymentJourney("receipt")}>
+            <ReceiptText size={19} /><span>Receipt</span><small>Counter sale</small>
+          </button>
+          <button className="np-method-btn np-journey-btn" disabled={!canPay} onClick={() => onOpenPaymentJourney("delivery")}>
+            <Truck size={19} /><span>Delivery</span><small>Address</small>
+          </button>
+          <button className="np-method-btn np-journey-btn" disabled={!canPay} onClick={() => onOpenPaymentJourney("digital")}>
+            <MessageCircle size={19} /><span>Digital</span><small>WhatsApp</small>
+          </button>
         </div>
       </div>
     </div>

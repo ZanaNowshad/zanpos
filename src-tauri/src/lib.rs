@@ -13,6 +13,7 @@ mod backup;
 mod commands;
 mod db;
 mod db_recovery;
+mod device_identity;
 mod diagnostics;
 mod digest;
 mod domain;
@@ -21,7 +22,9 @@ pub mod hub;
 mod inventory;
 mod license;
 pub mod printing;
+mod product_image_search;
 mod secure_store;
+mod sidecar_paths;
 pub mod storefront;
 mod sync;
 pub mod sync_v2;
@@ -193,6 +196,19 @@ pub fn run() {
     // setup() itself — historically where the worst release crashes lived.
     diagnostics::install_panic_hook();
     tauri::Builder::default()
+        // Registered first, before any plugin that touches app data. A second
+        // launch would otherwise clear port 3131 and kill the running
+        // instance's sidecar, overwrite the sidecar token, and drive sync and
+        // SQLite twice under the same device identity — minting duplicate
+        // receipt numbers from one counter.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            tracing::info!("Second instance blocked — focusing the running window");
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -366,44 +382,15 @@ pub fn run() {
             // server.mjs entry point separately:
             //   • Prod: bundled node.exe + server.mjs under the app resource dir.
             //   • Dev:  system `node` on PATH + the repo's server.mjs.
+            // Resolved through sidecar_paths so the restart command in
+            // startup_commands cannot drift from what startup actually spawned.
             let exe_dir = std::env::current_exe()
                 .ok()
                 .and_then(|p| p.parent().map(|p| p.to_path_buf()))
                 .unwrap_or_default();
-            let resource_dir = app.path().resource_dir().ok();
-
-            let sidecar_script = {
-                let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-                if let Some(rd) = &resource_dir {
-                    // Production: bundled under resources/sidecar/whatsapp-sidecar/
-                    candidates.push(rd.join("sidecar").join("whatsapp-sidecar").join("server.mjs"));
-                    // Legacy flat layout fallback
-                    candidates.push(rd.join("sidecar").join("server.mjs"));
-                }
-                candidates.push(exe_dir.join("sidecar").join("server.mjs"));
-                // Dev: source tree path (CARGO_MANIFEST_DIR is compile-time only)
-                candidates.push(
-                    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                        .join("sidecar").join("whatsapp-sidecar").join("server.mjs"),
-                );
-                candidates.iter().find(|p| p.exists()).cloned()
-                    .unwrap_or_else(|| exe_dir.join("sidecar").join("server.mjs"))
-            };
-
-            // Node executable: bundled node.exe (prod) else `node` on PATH (dev).
-            let node_exe: std::ffi::OsString = {
-                let mut candidates: Vec<std::path::PathBuf> = Vec::new();
-                if let Some(rd) = &resource_dir {
-                    // Production: bundled alongside server.mjs
-                    candidates.push(rd.join("sidecar").join("whatsapp-sidecar").join("node.exe"));
-                    // Legacy flat layout fallback
-                    candidates.push(rd.join("sidecar").join("node.exe"));
-                }
-                candidates.push(exe_dir.join("node.exe"));
-                candidates.into_iter().find(|p| p.exists())
-                    .map(std::path::PathBuf::into_os_string)
-                    .unwrap_or_else(|| std::ffi::OsString::from("node"))
-            };
+            let sidecar_script = sidecar_paths::script(app.handle())
+                .unwrap_or_else(|| exe_dir.join("sidecar").join("server.mjs"));
+            let node_exe = sidecar_paths::node(app.handle());
 
             /// Spawn the sidecar with up to `max_attempts` retries.
             /// `log_path` receives the sidecar's stdout + stderr so crashes are
@@ -726,6 +713,15 @@ pub fn run() {
             {
                 let app_state = app.state::<AppState>();
                 tauri::async_runtime::block_on(async {
+                    // Before anything records a device_id: give this terminal an
+                    // identity of its own if it is still on the shared seed. Every
+                    // install ships with the same seeded device row, and receipt
+                    // numbers embed its device_code, so two un-keyed terminals mint
+                    // colliding receipt numbers. Idempotent — a no-op after the
+                    // first launch.
+                    if let Err(e) = device_identity::ensure(&app_state.db).await {
+                        tracing::error!("Could not establish device identity: {e}");
+                    }
                     let device_id = commands::sync_commands::active_device_id(&app_state)
                         .await
                         .unwrap_or_else(|_| "unknown".into());
@@ -866,6 +862,8 @@ pub fn run() {
             commands::pos_commands::pos_void_sale,
             // Back-office admin
             commands::admin_commands::admin_list_products,
+            commands::admin_commands::admin_search_product_image,
+            commands::admin_commands::admin_set_product_image,
             commands::admin_commands::admin_create_product,
             commands::admin_commands::admin_update_product,
             commands::admin_commands::admin_find_duplicate_products,
@@ -901,6 +899,8 @@ pub fn run() {
             commands::report_commands::report_margin,
             commands::report_commands::report_product_margin,
             commands::report_commands::report_sales_list,
+            commands::report_commands::report_sales_cursor,
+            commands::report_commands::report_sales_export_csv,
             commands::report_commands::report_by_cashier,
             commands::report_commands::report_eod_cashup,
             commands::report_commands::report_z_report,
@@ -915,6 +915,7 @@ pub fn run() {
             commands::purchasing_commands::po_get,
             commands::purchasing_commands::po_create,
             commands::purchasing_commands::po_receive,
+            commands::purchasing_commands::product_cost_history_list,
             commands::purchasing_commands::po_cancel,
             // Inventory
             commands::inventory_commands::inventory_get_levels,
@@ -992,6 +993,14 @@ pub fn run() {
             // Startup health
             commands::startup_commands::startup_health_check,
             commands::startup_commands::startup_restart_sidecar,
+            // On-screen keyboard for touchscreen tills
+            commands::osk_commands::system_keyboard_open,
+            commands::device_commands::device_delete,
+            // Delivery riders
+            commands::rider_commands::rider_list,
+            commands::rider_commands::rider_create,
+            commands::rider_commands::rider_update,
+            commands::rider_commands::rider_delete,
             // System health checkup
             commands::system_health_commands::system_health_check,
             commands::system_health_commands::system_health_apply_fix,
@@ -999,10 +1008,10 @@ pub fn run() {
             commands::hub_commands::hub_status,
             commands::hub_commands::hub_enable,
             commands::hub_commands::hub_regenerate_token,
-            commands::hub_commands::hub_test_connection,
-            commands::hub_commands::hub_join,
-            commands::hub_commands::hub_connect_existing,
-            commands::hub_commands::hub_set_url,
+            commands::hub_join_commands::hub_test_connection,
+            commands::hub_join_commands::hub_join,
+            commands::hub_join_commands::hub_connect_existing,
+            commands::hub_join_commands::hub_set_url,
             // AI Admin — provider management
             commands::ai_admin_commands::admin_get_provider_config,
             commands::ai_admin_commands::admin_set_anthropic,
@@ -1018,7 +1027,12 @@ pub fn run() {
             commands::ai_admin_commands::admin_save_ai_config,
             commands::ai_admin_commands::admin_get_feature_toggles,
             commands::ai_admin_commands::admin_save_feature_toggles,
+            commands::ai_admin_commands::admin_list_ai_tools,
+            commands::ai_admin_commands::admin_set_ai_tool_enabled,
+            commands::ai_admin_commands::admin_list_ai_tool_metrics,
             // AI Admin — chat
+            commands::ai_admin_commands::ai_list_actions,
+            commands::ai_admin_commands::ai_undo_availability,
             commands::ai_admin_commands::ai_execute_action,
             commands::ai_admin_commands::ai_execute_batch_actions,
             commands::ai_admin_commands::ai_cancel_action,
@@ -1053,10 +1067,12 @@ pub fn run() {
             commands::delivery_commands::delivery_rider_suggestions,
             // Customers
             commands::customer_commands::customer_list,
+            commands::customer_loyalty_commands::customer_loyalty_summary,
+            commands::customer_loyalty_commands::customer_top_balances,
             commands::customer_commands::customer_create,
             commands::customer_commands::customer_update,
             commands::customer_commands::customer_get,
-            commands::customer_commands::customer_add_loyalty,
+            commands::customer_loyalty_commands::customer_add_loyalty,
             // Devices
             commands::device_commands::device_list,
             commands::device_commands::device_create,

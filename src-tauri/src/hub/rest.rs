@@ -270,7 +270,16 @@ async fn pull_table(
 
     let mut sql = format!("SELECT * FROM {table} WHERE 1=1");
     if since.is_some() {
-        sql.push_str(" AND datetime(updated_at) > datetime(?)");
+        // Millisecond precision on both sides. datetime() truncates to whole
+        // seconds, so every row written in the same second as the watermark
+        // compared equal and was skipped by `>` — permanently, since the
+        // watermark only moves forward. strftime also normalises the two
+        // timestamp formats in use ("2026-01-01 10:00:00" from the importer and
+        // RFC3339 from everything else), which a raw text compare does not.
+        sql.push_str(
+            " AND strftime('%Y-%m-%dT%H:%M:%f', updated_at) \
+              > strftime('%Y-%m-%dT%H:%M:%f', ?)",
+        );
     }
     if neq_dev.is_some() {
         sql.push_str(" AND origin_device_id <> ?");

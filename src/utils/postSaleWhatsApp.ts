@@ -1,4 +1,4 @@
-import type { CustomerRow, DeliveryInput, SaleResult, SessionUser } from "../types";
+import type { CustomerRow, DeliveryInput, RiderRow, SaleResult, SessionUser } from "../types";
 import { DEVICE } from "../types";
 import {
   appConfigLoad,
@@ -18,14 +18,54 @@ interface Options {
   result: SaleResult;
   deliveryInput?: DeliveryInput;
   selectedCustomer?: CustomerRow;
+  checkoutContactNumber?: string;
+  rider?: RiderRow;
   sessionUser: SessionUser;
   onPairingRequired: () => void;
+}
+
+/**
+ * The rider's job sheet. Deliberately not the customer's receipt: a rider needs
+ * where to go, who to call and what to collect, and nothing else. The amount is
+ * stated as "collect" only for an unpaid method, because handing a rider a
+ * figure to collect on an already-paid card sale is how double charges happen.
+ */
+export function buildRiderMessage(input: {
+  receiptNumber: string;
+  customerName?: string | null;
+  contactNumber: string;
+  houseNumber?: string | null;
+  area?: string | null;
+  addressText?: string | null;
+  amountLabel: string;
+  paymentMethod: string;
+  paid: boolean;
+  storeName: string;
+}): string {
+  const address = [
+    input.houseNumber ? `House ${input.houseNumber}` : null,
+    input.area ? `Flat ${input.area}` : null,
+    input.addressText || null,
+  ].filter(Boolean).join(", ");
+
+  return [
+    `*New delivery · ${input.receiptNumber}*`,
+    input.customerName ? `Customer: ${input.customerName}` : null,
+    `Phone: ${input.contactNumber}`,
+    address ? `Address: ${address}` : null,
+    input.paid
+      ? `Order total: ${input.amountLabel} (already paid · ${input.paymentMethod})`
+      : `Collect: ${input.amountLabel} (${input.paymentMethod})`,
+    `— ${input.storeName}`,
+  ].filter(Boolean).join("\n");
 }
 
 export function dispatchPostSaleWhatsApp({
   result,
   deliveryInput,
   selectedCustomer,
+  checkoutContactNumber,
+  rider,
   sessionUser,
   onPairingRequired,
 }: Options): void {
@@ -120,15 +160,57 @@ export function dispatchPostSaleWhatsApp({
       }
     };
     void sendDelivery();
+
+    /* The rider gets the job at the same moment the customer gets the receipt.
+       Separate dispatch, separate failure: a rider's handset being unreachable
+       must not cost the customer their receipt, or the other way round. */
+    if (rider?.phone) {
+      const sendRider = async () => {
+        try {
+          const status = await whatsappStatus(sessionUser.user_id);
+          if (!status.connected) return;
+          const method = result.payments[0]?.method ?? "cash";
+          const methodLabel = method === "wallet"
+            ? "BenefitPay"
+            : method.charAt(0).toUpperCase() + method.slice(1);
+          const digits = rider.phone.replace(/\D/g, "");
+          await whatsappSendDelivery(sessionUser.user_id, {
+            to: digits.startsWith("973") ? digits : `973${digits}`,
+            receipt_number: result.receipt_number,
+            net_total_minor: result.net_total_minor,
+            currency_exponent: DEVICE.currency_exponent,
+            address_text: delivery.address_text,
+            house_number: delivery.house_number ?? undefined,
+            area: delivery.area ?? undefined,
+            message_override: buildRiderMessage({
+              receiptNumber: result.receipt_number,
+              customerName: delivery.customer_name,
+              contactNumber: delivery.contact_number,
+              houseNumber: delivery.house_number,
+              area: delivery.area,
+              addressText: delivery.address_text,
+              amountLabel: `${DEVICE.currency} ${formatMoney(result.net_total_minor, DEVICE.currency_exponent)}`,
+              paymentMethod: methodLabel,
+              paid: delivery.payment_status === "paid",
+              storeName: DEVICE.branch_name,
+            }),
+          });
+        } catch {
+          // Downstream of a committed sale — never propagate.
+        }
+      };
+      void sendRider();
+    }
   }
 
-  if (selectedCustomer?.phone && !deliveryInput) {
+  const customerReceiptPhone = selectedCustomer?.phone || checkoutContactNumber;
+  if (customerReceiptPhone && !deliveryInput) {
     const sendCustomerReceipt = async () => {
       try {
         const status = await whatsappStatus(sessionUser.user_id);
         if (!status.connected) return;
         const config = await appConfigLoad();
-        const digits = selectedCustomer.phone!.replace(/\D/g, "");
+        const digits = customerReceiptPhone.replace(/\D/g, "");
         const to = digits.startsWith("973") ? digits : `973${digits}`;
         const format = loadWaCustomerFormat();
         const activeLines = format.language === "ar" ? format.ar_lines : format.en_lines;
@@ -142,7 +224,7 @@ export function dispatchPostSaleWhatsApp({
           : method.charAt(0).toUpperCase() + method.slice(1);
         const amount = `${DEVICE.currency} ${formatMoney(result.net_total_minor, DEVICE.currency_exponent)}`;
         const built = buildCustomerMessage(activeLines, {
-          customer_name: selectedCustomer.name ?? "",
+          customer_name: selectedCustomer?.name ?? "",
           receipt_number: result.receipt_number,
           date,
           amount,
@@ -157,7 +239,7 @@ export function dispatchPostSaleWhatsApp({
         }, result.items, DEVICE.currency_exponent);
         const message = built.trim().length > 0
           ? built
-          : `✅ Thank you, ${selectedCustomer.name}!\n`
+          : `✅ Thank you${selectedCustomer?.name ? `, ${selectedCustomer.name}` : ""}!\n`
             + `Receipt #${result.receipt_number}\n`
             + `Date: ${date}\n`
             + `Amount: ${amount}\n`

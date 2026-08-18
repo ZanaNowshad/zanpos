@@ -10,6 +10,13 @@ interface StoreTabProps {
   saveError: string | null; savedStore: boolean; saving: boolean;
   timeoutError: string | null; savedTimeout: boolean; savingTimeout: boolean;
   handleSave: () => void; handleSaveTimeout: () => void;
+  /**
+   * `settings_update_branch` is `rbac::owner_only` server-side, while
+   * `app_config_set_timeout` is `manager_or_owner`. This form therefore spans
+   * two permission levels; a manager may set the timeout but not the branch
+   * identity. Disabling with a reason beats letting the save fail afterwards.
+   */
+  canEditBranch?: boolean;
   TIMEZONES: string[]; TIMEOUT_OPTIONS: number[]; timeoutLabel: (m: number) => string;
 }
 
@@ -20,6 +27,7 @@ export default function StoreTab(props: StoreTabProps) {
     setSavedStore, timeoutMinutes, setTimeoutMinutes,
     saveError, savedStore, saving, timeoutError, savedTimeout, savingTimeout,
     handleSave, handleSaveTimeout, TIMEZONES, TIMEOUT_OPTIONS, timeoutLabel,
+    canEditBranch = true,
   } = props;
 
   return (
@@ -91,9 +99,17 @@ export default function StoreTab(props: StoreTabProps) {
         <div className="settings-action-group">
           {saveError && <span className="settings-action-msg settings-action-err">{saveError}</span>}
           {savedStore && <span className="settings-action-msg">✓ Saved</span>}
-          <button className="btn-primary" onClick={handleSave} disabled={saving}>
+          <button
+            className="btn-primary"
+            onClick={handleSave}
+            disabled={saving || !canEditBranch}
+            title={canEditBranch ? undefined : "Only an owner can change store identity"}
+          >
             {saving ? "Saving…" : "Save"}
           </button>
+          {!canEditBranch && (
+            <span className="settings-hint">Only an owner can change store identity.</span>
+          )}
         </div>
         <div className="settings-action-group">
           {timeoutError && <span className="settings-action-msg settings-action-err">{timeoutError}</span>}

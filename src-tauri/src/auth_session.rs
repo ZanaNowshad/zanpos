@@ -79,6 +79,36 @@ impl SessionStore {
         pool: &SqlitePool,
         token: &str,
     ) -> AppResult<AuthenticatedActor> {
+        let actor = self.resolve_active_actor(pool, token).await?;
+        if matches!(actor.role_name.as_str(), "manager" | "owner") {
+            Ok(actor)
+        } else {
+            Err(AppError::Permission(
+                "Office AI requires a manager or owner".into(),
+            ))
+        }
+    }
+
+    pub async fn resolve_ai(
+        &self,
+        pool: &SqlitePool,
+        token: &str,
+    ) -> AppResult<AuthenticatedActor> {
+        let actor = self.resolve_active_actor(pool, token).await?;
+        if matches!(actor.role_name.as_str(), "cashier" | "manager" | "owner") {
+            Ok(actor)
+        } else {
+            Err(AppError::Permission(
+                "ZanAI requires an active POS role".into(),
+            ))
+        }
+    }
+
+    async fn resolve_active_actor(
+        &self,
+        pool: &SqlitePool,
+        token: &str,
+    ) -> AppResult<AuthenticatedActor> {
         let key = parse_token(token)?;
         let now = Utc::now();
         self.purge_expired(now).await;
@@ -95,12 +125,12 @@ impl SessionStore {
             "SELECT u.user_id, u.branch_id, r.name AS role_name
              FROM users u JOIN roles r ON r.role_id = u.role_id
              WHERE u.user_id = ? AND u.is_active = 1
-               AND r.name IN ('manager', 'owner')",
+               ",
         )
         .bind(&user_id)
         .fetch_optional(pool)
         .await?
-        .ok_or_else(|| AppError::Permission("Office AI requires a manager or owner".into()))?;
+        .ok_or_else(|| AppError::Permission("User is inactive or unavailable".into()))?;
 
         Ok(AuthenticatedActor {
             user_id: row.get("user_id"),
@@ -235,6 +265,26 @@ mod tests {
             .unwrap();
         let moved = store.resolve_office(&pool, &manager.token).await.unwrap();
         assert_eq!(moved.branch_id, "NEW_BRANCH");
+    }
+
+    #[tokio::test]
+    async fn ai_resolution_accepts_active_cashier_without_weakening_office_resolution() {
+        let pool = pool().await;
+        let store = SessionStore::new(Duration::from_secs(60));
+        let cashier = store.issue("01JUSER000000000000CASH01").await;
+
+        assert_eq!(
+            store
+                .resolve_ai(&pool, &cashier.token)
+                .await
+                .unwrap()
+                .role_name,
+            "cashier"
+        );
+        assert!(matches!(
+            store.resolve_office(&pool, &cashier.token).await,
+            Err(crate::errors::AppError::Permission(_))
+        ));
     }
 
     #[tokio::test]

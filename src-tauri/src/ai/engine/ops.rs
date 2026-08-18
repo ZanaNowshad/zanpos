@@ -276,6 +276,30 @@ impl Registry {
     }
 }
 
+static OPERATION_REGISTRY: std::sync::OnceLock<Registry> = std::sync::OnceLock::new();
+
+/// Authoritative execution registry for long-running/run-based AI operations.
+/// Provider routing, policy metadata, and tests all derive from this factory.
+pub fn operation_registry() -> &'static Registry {
+    OPERATION_REGISTRY.get_or_init(|| {
+        let mut registry = Registry::new();
+        registry.register(Box::new(BulkPriceAdjust));
+        registry.register(Box::new(BulkStockSet));
+        registry.register(Box::new(BulkStockVarianceFix));
+        registry.register(Box::new(BulkPromotionApply));
+        registry.register(Box::new(BulkPromotionRemove));
+        registry.register(Box::new(BulkSupplierPriceSync));
+        registry.register(Box::new(BulkProductArchive));
+        registry.register(Box::new(BulkReorderPointUpdate));
+        registry.register(Box::new(ProductCreate));
+        registry
+    })
+}
+
+pub fn is_registered_operation(tool_name: &str) -> bool {
+    operation_registry().find(tool_name).is_some()
+}
+
 // ── Concrete operation: bulk.price_adjust ──
 
 use super::{apply_price, PriceOp};

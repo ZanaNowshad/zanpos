@@ -1,9 +1,67 @@
-use crate::ai::tool_registry::{Confirmation, ToolKind, ToolRegistry, UndoPolicy};
+use crate::ai::tool_registry::{Confirmation, RequiredRole, ToolKind, ToolRegistry, UndoPolicy};
 use crate::errors::{AppError, AppResult};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AiAccessTier {
+    CashierReadOnly,
+    Manager,
+    Owner,
+}
+
+impl AiAccessTier {
+    pub fn from_role(role_name: &str) -> AppResult<Self> {
+        match role_name {
+            "cashier" => Ok(Self::CashierReadOnly),
+            "manager" => Ok(Self::Manager),
+            "owner" => Ok(Self::Owner),
+            _ => Err(AppError::Permission(
+                "Role is not allowed to use ZanAI".into(),
+            )),
+        }
+    }
+}
+
+pub fn filter_definitions_for_role(
+    definitions: &[crate::ai::client::ToolDef],
+    role_name: &str,
+) -> AppResult<Vec<crate::ai::client::ToolDef>> {
+    match AiAccessTier::from_role(role_name)? {
+        AiAccessTier::Manager | AiAccessTier::Owner => Ok(definitions.to_vec()),
+        AiAccessTier::CashierReadOnly => {
+            let registry = ToolRegistry::global()?;
+            Ok(definitions
+                .iter()
+                .filter(|definition| {
+                    registry.get(&definition.name).is_some_and(|descriptor| {
+                        descriptor.kind == ToolKind::Read
+                            && descriptor.required_role == RequiredRole::Cashier
+                    })
+                })
+                .cloned()
+                .collect())
+        }
+    }
+}
+
+pub fn require_role_allows_tool(role_name: &str, tool_name: &str) -> AppResult<()> {
+    let tier = AiAccessTier::from_role(role_name)?;
+    let registry = ToolRegistry::global()?;
+    let descriptor = registry.get(tool_name).ok_or_else(|| {
+        AppError::Validation(format!("Unknown or unavailable AI tool: {tool_name}"))
+    })?;
+    if tier == AiAccessTier::CashierReadOnly
+        && (descriptor.kind != ToolKind::Read || descriptor.required_role != RequiredRole::Cashier)
+    {
+        return Err(AppError::Permission(format!(
+            "Cashier ZanAI access does not allow tool '{tool_name}'"
+        )));
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone)]
 pub struct MutationExecutionContext {
@@ -44,8 +102,81 @@ pub enum PlanDecision {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutomaticMutationResult {
     pub action_id: String,
-    pub undo_id: String,
+    pub undo_id: Option<String>,
     pub description: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SensitiveProtectionLevel {
+    Standard,
+    Enhanced,
+    Maximum,
+}
+
+impl SensitiveProtectionLevel {
+    pub fn from_config(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "standard" => Self::Standard,
+            "enhanced" => Self::Enhanced,
+            "maximum" => Self::Maximum,
+            // Corrupt policy must fail toward more confirmation, never less.
+            _ => Self::Maximum,
+        }
+    }
+}
+
+fn negative_stock_input(input: &Value) -> bool {
+    let Value::Object(fields) = input else {
+        return false;
+    };
+    ["delta", "quantity_delta", "adjustment"]
+        .iter()
+        .filter_map(|key| fields.get(*key))
+        .any(|value| {
+            value.as_f64().is_some_and(|number| number < 0.0)
+                || value
+                    .as_str()
+                    .and_then(|raw| raw.parse::<f64>().ok())
+                    .is_some_and(|number| number < 0.0)
+        })
+}
+
+pub fn sensitive_action_requires_confirmation(
+    tool_name: &str,
+    input: &Value,
+    level: SensitiveProtectionLevel,
+) -> bool {
+    if level == SensitiveProtectionLevel::Maximum {
+        return true;
+    }
+    let outbound_message = tool_name.starts_with("send_whatsapp_");
+    let refund = tool_name == "create_refund";
+    let cash_payout = tool_name == "create_cash_event"
+        && input
+            .get("event_type")
+            .and_then(Value::as_str)
+            .is_some_and(|event| matches!(event, "paid_out" | "safe_drop"));
+    let negative_stock =
+        matches!(tool_name, "adjust_stock" | "bulk_stock_set") && negative_stock_input(input);
+    if outbound_message || refund || cash_payout || negative_stock {
+        return true;
+    }
+    level == SensitiveProtectionLevel::Enhanced
+        && matches!(
+            tool_name,
+            "adjust_stock"
+                | "bulk_stock_set"
+                | "bulk_stock_take"
+                | "stock_take"
+                | "create_cash_event"
+                | "confirm_delivery_payment"
+                | "revert_delivery_payment"
+                | "bulk_update_prices"
+                | "bulk_price_adjust"
+                | "bulk_update_cost"
+                | "receive_stock"
+                | "receive_purchase_order"
+        )
 }
 
 #[derive(Debug, Default, Clone)]
@@ -95,30 +226,64 @@ pub async fn authorize_plan(
         ToolKind::Read => Ok(PlanDecision::ReadAllowed),
         ToolKind::Mutation => {
             provenance.require_mutations_allowed()?;
-            match descriptor.confirmation {
-                Confirmation::AutomaticIfActionUndo
-                    if descriptor.undo == UndoPolicy::Action
-                        && routine_input_is_reversible(tool_name, input) =>
-                {
-                    Ok(PlanDecision::AutomaticEligible)
-                }
-                Confirmation::AutomaticIfActionUndo | Confirmation::Always => {
-                    Ok(PlanDecision::ConfirmationRequired)
-                }
-                Confirmation::Never => Err(AppError::Permission(format!(
+            if descriptor.confirmation == Confirmation::Never {
+                return Err(AppError::Permission(format!(
                     "Mutation '{}' is missing a confirmation policy",
                     descriptor.name
-                ))),
+                )));
+            }
+            let params = crate::ai::config::load_ai_params(pool).await;
+            let sensitive_level =
+                SensitiveProtectionLevel::from_config(&params.sensitive_protection_level);
+            if mutation_is_destructive(tool_name, input)
+                || sensitive_action_requires_confirmation(tool_name, input, sensitive_level)
+                || params.confirm_non_destructive_actions
+            {
+                Ok(PlanDecision::ConfirmationRequired)
+            } else {
+                Ok(PlanDecision::AutomaticEligible)
             }
         }
     }
 }
 
-fn routine_input_is_reversible(tool_name: &str, input: &Value) -> bool {
-    match tool_name {
-        "set_product_active" => input.get("is_active").and_then(Value::as_bool) == Some(true),
-        "update_category" => input.get("is_active").and_then(Value::as_bool) != Some(false),
-        _ => true,
+pub fn mutation_is_destructive(tool_name: &str, input: &Value) -> bool {
+    let destructive_name = tool_name.split('_').any(|part| {
+        matches!(
+            part,
+            "delete"
+                | "remove"
+                | "archive"
+                | "deactivate"
+                | "void"
+                | "cancel"
+                | "merge"
+                | "clear"
+                | "disconnect"
+        )
+    });
+    destructive_name || value_contains_destructive_transition(input)
+}
+
+fn value_contains_destructive_transition(value: &Value) -> bool {
+    match value {
+        Value::Object(fields) => fields.iter().any(|(key, value)| {
+            (key == "is_active" && value.as_bool() == Some(false))
+                || (key == "status"
+                    && value.as_str().is_some_and(|status| {
+                        matches!(
+                            status.to_ascii_lowercase().as_str(),
+                            "cancelled" | "canceled" | "voided" | "inactive" | "archived"
+                        )
+                    }))
+                || (key == "fix_action"
+                    && value
+                        .as_str()
+                        .is_some_and(|action| action.starts_with("clear_")))
+                || value_contains_destructive_transition(value)
+        }),
+        Value::Array(values) => values.iter().any(value_contains_destructive_transition),
+        _ => false,
     }
 }
 
@@ -157,16 +322,14 @@ pub async fn execute_automatic_mutation(
         crate::ai::tools::execute_mutation_raw(pool, tool_name, input, currency_exponent),
     )
     .await?;
-    if !action_undo_allowed(tool_name, &mutation.rollback_tool)? {
-        return Err(AppError::Permission(format!(
-            "Automatic mutation '{tool_name}' did not return action undo metadata"
-        )));
+    let has_undo = action_undo_allowed(tool_name, &mutation.rollback_tool)?;
+    if has_undo {
+        let rollback_input: Value =
+            serde_json::from_str(&mutation.rollback_input_json).map_err(|e| {
+                AppError::Validation(format!("Invalid rollback metadata from '{tool_name}': {e}"))
+            })?;
+        validate_persisted_mutation(&mutation.rollback_tool, &rollback_input)?;
     }
-    let rollback_input: Value =
-        serde_json::from_str(&mutation.rollback_input_json).map_err(|e| {
-            AppError::Validation(format!("Invalid rollback metadata from '{tool_name}': {e}"))
-        })?;
-    validate_persisted_mutation(&mutation.rollback_tool, &rollback_input)?;
     let result_json = serde_json::json!({
         "description": &mutation.description,
         "automatic": true
@@ -174,19 +337,26 @@ pub async fn execute_automatic_mutation(
     .to_string();
     crate::db::repositories::ai_admin_repo::mark_executed(pool, &action.action_id, &result_json)
         .await?;
-    let undo = crate::db::repositories::ai_admin_repo::create_undo_record(
-        pool,
-        &action.action_id,
-        &mutation.entity_type,
-        &mutation.entity_id,
-        &mutation.undo_snapshot_json,
-        &mutation.rollback_tool,
-        &mutation.rollback_input_json,
-    )
-    .await?;
+    let undo_id = if has_undo {
+        Some(
+            crate::db::repositories::ai_admin_repo::create_undo_record(
+                pool,
+                &action.action_id,
+                &mutation.entity_type,
+                &mutation.entity_id,
+                &mutation.undo_snapshot_json,
+                &mutation.rollback_tool,
+                &mutation.rollback_input_json,
+            )
+            .await?
+            .undo_id,
+        )
+    } else {
+        None
+    };
     Ok(AutomaticMutationResult {
         action_id: action.action_id,
-        undo_id: undo.undo_id,
+        undo_id,
         description: mutation.description,
     })
 }
@@ -269,7 +439,72 @@ pub async fn require_tool_enabled(pool: &SqlitePool, tool_name: &str) -> AppResu
     let descriptor = registry.get(tool_name).ok_or_else(|| {
         AppError::Validation(format!("Unknown or unavailable AI tool: {tool_name}"))
     })?;
-    require_feature_enabled(pool, descriptor.feature_key).await
+    require_feature_enabled(pool, descriptor.feature_key).await?;
+    if tool_override_enabled(pool, &descriptor.name).await? {
+        Ok(())
+    } else {
+        Err(AppError::Permission(format!(
+            "AI tool is disabled: {}",
+            descriptor.name
+        )))
+    }
+}
+
+pub(crate) fn tool_config_key(tool_name: &str) -> String {
+    format!("ai_tool_enabled_{tool_name}")
+}
+
+pub(crate) fn tool_enabled_from_config(
+    tool_name: &str,
+    feature_key: Option<&str>,
+    values: &HashMap<String, String>,
+) -> AppResult<bool> {
+    let feature_enabled = match feature_key {
+        Some(key) => feature_toggle_enabled(key, values.get(key).map(String::as_str))?,
+        None => true,
+    };
+    let tool_enabled = match values.get(&tool_config_key(tool_name)).map(String::as_str) {
+        None | Some("1" | "true") => true,
+        Some("0" | "false") => false,
+        Some(_) => {
+            return Err(AppError::Validation(format!(
+                "Invalid enabled state for AI tool {tool_name}"
+            )))
+        }
+    };
+    Ok(feature_enabled && tool_enabled)
+}
+
+async fn tool_override_enabled(pool: &SqlitePool, tool_name: &str) -> AppResult<bool> {
+    let value: Option<String> = sqlx::query_scalar("SELECT value FROM app_config WHERE key = ?")
+        .bind(tool_config_key(tool_name))
+        .fetch_optional(pool)
+        .await?;
+    match value.as_deref() {
+        None | Some("1" | "true") => Ok(true),
+        Some("0" | "false") => Ok(false),
+        Some(_) => Err(AppError::Validation(format!(
+            "Invalid enabled state for AI tool {tool_name}"
+        ))),
+    }
+}
+
+pub async fn set_tool_enabled(pool: &SqlitePool, tool_name: &str, enabled: bool) -> AppResult<()> {
+    let registry = ToolRegistry::global()?;
+    let descriptor = registry
+        .get(tool_name)
+        .ok_or_else(|| AppError::Validation(format!("Unknown AI tool: {tool_name}")))?;
+    sqlx::query(
+        "INSERT INTO app_config (key, value, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+    )
+    .bind(tool_config_key(&descriptor.name))
+    .bind(if enabled { "true" } else { "false" })
+    .bind(chrono::Utc::now().to_rfc3339())
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 pub fn validate_persisted_mutation(tool_name: &str, input: &Value) -> AppResult<()> {
@@ -347,9 +582,12 @@ pub async fn filter_enabled_definitions(
 ) -> AppResult<Vec<crate::ai::client::ToolDef>> {
     require_ai_enabled(pool).await?;
     let registry = ToolRegistry::global()?;
-    let rows = sqlx::query("SELECT key,value FROM app_config WHERE key LIKE 'feature_%'")
-        .fetch_all(pool)
-        .await?;
+    let rows = sqlx::query(
+        "SELECT key,value FROM app_config
+         WHERE key LIKE 'feature_%' OR key LIKE 'ai_tool_enabled_%'",
+    )
+    .fetch_all(pool)
+    .await?;
     let toggle_values: HashMap<String, String> = rows
         .into_iter()
         .map(|row| (row.get("key"), row.get("value")))
@@ -359,11 +597,7 @@ pub async fn filter_enabled_definitions(
         let descriptor = registry.get(&definition.name).ok_or_else(|| {
             AppError::Validation(format!("Missing policy descriptor for {}", definition.name))
         })?;
-        let is_enabled = match descriptor.feature_key {
-            None => true,
-            Some(key) => feature_toggle_enabled(key, toggle_values.get(key).map(String::as_str))?,
-        };
-        if is_enabled {
+        if tool_enabled_from_config(&descriptor.name, descriptor.feature_key, &toggle_values)? {
             enabled.push(definition);
         }
     }
@@ -395,7 +629,7 @@ async fn require_feature_enabled(pool: &SqlitePool, key: Option<&str>) -> AppRes
     }
 }
 
-fn feature_toggle_enabled(key: &str, value: Option<&str>) -> AppResult<bool> {
+pub(crate) fn feature_toggle_enabled(key: &str, value: Option<&str>) -> AppResult<bool> {
     match value {
         Some("1" | "true") => Ok(true),
         Some("0" | "false") => Ok(false),
@@ -447,6 +681,100 @@ mod tests {
             .unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         pool
+    }
+
+    #[tokio::test]
+    async fn per_tool_disable_removes_provider_access_and_blocks_direct_dispatch() {
+        let pool = pool().await;
+        set_tool_enabled(&pool, "update_product_price", false)
+            .await
+            .unwrap();
+
+        let definitions =
+            filter_enabled_definitions(&pool, crate::ai::tools_catalogue::all_tool_definitions())
+                .await
+                .unwrap();
+        assert!(!definitions
+            .iter()
+            .any(|definition| definition.name == "update_product_price"));
+        assert!(require_tool_enabled(&pool, "update_product_price")
+            .await
+            .is_err());
+
+        set_tool_enabled(&pool, "update_product_price", true)
+            .await
+            .unwrap();
+        assert!(require_tool_enabled(&pool, "update_product_price")
+            .await
+            .is_ok());
+    }
+
+    #[test]
+    fn sensitive_protection_levels_cover_money_stock_and_outbound_messages() {
+        assert!(sensitive_action_requires_confirmation(
+            "create_refund",
+            &serde_json::json!({}),
+            SensitiveProtectionLevel::Standard,
+        ));
+        assert!(sensitive_action_requires_confirmation(
+            "adjust_stock",
+            &serde_json::json!({ "delta": -2 }),
+            SensitiveProtectionLevel::Standard,
+        ));
+        assert!(sensitive_action_requires_confirmation(
+            "create_cash_event",
+            &serde_json::json!({ "event_type": "paid_out", "amount_bhd": "5.000" }),
+            SensitiveProtectionLevel::Standard,
+        ));
+        assert!(sensitive_action_requires_confirmation(
+            "send_whatsapp_to_customer",
+            &serde_json::json!({}),
+            SensitiveProtectionLevel::Standard,
+        ));
+        assert!(!sensitive_action_requires_confirmation(
+            "create_product",
+            &serde_json::json!({}),
+            SensitiveProtectionLevel::Standard,
+        ));
+        assert!(sensitive_action_requires_confirmation(
+            "adjust_stock",
+            &serde_json::json!({ "delta": 2 }),
+            SensitiveProtectionLevel::Enhanced,
+        ));
+        assert!(sensitive_action_requires_confirmation(
+            "create_product",
+            &serde_json::json!({}),
+            SensitiveProtectionLevel::Maximum,
+        ));
+    }
+
+    #[test]
+    fn cashier_catalogue_contains_only_explicit_operational_reads() {
+        let definitions = crate::ai::tools_catalogue::all_tool_definitions();
+        let filtered = filter_definitions_for_role(&definitions, "cashier").unwrap();
+        let registry = ToolRegistry::global().unwrap();
+
+        assert!(filtered
+            .iter()
+            .any(|definition| definition.name == "lookup_barcode"));
+        assert!(filtered
+            .iter()
+            .any(|definition| definition.name == "get_stock_levels"));
+        assert!(filtered.iter().all(|definition| {
+            registry
+                .get(&definition.name)
+                .is_some_and(|descriptor| descriptor.kind == ToolKind::Read)
+        }));
+        assert!(!filtered
+            .iter()
+            .any(|definition| definition.name == "list_users"));
+    }
+
+    #[test]
+    fn cashier_direct_mutation_dispatch_is_denied() {
+        assert!(require_role_allows_tool("cashier", "update_product_price").is_err());
+        assert!(require_role_allows_tool("manager", "update_product_price").is_ok());
+        assert!(require_role_allows_tool("owner", "update_product_price").is_ok());
     }
 
     #[test]
@@ -628,18 +956,104 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dangerous_and_no_undo_mutations_require_confirmation() {
+    async fn toggle_controls_safe_mutations_but_destructive_mutations_always_confirm() {
+        let pool = pool().await;
+        let provenance = ProvenanceState::default();
+
+        assert_eq!(
+            authorize_plan(
+                &pool,
+                "create_supplier",
+                &serde_json::json!({"name":"Green Foods"}),
+                &provenance,
+            )
+            .await
+            .unwrap(),
+            PlanDecision::AutomaticEligible
+        );
+        assert_eq!(
+            authorize_plan(
+                &pool,
+                "delete_supplier",
+                &serde_json::json!({"supplier_id":"S1"}),
+                &provenance,
+            )
+            .await
+            .unwrap(),
+            PlanDecision::ConfirmationRequired
+        );
+
+        sqlx::query("INSERT INTO app_config(key,value,updated_at) VALUES('ai_confirm_non_destructive_actions','true',datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            authorize_plan(
+                &pool,
+                "create_supplier",
+                &serde_json::json!({"name":"Green Foods"}),
+                &provenance,
+            )
+            .await
+            .unwrap(),
+            PlanDecision::ConfirmationRequired
+        );
+        assert_eq!(
+            authorize_plan(
+                &pool,
+                "delete_supplier",
+                &serde_json::json!({"supplier_id":"S1"}),
+                &provenance,
+            )
+            .await
+            .unwrap(),
+            PlanDecision::ConfirmationRequired
+        );
+    }
+
+    #[test]
+    fn destructive_classification_covers_names_and_deactivation_inputs() {
+        for name in [
+            "delete_product",
+            "remove_product_barcode",
+            "bulk_product_archive",
+            "void_sale",
+            "cancel_delivery",
+            "merge_products",
+        ] {
+            assert!(
+                mutation_is_destructive(name, &serde_json::json!({})),
+                "{name}"
+            );
+        }
+        assert!(mutation_is_destructive(
+            "set_product_active",
+            &serde_json::json!({"is_active":false})
+        ));
+        assert!(mutation_is_destructive(
+            "update_supplier",
+            &serde_json::json!({"is_active":false})
+        ));
+        assert!(mutation_is_destructive(
+            "bulk_update_products",
+            &serde_json::json!({"products":[{"product_id":"P1","is_active":false}]})
+        ));
+        assert!(!mutation_is_destructive(
+            "create_product",
+            &serde_json::json!({"name":"Tea"})
+        ));
+        assert!(!mutation_is_destructive(
+            "update_product_price",
+            &serde_json::json!({"new_price_minor":100})
+        ));
+    }
+
+    #[tokio::test]
+    async fn destructive_mutations_require_confirmation() {
         let pool = pool().await;
         for (name, input) in [
             ("delete_product", serde_json::json!({"product_id":"P1"})),
-            (
-                "adjust_stock",
-                serde_json::json!({"product_id":"P1","delta":"1"}),
-            ),
-            (
-                "create_refund",
-                serde_json::json!({"sale_id":"S1","reason":"test","items":[]}),
-            ),
+            ("cancel_delivery", serde_json::json!({"delivery_id":"D1"})),
         ] {
             let result = authorize_plan(&pool, name, &input, &ProvenanceState::default()).await;
             if let Ok(decision) = result {
@@ -677,9 +1091,43 @@ mod tests {
         )
         .await;
 
-        assert!(
-            result.is_err(),
-            "create_product should require explicit confirmation"
+        let result = result.expect("create_product should execute without confirmation");
+        assert!(result.undo_id.is_some());
+        assert!(sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM products WHERE name='Cola')"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap());
+    }
+
+    #[tokio::test]
+    async fn automatic_non_destructive_mutation_without_undo_is_still_audited() {
+        let pool = pool().await;
+        let context = MutationExecutionContext {
+            actor_user_id: "admin-1".into(),
+            branch_id: "branch-1".into(),
+        };
+
+        let result = execute_automatic_mutation(
+            &pool,
+            &context,
+            "create_supplier",
+            &serde_json::json!({"name":"Green Foods"}),
+            3,
+            &ProvenanceState::default(),
+        )
+        .await
+        .expect("safe create should execute");
+
+        assert_eq!(result.undo_id, None);
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT status FROM ai_actions WHERE action_id=?")
+                .bind(result.action_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            "executed"
         );
     }
 }

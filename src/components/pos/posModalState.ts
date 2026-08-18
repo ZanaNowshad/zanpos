@@ -1,21 +1,20 @@
 import type { PaymentInput } from "../../types";
+import type { PaymentJourney } from "../PaymentModal";
 
 export type ActiveModal =
   | { kind: "none" }
-  | { kind: "payment"; method?: PaymentInput["method"]; split: boolean }
+  | { kind: "payment"; journey: PaymentJourney; method?: PaymentInput["method"]; split: boolean }
   | { kind: "shiftClose" }
   | { kind: "hold" }
   | { kind: "refund" }
   | { kind: "report" }
-  | { kind: "discount" }
-  | { kind: "lineDiscount"; lineId: string }
+  | { kind: "discount"; lineId?: string }
   | { kind: "customItem" }
   | { kind: "cashEvent" }
-  | { kind: "xReport" }
   | { kind: "clearConfirm" }
   | { kind: "help" }
   | { kind: "recent" }
-  | { kind: "priceInput"; mode: "setExisting"; lineId: string; productName: string }
+  | { kind: "priceInput"; mode: "setExisting"; lineId: string; productName: string; currentPriceMinor: number }
   | { kind: "priceInput"; mode: "addNew"; itemName: string; quantity: string };
 
 export interface ExchangeCredit {

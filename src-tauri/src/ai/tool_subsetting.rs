@@ -7,6 +7,7 @@ pub struct ToolSubset {
     pub definitions: Vec<ToolDef>,
     pub applied: bool,
     pub omitted_mutations: usize,
+    pub omitted_reads: usize,
     pub domains: Vec<&'static str>,
 }
 
@@ -28,26 +29,34 @@ pub fn subset_for_message(
     let registry = ToolRegistry::global()?;
     let mut selected = Vec::with_capacity(definitions.len());
     let mut omitted_mutations = 0;
+    let mut omitted_reads = 0;
     for definition in definitions {
         let descriptor = registry.get(&definition.name).ok_or_else(|| {
             AppError::Validation(format!("Missing policy descriptor for {}", definition.name))
         })?;
-        let keep = descriptor.kind == ToolKind::Read
-            || match mutation_domain(&definition.name) {
-                None => true,
-                Some(domain) => domains.contains(&domain),
-            };
+        // Reads used to be kept unconditionally, which meant the catalogue barely
+        // shrank: the read tools are the bulk of it, and every one of them shipped
+        // on every request. A tool whose name maps to no domain is general-purpose
+        // (search, help, current time) and is always kept, so narrowing here costs
+        // reach only within domains the message never mentioned.
+        let keep = match tool_domain(&definition.name) {
+            None => true,
+            Some(domain) => domains.contains(&domain),
+        };
         if keep {
             selected.push(definition.clone());
-        } else {
+        } else if descriptor.kind == ToolKind::Mutation {
             omitted_mutations += 1;
+        } else {
+            omitted_reads += 1;
         }
     }
 
     Ok(ToolSubset {
-        applied: omitted_mutations > 0,
+        applied: omitted_mutations + omitted_reads > 0,
         definitions: selected,
         omitted_mutations,
+        omitted_reads,
         domains,
     })
 }
@@ -63,8 +72,10 @@ pub async fn load_enabled(pool: &SqlitePool) -> AppResult<bool> {
 
 fn parse_enabled(value: Option<&str>) -> AppResult<bool> {
     match value {
-        None | Some("0" | "false") => Ok(false),
-        Some("1" | "true") => Ok(true),
+        // Unset means on: the whole point of subsetting is that it is the default
+        // path, and an explicit "0" still turns it off.
+        None | Some("1" | "true") => Ok(true),
+        Some("0" | "false") => Ok(false),
         Some(other) => Err(AppError::Validation(format!(
             "Invalid feature_ai_tool_subsetting value: {other}"
         ))),
@@ -76,6 +87,7 @@ fn full_catalogue(definitions: &[ToolDef]) -> ToolSubset {
         definitions: definitions.to_vec(),
         applied: false,
         omitted_mutations: 0,
+        omitted_reads: 0,
         domains: Vec::new(),
     }
 }
@@ -176,7 +188,7 @@ fn detect_domains(message: &str) -> Vec<&'static str> {
         .collect()
 }
 
-fn mutation_domain(name: &str) -> Option<&'static str> {
+fn tool_domain(name: &str) -> Option<&'static str> {
     if contains_any(
         name,
         &[
@@ -255,7 +267,7 @@ mod tests {
     }
 
     #[test]
-    fn clear_sales_intent_keeps_all_reads_and_only_relevant_classified_mutations() {
+    fn clear_sales_intent_scopes_reads_and_mutations_to_the_detected_domain() {
         let definitions = definitions(&[
             "get_today_summary",
             "list_products",
@@ -272,10 +284,66 @@ mod tests {
             .collect();
 
         assert!(subset.applied);
+        // Domain-less general tools always survive.
         assert!(names.contains(&"get_today_summary"));
-        assert!(names.contains(&"list_products"));
         assert!(names.contains(&"create_refund"));
+        // Both the product read and the product mutation drop out: the message
+        // never mentioned products, and the model can call
+        // request_full_tool_access if it turns out to need them.
+        assert!(!names.contains(&"list_products"));
         assert!(!names.contains(&"create_product"));
+        assert_eq!(subset.omitted_reads, 1);
+        assert_eq!(subset.omitted_mutations, 1);
+    }
+
+    /// Narrowing reads is only safe because the model can ask for the rest. If
+    /// this tool were ever classified into a domain it would vanish from exactly
+    /// the requests that need it, and the catalogue could never be widened again.
+    #[test]
+    fn the_widening_escape_hatch_survives_every_domain() {
+        assert_eq!(tool_domain("request_full_tool_access"), None);
+
+        for message in [
+            "Refund yesterday's sale",
+            "restock the shelf from the supplier",
+            "add a loyalty customer",
+            "change the cashier role",
+            "update the printer settings",
+            "raise the price of milk",
+        ] {
+            let domains = detect_domains(message);
+            assert!(!domains.is_empty(), "no domain detected for {message:?}");
+            let definitions = definitions(&["request_full_tool_access"]);
+            let subset = subset_for_message(&definitions, message, true, false).unwrap();
+            assert_eq!(
+                subset.definitions.len(),
+                1,
+                "escape hatch dropped for {message:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn scoping_reads_is_what_actually_shrinks_the_payload() {
+        // The read tools are the bulk of the catalogue, so keeping them all was
+        // why subsetting barely moved the token count.
+        let catalogue = crate::ai::tools::all_tool_definitions();
+        let subset =
+            subset_for_message(&catalogue, "raise the price of milk", true, false).unwrap();
+
+        assert!(subset.applied);
+        assert!(
+            subset.omitted_reads > subset.omitted_mutations,
+            "expected reads to dominate the omissions, got {} reads / {} mutations",
+            subset.omitted_reads,
+            subset.omitted_mutations
+        );
+        assert!(
+            subset.definitions.len() * 100 <= catalogue.len() * 55,
+            "expected at least ~45% of the catalogue to drop, kept {} of {}",
+            subset.definitions.len(),
+            catalogue.len()
+        );
     }
 
     #[test]
@@ -307,10 +375,13 @@ mod tests {
     }
 
     #[test]
-    fn subsetting_flag_defaults_off_and_rejects_invalid_values() {
-        assert!(!parse_enabled(None).unwrap());
-        assert!(!parse_enabled(Some("false")).unwrap());
+    fn subsetting_flag_defaults_on_and_rejects_invalid_values() {
+        // Unset means on. Previously this defaulted off, so the full catalogue
+        // shipped on every request unless an operator found the flag.
+        assert!(parse_enabled(None).unwrap());
         assert!(parse_enabled(Some("1")).unwrap());
+        assert!(!parse_enabled(Some("false")).unwrap());
+        assert!(!parse_enabled(Some("0")).unwrap());
         assert!(parse_enabled(Some("enabled")).is_err());
     }
 }

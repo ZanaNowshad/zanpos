@@ -108,43 +108,79 @@ fn format_qty(qty: f64) -> String {
     }
 }
 
-/// Compare the stock cache to the latest authoritative movement balance.
+/// Compare the stock cache to the authoritative movement balance.
+///
+/// The expected figure is the oldest surviving movement's post-state plus every
+/// delta after it. It deliberately does *not* use the newest movement's
+/// `quantity_after`: that is the value the cache is written from, so comparing
+/// the two made this check structurally unable to fail. Two terminals selling
+/// the same last unit offline both record `quantity_after = 9`, and the old
+/// query agreed with the cache at 9 while the truth was 8.
+///
+/// Anchored rather than a plain SUM because synced movements are pruned.
 pub async fn stock_drift_report(pool: &SqlitePool) -> AppResult<Vec<StockDriftRow>> {
     let rows = sqlx::query(
-        "WITH latest AS (
-           SELECT movement_id, product_id, branch_id, quantity_after,
+        "WITH ranked AS (
+           SELECT movement_id, product_id, branch_id, quantity_after, created_at, rowid AS rid,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY product_id, branch_id
+                    ORDER BY datetime(created_at) ASC, rowid ASC
+                  ) AS oldest_no,
                   ROW_NUMBER() OVER (
                     PARTITION BY product_id, branch_id
                     ORDER BY datetime(created_at) DESC, rowid DESC
-                  ) AS rank_no
+                  ) AS newest_no
            FROM stock_movements
+         ),
+         anchor AS (
+           SELECT product_id, branch_id, CAST(quantity_after AS REAL) AS anchor_after,
+                  created_at AS anchor_at, rid AS anchor_rid
+           FROM ranked WHERE oldest_no = 1
+         ),
+         expected AS (
+           SELECT a.product_id, a.branch_id,
+                  a.anchor_after + COALESCE((
+                    SELECT SUM(CAST(m.quantity_delta AS REAL))
+                    FROM stock_movements m
+                    WHERE m.product_id = a.product_id AND m.branch_id = a.branch_id
+                      AND (datetime(m.created_at) > datetime(a.anchor_at)
+                           OR (datetime(m.created_at) = datetime(a.anchor_at)
+                               AND m.rowid > a.anchor_rid))
+                  ), 0.0) AS expected_qty
+           FROM anchor a
          )
-         SELECT latest.movement_id, latest.product_id, latest.branch_id,
-                latest.quantity_after,
+         SELECT newest.movement_id, expected.product_id, expected.branch_id,
+                expected.expected_qty,
                 COALESCE(stock_levels.quantity_on_hand, '0') AS cached_quantity,
-                COALESCE(products.name, latest.product_id) AS product_name
-         FROM latest
+                COALESCE(products.name, expected.product_id) AS product_name
+         FROM expected
+         JOIN ranked newest
+           ON newest.product_id = expected.product_id
+          AND newest.branch_id = expected.branch_id
+          AND newest.newest_no = 1
          LEFT JOIN stock_levels
-           ON stock_levels.product_id = latest.product_id
-          AND stock_levels.branch_id = latest.branch_id
-         LEFT JOIN products ON products.product_id = latest.product_id
-         WHERE latest.rank_no = 1
-           AND ABS(CAST(COALESCE(stock_levels.quantity_on_hand, '0') AS REAL)
-                   - CAST(latest.quantity_after AS REAL)) > 0.001
-         ORDER BY product_name, latest.branch_id",
+           ON stock_levels.product_id = expected.product_id
+          AND stock_levels.branch_id = expected.branch_id
+         LEFT JOIN products ON products.product_id = expected.product_id
+         WHERE ABS(CAST(COALESCE(stock_levels.quantity_on_hand, '0') AS REAL)
+                   - expected.expected_qty) > 0.001
+         ORDER BY product_name, expected.branch_id",
     )
     .fetch_all(pool)
     .await?;
 
     Ok(rows
         .into_iter()
-        .map(|row| StockDriftRow {
-            product_id: row.get("product_id"),
-            product_name: row.get("product_name"),
-            branch_id: row.get("branch_id"),
-            cached_quantity: row.get("cached_quantity"),
-            expected_quantity: row.get("quantity_after"),
-            latest_movement_id: row.get("movement_id"),
+        .map(|row| {
+            let expected: f64 = row.get("expected_qty");
+            StockDriftRow {
+                product_id: row.get("product_id"),
+                product_name: row.get("product_name"),
+                branch_id: row.get("branch_id"),
+                cached_quantity: row.get("cached_quantity"),
+                expected_quantity: format_qty(expected),
+                latest_movement_id: row.get("movement_id"),
+            }
         })
         .collect())
 }
@@ -862,5 +898,101 @@ mod tests {
             .await
             .expect("clean report")
             .is_empty());
+    }
+
+    /// Insert a movement exactly as an offline terminal would: its own delta,
+    /// and a quantity_after computed from *its* view of stock.
+    async fn offline_movement(
+        pool: &SqlitePool,
+        id: &str,
+        delta: f64,
+        believed_after: f64,
+        created_at: &str,
+    ) {
+        sqlx::query(
+            "INSERT INTO stock_movements
+               (movement_id, product_id, branch_id, device_id, origin_device_id, movement_type,
+                quantity_delta, quantity_after, reference_type, reference_id,
+                created_by_user_id, created_at, sync_status)
+             VALUES (?,?,?,?,?,'sale',?,?,'sale','R-1',?,?,'synced')",
+        )
+        .bind(id)
+        .bind(COLA_ID)
+        .bind(BRANCH)
+        .bind(DEVICE)
+        .bind(DEVICE)
+        .bind(format_qty(delta))
+        .bind(format_qty(believed_after))
+        .bind(USER)
+        .bind(created_at)
+        .execute(pool)
+        .await
+        .expect("insert movement");
+    }
+
+    // Two terminals each sell the last unit while offline. Both compute
+    // quantity_after = 9 from their own cache of 10, so taking the newest
+    // snapshot settles stock at 9 when the truth is 8 — and the old drift check
+    // compared the cache against that same 9, so it could never report it.
+    #[tokio::test]
+    async fn concurrent_offline_sales_are_detected_as_drift() {
+        let pool = make_pool().await;
+        offline_movement(&pool, "M-BASE", -0.0, 10.0, "2026-01-01T10:00:00Z").await;
+        offline_movement(&pool, "M-LANE1", -1.0, 9.0, "2026-01-01T10:05:00Z").await;
+        offline_movement(&pool, "M-LANE2", -1.0, 9.0, "2026-01-01T10:06:00Z").await;
+
+        // The cache holds the newest snapshot, which is what sync wrote.
+        sqlx::query(
+            "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand,
+                                       created_at, updated_at)
+             VALUES ('SL-DRIFT', ?, ?, '9', datetime('now'), datetime('now'))
+             ON CONFLICT(product_id, branch_id) DO UPDATE SET quantity_on_hand = '9'",
+        )
+        .bind(COLA_ID)
+        .bind(BRANCH)
+        .execute(&pool)
+        .await
+        .expect("seed cache");
+
+        let drift = stock_drift_report(&pool).await.expect("drift report");
+        assert_eq!(drift.len(), 1, "the double-sale must be reported");
+        assert_eq!(
+            drift[0].expected_quantity, "8",
+            "both deltas must compose: 10 - 1 - 1"
+        );
+
+        reconcile_stock_drift(&pool).await.expect("reconcile");
+        assert_eq!(current_qty(&pool, COLA_ID).await, 8.0);
+    }
+
+    // Synced movements are pruned, so the balance must anchor on the oldest
+    // surviving row rather than summing deltas from zero.
+    #[tokio::test]
+    async fn balance_survives_pruned_history() {
+        let pool = make_pool().await;
+        // Everything before this was pruned; this row's quantity_after is the
+        // only record that the earlier 500 units ever existed.
+        offline_movement(&pool, "M-ANCHOR", -1.0, 500.0, "2026-02-01T10:00:00Z").await;
+        offline_movement(&pool, "M-NEXT", -2.0, 498.0, "2026-02-01T11:00:00Z").await;
+
+        sqlx::query(
+            "INSERT INTO stock_levels (stock_level_id, product_id, branch_id, quantity_on_hand,
+                                       created_at, updated_at)
+             VALUES ('SL-PRUNE', ?, ?, '498', datetime('now'), datetime('now'))
+             ON CONFLICT(product_id, branch_id) DO UPDATE SET quantity_on_hand = '498'",
+        )
+        .bind(COLA_ID)
+        .bind(BRANCH)
+        .execute(&pool)
+        .await
+        .expect("seed cache");
+
+        // 500 (anchor) - 2 (the one delta after it) = 498. A plain SUM of
+        // surviving deltas would have said -3.
+        let drift = stock_drift_report(&pool).await.expect("drift report");
+        assert!(
+            drift.is_empty(),
+            "pruned history must not be read as stock loss: {drift:?}"
+        );
     }
 }

@@ -1,0 +1,84 @@
+/* Header corrections found by inspecting rendered screenshots at 768/1024.
+   The DOM reported no overflow, but the control cluster wrapped onto a second
+   line inside a fixed-height header and printed over the breadcrumb. */
+
+.oa-topbar.zp-topbar {
+  /* Never wrap or stack: the shell header has a fixed height, so a second row
+     overflows it and prints over the page content below. Items shrink or hide
+     instead. `row` is stated explicitly because narrow-width rules elsewhere
+     stack `.oa-topbar` — that is correct for page headers, not for the shell. */
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  overflow: hidden;
+}
+
+/* "Till" is a fixed-size action, not a spacer. Without this it absorbed all
+   free space and rendered ~230px wide on a tablet. */
+.oa-topbar.zp-topbar .oa-back-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.oa-topbar.zp-topbar .oa-command-trigger {
+  min-width: 0;
+  /* Let the ask bar absorb slack instead of the Till button. */
+  flex: 1 1 auto;
+}
+
+/* The window buttons (.win-ctrls) are painted at the physical top-right corner
+   in both writing directions — they are OS chrome, and `right: 0` does not
+   flip. So the corner has to be reserved physically, not logically.
+
+   In LTR the header is what sits under them. The reservation used to apply only
+   below 1279px; above that the header merely happened not to reach the buttons,
+   and a longer store or user name printed straight underneath. */
+html:not([dir="rtl"]) .oa-topbar.zp-topbar { padding-right: 150px; }
+
+/* In RTL the header is on the left and the navigation rail is what runs under
+   the buttons: "ZANPOS Command" and the store name rendered behind them at
+   every width from 1280 up, and the collapse toggle sat under the close button
+   on a collapsed rail. The reservation goes on the rail rather than its brand
+   row — the brand's padding is rewritten by the collapsed and auto-collapsed
+   rules, which are more specific and would win. */
+[dir="rtl"] .oa-primary-nav { padding-top: 36px; }
+
+/* A 64px rail is narrower than the 138px button strip, so the strip overhangs
+   onto the header and lands on the search field's shortcut hint. Reserve the
+   overhang — but only while the rail is actually narrow, or RTL would carry a
+   permanent gap beside a full-width rail. The rail collapses either by the
+   user's toggle or automatically below 1100px. */
+[dir="rtl"] .oa-page:has(.oa-primary-nav-collapsed) .oa-topbar.zp-topbar { padding-right: 90px; }
+@media (max-width: 1100px) {
+  [dir="rtl"] .oa-topbar.zp-topbar { padding-right: 90px; }
+}
+
+@media (max-width: 1279px) {
+  .oa-topbar.zp-topbar .oa-user-name { display: none; }
+}
+
+@media (max-width: 1024px) {
+  /* Theme and language are preference toggles, not operational controls —
+     they are the first thing to go when horizontal space runs out. */
+  .oa-topbar.zp-topbar .oa-tool-btn[title="☀"],
+  .oa-topbar.zp-topbar .oa-tool-btn[title="☾"],
+  .oa-topbar.zp-topbar .oa-tool-btn[title="EN"],
+  .oa-topbar.zp-topbar .oa-tool-btn[title="ع"] { display: none; }
+
+  .oa-topbar.zp-topbar .oa-command-trigger span { display: none; }
+  .oa-topbar.zp-topbar .oa-command-trigger { flex: 0 0 auto; }
+}
+
+@media (max-width: 900px) {
+  /* Keep only what a tablet user needs from the header: search, identity and
+     the way back to the till. Everything else is reachable from a page. */
+  .oa-topbar.zp-topbar .oa-notif-btn,
+  .oa-topbar.zp-topbar .oa-dock-toggle { display: none; }
+  .oa-topbar.zp-topbar .oa-user-chip { padding-inline: 4px; }
+}
+
+@media (max-width: 860px) {
+  /* Below this the status pills lose their labels and keep only their icons,
+     so the user chip and Till stay reachable. */
+  .oa-topbar.zp-topbar .oa-status-pill span:not(.oa-status-dot) { display: none; }
+}

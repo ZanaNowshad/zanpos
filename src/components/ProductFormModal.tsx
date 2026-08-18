@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import {
+  resolveProductImageValue,
+  validateImageUrl,
+} from "../productImage";
 import type { AdminProduct, CategoryRow, ProductBarcodeRow, TaxRuleRow } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney, parseMoney } from "../money";
@@ -9,6 +12,7 @@ import { useLanguage } from "../hooks/useLanguage";
 import { modalTranslator } from "../i18n/modalStrings";
 import { detailTranslator } from "../i18n/detailStrings";
 import { productSchema, useSubmitGuard } from "../forms";
+import { ProductImageSearchControl } from "./ProductImageSearchControl";
 
 interface Props {
   mode: "create" | "edit";
@@ -48,6 +52,11 @@ export default function ProductFormModal({
   const [reorderPoint, setReorderPoint] = useState(product?.reorder_point ?? 0);
   const [isActive, setIsActive] = useState(product?.is_active ?? true);
   const [imagePath, setImagePath] = useState(product?.image_path ?? "");
+  const [imageUrlInput, setImageUrlInput] = useState("");
+  const [imageUrlErr, setImageUrlErr] = useState<string | null>(null);
+  const [imageSearchLoading, setImageSearchLoading] = useState(false);
+  const [imageSearchError, setImageSearchError] = useState<string | null>(null);
+  const [imageSearchSource, setImageSearchSource] = useState<string | null>(null);
   const [costPrice, setCostPrice] = useState("");
   const [markupPct, setMarkupPct] = useState("");
   const [extraBarcodes, setExtraBarcodes] = useState<ProductBarcodeRow[]>([]);
@@ -65,8 +74,51 @@ export default function ProductFormModal({
   }, [mode, product, sessionUserId]);
 
   async function pickImage() {
-    try { const p = await cmd.productPickImage(); if (p) setImagePath(p); }
+    try {
+      const p = await cmd.productPickImage();
+      if (p) { setImagePath(p); setImageSearchSource(null); setImageSearchError(null); }
+    }
     catch { setError(dt("filePickerFailed")); }
+  }
+
+  /** Accept a typed image URL. Validated before it is stored so a bad value is
+   *  caught here rather than becoming a silently broken image on every screen
+   *  that renders this product. */
+  function applyImageUrl() {
+    const reason = validateImageUrl(imageUrlInput);
+    if (reason === "empty") { setImageUrlErr(null); return; }
+    if (reason) {
+      setImageUrlErr(reason === "scheme" ? t("imageUrlScheme") : t("imageUrlInvalid"));
+      return;
+    }
+    setImageUrlErr(null);
+    setImagePath(imageUrlInput.trim());
+    setImageSearchSource(null);
+    setImageSearchError(null);
+    setImageUrlInput("");
+  }
+
+  async function fetchProductImage() {
+    setImageSearchLoading(true);
+    setImageSearchError(null);
+    try {
+      const categoryName = categories.find(c => c.category_id === categoryId)?.name;
+      const result = await cmd.adminSearchProductImage(sessionUserId, {
+        productName: name.trim(),
+        barcode: barcode.trim() || undefined,
+        sku: sku.trim() || undefined,
+        categoryName,
+        currentImageUrl: imagePath.trim() || undefined,
+        mode: imagePath.trim() ? "change" : "fetch",
+      });
+      setImagePath(result.imageUrl);
+      setImageSearchSource(`${t("imageFoundVia")} ${result.source}`);
+    } catch (e: unknown) {
+      const detail = typeof e === "string" ? e : e instanceof Error ? e.message : "";
+      setImageSearchError(detail || t("imageSearchFailed"));
+    } finally {
+      setImageSearchLoading(false);
+    }
   }
 
   function computeSelling(cost: number, pct: string): number {
@@ -106,6 +158,12 @@ export default function ProductFormModal({
 
   async function save() {
     if (!tryLock()) return; // Prevent double-submit
+    const resolvedImage = resolveProductImageValue(imagePath, imageUrlInput);
+    if (resolvedImage.error) {
+      setImageUrlErr(resolvedImage.error === "scheme" ? t("imageUrlScheme") : t("imageUrlInvalid"));
+      unlock();
+      return;
+    }
     const priceMinor = parseMoney(price, exp);
     const parsed = productSchema.safeParse({
       name: name.trim(),
@@ -128,7 +186,7 @@ export default function ProductFormModal({
           tax_rule_id: taxRuleId || undefined, price_minor: priceMinor,
           track_inventory: trackInventory, allow_decimal_quantity: allowDecimal,
           reorder_point: reorderPoint, created_by_user_id: sessionUserId,
-          image_path: imagePath.trim() || undefined,
+          image_path: resolvedImage.value || undefined,
         });
         for (const pb of pendingBarcodes) {
           try { await cmd.productBarcodeAdd(sessionUserId, created.product_id, pb.barcode); } catch { /* best-effort — extra-barcode failures must not block the save */ }
@@ -140,7 +198,7 @@ export default function ProductFormModal({
           tax_rule_id: taxRuleId || undefined, price_minor: priceMinor,
           track_inventory: trackInventory, allow_decimal_quantity: allowDecimal,
           reorder_point: reorderPoint, is_active: isActive,
-          updated_by_user_id: sessionUserId, image_path: imagePath.trim() || undefined,
+          updated_by_user_id: sessionUserId, image_path: resolvedImage.value || undefined,
         });
       }
       onSaved();
@@ -250,14 +308,46 @@ export default function ProductFormModal({
 
           <label className="bo-label">{t("image")}</label>
           <div className="prod-image-row">
-            {imagePath ? (
-              <img className="prod-image-preview" src={convertFileSrc(imagePath)} alt="" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
-            ) : <div className="prod-image-placeholder">{t("noImage")}</div>}
+            <ProductImageSearchControl
+              productName={name}
+              barcode={barcode}
+              sku={sku}
+              categoryName={categories.find(c => c.category_id === categoryId)?.name}
+              imagePath={imagePath}
+              fetchLabel={t("fetchImage")}
+              changeLabel={t("changeImage")}
+              searchingLabel={t("findingImage")}
+              evidenceLabel={t("imageSearchEvidence")}
+              noImageLabel={t("noImage")}
+              loading={imageSearchLoading}
+              error={imageSearchError}
+              source={imageSearchSource}
+              onSearch={() => { void fetchProductImage(); }}
+            />
             <div className="prod-image-btns">
               <button className="btn-secondary" type="button" onClick={pickImage}>{t("choose")}</button>
-              {imagePath && <button className="btn-secondary" type="button" onClick={() => setImagePath("")}>{t("remove")}</button>}
+              {imagePath && <button className="btn-secondary" type="button" onClick={() => { setImagePath(""); setImageSearchSource(null); }}>{t("remove")}</button>}
             </div>
           </div>
+          <div className="prod-image-url-row">
+            <input
+              className="bo-input"
+              type="url"
+              inputMode="url"
+              dir="ltr"
+              placeholder={t("imageUrlPlaceholder")}
+              value={imageUrlInput}
+              onChange={e => { setImageUrlInput(e.target.value); setImageUrlErr(null); }}
+              onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); applyImageUrl(); } }}
+              onBlur={applyImageUrl}
+              aria-label={t("imageUrl")}
+              aria-invalid={imageUrlErr ? true : undefined}
+            />
+            <button className="btn-secondary" type="button" onClick={applyImageUrl}>{t("useUrl")}</button>
+          </div>
+          {imageUrlErr && <div className="bo-field-error">{imageUrlErr}</div>}
+          <div className="prod-image-hint">{t("imageUrlHint")}</div>
+          {imageSearchSource && <div className="prod-image-hint">{t("imageSearchRightsHint")}</div>}
         </div>
         <div className="bo-form-modal-footer">
           <button className="btn-secondary" onClick={onClose}>{t("cancel")}</button>

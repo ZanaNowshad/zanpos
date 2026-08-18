@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { AdminProduct, CategoryRow, ProductPrefill, TaxRuleRow } from "../types";
+import type { AdminProduct, CategoryRow, ProductPrefill, StockLevel, TaxRuleRow } from "../types";
 import { DEVICE } from "../types";
-import { formatMoney } from "../money";
 import * as cmd from "../tauri/commands";
 import BarcodesPrintModal from "./BarcodesPrintModal";
 import BulkImportModal from "./BulkImportModal";
@@ -9,6 +8,12 @@ import DuplicateProductsModal from "./DuplicateProductsModal";
 import ProductFormModal from "./ProductFormModal";
 import { useLanguage } from "../hooks/useLanguage";
 import { modalTranslator } from "../i18n/modalStrings";
+import { PageTemplate, EmptyState, LoadingSkeleton, DataTable, Toolbar } from "./templates";
+import { exportProductCatalogue } from "../csv/exportProductCatalogue";
+import { Package, Tag } from "lucide-react";
+import { ProductImageSearchControl } from "./ProductImageSearchControl";
+import { productCatalogueColumns } from "./productCatalogueColumns";
+import { useProductImageFetch } from "./useProductImageFetch";
 
 interface Props {
   sessionUserId: string;
@@ -42,6 +47,22 @@ export default function ProductsTab({
   const [showBulkImport, setShowBulkImport] = useState(false);
   const [showDupModal, setShowDupModal] = useState(false);
   const [duplicateCount, setDuplicateCount] = useState<number | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [statusFilter, setStatusFilter]     = useState<"" | "active" | "inactive">("");
+  /** Stock is a separate command; joined by product_id. Null = unavailable. */
+  const [stockByProduct, setStockByProduct] = useState<Map<string, StockLevel> | null>(null);
+  const [loadError, setLoadError]           = useState<string | null>(null);
+  const [exporting, setExporting]           = useState(false);
+  const [exportError, setExportError]       = useState<string | null>(null);
+
+  const { imageSearchState, bulkImages, fetchProductImage, fetchMissingImages, stopBulk } =
+    useProductImageFetch({
+      sessionUserId,
+      products,
+      failureLabel: t("imageSearchFailed"),
+      onImageSaved: (productId, imageUrl) => setProducts(current =>
+        current.map(row => (row.product_id === productId ? { ...row, image_path: imageUrl } : row))),
+    });
 
   const exp = DEVICE.currency_exponent;
   const cur = DEVICE.currency;
@@ -52,21 +73,44 @@ export default function ProductsTab({
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  const fetchProducts = useCallback(async (q: string, off: number) => {
+  const fetchProducts = useCallback(async (q: string, off: number, categoryId: string) => {
     setLoading(true);
+    setLoadError(null);
     try {
-      const page = await cmd.adminListProducts(sessionUserId, { search: q, offset: off, limit: PAGE_SIZE });
+      const page = await cmd.adminListProducts(sessionUserId, {
+        search: q,
+        categoryId: categoryId || undefined,
+        offset: off,
+        limit: PAGE_SIZE,
+      });
       setProducts(page.items);
       setTotal(page.total);
       setOffset(off);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : String(e));
+      setProducts([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
   }, [sessionUserId]);
 
+  // Stock lives behind its own command. If it is unavailable the catalogue is
+  // still fully usable — the column degrades to "—" rather than failing the page.
   useEffect(() => {
-    fetchProducts(search, offset);
-  }, [search, offset]); 
+    let cancelled = false;
+    cmd.inventoryGetLevels(sessionUserId)
+      .then(levels => {
+        if (cancelled) return;
+        setStockByProduct(new Map(levels.map(l => [l.product_id, l])));
+      })
+      .catch(() => { if (!cancelled) setStockByProduct(null); });
+    return () => { cancelled = true; };
+  }, [sessionUserId]);
+
+  useEffect(() => {
+    fetchProducts(search, offset, categoryFilter);
+  }, [search, offset, categoryFilter, fetchProducts]);
 
   useEffect(() => {
     Promise.all([cmd.adminListCategories(sessionUserId), cmd.adminListTaxRules(sessionUserId)])
@@ -98,7 +142,11 @@ export default function ProductsTab({
     setCreating(true);
     setSelected(null);
     onPrefillConsumed?.();
-  }, [prefill]); 
+    // Deliberately keyed on `prefill` alone: this effect calls back into the
+    // parent to clear the prefill, so depending on that callback would re-run
+    // it on every parent render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill]);
 
   function startCreate() {
     setSelected(null);
@@ -119,16 +167,86 @@ export default function ProductsTab({
   const showingForm = creating || selected !== null;
 
   async function refreshProducts() {
-    await fetchProducts(search, 0);
+    await fetchProducts(search, 0, categoryFilter);
     setOffset(0);
   }
+
+  /** Rows on this page that could take an image but have none. */
+  const missingImageCount = products.filter(
+    p => !p.image_path?.trim() && p.barcode?.trim(),
+  ).length;
+
+  const hasQuery = search.trim() !== "" || categoryFilter !== "" || statusFilter !== "";
+
+  function clearQuery() {
+    setSearchInput("");
+    setSearch("");
+    setCategoryFilter("");
+    setStatusFilter("");
+    setOffset(0);
+  }
+
+
+  // Status is a client-side filter: the backend command has no status param, so
+  // filtering server-side would silently drop rows from the page count.
+  const exportProducts = useCallback(async () => {
+    setExporting(true);
+    setExportError(null);
+    try {
+      await exportProductCatalogue({
+        sessionUserId, search, categoryFilter, statusFilter,
+        currencyExponent: exp, pageSize: PAGE_SIZE,
+      });
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExporting(false);
+    }
+  }, [sessionUserId, search, categoryFilter, statusFilter, exp]);
+
+  /**
+   * Catalogue counts.
+   *
+   * `total` is the server's count for the whole filtered catalogue. The low and
+   * out-of-stock figures are counted over the loaded page only, because stock
+   * arrives from a separate command joined by product_id and there is no
+   * server-side aggregate for it — so they are labelled "on this page" rather
+   * than presented as store-wide totals. The reference's "Catalogue Health"
+   * score is deliberately absent: no backend computes it.
+   */
+  const stockCounts = useMemo(() => {
+    if (!stockByProduct) return null;
+    let low = 0, out = 0;
+    for (const p of products) {
+      const level = stockByProduct.get(p.product_id);
+      if (!level) continue;
+      const qty = Number(level.quantity_on_hand);
+      if (!Number.isFinite(qty)) continue;
+      if (qty <= 0) out += 1;
+      else if (qty <= p.reorder_point) low += 1;
+    }
+    return { low, out };
+  }, [products, stockByProduct]);
+
+  const visibleProducts = useMemo(() => {
+    if (!statusFilter) return products;
+    return products.filter(p => (statusFilter === "active" ? p.is_active : !p.is_active));
+  }, [products, statusFilter]);
+
+  const columns = useMemo(
+    () => productCatalogueColumns(t, cur, exp, stockByProduct),
+    [t, cur, exp, stockByProduct],
+  );
+
+  const rangeLabel = total > 0
+    ? `${offset + 1}–${Math.min(offset + visibleProducts.length, total)} ${t("of")} ${total.toLocaleString()}`
+    : "";
 
   return (
     <>
     {printProducts && <BarcodesPrintModal products={printProducts} onClose={() => setPrintProducts(null)} />}
     {showBulkImport && <BulkImportModal mode="products" sessionUserId={sessionUserId} onClose={() => setShowBulkImport(false)} onDone={refreshProducts} />}
 
-    {/* Product form modal — full-screen overlay */}
     {showingForm && (
       <ProductFormModal
         mode={creating ? "create" : "edit"}
@@ -143,7 +261,6 @@ export default function ProductsTab({
       />
     )}
 
-    {/* Duplicate-products triage — scans the catalog, merges or archives dupes */}
     {showDupModal && (
       <DuplicateProductsModal
         sessionUserId={sessionUserId}
@@ -152,62 +269,200 @@ export default function ProductsTab({
       />
     )}
 
-    <div className="bo-tab-layout">
-      {/* ── Full-width product list ── */}
-      <div className="bo-list-pane bo-list-full">
-        <div className="bo-list-header">
-          <input className="bo-search" placeholder={t("searchProducts")} value={searchInput} onChange={e => setSearchInput(e.target.value)} />
-          <button className="btn-secondary" onClick={() => setShowDupModal(true)} title={t("duplicates")}>{t("duplicates")}</button>
-          <button className="btn-secondary" onClick={() => setPrintProducts(products)} title={t("printLabels")}>{t("labels")}</button>
-          <button className="btn-secondary" onClick={() => setShowBulkImport(true)} title={t("importAction")}>{t("importAction")}</button>
-          <button className="btn-primary" onClick={startCreate}>+ {t("newProduct")}</button>
-        </div>
-        {duplicateCount !== null && duplicateCount > 0 && (
-          <div className="product-integrity-banner">
-            <div>
-              <strong>{duplicateCount} {t("possibleDuplicatesFound")}</strong>
-              <span>{t("duplicateReviewHint")}</span>
-            </div>
-            <button className="btn-primary" onClick={() => setShowDupModal(true)}>{t("reviewAndMerge")}</button>
-          </div>
-        )}
-        {total > 0 && (
-          <div className="bo-pagination">
-            <span className="bo-pagination-info">{loading ? t("loading") : `${offset + 1}–${Math.min(offset + products.length, total)} ${t("of")} ${total.toLocaleString()}`}</span>
-            <button className="bo-pagination-btn" disabled={offset === 0 || loading} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}><span className="icon-directional" aria-hidden="true">‹</span> {t("previous")}</button>
-            <button className="bo-pagination-btn" disabled={offset + PAGE_SIZE >= total || loading} onClick={() => setOffset(offset + PAGE_SIZE)}>{t("next")} <span className="icon-directional" aria-hidden="true">›</span></button>
-          </div>
-        )}
-        <div className="bo-list">
-          {loading && products.length === 0 && <div className="bo-empty">{t("loading")}</div>}
-          {products.map(p => (
-            <div key={p.product_id} className="bo-list-row-wrap">
-              <button
-                className={`bo-list-row ${selected?.product_id === p.product_id ? "bo-list-row-active" : ""} ${!p.is_active ? "bo-list-row-inactive" : ""}`}
-                onClick={() => startEdit(p)}
+    <PageTemplate
+      contentFlat
+      header={{
+        title: t("products"),
+        subtitle: t("catalogueSubtitle"),
+        primaryAction: { label: `+ ${t("newProduct")}`, onClick: startCreate },
+        secondaryActions: [
+          {
+            label: bulkImages
+              ? `${t("fetchingImages")} ${bulkImages.done}/${bulkImages.total}`
+              : t("fetchMissingImages"),
+            onClick: () => {
+              if (bulkImages) { stopBulk(); return; }
+              void fetchMissingImages();
+            },
+            disabled: missingImageCount === 0 && !bulkImages,
+          },
+          { label: t("duplicates"), onClick: () => setShowDupModal(true) },
+          { label: t("labels"), onClick: () => setPrintProducts(products) },
+          { label: t("importAction"), onClick: () => setShowBulkImport(true) },
+          {
+            label: exporting ? t("exporting") : t("exportAction"),
+            onClick: () => { void exportProducts(); },
+            disabled: exporting || total === 0,
+          },
+        ],
+      }}
+      degraded={exportError ? {
+        severity: "warning",
+        message: `${t("exportFailed")} ${exportError}`,
+        onDismiss: () => setExportError(null),
+      } : undefined}
+      toolbar={
+        <Toolbar
+          search={{
+            value: searchInput,
+            onChange: setSearchInput,
+            placeholder: t("searchProducts"),
+            label: t("searchProducts"),
+          }}
+          count={rangeLabel}
+          onClear={hasQuery ? clearQuery : undefined}
+          clearLabel={t("clearFilters")}
+          filters={
+            <>
+              <select
+                className="zp-filter"
+                value={categoryFilter}
+                aria-label={t("category")}
+                onChange={e => { setCategoryFilter(e.target.value); setOffset(0); }}
               >
-                <div className="bo-list-row-main">
-                  <span className="bo-list-row-name">{p.name}</span>
-                  <span className="bo-list-row-sub">{p.category_name}{p.sku ? ` · ${p.sku}` : ""}</span>
-                </div>
-                <div className="bo-list-row-right">
-                  <span className="bo-list-row-price">{cur} {formatMoney(p.price_minor, exp)}</span>
-                  {!p.is_active && <span className="bo-badge-inactive">{t("inactive")}</span>}
-                </div>
-              </button>
-              <button className="btn-secondary bo-label-btn" onClick={e => { e.stopPropagation(); setPrintProducts([p]); }}>{t("label")}</button>
-            </div>
-          ))}
-          {!loading && products.length === 0 && (
-            <div className="bo-empty">
-              <div className="bo-empty-icon">📦</div>
-              <p className="bo-empty-title">{t("noProductsFound")}</p>
-              <p className="bo-empty-hint">{t("noProductsHint")}</p>
-            </div>
-          )}
+                <option value="">{t("allCategories")}</option>
+                {categories.map(c => (
+                  <option key={c.category_id} value={c.category_id}>{c.name}</option>
+                ))}
+              </select>
+              <select
+                className="zp-filter"
+                value={statusFilter}
+                aria-label={t("status")}
+                onChange={e => setStatusFilter(e.target.value as "" | "active" | "inactive")}
+              >
+                <option value="">{t("allStatuses")}</option>
+                <option value="active">{t("active")}</option>
+                <option value="inactive">{t("inactive")}</option>
+              </select>
+            </>
+          }
+        />
+      }
+    >
+      {bulkImages && bulkImages.done === bulkImages.total && bulkImages.failed > 0 && (
+        <div className="product-integrity-banner">
+          <div>
+            <strong>{bulkImages.total - bulkImages.failed} {t("bulkImagesDone")}</strong>
+            <span>{bulkImages.failed} {t("bulkImagesFailed")}</span>
+          </div>
+        </div>
+      )}
+
+      {duplicateCount !== null && duplicateCount > 0 && (
+        <div className="product-integrity-banner">
+          <div>
+            <strong>{duplicateCount} {t("possibleDuplicatesFound")}</strong>
+            <span>{t("duplicateReviewHint")}</span>
+          </div>
+          <button className="btn-primary" onClick={() => setShowDupModal(true)}>{t("reviewAndMerge")}</button>
+        </div>
+      )}
+
+      {/* Which empty state to show is decided from application state, never
+          from how the page happens to look. */}
+      {/* Catalogue counts. Total is the server's figure for the whole filtered
+          catalogue; stock counts are page-scoped and say so, because stock has
+          no server-side aggregate. No composite "health score" — nothing
+          computes one. */}
+      <div className="zp-cat-counts">
+        <div>
+          <span>{t("totalProducts")}</span>
+          <strong className="zp-numeric">{total.toLocaleString()}</strong>
+        </div>
+        <div>
+          <span>{t("lowStockLabel")}</span>
+          {stockCounts
+            ? <strong className="zp-numeric zp-cat-warn">{stockCounts.low}<small>{t("onThisPage")}</small></strong>
+            : <strong className="zp-status-muted">{t("stockUnavailable")}</strong>}
+        </div>
+        <div>
+          <span>{t("outOfStockLabel")}</span>
+          {stockCounts
+            ? <strong className="zp-numeric zp-cat-danger">{stockCounts.out}<small>{t("onThisPage")}</small></strong>
+            : <strong className="zp-status-muted">{t("stockUnavailable")}</strong>}
         </div>
       </div>
-    </div>
+
+      {loading && products.length === 0 ? (
+        <LoadingSkeleton variant="table" count={8} />
+      ) : loadError ? (
+        <EmptyState
+          variant="degraded"
+          title={t("couldNotLoadProducts")}
+          description={loadError}
+          stillWorks={t("sellingUnaffected")}
+          actions={[{ label: t("retry"), onClick: () => refreshProducts(), primary: true }]}
+        />
+      ) : visibleProducts.length === 0 && hasQuery ? (
+        <EmptyState
+          variant="no-results"
+          title={t("noMatchingProducts")}
+          description={t("noMatchingProductsHint")}
+          actions={[{ label: t("clearFilters"), onClick: clearQuery, primary: true }]}
+        />
+      ) : visibleProducts.length === 0 ? (
+        <EmptyState
+          variant="first-use"
+          icon={<Package size={32} strokeWidth={1.5} />}
+          title={t("addFirstProduct")}
+          description={t("addFirstProductHint")}
+          actions={[
+            { label: `+ ${t("newProduct")}`, onClick: startCreate, primary: true },
+            { label: t("importAction"), onClick: () => setShowBulkImport(true) },
+          ]}
+        />
+      ) : (
+        <>
+          <DataTable
+            caption={t("products")}
+            columns={columns}
+            rows={visibleProducts}
+            rowKey={p => p.product_id}
+            onRowClick={startEdit}
+            isRowActive={p => selected?.product_id === p.product_id}
+            isRowMuted={p => !p.is_active}
+            rowAction={p => (
+              <div className="product-catalogue-actions">
+                <ProductImageSearchControl
+                  compact
+                  showPreview={false}
+                  productName={p.name}
+                  barcode={p.barcode}
+                  sku={p.sku}
+                  categoryName={p.category_name}
+                  imagePath={p.image_path}
+                  fetchLabel={t("fetchImage")}
+                  changeLabel={t("changeImage")}
+                  searchingLabel={t("findingImage")}
+                  evidenceLabel={t("imageSearchEvidence")}
+                  noImageLabel={t("noImage")}
+                  loading={imageSearchState[p.product_id]?.loading}
+                  error={imageSearchState[p.product_id]?.error}
+                  onSearch={() => { void fetchProductImage(p); }}
+                />
+                <button
+                  type="button"
+                  className="btn-secondary zp-row-action"
+                  onClick={() => setPrintProducts([p])}
+                  aria-label={`${t("label")}: ${p.name}`}
+                >
+                  <Tag size={14} aria-hidden="true" />
+                  <span className="zp-action-label">{t("label")}</span>
+                </button>
+              </div>
+            )}
+          />
+          {total > PAGE_SIZE && (
+            <div className="bo-pagination">
+              <span className="bo-pagination-info">{loading ? t("loading") : rangeLabel}</span>
+              <button className="bo-pagination-btn" disabled={offset === 0 || loading} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}><span className="icon-directional" aria-hidden="true">‹</span> {t("previous")}</button>
+              <button className="bo-pagination-btn" disabled={offset + PAGE_SIZE >= total || loading} onClick={() => setOffset(offset + PAGE_SIZE)}>{t("next")} <span className="icon-directional" aria-hidden="true">›</span></button>
+            </div>
+          )}
+        </>
+      )}
+    </PageTemplate>
     </>
   );
 }

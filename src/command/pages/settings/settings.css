@@ -1,0 +1,290 @@
+/* Settings workspace. Component-scoped (`zp-`). Nothing here is in App.css.
+   Structure follows the reference: one quiet rail, one generous work area,
+   restrained borders, cards only where a card means something. */
+
+.zp-settings {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+  min-height: 0;
+}
+
+/* ── Contextual rail ─────────────────────────────────────────────────────── */
+
+.zp-set-nav {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.zp-set-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  margin-bottom: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  color: var(--text-muted);
+  background: var(--surface);
+}
+
+.zp-set-search:focus-within {
+  border-color: var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.zp-set-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  font-size: 0.8125rem;
+}
+
+.zp-set-search input:focus { outline: none; }
+
+.zp-set-nav ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.zp-set-nav-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: var(--radius-sm, 6px);
+  color: var(--text-dim);
+  background: transparent;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.zp-set-nav-item:hover { color: var(--text); background: var(--surface2); }
+.zp-set-nav-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Active carries fill + weight + a start bar — never colour alone. */
+.zp-set-nav-item.is-on {
+  position: relative;
+  color: var(--text);
+  background: var(--surface2);
+}
+
+.zp-set-nav-item.is-on::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  top: 50%;
+  width: 3px;
+  height: 22px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+  transform: translateY(-50%);
+}
+
+.zp-set-nav-item.is-on .zp-set-nav-label { font-weight: 600; }
+.zp-set-nav-item.is-on .zp-set-nav-icon { color: var(--accent); }
+
+.zp-set-nav-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  padding-top: 1px;
+  color: var(--text-muted);
+}
+
+.zp-set-nav-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.zp-set-nav-label { font-size: 0.8125rem; }
+
+.zp-set-nav-desc {
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Advanced sits below a rule so destructive territory is never adjacent to
+   ordinary store configuration. */
+.zp-set-nav-sep {
+  height: 1px;
+  margin: 8px 0;
+  background: var(--border);
+}
+
+.zp-set-nav-item.is-danger .zp-set-nav-icon { color: var(--error); }
+.zp-set-nav-item.is-danger.is-on::before { background: var(--error); }
+
+.zp-set-nav-empty,
+.zp-set-nav-hint {
+  margin: 6px 2px;
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+}
+
+/* ── Work area ───────────────────────────────────────────────────────────── */
+
+.zp-set-content { min-width: 0; }
+
+.zp-set-section { max-width: 860px; }
+
+.zp-set-h2 {
+  margin: 0 0 4px;
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.zp-set-sub {
+  margin: 0 0 16px;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  max-width: 62ch;
+}
+
+.zp-set-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.zp-set-actions button { display: inline-flex; align-items: center; gap: 6px; }
+
+.zp-set-loading { padding: 24px 2px; color: var(--text-muted); font-size: 0.8125rem; }
+
+/* Flatten the legacy panel chrome the embedded feature tabs still carry, so
+   they read as sections of one page rather than cards inside a card. */
+.zp-set-content .oa-panel,
+.zp-set-content .settings-card {
+  border: 0;
+  border-radius: 0;
+  background: none;
+  padding: 0;
+}
+
+.zp-set-content .oa-panel + .oa-panel,
+.zp-set-content .settings-card + .settings-card {
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+
+@media (max-width: 1279px) {
+  .zp-settings { grid-template-columns: 224px minmax(0, 1fr); gap: 20px; }
+  .zp-set-nav-desc { display: none; }
+}
+
+/* Below tablet the rail stops being a column: a permanent 224px nav beside a
+   narrow form leaves neither usable. */
+@media (max-width: 1024px) {
+  .zp-settings { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+
+  .zp-set-nav {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .zp-set-search { width: 100%; margin-bottom: 4px; min-height: 44px; }
+  .zp-set-nav ul { flex-direction: row; flex-wrap: wrap; gap: 6px; }
+
+  .zp-set-nav-item {
+    width: auto;
+    min-height: 44px;
+    align-items: center;
+    padding: 0 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill, 999px);
+  }
+
+  .zp-set-nav-item.is-on { border-color: var(--accent); }
+  .zp-set-nav-item.is-on::before { display: none; }
+  .zp-set-nav-desc { display: none; }
+  .zp-set-nav-sep { width: 100%; margin: 2px 0; }
+}
+
+/* ── Form grammar inside Settings ────────────────────────────────────────── */
+/* The embedded feature tabs use the legacy `bo-*` form classes. Rather than
+   rewrite each of them, Settings normalises their grammar here: sentence-case
+   labels, and field widths that track content type instead of every input
+   stretching to the full work area. */
+
+.zp-set-content .settings-page { max-width: 860px; }
+
+.zp-set-content .bo-label {
+  /* ALL-CAPS micro-labels are hard work for a second-language reader. */
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-dim);
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.zp-set-content .bo-input,
+.zp-set-content .bo-select {
+  max-width: 360px;   /* names, emails */
+  min-height: 34px;
+}
+
+/* Short, known-length values get a field that says so. */
+.zp-set-content input[placeholder*="+973"],
+.zp-set-content input[placeholder*="VAT"],
+.zp-set-content input[placeholder*="12345"] { max-width: 240px; }
+
+.zp-set-content .bo-select { max-width: 240px; }
+
+/* Address is genuinely long-form. */
+.zp-set-content textarea.bo-input { max-width: 560px; min-height: 72px; }
+
+.zp-set-content .bo-row-two {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  max-width: 560px;
+}
+
+.zp-set-content .settings-hint {
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+}
+
+/* Primary save actions follow the brand accent, like every other surface. */
+.zp-set-content .btn-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-t);
+  font-weight: 600;
+}
+
+.zp-set-content .btn-primary:hover:not(:disabled) {
+  border-color: var(--accent-h);
+  background: var(--accent-h);
+}
+
+.zp-set-content .btn-primary:focus-visible,
+.zp-set-content .btn-secondary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 1024px) {
+  .zp-set-content .bo-row-two { grid-template-columns: minmax(0, 1fr); }
+  .zp-set-content .bo-input,
+  .zp-set-content .bo-select { max-width: none; min-height: 44px; }
+  .zp-set-content textarea.bo-input { max-width: none; }
+}

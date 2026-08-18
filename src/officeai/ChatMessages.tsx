@@ -99,19 +99,21 @@ function ToolPill({ entry }: { entry: ToolCallEntry }) {
 
 // ─── Chat bubble ──────────────────────────────────────────────────────────────
 
-export function ChatBubble({
+interface ChatBubbleProps {
+  msg: DisplayMessage;
+  onUndo?: (undoId: string, msgId: string) => void | Promise<void>;
+  onFeedback?: (messageId: string, rating: "up" | "down", aiSessionId?: string) => Promise<void>;
+  onSuggestedPrompt?: (prompt: string) => void;
+  isStreaming?: boolean;
+}
+
+function ChatBubbleImpl({
   msg,
   onUndo,
   onFeedback,
   onSuggestedPrompt,
   isStreaming = false,
-}: {
-  msg: DisplayMessage;
-  onUndo?: () => void;
-  onFeedback?: (messageId: string, rating: "up" | "down", aiSessionId?: string) => Promise<void>;
-  onSuggestedPrompt?: (prompt: string) => void;
-  isStreaming?: boolean;
-}) {
+}: ChatBubbleProps) {
   const { language } = useLanguage();
   const t = officeAiTranslator(language);
   const [copied, setCopied] = useState(false);
@@ -186,8 +188,11 @@ export function ChatBubble({
                 : `⏳ ${t("awaitingConfirmation")}`}
             </div>
           )}
-          {onUndo && (
-            <button className="chat-undo-btn" onClick={onUndo}>↩ {t("undoChange")}</button>
+          {onUndo && msg.undoId && (
+            <button
+              className="chat-undo-btn"
+              onClick={() => void onUndo(msg.undoId!, msg.id)}
+            >↩ {t("undoChange")}</button>
           )}
           {msg.suggestedPrompt && msg.suggestedLabel && onSuggestedPrompt && (
             <button
@@ -234,6 +239,31 @@ export function ChatBubble({
 
 // ─── Message list ─────────────────────────────────────────────────────────────
 
+/**
+ * Memoised because the list re-renders on every streamed token. A completed
+ * message's props are stable, so only the streaming bubble actually re-renders
+ * and re-parses its markdown; without this the cost is O(tokens x messages).
+ */
+export const ChatBubble = React.memo(ChatBubbleImpl);
+
+/** One Intl instance for the whole list; constructing one per call is the
+ *  expensive part of date formatting. */
+const DAY_FORMAT = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+const dayLabelCache = new Map<number, string>();
+function dayLabel(ts: Date): string {
+  const key = ts.getTime();
+  let label = dayLabelCache.get(key);
+  if (label === undefined) {
+    label = DAY_FORMAT.format(ts);
+    dayLabelCache.set(key, label);
+  }
+  return label;
+}
+
 export function ChatMessageList({
   messages, chatState, streamingMsgId, liveToolCalls, onUndo, onFeedback, onChip, userName, businessName,
 }: {
@@ -241,7 +271,7 @@ export function ChatMessageList({
   chatState: ChatState;
   streamingMsgId: string | null;
   liveToolCalls: ToolCallEntry[];
-  onUndo: (undoId: string, msgId: string) => void;
+  onUndo?: (undoId: string, msgId: string) => void;
   onFeedback?: (messageId: string, rating: "up" | "down", aiSessionId?: string) => Promise<void>;
   onChip: (text: string) => void;
   userName: string;
@@ -262,9 +292,8 @@ export function ChatMessageList({
       )}
 
       {messages.map((msg, i) => {
-        const msgDate = msg.timestamp.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-        const prevDate = i > 0 ? messages[i - 1].timestamp.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
-        const showSep  = i === 0 || msgDate !== prevDate;
+        const msgDate = dayLabel(msg.timestamp);
+        const showSep = i === 0 || msgDate !== dayLabel(messages[i - 1].timestamp);
         const isStreaming = msg.id === streamingMsgId;
         return (
           <React.Fragment key={msg.id}>
@@ -272,7 +301,7 @@ export function ChatMessageList({
             <ChatBubble
               msg={msg}
               isStreaming={isStreaming}
-              onUndo={msg.undoId ? () => onUndo(msg.undoId!, msg.id) : undefined}
+              onUndo={onUndo}
               onFeedback={onFeedback}
               onSuggestedPrompt={onChip}
             />

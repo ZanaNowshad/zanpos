@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import i18n from "../i18n";
 
 /**
@@ -8,12 +8,22 @@ import i18n from "../i18n";
  * UI preferences in localStorage and carries no i18n library, and adding one
  * for a two-language app would be a heavier change than the problem needs.
  *
- * Scope note: before this existed, every string in the POS and back office was
- * a hardcoded English literal — only receipts, the storefront and WhatsApp
- * templates were ever bilingual. This is the foundation plus the till strings;
- * the back office is still English and needs the same treatment surface by
- * surface, ideally with a native reviewer, since a mistranslated action at a
- * till causes real mistakes rather than mild confusion.
+ * ONE AUTHORITATIVE STATE, SHARED BY EVERY CONSUMER.
+ *
+ * This hook previously held the language in a per-component `useState`
+ * initialised from localStorage. Each of its ~69 consumers therefore owned an
+ * independent copy: toggling the language in the header updated that component
+ * only. Screens appeared to translate because navigating between them remounts
+ * them, and a fresh mount re-reads the stored value — but the persistent shell
+ * chrome never remounts, so the sidebar stayed English while `dir` flipped to
+ * rtl and the page content became Arabic. The Arabic strings were always
+ * present; nothing was missing except a shared subscription.
+ *
+ * The store lives at module scope and components subscribe with
+ * `useSyncExternalStore`. That keeps the public API byte-for-byte identical, so
+ * no call site changes, and needs no provider — which matters because consumers
+ * render in both the POS and back-office trees and in `renderToStaticMarkup`
+ * tests, none of which would otherwise be wrapped.
  */
 export type Language = "en" | "ar";
 
@@ -55,24 +65,55 @@ function applyLanguage(language: Language) {
   i18n.changeLanguage(language).catch(() => {});
 }
 
+// ─── The store ────────────────────────────────────────────────────────────────
+
+let current: Language = storedLanguage();
+const listeners = new Set<() => void>();
+
+function subscribe(onChange: () => void): () => void {
+  listeners.add(onChange);
+  return () => { listeners.delete(onChange); };
+}
+
+/** Must return a stable value, so the snapshot is the primitive, not an object. */
+function getSnapshot(): Language {
+  return current;
+}
+
+/** Server render has no localStorage; English is the documented default. */
+function getServerSnapshot(): Language {
+  return "en";
+}
+
+function commit(next: Language) {
+  if (next === current) return;
+  current = next;
+  storeLanguage(next);
+  // Applied once per change rather than in an effect per consumer: 69
+  // components each writing the same two document attributes is pure waste.
+  applyLanguage(next);
+  listeners.forEach(listener => listener());
+}
+
+// The document must agree with the stored language on first paint, before any
+// component has mounted.
+applyLanguage(current);
+
+/** Escape hatch for non-React callers and tests. */
+export function setLanguageGlobal(next: Language) {
+  commit(next);
+}
+
+export function getLanguage(): Language {
+  return current;
+}
+
 export function useLanguage() {
-  const [language, setLanguageState] = useState<Language>(storedLanguage);
+  const language = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
-  useEffect(() => {
-    applyLanguage(language);
-  }, [language]);
-
-  const setLanguage = useCallback((next: Language) => {
-    storeLanguage(next);
-    setLanguageState(next);
-  }, []);
-
+  const setLanguage = useCallback((next: Language) => { commit(next); }, []);
   const toggle = useCallback(() => {
-    setLanguageState(prev => {
-      const next: Language = prev === "en" ? "ar" : "en";
-      storeLanguage(next);
-      return next;
-    });
+    commit(getSnapshot() === "en" ? "ar" : "en");
   }, []);
 
   return { language, setLanguage, toggle, dir: directionFor(language) } as const;

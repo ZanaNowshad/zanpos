@@ -10,11 +10,35 @@ const namespaces = [
   "officeAiTool",
 ] as const;
 
+/**
+ * Locale bundles are loaded with Vite's eager glob rather than `require`.
+ *
+ * `require` is not defined in this ESM/TS module — ESLint was right to flag it,
+ * and the assertions below only ran because the transform happened to tolerate
+ * it. `import.meta.glob` resolves at build time, so a namespace file that goes
+ * missing fails here loudly instead of yielding an empty object that would make
+ * every parity assertion trivially pass.
+ */
+const LOCALES = import.meta.glob<Record<string, unknown>>(
+  "./*/*.json",
+  { eager: true, import: "default" },
+);
+
+function bundle(relativePath: string): Record<string, unknown> {
+  const found = LOCALES[relativePath];
+  if (!found) {
+    throw new Error(
+      `Locale bundle not found: ${relativePath}. Known: ${Object.keys(LOCALES).join(", ")}`,
+    );
+  }
+  return found;
+}
+
 describe("i18next locale parity", () => {
   for (const ns of namespaces) {
     describe(ns, () => {
-      const en = require(`../locales/en/${ns}.json`);
-      const ar = require(`../locales/ar/${ns}.json`);
+      const en = bundle(`./en/${ns}.json`);
+      const ar = bundle(`./ar/${ns}.json`);
 
       it("has keys in both languages", () => {
         const enKeys = Object.keys(en);

@@ -13,10 +13,12 @@ pub const SYNC_TABLES: &[&str] = &[
     "suppliers",
     "purchase_orders",
     "purchase_order_lines",
+    "po_receipts",
     "devices",
     "roles",
     "users",
     "customers",
+    "riders",
     "shifts",
     "sales",
     "sale_items",
@@ -40,11 +42,13 @@ pub const ALLOWED_CONFIG_KEYS: &[&str] = &[
     "ai_anthropic_model",
     "ai_bulk_batch_size",
     "ai_connect_timeout_secs",
+    "ai_confirm_non_destructive_actions",
     "ai_context_window_chars",
     "ai_enabled",
     "ai_max_turns",
     "ai_openai_max_tokens",
     "ai_provider",
+    "ai_sensitive_protection_level",
     "ai_stream_timeout_secs",
     "ai_temperature",
     "feature_compare_prices",
@@ -84,7 +88,16 @@ pub const ALLOWED_CONFIG_KEYS: &[&str] = &[
 ];
 
 pub fn is_allowed_config_key(key: &str) -> bool {
-    ALLOWED_CONFIG_KEYS.contains(&key)
+    if ALLOWED_CONFIG_KEYS.contains(&key) {
+        return true;
+    }
+    let Some(tool_name) = key.strip_prefix("ai_tool_enabled_") else {
+        return false;
+    };
+    crate::ai::tool_registry::ToolRegistry::global()
+        .ok()
+        .and_then(|registry| registry.get(tool_name))
+        .is_some()
 }
 
 pub(crate) const STOCK_DRIFT_TOLERANCE: f64 = 0.001;
@@ -106,7 +119,11 @@ pub async fn apply_row(pool: &SqlitePool, table: &str, row: &Value) -> AppResult
             apply_lww(pool, "purchase_order_lines", "po_line_id", obj, &[]).await
         }
         "devices" => {
-            if let (Some(device_id), Some(branch_id), Some(device_code)) = (
+            // Retiring a device is destructive and not idempotent — only a row
+            // that is actually news may trigger it.
+            let fresh = is_fresh(pool, "devices", "device_id", obj).await?;
+            if let (true, Some(device_id), Some(branch_id), Some(device_code)) = (
+                fresh,
                 obj.get("device_id").and_then(|v| v.as_str()),
                 obj.get("branch_id").and_then(|v| v.as_str()),
                 obj.get("device_code").and_then(|v| v.as_str()),
@@ -144,7 +161,11 @@ pub async fn apply_row(pool: &SqlitePool, table: &str, row: &Value) -> AppResult
         "roles" => apply_lww(pool, "roles", "role_id", obj, &[]).await,
         "branches" => apply_lww(pool, "branches", "branch_id", obj, &[]).await,
         "shifts" => {
-            if obj.get("status").and_then(|v| v.as_str()) == Some("open") {
+            // Closing the other open shift on a till is destructive: a stale
+            // 'open' row re-pulled after that shift already ended would close
+            // whichever shift is live now, and the till stops taking sales.
+            let fresh = is_fresh(pool, "shifts", "shift_id", obj).await?;
+            if fresh && obj.get("status").and_then(|v| v.as_str()) == Some("open") {
                 if let (Some(shift_id), Some(device_id)) = (
                     obj.get("shift_id").and_then(|v| v.as_str()),
                     obj.get("device_id").and_then(|v| v.as_str()),
@@ -294,11 +315,62 @@ pub async fn apply_row(pool: &SqlitePool, table: &str, row: &Value) -> AppResult
             }
             Ok(())
         }
+        "riders" => apply_lww(pool, "riders", "rider_id", obj, &[]).await,
+        "po_receipts" => apply_lww(pool, "po_receipts", "receipt_id", obj, &[]).await,
         other => {
-            tracing::warn!("Sync v2: unknown table '{}', skipping apply", other);
-            Ok(())
+            // Not tolerance for an unknown table — a wiring bug. The worker only
+            // applies tables it pulled from its own PULL_ORDER, so arriving here
+            // means the table is listed for sync but has no handler, and every
+            // row for it was being dropped while the pull reported success.
+            // Failing the table surfaces that instead of losing data quietly.
+            tracing::error!(
+                "Sync v2: no apply handler for table '{other}' — refusing to discard rows"
+            );
+            Err(AppError::Internal(format!(
+                "No sync apply handler for table '{other}'"
+            )))
         }
     }
+}
+
+/// True when this row is new to us, or newer than the copy we hold.
+///
+/// `apply_lww` already refuses to overwrite a newer local row, but several
+/// tables run *side effects* before that check — retiring a device, closing a
+/// shift. Those are not idempotent, so a re-pulled or out-of-order row could
+/// retire a device that is in use or close a shift that is still open, which
+/// stops the till taking sales. Gate the side effect on the same freshness the
+/// write itself is subject to.
+async fn is_fresh(
+    pool: &SqlitePool,
+    table: &str,
+    pk: &str,
+    obj: &Map<String, Value>,
+) -> AppResult<bool> {
+    let Some(pk_value) = obj.get(pk).and_then(|v| v.as_str()) else {
+        return Ok(false);
+    };
+    let Some(incoming) = obj.get("updated_at").and_then(|v| v.as_str()) else {
+        // No timestamp to compare: treat as fresh only if we hold nothing yet.
+        return Ok(!row_exists(pool, table, pk, pk_value).await?);
+    };
+
+    let local: Option<String> =
+        sqlx::query_scalar(&format!("SELECT updated_at FROM {table} WHERE {pk} = ?"))
+            .bind(pk_value)
+            .fetch_optional(pool)
+            .await?;
+
+    let Some(local) = local else {
+        return Ok(true); // never seen — this row is news
+    };
+
+    let newer: Option<i64> = sqlx::query_scalar("SELECT datetime(?) < datetime(?)")
+        .bind(&local)
+        .bind(incoming)
+        .fetch_optional(pool)
+        .await?;
+    Ok(newer.unwrap_or(0) == 1)
 }
 
 pub(crate) fn is_safe_col(name: &str) -> bool {
@@ -498,6 +570,61 @@ async fn apply_customer_by_primary_key(
     Ok(())
 }
 
+/// True when the insert failed because a UNIQUE or PRIMARY KEY index rejected it.
+///
+/// Matched on the message rather than the extended result code: the code is not
+/// consistently surfaced through the driver, and a missed match here would turn
+/// a recoverable collision into a hard sync failure.
+fn is_unique_violation(e: &sqlx::Error) -> bool {
+    let msg = e.to_string();
+    msg.contains("UNIQUE constraint failed") || msg.contains("PRIMARY KEY constraint failed")
+}
+
+async fn row_exists(pool: &SqlitePool, table: &str, pk: &str, pk_value: &str) -> AppResult<bool> {
+    if pk_value.is_empty() {
+        return Ok(false);
+    }
+    let found: Option<i64> =
+        sqlx::query_scalar(&format!("SELECT 1 FROM {table} WHERE {pk} = ? LIMIT 1"))
+            .bind(pk_value)
+            .fetch_optional(pool)
+            .await?;
+    Ok(found.is_some())
+}
+
+/// Record an append-only row that could not be stored.
+///
+/// Severity is critical because the alternative to noticing is losing a
+/// financial record: the originating terminal has already marked the row synced,
+/// so nothing will re-offer it.
+async fn record_append_conflict(
+    pool: &SqlitePool,
+    table: &str,
+    entity_id: &str,
+    detail: &str,
+) -> AppResult<()> {
+    tracing::error!(
+        table,
+        entity_id,
+        "Sync: append-only row rejected by a unique index — recorded as a conflict"
+    );
+    sqlx::query(
+        "INSERT INTO sync_conflicts
+           (conflict_id, conflict_type, table_name, entity_id, severity, title, detail,
+            status, created_at)
+         VALUES (?, 'unique_collision', ?, ?, 'critical', ?, ?, 'open', ?)",
+    )
+    .bind(ulid::Ulid::new().to_string())
+    .bind(table)
+    .bind(entity_id)
+    .bind(format!("Rejected {table} row from another terminal"))
+    .bind(detail)
+    .bind(chrono::Utc::now().to_rfc3339())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub(crate) async fn apply_append_only(
     pool: &SqlitePool,
     table: &str,
@@ -528,12 +655,31 @@ pub(crate) async fn apply_append_only(
         .collect::<Vec<_>>()
         .join(", ");
 
+    // Deliberately not INSERT OR IGNORE. These tables are append-only business
+    // records, and OR IGNORE cannot tell a harmless re-delivery of a row we
+    // already hold from a genuine collision — two terminals minting the same
+    // receipt_number or idempotency_key. It swallowed both, and the pull was
+    // still reported successful, so a lost sale left no trace anywhere.
     let sql = format!(
-        "INSERT OR IGNORE INTO {} ({}, sync_status) VALUES ({}, 'synced')",
+        "INSERT INTO {} ({}, sync_status) VALUES ({}, 'synced')",
         table, col_list, val_list,
     );
 
-    sqlx::query(&sql).execute(pool).await?;
+    if let Err(e) = sqlx::query(&sql).execute(pool).await {
+        if !is_unique_violation(&e) {
+            return Err(e.into());
+        }
+        let pk = pk_for_table(table);
+        let pk_value = obj.get(pk).and_then(|v| v.as_str()).unwrap_or_default();
+
+        // Same primary key already present: this is the idempotent replay the
+        // sync protocol is built on. Nothing is lost, nothing to report.
+        if !row_exists(pool, table, pk, pk_value).await? {
+            // A *different* row already holds one of this row's unique keys.
+            // The incoming record cannot be stored and would otherwise vanish.
+            record_append_conflict(pool, table, pk_value, &e.to_string()).await?;
+        }
+    }
 
     if table == "stock_movements" {
         if let (Some(product_id), Some(branch_id), Some(created_at)) = (
@@ -578,6 +724,8 @@ pub fn pk_for_table(table: &str) -> &str {
         "suppliers" => "supplier_id",
         "purchase_orders" => "po_id",
         "purchase_order_lines" => "po_line_id",
+        "po_receipts" => "receipt_id",
+        "riders" => "rider_id",
         "devices" => "device_id",
         "roles" => "role_id",
         "customers" => "customer_id",
@@ -688,25 +836,72 @@ pub(crate) fn json_to_sql_literal(v: &Value) -> String {
 
 /// Recompute stock_levels quantity_on_hand from the stock_movements ledger
 /// for a given (product, branch). Called after applying a remote movement.
+/// Authoritative on-hand quantity for a product from the movement ledger.
+///
+/// The balance is the oldest *surviving* movement's own post-state plus every
+/// delta recorded after it — not the newest movement's `quantity_after`.
+///
+/// `quantity_after` is a snapshot of what the writing terminal believed at the
+/// time, computed from its own cache. When two terminals sell the same last
+/// unit while offline they both record `quantity_after = 9`, and taking the
+/// newest leaves stock at 9 when the truth is 8; the deltas (-1 and -1) are the
+/// only part of those rows that composes correctly.
+///
+/// It is anchored rather than a plain `SUM` because `stock_movements` is pruned
+/// once rows are synced (`worker::prune_old_data`), so summing every surviving
+/// delta would silently discard all pruned history.
+///
+/// Returns `None` when no movements survive for this product.
+async fn ledger_balance(
+    pool: &SqlitePool,
+    product_id: &str,
+    branch_id: &str,
+) -> AppResult<Option<f64>> {
+    let anchor: Option<(f64, String, i64)> = sqlx::query_as(
+        "SELECT CAST(quantity_after AS REAL), created_at, rowid
+           FROM stock_movements
+          WHERE product_id = ? AND branch_id = ?
+          ORDER BY datetime(created_at) ASC, rowid ASC
+          LIMIT 1",
+    )
+    .bind(product_id)
+    .bind(branch_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let Some((anchor_after, anchor_at, anchor_rowid)) = anchor else {
+        return Ok(None);
+    };
+
+    let delta_sum: f64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(CAST(quantity_delta AS REAL)), 0.0)
+           FROM stock_movements
+          WHERE product_id = ? AND branch_id = ?
+            AND (datetime(created_at) > datetime(?)
+                 OR (datetime(created_at) = datetime(?) AND rowid > ?))",
+    )
+    .bind(product_id)
+    .bind(branch_id)
+    .bind(&anchor_at)
+    .bind(&anchor_at)
+    .bind(anchor_rowid)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(Some(anchor_after + delta_sum))
+}
+
 pub(crate) async fn recompute_stock_level(
     pool: &SqlitePool,
     product_id: &str,
     branch_id: &str,
     applied_at: &str,
 ) -> AppResult<()> {
-    let ledger_balance: Option<f64> = sqlx::query_scalar(
-        "SELECT CAST(quantity_after AS REAL)
-         FROM stock_movements
-         WHERE product_id = ? AND branch_id = ?
-         ORDER BY datetime(created_at) DESC, rowid DESC
-         LIMIT 1",
-    )
-    .bind(product_id)
-    .bind(branch_id)
-    .fetch_one(pool)
-    .await?;
-
-    let ledger = ledger_balance.unwrap_or(0.0);
+    let Some(ledger) = ledger_balance(pool, product_id, branch_id).await? else {
+        // No surviving movements to recompute from — leave the cached level as
+        // it is rather than resetting a real stock figure to zero.
+        return Ok(());
+    };
 
     let stock_level_id = format!("SL-{}-{}", product_id, branch_id);
     let qty_str = format!("{:.3}", ledger)
@@ -1080,5 +1275,277 @@ mod tests {
         ] {
             assert!(!is_allowed_config_key(key), "{key} must never sync");
         }
+    }
+
+    #[test]
+    fn confirmation_preference_is_safe_to_sync() {
+        assert!(is_allowed_config_key("ai_confirm_non_destructive_actions"));
+    }
+
+    #[test]
+    fn ai_policy_preferences_sync_only_for_registered_tools() {
+        assert!(is_allowed_config_key("ai_sensitive_protection_level"));
+        assert!(is_allowed_config_key("ai_tool_enabled_create_product"));
+        assert!(!is_allowed_config_key(
+            "ai_tool_enabled_future_unknown_tool"
+        ));
+        assert!(!is_allowed_config_key("ai_tool_enabled_openai_api_key"));
+    }
+
+    // Identity must never replicate. If device_id or hub_url crossed the wire,
+    // a terminal would adopt a sibling's identity and mint colliding receipt
+    // numbers under it. reports_device_scope *is* deliberately synced — it is a
+    // fleet-wide policy ("each till reports on itself" vs "everyone sees
+    // everything"), documented in sync::scope — so it is not listed here.
+    #[test]
+    fn identity_never_syncs() {
+        assert!(!is_allowed_config_key("device_id"));
+        assert!(!is_allowed_config_key("hub_url"));
+        assert!(!is_allowed_config_key("hub_mode"));
+        assert!(!is_allowed_config_key("setup_complete"));
+        assert!(is_allowed_config_key("reports_device_scope"));
+    }
+
+    // Regression: both tables carried the full sync contract (sync_status,
+    // updated_at, a stable PK) but were never listed, so their rows stayed on
+    // whichever terminal created them. riders matters most — delivery_orders
+    // *does* sync and carries rider_id, so an unsynced roster leaves deliveries
+    // pointing at a rider the receiving terminal has never seen.
+    #[test]
+    fn tables_built_to_sync_are_actually_wired() {
+        for table in ["riders", "po_receipts"] {
+            assert!(
+                SYNC_TABLES.contains(&table),
+                "{table} has sync scaffolding but is not in SYNC_TABLES"
+            );
+            assert_ne!(
+                pk_for_table(table),
+                "id",
+                "{table} needs a real primary key mapping, not the fallback"
+            );
+        }
+    }
+
+    // A table listed for sync but missing an apply_row arm used to be pulled and
+    // thrown away with only a log line, while the pull reported success. Every
+    // synced table must reach a real handler.
+    #[tokio::test]
+    async fn every_synced_table_has_an_apply_handler() {
+        let pool = test_pool().await;
+        for table in SYNC_TABLES {
+            // An empty object exercises dispatch without satisfying NOT NULL, so
+            // a handled table fails on the row and only an *unhandled* one fails
+            // on dispatch. Distinguish by message.
+            let err = apply_row(&pool, table, &json!({}))
+                .await
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default();
+            assert!(
+                !err.contains("No sync apply handler"),
+                "{table} is in SYNC_TABLES but apply_row has no arm for it"
+            );
+        }
+    }
+
+    /// Branch, device and an open shift — the FK spine a `sales` row needs.
+    /// The hub always sends full rows, so every NOT NULL column must be present.
+    async fn sale_context(pool: &SqlitePool) -> (String, String, String) {
+        let branch: String = sqlx::query_scalar("SELECT branch_id FROM branches LIMIT 1")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        let device: String = sqlx::query_scalar("SELECT device_id FROM devices LIMIT 1")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        let shift = ulid::Ulid::new().to_string();
+        sqlx::query(
+            "INSERT INTO shifts (shift_id, branch_id, device_id, cashier_user_id, status,
+                                 opened_at, created_at, updated_at)
+             VALUES (?,?,?,'01JUSER000000000000ADMIN1','open',
+                     datetime('now'), datetime('now'), datetime('now'))",
+        )
+        .bind(&shift)
+        .bind(&branch)
+        .bind(&device)
+        .execute(pool)
+        .await
+        .unwrap();
+        (branch, device, shift)
+    }
+
+    // Two terminals left on the seeded identity mint the same receipt_number
+    // from their own counters. receipt_number is UNIQUE, so the second sale to
+    // reach the hub cannot be stored — it used to be swallowed by INSERT OR
+    // IGNORE while the pull reported success, and the sale was simply gone.
+    #[tokio::test]
+    async fn colliding_sale_is_recorded_as_a_conflict_not_dropped() {
+        let pool = test_pool().await;
+        let (branch, device, shift) = sale_context(&pool).await;
+
+        let sale = |id: &str, ik: &str| {
+            json!({"sale_id":id,"branch_id":branch,"device_id":device,"shift_id":shift,
+                "origin_device_id":device,"receipt_number":"MAIN-POS01-00000001",
+                "cashier_user_id":"01JUSER000000000000ADMIN1","status":"completed",
+                "gross_total_minor":100,"discount_total_minor":0,"tax_total_minor":0,
+                "net_total_minor":100,"sold_at":"2026-01-01T00:00:00Z",
+                "business_date":"2026-01-01","idempotency_key":ik,
+                "created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"})
+        };
+
+        apply_row(&pool, "sales", &sale("SALE-LANE-1", "ik-1"))
+            .await
+            .expect("first sale stores");
+
+        // A different sale from another till carrying the same receipt number.
+        apply_row(&pool, "sales", &sale("SALE-LANE-2", "ik-2"))
+            .await
+            .expect("collision must not fail the pull");
+
+        let conflicts: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sync_conflicts
+              WHERE table_name = 'sales' AND entity_id = 'SALE-LANE-2'
+                AND severity = 'critical' AND status = 'open'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(conflicts, 1, "the rejected sale must be recorded, not lost");
+    }
+
+    // The protocol re-delivers rows routinely; that must stay silent or the
+    // conflicts list fills with noise and real collisions get missed.
+    #[tokio::test]
+    async fn redelivering_the_same_row_records_no_conflict() {
+        let pool = test_pool().await;
+        let (branch, device, shift) = sale_context(&pool).await;
+        let sale = json!({"sale_id":"SALE-1","branch_id":branch,"device_id":device,
+            "shift_id":shift,
+            "origin_device_id":device,"receipt_number":"MAIN-POS01-00000009",
+            "cashier_user_id":"01JUSER000000000000ADMIN1","status":"completed",
+            "gross_total_minor":100,"discount_total_minor":0,"tax_total_minor":0,
+            "net_total_minor":100,"sold_at":"2026-01-01T00:00:00Z",
+            "business_date":"2026-01-01","idempotency_key":"ik-9",
+            "created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"});
+
+        apply_row(&pool, "sales", &sale).await.expect("first");
+        apply_row(&pool, "sales", &sale).await.expect("replay");
+
+        let conflicts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sync_conflicts")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(conflicts, 0, "an idempotent replay is not a conflict");
+    }
+
+    // A shift row re-delivered after that shift has already ended must not close
+    // whichever shift is live now — that stops the till taking sales.
+    #[tokio::test]
+    async fn stale_open_shift_does_not_close_the_live_one() {
+        let pool = test_pool().await;
+        let (branch, device, old_shift) = sale_context(&pool).await;
+
+        // The old shift has since been closed locally, later than the row the
+        // hub still holds for it.
+        sqlx::query(
+            "UPDATE shifts SET status='closed', updated_at='2026-01-02T00:00:00Z' WHERE shift_id=?",
+        )
+        .bind(&old_shift)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The shift actually running now.
+        let live = "SHIFT-LIVE";
+        sqlx::query(
+            "INSERT INTO shifts (shift_id, branch_id, device_id, cashier_user_id, status,
+                                 opened_at, created_at, updated_at)
+             VALUES (?,?,?,'01JUSER000000000000ADMIN1','open',
+                     '2026-01-03T00:00:00Z','2026-01-03T00:00:00Z','2026-01-03T00:00:00Z')",
+        )
+        .bind(live)
+        .bind(&branch)
+        .bind(&device)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The hub re-offers the old shift, still marked open and stamped before
+        // the local close.
+        let stale = json!({"shift_id":old_shift,"branch_id":branch,"device_id":device,
+            "origin_device_id":device,"cashier_user_id":"01JUSER000000000000ADMIN1",
+            "status":"open","opened_at":"2026-01-01T00:00:00Z",
+            "created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"});
+        apply_row(&pool, "shifts", &stale)
+            .await
+            .expect("apply stale");
+
+        let status: String = sqlx::query_scalar("SELECT status FROM shifts WHERE shift_id = ?")
+            .bind(live)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(status, "open", "the live shift must survive a stale replay");
+    }
+
+    // A genuinely new open shift still closes the previous one on that till.
+    #[tokio::test]
+    async fn a_new_open_shift_still_closes_the_previous_one() {
+        let pool = test_pool().await;
+        let (branch, device, previous) = sale_context(&pool).await;
+
+        let incoming = json!({"shift_id":"SHIFT-NEW","branch_id":branch,"device_id":device,
+            "origin_device_id":device,"cashier_user_id":"01JUSER000000000000ADMIN1",
+            "status":"open","opened_at":"2030-01-01T00:00:00Z",
+            "created_at":"2030-01-01T00:00:00Z","updated_at":"2030-01-01T00:00:00Z"});
+        apply_row(&pool, "shifts", &incoming).await.expect("apply");
+
+        let status: String = sqlx::query_scalar("SELECT status FROM shifts WHERE shift_id = ?")
+            .bind(&previous)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            status, "closed",
+            "a real handover still closes the old shift"
+        );
+    }
+
+    #[tokio::test]
+    async fn riders_round_trip_through_apply() {
+        let pool = test_pool().await;
+        let branch: String = sqlx::query_scalar("SELECT branch_id FROM branches LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        let row = json!({
+            "rider_id": "RD-1", "branch_id": branch, "origin_device_id": "OTHER-TERMINAL",
+            "name": "Ali", "phone": "+97333050666", "notes": Value::Null, "is_active": 1,
+            "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+            "deleted_at": Value::Null, "version": 1,
+        });
+        apply_row(&pool, "riders", &row).await.expect("apply rider");
+
+        let name: String = sqlx::query_scalar("SELECT name FROM riders WHERE rider_id = 'RD-1'")
+            .fetch_one(&pool)
+            .await
+            .expect("rider arrived from another terminal");
+        assert_eq!(name, "Ali");
+
+        // And a later edit from that terminal wins on updated_at.
+        let mut newer = row.clone();
+        newer["name"] = json!("Ali Hassan");
+        newer["updated_at"] = json!("2026-02-01T00:00:00Z");
+        apply_row(&pool, "riders", &newer)
+            .await
+            .expect("apply edit");
+
+        let name: String = sqlx::query_scalar("SELECT name FROM riders WHERE rider_id = 'RD-1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(name, "Ali Hassan");
     }
 }

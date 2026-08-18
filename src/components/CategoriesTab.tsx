@@ -3,18 +3,24 @@ import type { CategoryRow } from "../types";
 import * as cmd from "../tauri/commands";
 import BulkImportModal from "./BulkImportModal";
 import CategoryFormModal from "./CategoryFormModal";
+import { PageTemplate, EmptyState, LoadingSkeleton } from "./templates";
+import { Tag } from "lucide-react";
 
 interface Props { sessionUserId: string; }
 
 export default function CategoriesTab({ sessionUserId }: Props) {
   const [categories, setCategories] = useState<CategoryRow[]>([]);
+  const [loading, setLoading]       = useState(true);
   const [selected, setSelected]     = useState<CategoryRow | null>(null);
   const [creating, setCreating]     = useState(false);
   const [showBulkImport, setShowBulkImport] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    cmd.adminListCategories(sessionUserId).then(data => { if (!cancelled) setCategories(data); });
+    setLoading(true);
+    cmd.adminListCategories(sessionUserId).then(data => {
+      if (!cancelled) { setCategories(data); setLoading(false); }
+    });
     return () => { cancelled = true; };
   }, [sessionUserId]);
 
@@ -25,8 +31,10 @@ export default function CategoriesTab({ sessionUserId }: Props) {
   const showingForm = creating || selected !== null;
 
   async function refreshCategories() {
+    setLoading(true);
     const cats = await cmd.adminListCategories(sessionUserId);
     setCategories(cats);
+    setLoading(false);
   }
 
   return (
@@ -44,13 +52,26 @@ export default function CategoriesTab({ sessionUserId }: Props) {
       />
     )}
 
-    <div className="bo-tab-layout">
-      <div className="bo-list-pane bo-list-full">
-        <div className="bo-list-header">
-          <span className="bo-list-title">Categories</span>
-          <button className="btn-secondary" onClick={() => setShowBulkImport(true)} title="Bulk import CSV">Import</button>
-          <button className="btn-primary" onClick={startCreate}>+ New Category</button>
-        </div>
+    <PageTemplate
+      header={{
+        title: "Categories",
+        icon: <Tag size={18} strokeWidth={1.7} aria-hidden="true" />,
+        primaryAction: { label: "+ New Category", onClick: startCreate },
+        secondaryActions: [
+          { label: "Import", onClick: () => setShowBulkImport(true) },
+        ],
+      }}
+    >
+      {loading && categories.length === 0 ? (
+        <LoadingSkeleton variant="table" count={4} />
+      ) : categories.length === 0 ? (
+        <EmptyState
+          icon={<Tag size={36} strokeWidth={1.5} />}
+          title="No categories"
+          description="Create product categories to organise your catalogue."
+          actions={[{ label: "+ New Category", onClick: startCreate, primary: true }]}
+        />
+      ) : (
         <div className="bo-list">
           {categories.map(c => (
             <button
@@ -65,10 +86,9 @@ export default function CategoriesTab({ sessionUserId }: Props) {
               {!c.is_active && <span className="bo-badge-inactive">Inactive</span>}
             </button>
           ))}
-          {categories.length === 0 && <div className="bo-empty">No categories.</div>}
         </div>
-      </div>
-    </div>
+      )}
+    </PageTemplate>
     </>
   );
 }

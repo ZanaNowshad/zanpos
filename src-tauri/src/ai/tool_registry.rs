@@ -44,6 +44,109 @@ pub enum UndoPolicy {
     Run,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionPath {
+    Read,
+    Action,
+    Run,
+}
+
+impl ExecutionPath {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Action => "action",
+            Self::Run => "run",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequiredRole {
+    Cashier,
+    Manager,
+}
+
+impl RequiredRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cashier => "cashier",
+            Self::Manager => "manager",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RiskLevel {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+impl RiskLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Critical => "critical",
+        }
+    }
+}
+
+const CASHIER_READ_TOOLS: &[&str] = &[
+    "lookup_barcode",
+    "search_products",
+    "get_product",
+    "get_product_detail",
+    "get_stock_levels",
+    "get_active_shift",
+    "get_sync_status",
+    "get_whatsapp_status",
+];
+
+fn required_role(name: &str, kind: ToolKind) -> RequiredRole {
+    if kind == ToolKind::Read && CASHIER_READ_TOOLS.contains(&name) {
+        RequiredRole::Cashier
+    } else {
+        RequiredRole::Manager
+    }
+}
+
+fn risk_level(name: &str, kind: ToolKind, trust: TrustLevel, undo: UndoPolicy) -> RiskLevel {
+    if kind == ToolKind::Read {
+        return if trust == TrustLevel::External {
+            RiskLevel::Medium
+        } else {
+            RiskLevel::Low
+        };
+    }
+    if matches!(
+        name,
+        "create_refund"
+            | "create_cash_event"
+            | "adjust_stock"
+            | "bulk_stock_set"
+            | "send_whatsapp_delivery_alert"
+            | "send_whatsapp_payment_reminder"
+            | "send_whatsapp_arrival_notice"
+            | "send_whatsapp_to_customer"
+            | "send_receipt_via_whatsapp"
+            | "delete_product"
+            | "delete_customer"
+            | "delete_user"
+            | "force_close_shift"
+            | "void_sale"
+    ) {
+        RiskLevel::Critical
+    } else if undo == UndoPolicy::None {
+        RiskLevel::High
+    } else {
+        RiskLevel::Medium
+    }
+}
+
 fn undo_policy(name: &str) -> UndoPolicy {
     match name {
         "bulk_price_adjust" | "bulk_stock_set" => UndoPolicy::Run,
@@ -99,16 +202,20 @@ fn routine_reversible_mutation(name: &str) -> bool {
 #[derive(Debug, Clone)]
 pub struct ToolDescriptor {
     pub name: String,
+    pub description: String,
     pub kind: ToolKind,
     pub confirmation: Confirmation,
     pub feature_key: Option<&'static str>,
+    pub required_role: RequiredRole,
+    pub risk: RiskLevel,
+    pub execution: ExecutionPath,
     #[allow(dead_code)]
     pub trust: TrustLevel,
     #[allow(dead_code)]
     pub scope: DataScope,
     #[allow(dead_code)]
     pub undo: UndoPolicy,
-    schema: Value,
+    pub(crate) schema: Value,
 }
 
 impl ToolDescriptor {
@@ -170,6 +277,23 @@ impl ToolRegistry {
             } else {
                 ToolKind::Read
             };
+            let trust = if crate::ai::tool_policy::is_external_content_tool(&definition.name) {
+                TrustLevel::External
+            } else {
+                TrustLevel::Internal
+            };
+            let undo = if kind.is_mutation() {
+                undo_policy(&definition.name)
+            } else {
+                UndoPolicy::None
+            };
+            let execution = if crate::ai::engine::ops::is_registered_operation(&definition.name) {
+                ExecutionPath::Run
+            } else if kind.is_mutation() {
+                ExecutionPath::Action
+            } else {
+                ExecutionPath::Read
+            };
             let descriptor = ToolDescriptor {
                 feature_key: tools::feature_key_for_tool(&definition.name),
                 confirmation: if kind.is_mutation()
@@ -183,22 +307,18 @@ impl ToolRegistry {
                     Confirmation::Never
                 },
                 name: definition.name.clone(),
+                description: definition.description,
                 kind,
-                trust: if crate::ai::tool_policy::is_external_content_tool(&definition.name) {
-                    TrustLevel::External
-                } else {
-                    TrustLevel::Internal
-                },
+                required_role: required_role(&definition.name, kind),
+                risk: risk_level(&definition.name, kind, trust, undo),
+                execution,
+                trust,
                 scope: if kind.is_mutation() {
                     DataScope::BranchMutation
                 } else {
                     DataScope::BranchRead
                 },
-                undo: if kind.is_mutation() {
-                    undo_policy(&definition.name)
-                } else {
-                    UndoPolicy::None
-                },
+                undo,
                 schema: definition.input_schema,
             };
             by_name.insert(definition.name, ordered.len());
@@ -225,201 +345,10 @@ impl ToolRegistry {
             .map(|index| &self.ordered[*index])
     }
 
-    #[cfg(test)]
     pub fn iter(&self) -> impl Iterator<Item = &ToolDescriptor> {
         self.ordered.iter()
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn registry_covers_every_provider_definition_once() {
-        let registry = ToolRegistry::build().unwrap();
-        let definitions = crate::ai::tools_catalogue::all_tool_definitions();
-        assert_eq!(registry.len(), definitions.len());
-        for definition in definitions {
-            assert!(
-                registry.get(&definition.name).is_some(),
-                "{}",
-                definition.name
-            );
-        }
-    }
-
-    #[test]
-    fn global_registry_is_built_once_but_fresh_validation_remains_available() {
-        let first = ToolRegistry::global().unwrap();
-        let second = ToolRegistry::global().unwrap();
-
-        assert!(std::ptr::eq(first, second));
-        assert_eq!(ToolRegistry::build().unwrap().len(), first.len());
-    }
-
-    #[test]
-    fn registry_rejects_injected_duplicate_definitions() {
-        let mut definitions = crate::ai::tools_catalogue::all_tool_definitions();
-        definitions.push(definitions[0].clone());
-        assert!(ToolRegistry::from_definitions(definitions).is_err());
-    }
-
-    #[test]
-    fn internal_product_create_alias_resolves_without_provider_advertisement() {
-        let registry = ToolRegistry::build().unwrap();
-        assert_eq!(
-            registry.get("product_create").unwrap().name,
-            "create_product"
-        );
-        assert_eq!(
-            crate::ai::tools_catalogue::all_tool_definitions()
-                .iter()
-                .filter(|definition| {
-                    definition.name == "create_product" || definition.name == "product_create"
-                })
-                .count(),
-            1
-        );
-    }
-
-    #[test]
-    fn bulk_stock_set_is_a_confirmed_run_mutation() {
-        let registry = ToolRegistry::build().unwrap();
-        let descriptor = registry.get("bulk_stock_set").unwrap();
-
-        assert_eq!(descriptor.kind, ToolKind::Mutation);
-        assert_eq!(descriptor.confirmation, Confirmation::Always);
-        assert_eq!(descriptor.undo, UndoPolicy::Run);
-    }
-
-    #[test]
-    fn every_provider_tool_name_uses_supported_characters() {
-        for (index, definition) in crate::ai::tools_catalogue::all_tool_definitions()
-            .into_iter()
-            .enumerate()
-        {
-            assert!(
-                !definition.name.is_empty()
-                    && definition
-                        .name
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')),
-                "tools[{index}].function.name is invalid: {}",
-                definition.name
-            );
-        }
-    }
-
-    #[test]
-    fn routine_reversible_mutations_use_risk_based_confirmation() {
-        let registry = ToolRegistry::build().unwrap();
-        let name = "update_product_price";
-        let descriptor = registry.get(name).unwrap();
-        assert_eq!(
-            descriptor.confirmation,
-            Confirmation::AutomaticIfActionUndo,
-            "{name}"
-        );
-        assert_eq!(descriptor.undo, UndoPolicy::Action, "{name}");
-        assert_eq!(descriptor.scope, DataScope::BranchMutation);
-    }
-
-    #[test]
-    fn sensitive_and_unknown_undo_mutations_still_require_confirmation() {
-        let registry = ToolRegistry::build().unwrap();
-        for name in [
-            "delete_product",
-            "create_refund",
-            "adjust_stock",
-            "bulk_update_prices",
-            "create_user",
-            "backup_database",
-            "send_whatsapp_message",
-        ] {
-            if let Some(descriptor) = registry.get(name) {
-                assert_eq!(descriptor.confirmation, Confirmation::Always, "{name}");
-            }
-        }
-    }
-
-    #[test]
-    fn no_undo_mutation_is_never_automatic() {
-        let registry = ToolRegistry::build().unwrap();
-        for descriptor in registry.iter().filter(|d| d.kind.is_mutation()) {
-            if descriptor.undo != UndoPolicy::Action {
-                assert_ne!(
-                    descriptor.confirmation,
-                    Confirmation::AutomaticIfActionUndo,
-                    "{}",
-                    descriptor.name
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn irreversible_mutations_do_not_claim_undo() {
-        let registry = ToolRegistry::build().unwrap();
-        for name in [
-            "open_cash_drawer",
-            "send_whatsapp_message",
-            "backup_database",
-        ] {
-            if let Some(descriptor) = registry.get(name) {
-                assert_eq!(descriptor.undo, UndoPolicy::None, "{name}");
-            }
-        }
-        assert_eq!(
-            registry.get("bulk_price_adjust").unwrap().undo,
-            UndoPolicy::Run
-        );
-    }
-
-    #[test]
-    fn network_descriptors_are_explicitly_untrusted() {
-        let registry = ToolRegistry::build().unwrap();
-        for name in [
-            "web_search",
-            "fetch_url",
-            "smart_barcode_lookup",
-            "lookup_barcode",
-            "get_exchange_rates",
-            "get_prayer_times",
-            "get_bahrain_holidays",
-        ] {
-            assert_eq!(
-                registry.get(name).unwrap().trust,
-                TrustLevel::External,
-                "{name}"
-            );
-        }
-    }
-
-    #[test]
-    fn schema_validation_rejects_unknown_and_oversized_input() {
-        let registry = ToolRegistry::build().unwrap();
-        let search = registry.get("search_products").unwrap();
-        assert!(search
-            .validate(&serde_json::json!({"query":"tea", "extra":true}))
-            .is_err());
-        assert!(search
-            .validate(&serde_json::json!({"query":"x".repeat(4097)}))
-            .is_err());
-        assert!(search.validate(&serde_json::json!({"query":"tea"})).is_ok());
-    }
-
-    #[test]
-    fn list_categories_accepts_an_optional_query_filter() {
-        let registry = ToolRegistry::build().unwrap();
-        let categories = registry.get("list_categories").unwrap();
-
-        assert!(categories.validate(&serde_json::json!({})).is_ok());
-        assert!(categories
-            .validate(&serde_json::json!({"query":"drinks"}))
-            .is_ok());
-        assert!(categories
-            .validate(&serde_json::json!({"query":"drinks", "extra":true}))
-            .is_err());
-    }
-}
+mod tests;

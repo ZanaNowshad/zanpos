@@ -16,19 +16,14 @@ pub async fn delivery_list(
 ) -> Result<Vec<DeliveryRow>, AppError> {
     rbac::require_role(&state.db, &actor_user_id, &["owner", "manager", "cashier"]).await?;
 
-    // BUG-DELIVERY-10: prefer branch_id from caller (DEVICE.branch_id) over DB lookup.
-    let branch_id: String = if let Some(b) = &filter.branch_id {
-        b.clone()
-    } else {
-        sqlx::query_scalar(
-            "SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1",
-        )
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_default()
-    };
+    // Delivery rows carry customer contact numbers and receipt references, so the
+    // branch scope comes from the actor's own record. `filter.branch_id` is
+    // caller-supplied and was previously preferred over any lookup, which let an
+    // authenticated user read another branch's deliveries by changing one field.
+    //
+    // The previous fallback also defaulted to an empty string when no active
+    // branch existed, which matched no rows silently rather than failing.
+    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
 
     delivery_repo::list_deliveries(&state.db, &branch_id, &filter).await
 }
@@ -104,5 +99,10 @@ pub async fn delivery_rider_suggestions(
     state: State<'_, AppState>,
 ) -> Result<Vec<String>, AppError> {
     rbac::require_role(&state.db, &actor_user_id, &["owner", "manager", "cashier"]).await?;
+    // Caller-supplied `branch_id` is not trusted for branch-scoped data;
+    // the scope comes from the actor's own record. The parameter remains
+    // only to preserve the existing invoke contract.
+    let _ = branch_id;
+    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
     delivery_repo::rider_suggestions(&state.db, &branch_id).await
 }

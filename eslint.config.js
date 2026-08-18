@@ -45,4 +45,16 @@ export default [
       react: { version: "detect" },
     },
   },
+  // Test files that inspect the repository run under Node, not the browser, so
+  // `__dirname` and friends are genuinely defined for them. Declaring the real
+  // environment is not the same as switching a rule off: `no-undef` stays on
+  // and would still catch a typo.
+  {
+    files: ["src/__tests__/**/*.{ts,tsx}", "src/**/*.test.{ts,tsx}"],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
 ];

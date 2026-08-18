@@ -16,6 +16,12 @@ import tsParser from "@typescript-eslint/parser";
 export default [
   {
     files: ["src/**/*.{ts,tsx}"],
+    // This config deliberately runs react-hooks/exhaustive-deps "off" so the
+    // gate stays focused on accessibility. That makes every
+    // eslint-disable-next-line for that rule look "unused" *here*, even though
+    // `npm run lint` needs each one. Directive reporting therefore belongs to
+    // the main config, which is the one that can actually judge them.
+    linterOptions: { reportUnusedDisableDirectives: "off" },
     languageOptions: {
       parser: tsParser,
       parserOptions: {

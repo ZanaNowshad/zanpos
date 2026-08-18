@@ -81,7 +81,7 @@ pub fn all_intents() -> Vec<IntentDef> {
         IntentDef { name: "get_sync_status", description: "Current hub sync status: online/offline, pending count, last sync time.", parameters: json!({"type":"object","properties":{}}) },
         IntentDef { name: "get_audit_log", description: "View audit trail entries for a date range.", parameters: json!({"type":"object","properties":{"from_date":{"type":"string"},"to_date":{"type":"string"}}}) },
         IntentDef { name: "backup_database", description: "Create a database backup to the specified path. Returns file path and size.", parameters: json!({"type":"object","properties":{}}) },
-        IntentDef { name: "open_tab", description: "Navigate the admin workspace to a specific tab.", parameters: json!({"type":"object","properties":{"tab":{"type":"string","enum":["products","categories","inventory","reports","cashier","eod","deliveries","customers","users","settings","audit","devices"]}},"required":["tab"]}) },
+        IntentDef { name: "open_tab", description: "Navigate the admin workspace to a destination accepted by the tab schema.", parameters: json!({"type":"object","properties":{"tab":{"type":"string","enum":["products","categories","inventory","reports","cashier","eod","deliveries","customers","users","purchasing","settings","audit","devices"]}},"required":["tab"]}) },
     ]
 }
 

@@ -23,13 +23,7 @@ async fn active_branch_id(state: &AppState) -> AppResult<String> {
 
 /// Resolve the active device_id from the database at runtime.
 async fn active_device_id(state: &AppState) -> AppResult<String> {
-    let row = sqlx::query(
-        "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1",
-    )
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::NotFound("No active device configured".into()))?;
-    Ok(row.get("device_id"))
+    crate::device_identity::current(&state.db).await
 }
 
 // ── Decimal quantity helper (H9/H10) ─────────────────────────────────────────────

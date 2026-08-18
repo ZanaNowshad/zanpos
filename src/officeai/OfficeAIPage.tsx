@@ -3,51 +3,55 @@ import type { AiHandoff, DiagnosticReport, ProductPrefill, ProviderConfig, Sessi
 import { DEVICE } from "../types";
 import { adminGetProviderConfig, adminRunDiagnostics, settingsGetBranch } from "../tauri/commands";
 import type { OfficeAiOverviewSnapshot, OfficeTab } from "./officeAiTypes";
-import { CONTROL_TABS, OPERATION_TABS, primarySpaceForTab, visibleTabsFor } from "./nav";
-import type { OfficeSubTab } from "./nav";
 import { officeAiActionQueue, officeAiOverview } from "./officeAiData";
 import { useLanguage } from "../hooks/useLanguage";
+import { useTheme } from "../hooks/useTheme";
 import { officeAiTranslator } from "../i18n/officeAiStrings";
-import {
-  controlGroups as localizedControlGroups, controlTabs as buildControlTabs,
-  operationGroups as localizedOperationGroups, operationTabs as buildOperationTabs,
-} from "./officeAiNavigation";
 import { buildOfficePagePulse, EMPTY_OFFICE_OVERVIEW } from "./officeAiPagePresentation";
-import { useChatController } from "./useChatController";
-import OfficeAIShell from "./OfficeAIShell";
-import type { OfficePulseItem } from "./OfficeAIShell";
-import OfficeAIPrimaryNav, { PRIMARY_ENTRIES } from "./OfficeAIPrimaryNav";
-import OfficeAISecondaryNav from "./OfficeAISecondaryNav";
+import { useZanAi } from "../zanai/useZanAi";
+// Phase 4: new Today dashboard replaces OfficeAIOverview
+import TodayDashboard from "../command/pages/TodayDashboard";
 import OfficeAICommandPalette from "./OfficeAICommandPalette";
-import OfficeAIOverview from "./OfficeAIOverview";
+import type { OfficePulseItem } from "./officeAiTypes";
+// Canonical navigation — the single source of truth (src/navigation/config).
+import {
+  ALIAS_TABS,
+  domainForTab,
+  domainsForRole,
+  entryTabForDomain,
+  paletteEntriesForRole,
+  sectionsForDomain,
+  visibleTabsForRole,
+} from "../navigation/config";
+import SectionNav from "../navigation/SectionNav";
+import Breadcrumb from "../navigation/Breadcrumb";
+import CommandShell from "../command/CommandShell";
+import type { CommandDomain } from "../command/CommandSidebar";
+import type { HeaderStatusPill } from "../command/CommandHeader";
 import OfficeAIAssistantWorkspace from "./OfficeAIAssistantWorkspace";
-import OfficeAIActionReview from "./OfficeAIActionReview";
+import ReviewWorkspace from "../command/pages/review/ReviewWorkspace";
 import OfficeAISystemHealth from "./OfficeAISystemHealth";
 import OfficeAIWorkflowInbox from "./OfficeAIWorkflowInbox";
 import OfficeAIConflictInbox from "./OfficeAIConflictInbox";
 import OfficeAIGrowthWorkspace from "./OfficeAIGrowthWorkspace";
-import OfficeAIPurchasingWorkspace from "./OfficeAIPurchasingWorkspace";
 import CopilotDock from "./CopilotDock";
 import ConfirmActionModal from "../components/ConfirmActionModal";
-import { X } from "lucide-react";
+import { DegradedBanner } from "../components/templates";
 
-import ProductsTab from "../components/ProductsTab";
-import CategoriesTab from "../components/CategoriesTab";
-import UsersTab from "../components/UsersTab";
-import ReportsTab from "../components/ReportsTab";
-import InventoryTab from "../components/InventoryTab";
-import CustomersTab from "../components/CustomersTab";
-import SettingsTab from "../components/SettingsTab";
-import AuditLogTab from "../components/AuditLogTab";
-import DevicesTab from "../components/DevicesTab";
-import CashierReportTab from "../components/CashierReportTab";
-import EodCashupTab from "../components/EodCashupTab";
-import DeliveriesTab from "../components/DeliveriesTab";
+// Customers: directory + loyalty are one workspace, replacing CustomersTab and
+// the Growth workspace's loyalty mode.
+import LoyaltyPage from "../command/pages/customers/LoyaltyPage";
+// Phase 7: consolidated settings replaces SettingsTab
+import { renderDataTab } from "./officeAiTabRouter";
+import { usePersistedAiActions } from "./usePersistedAiActions";
+import { useOfficeAiShortcuts } from "./useOfficeAiShortcuts";
+
 
 interface Props {
   sessionUser: SessionUser; onBackToPOS: () => void;
   initialProductPrefill?: ProductPrefill | null; initialAiMessage?: AiHandoff | null;
   initialTab?: OfficeTab; initialMaintenancePane?: boolean;
+  onStartPractice?: () => void;
 }
 
 export default function OfficeAIPage({
@@ -57,8 +61,10 @@ export default function OfficeAIPage({
   initialAiMessage,
   initialTab,
   initialMaintenancePane,
+  onStartPractice,
 }: Props) {
-  const { language } = useLanguage();
+  const { language, toggle: toggleLanguage } = useLanguage();
+  const { theme, toggle: toggleTheme } = useTheme();
   const t = useMemo(() => officeAiTranslator(language), [language]);
   const [tab, setTab] = useState<OfficeTab>(
     initialProductPrefill ? "products" : initialTab ?? "overview",
@@ -71,11 +77,17 @@ export default function OfficeAIPage({
   const [config, setConfig] = useState<ProviderConfig | null>(null);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [overview, setOverview] = useState<OfficeAiOverviewSnapshot>(EMPTY_OFFICE_OVERVIEW);
-  const [overviewLoading, setOverviewLoading] = useState(false);
   const [productPrefill, setProductPrefill] = useState<ProductPrefill | null>(initialProductPrefill ?? null);
   const [diagRunning, setDiagRunning] = useState(false);
   const [diagResult, setDiagResult] = useState<DiagnosticReport | null>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const {
+    ctrl,
+    navigationRequest,
+    consumeNavigationRequest,
+    registerSurfaceContext,
+    dataEpoch,
+  } = useZanAi();
 
   const isOwner = sessionUser.role_name === "owner";
   const isManager = isOwner || sessionUser.role_name === "manager";
@@ -90,7 +102,6 @@ export default function OfficeAIPage({
   }, [sessionUser.user_id, sessionUser.session_token]);
 
   const refreshOverview = useCallback(async () => {
-    setOverviewLoading(true);
     setOverview(prev => ({ ...prev, loading: true }));
     try {
       const next = await officeAiOverview(sessionUser.user_id, sessionUser.session_token, sessionUser.branch_id, t);
@@ -102,8 +113,6 @@ export default function OfficeAIPage({
         loading: false,
         errors: [`${t("officeAiOverview")}: ${typeof e === "string" ? e : String(e)}`],
       }));
-    } finally {
-      setOverviewLoading(false);
     }
   }, [sessionUser.branch_id, sessionUser.user_id, sessionUser.session_token, t]);
 
@@ -121,22 +130,33 @@ export default function OfficeAIPage({
   const tabRef = useRef(tab);
   useEffect(() => { tabRef.current = tab; }, [tab]);
   const getUiContext = useCallback(
-    () => `The admin is in the ZANPOS OfficeAI command center, currently viewing the "${tabRef.current}" workspace.`,
+    () => `The admin is in the ZANPOS Command center, currently viewing the "${tabRef.current}" workspace.`,
     [],
   );
-  const onNavigate = useCallback((t: string) => {
-    if ((visibleTabsFor(sessionUser.role_name) as string[]).includes(t)) setTab(t as OfficeTab);
-  }, [sessionUser.role_name]);
   const openVisibleTab = useCallback((nextTab: OfficeTab) => {
-    if ((visibleTabsFor(sessionUser.role_name) as string[]).includes(nextTab)) {
+    if ((visibleTabsForRole(sessionUser.role_name) as string[]).includes(nextTab)) {
       setTab(nextTab);
     }
   }, [sessionUser.role_name]);
-  const onMutationApplied = useCallback(() => {
-    setTabEpoch(e => e + 1);
+  useEffect(() => {
+    registerSurfaceContext({ surface: "office", summary: getUiContext() });
+  }, [getUiContext, registerSurfaceContext, tab]);
+
+  useEffect(() => {
+    if (!navigationRequest) return;
+    if ((visibleTabsForRole(sessionUser.role_name) as string[]).includes(navigationRequest.tab)) {
+      setTab(navigationRequest.tab as OfficeTab);
+    }
+    consumeNavigationRequest(navigationRequest.id);
+  }, [consumeNavigationRequest, navigationRequest, sessionUser.role_name]);
+
+  const observedDataEpochRef = useRef(dataEpoch);
+  useEffect(() => {
+    if (observedDataEpochRef.current === dataEpoch) return;
+    observedDataEpochRef.current = dataEpoch;
+    setTabEpoch(epoch => epoch + 1);
     void refreshOverview();
-  }, [refreshOverview]);
-  const ctrl = useChatController({ sessionUser, getUiContext, onNavigate, onMutationApplied });
+  }, [dataEpoch, refreshOverview]);
 
   const sendPrompt = useCallback((prompt: string) => {
     setTab("assistant");
@@ -204,146 +224,93 @@ export default function OfficeAIPage({
     void ctrl.handleSend(q.text);
   }, [ctrl.chatState, ctrl]);
 
-  const visibleTabIds = useMemo(() => {
-    return new Set(visibleTabsFor(sessionUser.role_name));
-  }, [sessionUser.role_name]);
-  const coreTabs = useMemo<OfficeSubTab[]>(() => [
-    { id: "overview", label: t("home"), description: t("whatNeedsAttention") },
-    { id: "assistant", label: t("askAi"), description: t("askInspectAct") },
-  ], [t]);
-  const translatedOperationTabs = useMemo(() => buildOperationTabs(t), [t]);
-  const translatedControlTabs = useMemo(() => buildControlTabs(t), [t]);
-  const paletteItems = useMemo(
-    () => [...coreTabs, ...translatedOperationTabs, ...translatedControlTabs]
-      .filter(item => visibleTabIds.has(item.id)),
-    [coreTabs, translatedOperationTabs, translatedControlTabs, visibleTabIds],
+  /** Rail domains for this role, sections already permission-filtered. */
+  const navDomains = useMemo(
+    () => domainsForRole(sessionUser.role_name),
+    [sessionUser.role_name],
   );
-  const primaryEntries = useMemo(() => PRIMARY_ENTRIES.flatMap(entry => {
-    if (visibleTabIds.has(entry.defaultTab)) return [entry];
-    const fallback = paletteItems.find(item => primarySpaceForTab(item.id) === entry.space);
-    return fallback ? [{ ...entry, defaultTab: fallback.id }] : [];
-  }), [paletteItems, visibleTabIds]);
+  /** Palette entries are derived from the nav config — never hand-listed. */
+  const paletteItems = useMemo(
+    () => paletteEntriesForRole(sessionUser.role_name).map(entry => ({
+      id: entry.id,
+      label: t(entry.labelKey),
+      description: t(entry.domainLabelKey),
+    })),
+    [sessionUser.role_name, t],
+  );
 
   const chatStateRef = useRef(ctrl.chatState);
   useEffect(() => { chatStateRef.current = ctrl.chatState; }, [ctrl.chatState]);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (chatStateRef.current === "confirm") return;
-      if (e.key === "Escape") {
-        if (commandOpen) {
-          e.preventDefault();
-          setCommandOpen(false);
-          return;
-        }
-        if (dockOpen) {
-          e.preventDefault();
-          setDockOpen(false);
-          return;
-        }
-        const active = document.activeElement as HTMLElement | null;
-        if (active && ["TEXTAREA", "INPUT", "SELECT"].includes(active.tagName)) {
-          active.blur();
-          return;
-        }
-        e.preventDefault();
-        onBackToPOS();
-        return;
-      }
-      if (e.ctrlKey && e.key === "/") {
-        e.preventDefault();
-        setDockOpen(d => !d);
-        window.setTimeout(() => composerRef.current?.focus(), 120);
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setCommandOpen(true);
-        return;
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key >= "1" && e.key <= "4") {
-        e.preventDefault();
-        const idx = parseInt(e.key, 10) - 1;
-        if (idx < primaryEntries.length) setTab(primaryEntries[idx].defaultTab);
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [commandOpen, dockOpen, onBackToPOS, primaryEntries]);
+  useOfficeAiShortcuts({
+    chatStateRef, commandOpen, dockOpen, navDomains,
+    setCommandOpen, setDockOpen, onOpenTab: openVisibleTab, onBackToPOS,
+    focusComposer: () => composerRef.current?.focus(),
+  });
 
-  const activeSpace = useMemo(() => primarySpaceForTab(tab), [tab]);
+  // ── Canonical navigation state ────────────────────────────────────────────
+  // One model: rail domain (L1) + contextual sections (L2). Both derive from
+  // src/navigation/config, so they can never disagree about what is active.
+  const { confirmPersistedAction, cancelPersistedAction } = usePersistedAiActions({
+    sessionToken: sessionUser.session_token,
+    onApplied: () => { setTabEpoch(e => e + 1); void refreshOverview(); },
+  });
+
+  const activeDomainId = useMemo(() => domainForTab(tab), [tab]);
+  const activeSections = useMemo(
+    () => sectionsForDomain(activeDomainId, sessionUser.role_name),
+    [activeDomainId, sessionUser.role_name],
+  );
+  const activeDomain = useMemo(
+    () => navDomains.find(d => d.id === activeDomainId),
+    [navDomains, activeDomainId],
+  );
+  /** The section highlighted in L2 — resolves aliases so "operations" lights up "products". */
+  const activeSectionTab = useMemo<OfficeTab>(() => {
+    const aliased = (ALIAS_TABS[tab] ?? tab) as OfficeTab;
+    return activeSections.some(s => s.id === aliased) ? aliased : (activeDomain?.defaultTab ?? aliased);
+  }, [tab, activeSections, activeDomain]);
+
+  const commandDomains = useMemo<CommandDomain[]>(
+    () => navDomains.map(d => ({
+      id: d.id,
+      labelKey: d.labelKey,
+      icon: d.icon,
+      defaultTab: d.defaultTab,
+    })),
+    [navDomains],
+  );
   const activeItem = paletteItems.find(item => item.id === tab)
-    ?? (tab === "operations" ? { id: "operations" as OfficeTab, label: t("operations"), description: t("catalogSalesPeople") } : undefined)
-    ?? { id: tab, label: tab, description: "ZanAI" };
+    ?? { id: tab, label: activeDomain ? t(activeDomain.labelKey) : tab, description: "ZanAI" };
   const storeName = businessName || t("yourStore");
   const tabKey = `${tab}:${tabEpoch}`;
   const actionItems = officeAiActionQueue(ctrl, t);
-  const operationTabs = useMemo(
-    () => translatedOperationTabs.filter(item => visibleTabIds.has(item.id)),
-    [translatedOperationTabs, visibleTabIds],
-  );
-  const controlTabs = useMemo(
-    () => translatedControlTabs.filter(item => visibleTabIds.has(item.id)),
-    [translatedControlTabs, visibleTabIds],
-  );
-  const operationNavGroups = useMemo(() => localizedOperationGroups(t), [t]);
-  const controlNavGroups = useMemo(() => localizedControlGroups(t), [t]);
-  const activeOperationTab = OPERATION_TABS.some(t => t.id === tab) ? tab : "products";
-  const activeControlTab = CONTROL_TABS.some(t => t.id === tab) ? tab : "actions";
 
   const pulseItems: OfficePulseItem[] = useMemo(
     () => buildOfficePagePulse({ overview, actionItems, configured, isManager, t }),
     [overview, actionItems, configured, isManager, t],
   );
 
-  const handleSelectSpace = useCallback((entry: typeof PRIMARY_ENTRIES[number]) => {
-    setTab(entry.defaultTab);
-  }, []);
+  const headerStatuses = useMemo<HeaderStatusPill[]>(() =>
+    pulseItems.map(p => ({
+      id: p.id,
+      label: p.label,
+      level: p.level,
+      icon: p.icon,
+    })), [pulseItems]);
 
-  const renderDataTab = () => {
-    switch (tab) {
-      case "operations": return <ProductsTab key={tabKey} sessionUserId={sessionUser.user_id} prefill={productPrefill} onPrefillConsumed={() => setProductPrefill(null)} />;
-      case "products": return <ProductsTab key={tabKey} sessionUserId={sessionUser.user_id} prefill={productPrefill} onPrefillConsumed={() => setProductPrefill(null)} />;
-      case "categories": return <CategoriesTab key={tabKey} sessionUserId={sessionUser.user_id} />;
-      case "users": return <UsersTab key={tabKey} sessionUserId={sessionUser.user_id} />;
-      case "reports": return <ReportsTab key={tabKey} sessionUserId={sessionUser.user_id} />;
-      case "cashier": return <CashierReportTab key={tabKey} sessionUserId={sessionUser.user_id} />;
-      case "eod": return <EodCashupTab key={tabKey} sessionUserId={sessionUser.user_id} />;
-      case "inventory": return <InventoryTab key={tabKey} sessionUserId={sessionUser.user_id} />;
-      case "customers": return <CustomersTab key={tabKey} sessionUserId={sessionUser.user_id} />;
-      case "settings": return (
-        <SettingsTab
-          key={tabKey}
-          sessionUserId={sessionUser.user_id}
-          sessionToken={sessionUser.session_token}
-          sessionRole={sessionUser.role_name}
-          initialMaintenancePane={initialMaintenancePane}
-        />
-      );
-      case "audit": return isOwner ? <AuditLogTab key={tabKey} sessionUserId={sessionUser.user_id} /> : null;
-      case "devices": return isOwner ? <DevicesTab key={tabKey} sessionUserId={sessionUser.user_id} /> : null;
-      case "deliveries": return <DeliveriesTab key={tabKey} sessionUser={sessionUser} />;
-      case "purchasing": return (
-        <OfficeAIPurchasingWorkspace
-          key={tabKey}
-          actorUserId={sessionUser.user_id}
-          currencyExp={DEVICE.currency_exponent}
-          onSendPrompt={sendPrompt}
-        />
-      );
-      default: return null;
-    }
-  };
 
   const renderWorkspaceContent = () => {
     if (tab === "overview") {
       return (
-        <OfficeAIOverview
+        <TodayDashboard
           snapshot={overview}
+          storeName={businessName}
           currencyExp={DEVICE.currency_exponent}
           canUseManagerTools={isManager}
           pendingActionCount={actionItems.filter(item => item.status === "pending").length}
           onOpenTab={openVisibleTab}
           onRefresh={refreshOverview}
+          onSendPrompt={sendPrompt}
         />
       );
     }
@@ -365,7 +332,18 @@ export default function OfficeAIPage({
       );
     }
     if (tab === "actions") {
-      return <OfficeAIActionReview items={actionItems} ctrl={ctrl} canApprove={isManager} />;
+      // Persisted actions are the authority here, not chat state: a manager in
+      // a fresh session must still see everything awaiting a decision.
+      return (
+        <ReviewWorkspace
+          sessionToken={sessionUser.session_token}
+          actorUserId={sessionUser.user_id}
+          canApprove={isManager}
+          conflictsSlot={<OfficeAIConflictInbox actorUserId={sessionUser.user_id} />}
+          onConfirm={confirmPersistedAction}
+          onCancelAction={cancelPersistedAction}
+        />
+      );
     }
     if (tab === "health") {
       return <OfficeAISystemHealth actorUserId={sessionUser.user_id} initialReport={overview.health} onReport={(health) => setOverview(prev => ({ ...prev, health }))} />;
@@ -376,10 +354,20 @@ export default function OfficeAIPage({
     if (tab === "workflows") {
       return <OfficeAIWorkflowInbox actorUserId={sessionUser.user_id} sessionToken={sessionUser.session_token} onSendPrompt={sendPrompt} />;
     }
-    if (tab === "insights" || tab === "loyalty") {
+    if (tab === "loyalty") {
+      return (
+        <LoyaltyPage
+          key={tabKey}
+          actorUserId={sessionUser.user_id}
+          onOpenDirectory={() => openVisibleTab("customers")}
+          onOpenSettings={isManager ? () => openVisibleTab("settings") : undefined}
+        />
+      );
+    }
+    if (tab === "insights") {
       return (
         <OfficeAIGrowthWorkspace
-          mode={tab}
+          mode="insights"
           actorUserId={sessionUser.user_id}
           snapshot={overview}
           currencyExp={DEVICE.currency_exponent}
@@ -388,80 +376,92 @@ export default function OfficeAIPage({
         />
       );
     }
-    return <div className="oa-embedded-tab">{renderDataTab()}</div>;
+    // No wrapper: pages render their own PageTemplate, which already provides
+    // the content panel. Wrapping here produced a bordered card inside a
+    // bordered card and stopped the page claiming the available height.
+    return renderDataTab({
+      tab, tabKey, sessionUser, isOwner, isManager,
+      productPrefill,
+      maintenancePane: initialMaintenancePane,
+      onPrefillConsumed: () => setProductPrefill(null),
+      onOpenTab: openVisibleTab,
+      onSendPrompt: sendPrompt,
+      onStartPractice,
+    });
   };
 
+  /**
+   * One layout for every domain: contextual L2 nav (when the domain has two
+   * or more sections) beside the workspace. No per-space special-casing.
+   */
   const renderWorkspace = () => {
-    if (activeSpace === "operations") {
-      return (
-        <div className="oa-space-layout">
-          <OfficeAISecondaryNav
-            label={t("operations")}
-            groups={operationNavGroups}
-            tabs={operationTabs}
-            activeTab={activeOperationTab}
+    // Settings brings its own group rail, which is that page's level-2
+    // navigation. Rendering the domain section nav as well would stack three
+    // navigation columns — the exact nesting this shell exists to remove.
+    const ownsItsNav = tab === "settings";
+    const hasSections = activeSections.length >= 2 && !ownsItsNav;
+    return (
+      <div className={`zp-domain-layout${hasSections ? "" : " zp-domain-layout-flat"}`}>
+        {hasSections && activeDomain && (
+          <SectionNav
+            domainLabelKey={activeDomain.labelKey}
+            sections={activeSections}
+            activeTab={activeSectionTab}
             onSelect={setTab}
           />
-          <div className="oa-space-content oa-embedded-tab oa-embedded-tab-flat">{renderDataTab()}</div>
-        </div>
-      );
-    }
-    if (activeSpace === "control") {
-      return (
-        <div className="oa-space-layout">
-          <OfficeAISecondaryNav
-            label={t("control")}
-            groups={controlNavGroups}
-            tabs={controlTabs}
-            activeTab={activeControlTab}
-            onSelect={setTab}
-          />
-          <div className="oa-space-content">{renderWorkspaceContent()}</div>
-        </div>
-      );
-    }
-    return renderWorkspaceContent();
+        )}
+        <div className="zp-domain-content">{renderWorkspaceContent()}</div>
+      </div>
+    );
   };
 
   return (
-    <div className="oa-page">
-      <OfficeAIPrimaryNav
-        activeSpace={activeSpace}
+    <>
+      <CommandShell
+        activeDomainId={activeDomainId}
         collapsed={collapsed}
+        hasSectionNav={activeSections.length >= 2 && tab !== "settings"}
         storeName={storeName}
-        entries={primaryEntries}
-        onSelectSpace={handleSelectSpace}
+        roleName={sessionUser.role_name}
+        domains={commandDomains}
+        onSelectDomain={(d) => {
+          const domain = navDomains.find(n => n.id === d.id);
+          setTab(domain ? entryTabForDomain(domain) : (d.defaultTab as OfficeTab));
+        }}
         onToggleCollapsed={() => setCollapsed(c => !c)}
         onBackToPOS={onBackToPOS}
-      />
-
-      <OfficeAIShell
-        activeTab={tab}
-        activeSpace={activeSpace}
-        title={activeItem?.label ?? tab}
-        subtitle={activeItem?.description ?? t("zanAiCommandCenter")}
-        dockOpen={dockOpen}
+        notificationCount={actionItems.filter(i => i.status === "pending").length}
+        onOpenAskBar={() => setCommandOpen(true)}
         onToggleDock={() => setDockOpen(d => !d)}
-        onOpenCommand={() => setCommandOpen(true)}
-        onRefresh={tab === "overview" ? refreshOverview : undefined}
-        refreshing={overviewLoading}
-        pulseItems={isManager ? pulseItems : pulseItems.filter(p => p.id !== "pending")}
+        dockOpen={dockOpen}
+        onOpenNotifications={() => openVisibleTab("workflows")}
+        statusPills={headerStatuses}
+        userName={sessionUser.display_name}
+        userRole={sessionUser.role_name}
+        themeLabel={theme === "light" ? "☀" : "☾"}
+        onToggleTheme={toggleTheme ?? (() => {})}
+        languageLabel={language === "ar" ? "EN" : "ع"}
+        onToggleLanguage={toggleLanguage}
       >
         {(ctrl.errorMessage || diagResult) && (
-          <div className={`oa-error-banner${diagResult?.ok ? " oa-error-banner-ok" : ""}`}>
-            <span className="oa-error-banner-text">{diagResult ? diagResult.note : ctrl.errorMessage}</span>
-            <div className="oa-error-banner-actions">
-              {ctrl.errorMessage && !diagResult && (
-                <button className="oa-error-banner-fix" onClick={handleRunDiagnostics} disabled={diagRunning}>
-                  {t(diagRunning ? "fixingEllipsis" : "autoFix")}
-                </button>
-              )}
-              <button className="oa-error-banner-close" onClick={() => { ctrl.dismissError(); setDiagResult(null); }} title={t("dismiss")} aria-label={t("dismiss")}><X size={14} /></button>
-            </div>
+          <DegradedBanner
+            severity={diagResult?.ok ? "ok" : "warning"}
+            message={diagResult ? diagResult.note : ctrl.errorMessage!}
+            action={
+              ctrl.errorMessage && !diagResult
+                ? { label: t(diagRunning ? "fixingEllipsis" : "autoFix"), onClick: handleRunDiagnostics }
+                : undefined
+            }
+            onDismiss={() => { ctrl.dismissError(); setDiagResult(null); }}
+          />
+        )}
+        {tab !== "overview" && tab !== "assistant" && (
+          <div className="zp-breadcrumb-bar">
+            <Breadcrumb tab={tab} onNavigate={setTab} />
           </div>
         )}
         {renderWorkspace()}
-      </OfficeAIShell>
+      </CommandShell>
 
       {dockOpen && tab !== "assistant" && (
         <div role="presentation"  className="oa-copilot-backdrop" onMouseDown={() => setDockOpen(false)}>
@@ -494,6 +494,6 @@ export default function OfficeAIPage({
           onCancel={ctrl.handleCancel}
         />
       )}
-    </div>
+    </>
   );
 }

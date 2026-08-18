@@ -7,14 +7,17 @@ import { modalTranslator } from "../i18n/modalStrings";
 
 interface Props {
   productName: string;
+  currentPriceMinor?: number;
   onConfirm: (priceMajor: string) => Promise<void>;
   onCancel: () => void;
 }
 
-export default function PriceInputModal({ productName, onConfirm, onCancel }: Props) {
+export default function PriceInputModal({ productName, currentPriceMinor, onConfirm, onCancel }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => modalTranslator(language), [language]);
-  const [price, setPrice]     = useState("");
+  const [price, setPrice] = useState(() => currentPriceMinor
+    ? formatMoney(currentPriceMinor, DEVICE.currency_exponent)
+    : "");
   const [error, setError]     = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const confirmRef = useRef<HTMLButtonElement>(null);
@@ -55,10 +58,14 @@ export default function PriceInputModal({ productName, onConfirm, onCancel }: Pr
 
         {/* ── Left: info + price display ── */}
         <div className="modal custom-item-left">
-          <h2 className="modal-title">{t("setPrice")}</h2>
+          <h2 className="modal-title">{currentPriceMinor ? t("changeItemPrice") : t("setPrice")}</h2>
 
           <div className="pi-product-name">{productName}</div>
-          <div className="pi-hint">{t("itemHasNoBasePrice")}</div>
+          <div className="pi-hint">
+            {currentPriceMinor
+              ? `${t("currentPrice")}: ${cur} ${formatMoney(currentPriceMinor, EXP)}`
+              : t("itemHasNoBasePrice")}
+          </div>
 
           {/* Keyboard-typeable price input (dialpad on the right still works for touch) */}
           <div className="ce-amount-block ce-amount-input-block">

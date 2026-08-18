@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import type { StickyNote } from "../utils/stickyNotes";
 import { formatReminderTime, patchNote } from "../utils/stickyNotes";
 
@@ -9,10 +9,10 @@ interface Props {
 }
 
 export default function ReminderPopup({ note, onClose }: Props) {
-  const handleDismiss = () => {
+  const handleDismiss = useCallback(() => {
     patchNote(note.id, { reminderFired: true });
     onClose();
-  };
+  }, [note.id, onClose]);
 
   // Dismiss via Escape key
   useEffect(() => {
@@ -21,7 +21,7 @@ export default function ReminderPopup({ note, onClose }: Props) {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [note.id]);
+  }, [handleDismiss]);
 
   const handleSnooze = () => {
     patchNote(note.id, {

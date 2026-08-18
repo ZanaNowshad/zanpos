@@ -575,6 +575,7 @@ mod tests {
             product_name: "Coca-Cola 330ml".into(),
             sku: Some("COLA330".into()),
             barcode: None,
+            image_path: None,
             quantity: "2".to_string(),
             unit_price_minor: 400,
             line_discount_minor: 0,

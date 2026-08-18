@@ -509,6 +509,10 @@ export default function MigrationAgentPage({ onDone, sessionUserId, sessionToken
       node: <WelcomeFilePicker onFile={handleFile} isDragOver={isDragOver} />,
       ts: Date.now(),
     }]);
+    // Fires once, when AI becomes ready. `isDragOver` is read only to seed the
+    // picker's initial state — depending on it would rebuild the whole message
+    // list on every drag-hover.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aiReady]);
 
   // ── File handling ──────────────────────────────────────────────────────────
@@ -535,6 +539,9 @@ export default function MigrationAgentPage({ onDone, sessionUserId, sessionToken
         node: <WelcomeFilePicker onFile={handleFile} isDragOver={false} compact />,
       } : m));
     }
+    // Self-referential: the error branch renders a picker bound to this same
+    // callback, so it cannot list itself as a dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addMsg, updateMsgNode]);
 
   const handlePickFile = async () => {
@@ -581,6 +588,9 @@ export default function MigrationAgentPage({ onDone, sessionUserId, sessionToken
         node: <RetryButton label="♻ Retry AI Mapping" onClick={() => runAiMap(s)} />,
       } : msg));
     }
+    // Self-referential: the retry button re-invokes this callback, so it cannot
+    // list itself as a dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addMsg]);
 
   // ── Execute ────────────────────────────────────────────────────────────────
@@ -634,7 +644,7 @@ export default function MigrationAgentPage({ onDone, sessionUserId, sessionToken
         text: `❌ Migration error: ${sanitizeErrorMessage(String(e))}`,
       } : msg));
     }
-  }, [addMsg, messages, onDone]);
+  }, [addMsg, onDone, sessionUserId]);
 
   // ── Page drag-drop ─────────────────────────────────────────────────────────
   const handlePageDrop = async (e: React.DragEvent) => {

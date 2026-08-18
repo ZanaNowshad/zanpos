@@ -5,39 +5,75 @@ import Dialpad, { applyDialpadKey } from "./Dialpad";
 import { useLanguage } from "../hooks/useLanguage";
 import { modalTranslator } from "../i18n/modalStrings";
 import { detailTranslator } from "../i18n/detailStrings";
+import type { CartLine } from "../types";
 
 interface Props {
-  grossMinor:           number;
-  currentDiscountMinor: number;
-  onApply:  (discount_minor: number, reason: string) => void;
+  grossMinor: number;
+  currentBillDiscountMinor: number;
+  lines: CartLine[];
+  initialLineId?: string;
+  onApplyBill: (discount_minor: number, reason: string) => void;
+  onApplyLine: (line_id: string, discount_minor: number, reason: string) => void;
   onCancel: () => void;
 }
 
-type Mode = "pct" | "flat";
+export type DiscountMode = "pct" | "flat";
+type Scope = "bill" | "item";
 
-export default function DiscountModal({ grossMinor, currentDiscountMinor, onApply, onCancel }: Props) {
+export function calculateDiscountMinor(
+  mode: DiscountMode,
+  value: string,
+  baseMinor: number,
+  currencyExponent: number,
+): number {
+  if (mode === "pct") {
+    const basisPoints = Math.round(parseFloat(value || "0") * 100);
+    if (Number.isNaN(basisPoints) || basisPoints <= 0) return 0;
+    return Math.round(baseMinor * Math.min(basisPoints, 10_000) / 10_000);
+  }
+  return Math.min(parseMoney(value, currencyExponent), baseMinor);
+}
+
+export default function DiscountModal({
+  grossMinor,
+  currentBillDiscountMinor,
+  lines,
+  initialLineId,
+  onApplyBill,
+  onApplyLine,
+  onCancel,
+}: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => modalTranslator(language), [language]);
   const dt = useMemo(() => detailTranslator(language), [language]);
-  const [mode, setMode]     = useState<Mode>("pct");
+  const initialItemId = lines.some(line => line.cart_line_id === initialLineId)
+    ? initialLineId
+    : lines[0]?.cart_line_id;
+  const [scope, setScope] = useState<Scope>(initialLineId && initialItemId ? "item" : "bill");
+  const [selectedLineId, setSelectedLineId] = useState(initialItemId ?? "");
+  const [mode, setMode]     = useState<DiscountMode>("pct");
   const [value, setValue]   = useState("");
   const [reason, setReason] = useState("");
   const confirmRef = useRef<HTMLButtonElement>(null);
   const exp = DEVICE.currency_exponent;
   const cur = DEVICE.currency;
 
+  const selectedLine = lines.find(line => line.cart_line_id === selectedLineId);
+  const lineSubtotalMinor = selectedLine
+    ? Math.round(selectedLine.unit_price_minor * (parseFloat(selectedLine.quantity) || 0))
+    : 0;
+  const discountBaseMinor = scope === "bill" ? grossMinor : lineSubtotalMinor;
+  const currentDiscountMinor = scope === "bill"
+    ? currentBillDiscountMinor
+    : selectedLine?.line_discount_minor ?? 0;
+
   // ── Computed ──
   function computeMinor(): number {
-    if (mode === "pct") {
-      const bp = Math.round(parseFloat(value || "0") * 100);
-      if (isNaN(bp) || bp <= 0) return 0;
-      return Math.round(grossMinor * Math.min(bp, 10000) / 10000);
-    }
-    return Math.min(parseMoney(value, exp), grossMinor);
+    return calculateDiscountMinor(mode, value, discountBaseMinor, exp);
   }
 
   const preview    = computeMinor();
-  const netAfter   = Math.max(0, grossMinor - preview);
+  const netAfter   = Math.max(0, discountBaseMinor - preview);
   const pctDisplay = mode === "pct" && value ? `${value}%` : null;
   const isValid    = preview > 0 && reason.trim().length > 0;
 
@@ -56,7 +92,12 @@ export default function DiscountModal({ grossMinor, currentDiscountMinor, onAppl
   };
 
   const handleApply = () => {
-    if (isValid) onApply(preview, reason.trim());
+    if (!isValid) return;
+    if (scope === "item" && selectedLine) {
+      onApplyLine(selectedLine.cart_line_id, preview, reason.trim());
+    } else if (scope === "bill") {
+      onApplyBill(preview, reason.trim());
+    }
   };
 
   return (
@@ -67,6 +108,43 @@ export default function DiscountModal({ grossMinor, currentDiscountMinor, onAppl
         <div className="modal cash-event-left">
           <h2 className="modal-title">{t("applyDiscount")}</h2>
 
+          <div className="discount-scope-tabs" role="radiogroup" aria-label={t("discountAppliesTo")}>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={scope === "bill"}
+              className={`discount-scope-tab${scope === "bill" ? " discount-scope-tab-active" : ""}`}
+              onClick={() => { setScope("bill"); setValue(""); }}
+            >
+              <span className="discount-scope-title">{t("wholeBill")}</span>
+              <span className="discount-scope-detail">{t("everyItemThisSale")}</span>
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={scope === "item"}
+              className={`discount-scope-tab${scope === "item" ? " discount-scope-tab-active" : ""}`}
+              disabled={lines.length === 0}
+              onClick={() => { setScope("item"); setValue(""); }}
+            >
+              <span className="discount-scope-title">{t("individualItem")}</span>
+              <span className="discount-scope-detail">{t("oneSelectedCartLine")}</span>
+            </button>
+          </div>
+
+          {scope === "item" && (
+            <label className="discount-item-picker">
+              <span>{t("selectItem")}</span>
+              <select value={selectedLineId} onChange={event => { setSelectedLineId(event.target.value); setValue(""); }}>
+                {lines.map(line => (
+                  <option key={line.cart_line_id} value={line.cart_line_id}>
+                    {line.product_name} × {line.quantity} — {cur} {formatMoney(Math.round(line.unit_price_minor * (parseFloat(line.quantity) || 0)), exp)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
           {/* Mode tabs */}
           <div className="ce-type-tabs">
             <button
@@ -74,21 +152,21 @@ export default function DiscountModal({ grossMinor, currentDiscountMinor, onAppl
               onClick={() => { setMode("pct"); setValue(""); }}
             >
               <span className="ce-tab-icon">%</span>
-              <span className="ce-tab-label">{t("percent")}</span>
+              <span className="ce-tab-label">{t("percentage")}</span>
             </button>
             <button
               className={`ce-type-tab${mode === "flat" ? " ce-type-tab-active" : ""}`}
               onClick={() => { setMode("flat"); setValue(""); }}
             >
               <span className="ce-tab-icon">{cur}</span>
-              <span className="ce-tab-label">{t("flatAmount")}</span>
+              <span className="ce-tab-label">{t("fixedAmount")}</span>
             </button>
           </div>
 
-          {/* Bill total reference */}
+          {/* Discount base reference */}
           <div className="discount-bill-ref">
-            <span className="discount-bill-label">{t("billTotal")}</span>
-            <span className="discount-bill-value">{cur} {formatMoney(grossMinor, exp)}</span>
+            <span className="discount-bill-label">{scope === "bill" ? t("billTotal") : t("itemSubtotal")}</span>
+            <span className="discount-bill-value">{cur} {formatMoney(discountBaseMinor, exp)}</span>
           </div>
 
           {/* Amount display */}

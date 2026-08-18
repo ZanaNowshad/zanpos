@@ -105,7 +105,7 @@ mod tests {
 
     #[test]
     fn configured_model_identifiers_are_bounded() {
-        assert!(validate_model_identifier("claude-sonnet-4-6").is_ok());
+        assert!(validate_model_identifier("claude-sonnet-5").is_ok());
         assert!(validate_model_identifier("").is_err());
         assert!(validate_model_identifier("bad\nmodel").is_err());
         assert!(validate_model_identifier(&"m".repeat(201)).is_err());
@@ -172,7 +172,7 @@ impl Provider {
                 let model = ai_admin_repo::get_config(pool, "ai_anthropic_model")
                     .await?
                     .filter(|m| !m.is_empty())
-                    .unwrap_or_else(|| "claude-sonnet-4-6".into());
+                    .unwrap_or_else(|| "claude-sonnet-5".into());
                 validate_model_identifier(&model)?;
                 Ok(Some(Provider::Anthropic(AnthropicClient::new(
                     key,
@@ -515,7 +515,7 @@ impl Provider {
                             let model = ai_admin_repo::get_config(pool, "ai_anthropic_model")
                                 .await?
                                 .filter(|m| !m.is_empty())
-                                .unwrap_or_else(|| "claude-sonnet-4-6".into());
+                                .unwrap_or_else(|| "claude-sonnet-5".into());
                             validate_model_identifier(&model)?;
                             return Ok(Some(Provider::Anthropic(AnthropicClient::new(
                                 key,

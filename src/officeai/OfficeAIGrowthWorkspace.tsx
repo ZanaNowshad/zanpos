@@ -1,25 +1,20 @@
-import { BarChart3, Medal, RefreshCw, Settings, Sparkles, TrendingUp, Users } from "lucide-react";
+import { BarChart3, RefreshCw, Sparkles, TrendingUp } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatMoney } from "../money";
-import { appConfigLoad, customerList, operationalSettingsLoad, reportDateRange, reportTopProducts } from "../tauri/commands";
-import type { CustomerRow, RangeSummary, TopProduct } from "../types";
+import { appConfigLoad, reportDateRange, reportTopProducts } from "../tauri/commands";
+import type { RangeSummary, TopProduct } from "../types";
 import type { OfficeAiOverviewSnapshot, OfficeTab } from "./officeAiTypes";
 import { useLanguage } from "../hooks/useLanguage";
 import {
-  officeAiFormat,
   officeAiTranslator,
   type OfficeAiStringKey,
 } from "../i18n/officeAiStrings";
 
-type GrowthMode = "insights" | "loyalty";
-
-const RETENTION_PROMPTS = [
-  { labelKey: "retentionPromptOne", prompt: "Which loyalty customers are worth contacting today?" },
-  { labelKey: "retentionPromptTwo", prompt: "Suggest a simple loyalty reward that will not hurt margin." },
-  { labelKey: "retentionPromptThree", prompt: "Find customers with points but no recent purchase." },
-  { labelKey: "retentionPromptFour", prompt: "Draft a WhatsApp message for top loyalty customers." },
-] satisfies Array<{ labelKey: OfficeAiStringKey; prompt: string }>;
-
+/**
+ * Insights only. Loyalty moved to the Customers domain, where the balances it
+ * described can actually be acted on; the retention prompts went with it —
+ * they asked for per-customer purchase history, which no command can return.
+ */
 const OPERATING_PROMPTS = [
   { labelKey: "operatingPromptOne", prompt: "Which products drove the last 30 days of sales?" },
   { labelKey: "operatingPromptTwo", prompt: "What should I reorder based on sales and low stock?" },
@@ -28,7 +23,8 @@ const OPERATING_PROMPTS = [
 ] satisfies Array<{ labelKey: OfficeAiStringKey; prompt: string }>;
 
 interface Props {
-  mode: GrowthMode;
+  /** Retained so the call site reads explicitly; only "insights" remains. */
+  mode: "insights";
   actorUserId: string;
   snapshot: OfficeAiOverviewSnapshot;
   currencyExp: number;
@@ -52,7 +48,6 @@ function money(minor: number, exp: number): string {
 }
 
 export default function OfficeAIGrowthWorkspace({
-  mode,
   actorUserId,
   snapshot,
   currencyExp,
@@ -63,8 +58,6 @@ export default function OfficeAIGrowthWorkspace({
   const t = useMemo(() => officeAiTranslator(language), [language]);
   const [summary, setSummary] = useState<RangeSummary | null>(null);
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
-  const [customers, setCustomers] = useState<CustomerRow[]>([]);
-  const [pointsPerBhd, setPointsPerBhd] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const range = useMemo(() => defaultRange(), []);
@@ -75,16 +68,12 @@ export default function OfficeAIGrowthWorkspace({
     try {
       const appConfig = await appConfigLoad();
       const branchId = appConfig.branch_id;
-      const [nextSummary, nextTopProducts, nextCustomers, settings] = await Promise.all([
+      const [nextSummary, nextTopProducts] = await Promise.all([
         reportDateRange(actorUserId, branchId, range.from, range.to),
         reportTopProducts(actorUserId, branchId, range.from, range.to),
-        customerList(actorUserId, ""),
-        operationalSettingsLoad().catch(() => null),
       ]);
       setSummary(nextSummary);
       setTopProducts(nextTopProducts);
-      setCustomers(nextCustomers);
-      setPointsPerBhd(settings?.loyalty_points_per_bhd ?? null);
     } catch (e) {
       setError(typeof e === "string" ? e : t("growthLoadFailed"));
     } finally {
@@ -94,92 +83,9 @@ export default function OfficeAIGrowthWorkspace({
 
   useEffect(() => { void load(); }, [load]);
 
-  const loyaltyCustomers = customers
-    .filter(c => c.loyalty_points > 0)
-    .sort((a, b) => b.loyalty_points - a.loyalty_points);
-  const totalPoints = loyaltyCustomers.reduce((sum, c) => sum + c.loyalty_points, 0);
   const avgTicket = summary && summary.transaction_count > 0
     ? Math.round(summary.net_total_minor / summary.transaction_count)
     : 0;
-
-  if (mode === "loyalty") {
-    return (
-      <div className="oa-growth">
-        <section className="oa-command-strip">
-          <div className="oa-health-summary">
-            <span className="oa-health-orb ok" />
-            <div>
-              <strong>{t("loyaltyCommandView")}</strong>
-              <span>{t("loyaltyIntro")}</span>
-            </div>
-          </div>
-          <button className="oa-command-tile oa-command-primary" onClick={() => onOpenTab("customers")}>
-            <Users size={20} />
-            <span><strong>{t("openCustomers")}</strong><small>{t("openCustomersHint")}</small></span>
-          </button>
-          <button className="oa-command-tile" onClick={() => onOpenTab("settings")}>
-            <Settings size={20} />
-            <span><strong>{t("loyaltySettings")}</strong><small>{t("loyaltySettingsHint")}</small></span>
-          </button>
-          <button className="oa-command-tile" onClick={() => onSendPrompt("Find loyalty customers who should receive a retention offer this week.")}>
-            <Sparkles size={20} />
-            <span><strong>{t("askAiRetention")}</strong><small>{t("askAiRetentionHint")}</small></span>
-          </button>
-        </section>
-
-        {error && <div className="oa-inline-warning">{error}<button onClick={load}>{t("retry")}</button></div>}
-
-        <section className="oa-metric-grid">
-          <div className="oa-metric-card">
-            <div className="oa-card-label"><Medal size={15} /> {t("outstandingPoints")}</div>
-            <div className="oa-big-number">{totalPoints}</div>
-            <div className="oa-card-sub">{loyaltyCustomers.length} customers with a balance</div>
-          </div>
-          <div className="oa-metric-card">
-            <div className="oa-card-label"><Users size={15} /> {t("customerBase")}</div>
-            <div className="oa-big-number">{customers.length}</div>
-            <div className="oa-card-sub">{customers.filter(c => c.phone).length} {t("reachableByPhone")}</div>
-          </div>
-          <div className="oa-metric-card">
-            <div className="oa-card-label"><TrendingUp size={15} /> {t("today")}</div>
-            <div className="oa-big-number">{snapshot.today ? money(snapshot.today.net_total_minor, currencyExp) : t("noData")}</div>
-            <div className="oa-card-sub">{officeAiFormat(t("transactionsToday"), { count: snapshot.today?.transaction_count ?? 0 })}</div>
-          </div>
-          <div className="oa-metric-card">
-            <div className="oa-card-label"><Settings size={15} /> {t("earnRule")}</div>
-            <div className="oa-status-line">{pointsPerBhd == null ? t("notLoaded") : `${pointsPerBhd} pt/BHD`}</div>
-            <div className="oa-card-sub">{t("simpleRewardsHint")}</div>
-          </div>
-        </section>
-
-        <section className="oa-two-column">
-          <div className="oa-panel">
-            <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="oa-panel-header"><h2>{t("topLoyaltyBalances")}</h2><button onClick={load} disabled={loading}>{t(loading ? "loading" : "refresh")}</button></div>
-            {loyaltyCustomers.length ? (
-              <div className="oa-list">
-                {loyaltyCustomers.slice(0, 8).map(c => (
-                  <div key={c.customer_id} className="oa-list-row">
-                    <Medal size={16} />
-                    <span><strong>{c.name}</strong><small>{c.phone ?? t("noPhone")} - {c.loyalty_points} {t("points")}</small></span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="oa-empty-state">{t("noLoyaltyPoints")}</div>
-            )}
-          </div>
-          <div className="oa-panel">
-            <div className="oa-panel-header"><h2>{t("retentionPrompts")}</h2></div>
-            <div className="oa-shortcut-grid">
-              {RETENTION_PROMPTS.map(item => (
-                <button key={item.prompt} onClick={() => onSendPrompt(item.prompt)}>{t(item.labelKey)}</button>
-              ))}
-            </div>
-          </div>
-        </section>
-      </div>
-    );
-  }
 
   return (
     <div className="oa-growth">

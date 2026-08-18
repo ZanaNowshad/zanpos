@@ -152,6 +152,10 @@ export function usePosShortcuts(h: PosShortcutHandlers) {
     // L9: `h` is a plain object rebuilt on every PosPage render.
     // Listing it as the dep causes 20+ listeners to be re-registered on every
     // keystroke. Use a stable ref and read from it inside the handler instead.
+  // The rationale is the L9 note above: `h` is rebuilt every render, so
+  // depending on the object re-registers 20+ listeners per keystroke. The
+  // individual fields actually read are listed instead.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     h.noModalOpen, h.lineCount, h.hasRecentLine, h.lastReceiptNumber,
     h.onFocusBarcode, h.onHold, h.onResumeHeld, h.onPay, h.onPayFast,

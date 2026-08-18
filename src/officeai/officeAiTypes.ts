@@ -9,10 +9,20 @@ export type OfficeTab =
   | "operations" | "purchasing"
   | "products" | "categories" | "users" | "reports"
   | "inventory" | "customers" | "settings" | "audit" | "devices"
-  | "cashier" | "eod" | "deliveries";
+  | "cashier" | "eod" | "deliveries" | "riders"
+  | "zanshop";
 
-// ─── Primary spaces (4-entry nav) ──────────────────────────────────────────────
-export type OfficePrimarySpace = "home" | "ask-ai" | "operations" | "control";
+/**
+ * A status signal rendered in the shell header.
+ * Extracted from OfficeAIShell so that dead shell could be deleted — a type
+ * alias was the only thing keeping the file in the build graph.
+ */
+export interface OfficePulseItem {
+  id: string;
+  label: string;
+  level: "ok" | "warning" | "critical";
+  icon: import("react").ReactNode;
+}
 
 export interface OfficeAttentionItem {
   id: string;

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { AiHandoff, Cart, PaymentInput, ProductPrefill, SaleResult, SessionUser, Shift } from "../types";
-import { type Theme } from "../hooks/useTheme";
+import type { Cart, PaymentInput, SaleResult } from "../types";
 import { DEVICE } from "../types";
 import PosSidebar from "../components/pos/PosSidebar";
 import PosActionBar from "../components/pos/PosActionBar";
@@ -30,27 +29,21 @@ import { usePosRecoveryActions } from "../hooks/usePosRecoveryActions";
 import { usePosPaymentActions } from "../hooks/usePosPaymentActions";
 import { usePosRegisterActions } from "../hooks/usePosRegisterActions";
 import { usePosConfiguration } from "../hooks/usePosConfiguration";
+import { useCustomItemSuggestions } from "../hooks/useCustomItemSuggestions";
+import { usePosZanAiContext } from "../hooks/usePosZanAiContext";
+import { posLayoutClass } from "./posLayoutClass";
+import { usePosOverlays } from "../hooks/usePosOverlays";
+import type { PosPageProps } from "./posPageProps";
 import { usePosNumpad } from "../hooks/usePosNumpad";
 import { usePosShortcutBindings } from "../hooks/usePosShortcutBindings";
 import { type ReceiptConfidenceStatus } from "../utils/posConfidence";
 import { getExchangeBalance } from "../utils/posExchange";
+import PosZanAiWidget from "../zanai/PosZanAiWidget";
 
-interface Props {
-  sessionUser: SessionUser;
-  shift: Shift;
-  onLogout: () => void;
-  onLock?: () => void;
-  onShiftClose: (closed: boolean) => void;
-  onOpenOfficeAI?: (prefill?: ProductPrefill) => void;
-  /** Open OfficeAI's assistant and send this message (and image) to the AI. */
-  onAskOfficeAI?: (handoff: AiHandoff) => void;
-  theme?: Theme;
-  onToggleTheme?: () => void;
-}
 
 export default function PosPage({
   sessionUser, shift, onLogout, onLock, onShiftClose, onOpenOfficeAI, onAskOfficeAI, theme, onToggleTheme,
-}: Props) {
+}: PosPageProps) {
   const session = useMemo(() => ({
     branch_id: DEVICE.branch_id,
     device_id: DEVICE.device_id,
@@ -66,25 +59,18 @@ export default function PosPage({
   const [lastReceiptNumber, setLastReceiptNumber] = useState<string | null>(null);
   const [receiptStatus, setReceiptStatus] = useState<ReceiptConfidenceStatus>("not_ready");
   const [exchangeCredit, setExchangeCredit] = useState<ExchangeCredit | null>(null);
-  const [showWaQR, setShowWaQR]             = useState(false);
-  const [showSyncDetails, setShowSyncDetails] = useState(false);
-  const [showNotes, setShowNotes]           = useState(false);
-  const [showNotifications, setShowNotifications] = useState(false);
-  const [showOrders, setShowOrders] = useState(false);
-  const [showDeliveries, setShowDeliveries] = useState(false);
+  const {
+    showWaQR, setShowWaQR, showSyncDetails, setShowSyncDetails,
+    showNotes, setShowNotes, showNotifications, setShowNotifications,
+    showOrders, setShowOrders, showDeliveries, setShowDeliveries,
+  } = usePosOverlays();
 
   const {
     businessFlags: bizFlags,
     setBusinessFlags: setBizFlags,
     commerceEnabled,
   } = usePosConfiguration(sessionUser.user_id);
-  // Saved custom-item suggestions — loaded from localStorage, refreshed after modal closes
-  const [suggestions, setSuggestions] = useState<{ id: string; name: string; price: string }[]>(() => {
-    try { return JSON.parse(localStorage.getItem("zanpos_custom_suggestions") || "[]"); } catch { return []; }
-  });
-  const refreshSuggestions = useCallback(() => {
-    try { setSuggestions(JSON.parse(localStorage.getItem("zanpos_custom_suggestions") || "[]")); } catch { setSuggestions([]); }
-  }, []);
+  const { suggestions, refreshSuggestions } = useCustomItemSuggestions();
 
   const canOpenBackOffice = ["owner", "manager"].includes(sessionUser.role_name);
   const canViewXReport    = canOpenBackOffice;
@@ -113,7 +99,15 @@ export default function PosPage({
   // to the backend, so they cannot reach reports, EOD, stock or the receipt
   // sequence — a structural guarantee rather than a filter every future report
   // query has to remember. Everything else, including the real print, is live.
-  const [trainingMode, setTrainingMode] = useState(false);
+  const [trainingMode, setTrainingMode] = useState(() => {
+    try {
+      const requested = sessionStorage.getItem("zanpos:start-practice") === "1";
+      sessionStorage.removeItem("zanpos:start-practice");
+      return requested;
+    } catch {
+      return false;
+    }
+  });
   const buildTrainingResult = useMemo(
     () => trainingMode
       ? (cart: Cart, payments: PaymentInput[]) =>
@@ -127,7 +121,7 @@ export default function PosPage({
     recentLineId,
     addByBarcode, addProduct, addCustomItem,
     updateQuantity, removeLine, removeRecentLine, bumpRecentQty, bumpLine,
-    applyBillDiscount, applyLineDiscount, setLinePrice, setLineNote,
+    applyBillDiscount, applyLineDiscount, setLinePrice,
     finalizeSale, clearCart, replaceCart,
     netTotal, taxTotal, lineCount,
   } = useCart(session, buildTrainingResult);
@@ -183,7 +177,7 @@ export default function PosPage({
 
   const {
     payFastLoading, restockAlerts, dismissRestockAlerts, handlePayFast,
-    openPayDirect, openPaySplit, openPay, handleConfirmPayment,
+    openPayDirect, openPaySplit, openPay, openPaymentJourney, handleConfirmPayment,
     handleCompleteCoveredExchange,
   } = usePosPaymentActions({
     cart,
@@ -258,12 +252,6 @@ export default function PosPage({
   // ── Sync status helpers ───────────────────────────────────────────────────────
   const isOnline      = syncStatus?.online ?? false;
 
-  // Line-discount target — hoisted out of the JSX so no render-time IIFE wraps
-  // the modal's handlers (react-hooks/refs flags ref-reading closures inside one).
-  const discountLine = activeModal.kind === "lineDiscount"
-    ? cart.lines.find(l => l.cart_line_id === activeModal.lineId && !l.voided)
-    : undefined;
-
   const { recoveryActions, handleRecoveryAction } = usePosRecoveryActions({
     error,
     bannerResult,
@@ -284,8 +272,14 @@ export default function PosPage({
     onOpenOfficeAI,
   });
 
+  const { buildZanAiContext, zanAiSuppressed } = usePosZanAiContext({
+    cart, shift, sessionUser, netTotal, taxTotal, syncStatus,
+    modalOpen: activeModal.kind !== "none", payFastLoading, showSaleDetails,
+  });
+
   return (
-    <div className={`pos-layout ${lineCount > 0 ? "pos-has-cart" : "pos-idle"} ${activeModal.kind === "payment" || payFastLoading ? "pos-payment-started" : ""} ${!isOnline ? "pos-offline" : "pos-online"}`}>
+    <div className={posLayoutClass({ hasCart: lineCount > 0, online: isOnline,
+      paymentStarted: activeModal.kind === "payment" || payFastLoading })}>
       <PosTopBar
         showSidebar={showSidebar}
         cashierName={sessionUser.display_name}
@@ -324,15 +318,11 @@ export default function PosPage({
         <PosSidebar
           visible={showSidebar}
           t={t}
-          trainingMode={trainingMode}
-          canViewXReport={canViewXReport}
           canOpenBackOffice={canOpenBackOffice}
           commerceEnabled={commerceEnabled}
           notifCount={notifCount}
           orderCount={orderCount}
-          onStartTraining={() => { clearCart(); setTrainingMode(true); focusBarcode(); }}
           onOpenReport={() => setActiveModal({ kind: "report" })}
-          onOpenXReport={() => setActiveModal({ kind: "xReport" })}
           onOpenOfficeAI={() => {
             // Opening the back office mid-sale would strand the cart behind a
             // full-screen surface, so the cashier is told to resolve it first.
@@ -366,10 +356,7 @@ export default function PosPage({
           setError={setError}
           addProduct={addProduct}
           addCustomItem={addCustomItem}
-          updateQuantity={updateQuantity}
           removeLine={removeLine}
-          applyLineDiscount={applyLineDiscount}
-          setLineNote={setLineNote}
           bumpLine={bumpLine}
           onBarcode={handleBarcode}
           onPaySplit={openPaySplit}
@@ -392,8 +379,7 @@ export default function PosPage({
           onCancelExchange={() => setExchangeCredit(null)}
           onCompleteCoveredExchange={handleCompleteCoveredExchange}
           onPayFast={handlePayFast}
-          onPayDirect={openPayDirect}
-          onPaySplit={openPaySplit}
+          onOpenPaymentJourney={openPaymentJourney}
         />
       </div>
 
@@ -413,12 +399,20 @@ export default function PosPage({
         onReprintLast={handleReprintLast}
       />
 
+      <PosZanAiWidget
+        sessionUser={sessionUser}
+        branchName={DEVICE.branch_name}
+        suppressed={zanAiSuppressed}
+        buildContext={buildZanAiContext}
+        onBarcode={handleBarcode}
+        focusBarcode={focusBarcode}
+      />
+
       <PosCartModals
         activeModal={activeModal}
         setActiveModal={setActiveModal}
         cart={cart}
         lineCount={lineCount}
-        discountLine={discountLine}
         addCustomItem={addCustomItem}
         setLinePrice={setLinePrice}
         applyBillDiscount={applyBillDiscount}
@@ -434,6 +428,7 @@ export default function PosPage({
         payableTotal={payableTotal}
         loading={loading}
         sessionUserId={sessionUser.user_id}
+        defaultPrintReceipt={bizFlags.auto_print_receipt}
         bannerResult={bannerResult}
         receiptStatus={receiptStatus}
         showSaleDetails={showSaleDetails}

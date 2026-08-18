@@ -1,0 +1,85 @@
+/* Contextual "Ask ZanAI about this page" bar.
+   The component shipped without any stylesheet, so its chips and input had no
+   layout and rendered overlapping each other at the foot of Today. */
+
+.contextual-ask-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--oa-line, var(--border));
+}
+
+.ask-bar-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ask-bar-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: var(--radius-pill, 999px);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  font: inherit;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ask-bar-chip:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.ask-bar-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.ask-bar-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface);
+}
+
+.ask-bar-input-row:focus-within {
+  border-color: var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: 0;
+}
+
+.ask-bar-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--accent);
+}
+
+.ask-bar-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 36px;
+  border: 0;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  font-size: 0.8125rem;
+}
+
+.ask-bar-input:focus { outline: none; }
+.ask-bar-input::placeholder { color: var(--text-muted); }
+
+@media (max-width: 1024px) {
+  .ask-bar-chip { min-height: 44px; }
+  .ask-bar-input-row { min-height: 44px; }
+  .ask-bar-input { height: 42px; }
+}

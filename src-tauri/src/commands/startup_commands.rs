@@ -112,36 +112,13 @@ pub async fn startup_restart_sidecar(
 
     let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let wa_session_dir = app_data.join("wa-session");
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_default();
 
-    let node_exe: std::ffi::OsString = {
-        let candidates = vec![
-            exe_dir.join("node.exe"),
-            exe_dir.join("sidecar").join("node.exe"),
-        ];
-        candidates
-            .into_iter()
-            .find(|p| p.exists())
-            .map(std::path::PathBuf::into_os_string)
-            .unwrap_or_else(|| std::ffi::OsString::from("node"))
-    };
-
-    let script = {
-        let candidates = vec![
-            exe_dir.join("sidecar").join("server.mjs"),
-            exe_dir
-                .join("sidecar")
-                .join("whatsapp-sidecar")
-                .join("server.mjs"),
-        ];
-        candidates
-            .into_iter()
-            .find(|p| p.exists())
-            .ok_or("sidecar script not found")?
-    };
+    // Same resolver startup uses. Resolving separately here meant an installed
+    // build searched only next to the executable, never the resource directory
+    // the installer actually writes to — so this command killed a working
+    // sidecar and then could not respawn it.
+    let node_exe = crate::sidecar_paths::node(&app);
+    let script = crate::sidecar_paths::script(&app).ok_or("sidecar script not found")?;
 
     let mut cmd = tokio::process::Command::new(&node_exe);
     if let Some(dir) = script.parent() {

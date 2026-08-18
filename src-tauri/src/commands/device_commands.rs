@@ -63,7 +63,7 @@ pub async fn device_list(
     let rows = sqlx::query(
         "SELECT device_id, device_code, name, is_active,
                 COALESCE(last_seen_at, '') AS created_at
-         FROM devices WHERE branch_id = ?
+         FROM devices WHERE branch_id = ? AND deleted_at IS NULL
          ORDER BY device_code",
     )
     .bind(&branch_id)
@@ -126,6 +126,69 @@ pub async fn device_create(
 
     let _ = now; // suppress unused warning
     Ok(map_row(&row))
+}
+
+/// Remove a device from the register list.
+///
+/// A soft delete, and deliberately so: `device_id` is stamped on every sale,
+/// shift, refund and delivery this terminal ever recorded. Removing the row
+/// outright would leave that history pointing at a device that no longer
+/// exists, and receipt numbering is per-device — a reused code would collide
+/// with numbers already issued.
+///
+/// Two things are refused rather than warned about. A device with an open shift
+/// still has takings to account for, and removing it would strand the count.
+/// And a device cannot remove itself: the terminal doing the asking would keep
+/// running on a record that says it is gone.
+#[tauri::command]
+pub async fn device_delete(
+    device_id: String,
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+
+    let this_device: Option<String> = sqlx::query_scalar(
+        "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1",
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .flatten();
+    if this_device.as_deref() == Some(device_id.as_str()) {
+        return Err(AppError::Validation(
+            "This is the terminal you are using — remove it from another device.".into(),
+        ));
+    }
+
+    let open_shifts: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM shifts WHERE device_id = ? AND status = 'open'")
+            .bind(&device_id)
+            .fetch_one(&state.db)
+            .await?;
+    if open_shifts > 0 {
+        return Err(AppError::Validation(
+            "That device still has an open shift. Close the shift first so the cash is accounted for.".into(),
+        ));
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let affected = sqlx::query(
+        "UPDATE devices
+            SET deleted_at = ?, is_active = 0, updated_at = ?,
+                version = version + 1, sync_status = 'pending'
+          WHERE device_id = ? AND deleted_at IS NULL",
+    )
+    .bind(&now)
+    .bind(&now)
+    .bind(&device_id)
+    .execute(&state.db)
+    .await?
+    .rows_affected();
+
+    if affected == 0 {
+        return Err(AppError::NotFound(format!("Device {device_id} not found")));
+    }
+    Ok(())
 }
 
 /// Activate or deactivate a device.

@@ -42,14 +42,14 @@ export function usePosShortcutBindings({
     onPayFast: payFast,
     onDiscount: () => setActiveModal({ kind: "discount" }),
     onLineDiscount: () => {
-      if (recentLineId) setActiveModal({ kind: "lineDiscount", lineId: recentLineId });
+      if (recentLineId) setActiveModal({ kind: "discount", lineId: recentLineId });
     },
     onRefund: () => canRefund && setActiveModal({ kind: "refund" }),
     onClearCart: clearCart,
     onReprintLast: reprintLast,
     onNoSale: noSale,
     onXReport: canViewXReport
-      ? () => setActiveModal({ kind: "xReport" as const })
+      ? () => setActiveModal({ kind: "report" as const })
       : undefined,
     onIncrementRecent: () => bumpRecentQty(1),
     onDecrementRecent: () => bumpRecentQty(-1),

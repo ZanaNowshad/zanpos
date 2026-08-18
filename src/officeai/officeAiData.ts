@@ -110,9 +110,12 @@ export function buildOfficePulseModel(
   for (const finding of snapshot.health?.findings ?? []) {
     if (finding.severity !== "critical" && finding.severity !== "warning") continue;
     attention.push({
-      id: `health:${finding.code}`,
+      // The area is carried in the id so Today can tell which capability owns
+      // this row; it is deliberately not printed, because "whatsapp: 14
+      // messages…" leaks an internal key into a shopkeeper's alert.
+      id: `health:${finding.area}:${finding.code}`,
       title: finding.title,
-      detail: `${finding.area}: ${finding.detail}`,
+      detail: finding.detail,
       severity: finding.severity,
       destination: "health",
       actionLabel: t("reviewHealth"),

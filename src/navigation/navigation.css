@@ -1,0 +1,229 @@
+/* ZANPOS Command — navigation component styles.
+   Component-scoped by the `zp-` prefix. Nothing here may be redeclared in
+   App.css; the duplicate-selector check treats `zp-` as owned by this layer. */
+
+.zp-domain-layout {
+  display: grid;
+  grid-template-columns: var(--zp-section-nav-w, 200px) minmax(0, 1fr);
+  min-height: 0;
+  flex: 1;
+}
+
+/* A domain with no L2 nav gets the full width — no empty gutter. */
+.zp-domain-layout.zp-domain-layout-flat {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Flex column so the page inside can claim the remaining height. As `block`
+   it left the workspace at its natural height with ~500px of dead canvas
+   beneath, and long lists scrolled the outer container instead of the table. */
+.zp-domain-content {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.zp-section-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1, 4px);
+  padding: var(--sp-4, 16px) var(--sp-3, 12px);
+  border-inline-end: 1px solid var(--border, rgba(0, 0, 0, 0.1));
+  overflow-y: auto;
+}
+
+.zp-section-nav-label {
+  padding: 0 var(--sp-2, 8px) var(--sp-2, 8px);
+  color: var(--text-muted, #6b7280);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.zp-section-nav ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.zp-section-nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2, 8px);
+  width: 100%;
+  min-height: 34px;
+  padding: 0 var(--sp-2, 8px);
+  border: 0;
+  border-radius: var(--radius-sm, 4px);
+  color: var(--text-dim, #4b5563);
+  background: transparent;
+  font: inherit;
+  font-size: 0.8125rem;
+  text-align: start;
+  cursor: pointer;
+}
+
+.zp-section-nav-item:hover {
+  color: var(--text, #111827);
+  background: var(--surface2, rgba(0, 0, 0, 0.04));
+}
+
+.zp-section-nav-item:focus-visible {
+  outline: 2px solid var(--accent, #f0a500);
+  outline-offset: 2px;
+}
+
+/* Active state carries weight + a start bar, never colour alone. */
+.zp-section-nav-item.is-active {
+  position: relative;
+  color: var(--text, #111827);
+  background: var(--surface2, rgba(0, 0, 0, 0.06));
+  font-weight: 600;
+}
+
+.zp-section-nav-item.is-active::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: -12px;
+  top: 50%;
+  width: 3px;
+  height: 18px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent, #f0a500);
+  transform: translateY(-50%);
+}
+
+.zp-section-nav-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.zp-section-nav-icon > svg { width: 16px; height: 16px; }
+
+.zp-section-nav-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Breadcrumb ─────────────────────────────────────────────────────────── */
+
+.zp-breadcrumb-bar {
+  flex: 0 0 auto;
+  padding: var(--sp-2, 8px) var(--sp-6, 24px) 0;
+}
+
+.zp-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1, 4px);
+  min-height: 18px;
+  color: var(--text-muted, #6b7280);
+  font-size: 0.75rem;
+}
+
+.zp-breadcrumb ol {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1, 4px);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.zp-breadcrumb li { display: flex; align-items: center; gap: var(--sp-1, 4px); }
+
+.zp-breadcrumb-link {
+  /* 24px minimum target (WCAG 2.2 SC 2.5.8) without inflating the text. */
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: var(--radius-sm, 4px);
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+
+.zp-breadcrumb-link:hover { color: var(--text, #111827); text-decoration: underline; }
+
+.zp-breadcrumb-link:focus-visible {
+  outline: 2px solid var(--accent, #f0a500);
+  outline-offset: 1px;
+}
+
+.zp-breadcrumb-current {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  color: var(--text-dim, #4b5563);
+  font-weight: 500;
+}
+
+.zp-breadcrumb-sep { opacity: 0.5; }
+
+/* ── Responsive ─────────────────────────────────────────────────────────── */
+
+@media (max-width: 1279px) {
+  .zp-domain-layout { --zp-section-nav-w: 184px; }
+}
+
+/* Tablet landscape (1024) and below: L2 becomes a horizontal strip so content
+   keeps full width instead of the sidebar eating a third of a narrow screen.
+   Inclusive of 1024 — that is a real device width, not one below the boundary. */
+@media (max-width: 1024px) {
+  .zp-domain-layout,
+  .zp-domain-layout.zp-domain-layout-flat {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .zp-section-nav {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--sp-2, 8px);
+    padding: var(--sp-2, 8px) var(--sp-3, 12px);
+    border-inline-end: 0;
+    border-block-end: 1px solid var(--border, rgba(0, 0, 0, 0.1));
+    overflow-x: auto;
+  }
+
+  .zp-section-nav-label { display: none; }
+
+  .zp-section-nav ul { flex-direction: row; gap: var(--sp-1, 4px); }
+
+  .zp-section-nav-item {
+    width: auto;
+    min-height: 44px; /* touch target */
+    padding: 0 var(--sp-3, 12px);
+    white-space: nowrap;
+  }
+
+  .zp-section-nav-item.is-active::before {
+    inset-inline-start: 50%;
+    top: auto;
+    bottom: -8px;
+    width: 18px;
+    height: 3px;
+    border-radius: 2px 2px 0 0;
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zp-section-nav-item { transition: none; }
+}

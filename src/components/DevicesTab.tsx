@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Trash2 } from "lucide-react";
 import { useAutoFocus } from "../hooks/useAutoFocus";
 import type { DeviceRow } from "../types";
 import { DEVICE } from "../types";
 import * as cmd from "../tauri/commands";
 import { useLanguage } from "../hooks/useLanguage";
 import { deviceStatusText, operationsTranslator } from "../i18n/operationsStrings";
+import ConfirmDialog from "./templates/ConfirmDialog";
 
 interface Props { sessionUserId: string; }
 
@@ -18,6 +20,7 @@ export default function DevicesTab({ sessionUserId }: Props) {
   const [code, setCode]         = useState("");
   const [name, setName]         = useState("");
   const [saving, setSaving]     = useState(false);
+  const [pendingRemove, setPendingRemove] = useState<DeviceRow | null>(null);
   const codeRef = useAutoFocus<HTMLInputElement>();
 
   const load = useCallback(async () => {
@@ -47,6 +50,19 @@ export default function DevicesTab({ sessionUserId }: Props) {
       setError(typeof e === "string" ? e : t("deviceCreateFailed"));
     } finally {
       setSaving(false);
+    }
+  }
+
+  /* Removal is a soft delete the backend guards: it refuses the terminal making
+     the request and any device with an open shift, because that shift's cash
+     still has to be counted. Those refusals surface here as the error banner. */
+  async function handleRemove(device: DeviceRow) {
+    setPendingRemove(null);
+    try {
+      await cmd.deviceDelete(sessionUserId, device.device_id);
+      setDevices(prev => prev.filter(d => d.device_id !== device.device_id));
+    } catch (e: unknown) {
+      setError(typeof e === "string" ? e : t("deviceUpdateFailed"));
     }
   }
 
@@ -121,12 +137,20 @@ export default function DevicesTab({ sessionUserId }: Props) {
                 <td>{isCurrent ? <span className="devices-current-chip">{t("thisTerminal")}</span> : ""}</td>
                 <td>
                   {!isCurrent && (
-                    <button
-                      className={d.is_active ? "btn-secondary" : "btn-primary"}
-                      onClick={() => handleToggle(d)}
-                    >
-                      {t(d.is_active ? "deactivate" : "activate")}
-                    </button>
+                    <div className="devices-row-actions">
+                      <button
+                        className={d.is_active ? "btn-secondary" : "btn-primary"}
+                        onClick={() => handleToggle(d)}
+                      >
+                        {t(d.is_active ? "deactivate" : "activate")}
+                      </button>
+                      <button
+                        className="btn-secondary devices-remove-btn"
+                        onClick={() => { setPendingRemove(d); setError(null); }}
+                      >
+                        <Trash2 size={14} aria-hidden="true" /> {t("remove")}
+                      </button>
+                    </div>
                   )}
                 </td>
               </tr>
@@ -137,6 +161,16 @@ export default function DevicesTab({ sessionUserId }: Props) {
           )}
         </tbody>
       </table>
+
+      <ConfirmDialog
+        open={pendingRemove !== null}
+        title={t("removeDevice")}
+        message={pendingRemove ? t("removeDeviceWarning").replace("{name}", pendingRemove.device_name) : ""}
+        confirmLabel={t("remove")}
+        cancelLabel={t("cancel")}
+        onConfirm={() => { if (pendingRemove) void handleRemove(pendingRemove); }}
+        onCancel={() => setPendingRemove(null)}
+      />
     </div>
   );
 }

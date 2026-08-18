@@ -1,4 +1,4 @@
-import { useRef, useCallback } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { ZodSchema } from "zod";
 
 /**
@@ -6,9 +6,9 @@ import type { ZodSchema } from "zod";
  * with Zod schemas before they reach the Rust boundary.
  *
  * Usage:
- *   const payload = guardPayload(customerSchema, formData);
+ *   const payload = guardPayload(productSchema, formData);
  *   if (!payload) { setError("Invalid form data"); return; }
- *   await cmd.customerCreate(payload);
+ *   await cmd.productCreate(payload);
  *
  * Owner: ZANPOS Maintainers. Review by: 2027-01-31.
  */
@@ -38,18 +38,24 @@ export function validatePayload<TSchema extends ZodSchema>(
  * Returns [isLocked, tryLock, unlock].
  */
 export function useSubmitGuard(): [boolean, () => boolean, () => void] {
+  // The ref wins the race: it updates synchronously, so two clicks in the same
+  // tick cannot both acquire the lock. State exists separately because reading
+  // `ref.current` during render produces a value that never triggers a
+  // re-render — the returned `isLocked` was therefore stale by construction,
+  // and only went unnoticed because the sole caller discards it.
   const lockedRef = useRef(false);
-
-  const isLocked = lockedRef.current;
+  const [isLocked, setIsLocked] = useState(false);
 
   const tryLock = useCallback(() => {
     if (lockedRef.current) return false;
     lockedRef.current = true;
+    setIsLocked(true);
     return true;
   }, []);
 
   const unlock = useCallback(() => {
     lockedRef.current = false;
+    setIsLocked(false);
   }, []);
 
   return [isLocked, tryLock, unlock];

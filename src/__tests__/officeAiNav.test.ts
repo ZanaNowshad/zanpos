@@ -1,53 +1,85 @@
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { CONTROL_GROUPS, OPERATION_GROUPS, primarySpaceForTab, sectionsForRole, visibleTabsFor } from "../officeai/nav";
-import { PRIMARY_ENTRIES } from "../officeai/OfficeAIPrimaryNav";
+import {
+  NAVIGATION,
+  breadcrumbForTab,
+  domainForTab,
+  domainsForRole,
+  paletteEntriesForRole,
+  pathForTab,
+  sectionsForDomain,
+  tabForPath,
+  visibleTabsForRole,
+} from "../navigation/config";
 import OfficeAIOverview from "../officeai/OfficeAIOverview";
 import { buildOfficePulseModel } from "../officeai/officeAiData";
 import { buildSystemCommandCenterModel } from "../officeai/OfficeAISystemHealth";
 import { officeAiTranslator } from "../i18n/officeAiStrings";
 import { buildPurchasingCommandModel } from "../officeai/OfficeAIPurchasingWorkspace";
 import { conflictActionsFor } from "../officeai/OfficeAIConflictInbox";
-import OfficeAIShell from "../officeai/OfficeAIShell";
 import type { OfficeAiOverviewSnapshot } from "../officeai/officeAiTypes";
 import type { MarginSummary, PurchaseOrderRow, SupplierRow, SyncDiagnostics, SystemHealthReport } from "../types";
 
-function flattened(role: string) {
-  return sectionsForRole(role).flatMap(section => section.items.map(item => item.id));
-}
-
-describe("OfficeAI workspace navigation", () => {
-  it("exposes exactly four quiet primary spaces", () => {
-    expect(PRIMARY_ENTRIES.map(entry => entry.label)).toEqual(["Home", "Ask AI", "Operations", "Control"]);
-    expect(primarySpaceForTab("overview")).toBe("home");
-    expect(primarySpaceForTab("assistant")).toBe("ask-ai");
-    expect(primarySpaceForTab("purchasing")).toBe("operations");
-    expect(primarySpaceForTab("settings")).toBe("control");
+describe("ZANPOS Command navigation", () => {
+  it("declares nine domains in one canonical model", () => {
+    expect(NAVIGATION.map(d => d.id)).toEqual([
+      "today", "sell", "catalogue", "purchasing",
+      "customers", "team", "insights", "review", "system",
+    ]);
   });
 
-  it("groups operational and control tools without hiding capabilities", () => {
-    expect(OPERATION_GROUPS.map(group => group.label)).toEqual(["Catalog", "Sales", "People"]);
-    expect(OPERATION_GROUPS.flatMap(group => group.tabs)).toContain("purchasing");
-    expect(CONTROL_GROUPS.flatMap(group => group.tabs)).toEqual(expect.arrayContaining([
-      "actions", "workflows", "health", "conflicts", "devices", "settings", "audit", "insights", "loyalty",
-    ]));
-  });
-  it("uses a simplified owner sidebar without duplicating operational tables", () => {
-    const tabs = flattened("owner");
-    expect(tabs).toContain("operations");
-    expect(tabs).toContain("insights");
-    expect(tabs).toContain("loyalty");
-    expect(tabs).toContain("conflicts");
-    expect(tabs).not.toContain("products");
-    expect(tabs).not.toContain("reports");
-    expect(tabs).not.toContain("customers");
-    expect(tabs).not.toContain("purchasing");
-    expect(new Set(tabs).size).toBe(tabs.length);
+  // The invariant that stops duplicate ownership from returning. Reports,
+  // Customers, Users and Health each used to have two independent homes.
+  it("gives every destination exactly one home", () => {
+    const seen = new Map<string, string>();
+    for (const domain of NAVIGATION) {
+      const ids = domain.sections.length ? domain.sections.map(s => s.id) : [domain.defaultTab];
+      for (const id of ids) {
+        expect(seen.has(id), `${id} is claimed by both ${seen.get(id)} and ${domain.id}`).toBe(false);
+        seen.set(id, domain.id);
+      }
+    }
   });
 
-  it("keeps manager-only OfficeAI workspaces out of cashier navigation", () => {
-    const visible = visibleTabsFor("cashier");
+  it("gives every route path exactly one destination", () => {
+    const paths = NAVIGATION.flatMap(d => (d.sections.length ? d.sections.map(s => s.path) : [d.path]));
+    expect(new Set(paths).size).toBe(paths.length);
+  });
+
+  it("round-trips tabs through their paths", () => {
+    for (const domain of NAVIGATION) {
+      const ids = domain.sections.length ? domain.sections.map(s => s.id) : [domain.defaultTab];
+      for (const id of ids) expect(tabForPath(pathForTab(id))).toBe(id);
+    }
+  });
+
+  it("resolves every destination back to its rail domain", () => {
+    expect(domainForTab("products")).toBe("catalogue");
+    expect(domainForTab("purchasing")).toBe("purchasing");
+    expect(domainForTab("settings")).toBe("system");
+    expect(domainForTab("loyalty")).toBe("customers");
+    expect(domainForTab("zanshop")).toBe("customers");
+    expect(domainForTab("audit")).toBe("review");
+    // Legacy alias must keep resolving so old deep links do not break.
+    expect(domainForTab("operations")).toBe("catalogue");
+    // The assistant is global, not a silo — it keeps Today lit in the rail.
+    expect(domainForTab("assistant")).toBe("today");
+  });
+
+  it("never renders a one-item contextual sidebar", () => {
+    for (const domain of NAVIGATION) {
+      const sections = sectionsForDomain(domain.id, "owner");
+      expect(sections.length === 0 || sections.length >= 2).toBe(true);
+    }
+    expect(sectionsForDomain("today", "owner")).toEqual([]);
+    expect(sectionsForDomain("purchasing", "owner")).toEqual([]);
+    expect(sectionsForDomain("catalogue", "owner").map(s => s.id))
+      .toEqual(["products", "categories", "inventory"]);
+  });
+
+  it("keeps manager-only workspaces out of cashier navigation", () => {
+    const visible = visibleTabsForRole("cashier");
     expect(visible).not.toContain("actions");
     expect(visible).not.toContain("workflows");
     expect(visible).not.toContain("health");
@@ -55,6 +87,30 @@ describe("OfficeAI workspace navigation", () => {
     expect(visible).not.toContain("loyalty");
     expect(visible).not.toContain("purchasing");
     expect(visible).not.toContain("conflicts");
+    expect(visible).not.toContain("audit");
+    // but the everyday work is still reachable
+    expect(visible).toContain("products");
+    expect(visible).toContain("customers");
+  });
+
+  it("hides owner-only sections from a manager", () => {
+    const review = sectionsForDomain("review", "manager").map(s => s.id);
+    expect(review).not.toContain("audit");
+    expect(sectionsForDomain("review", "owner").map(s => s.id)).toContain("audit");
+    expect(domainsForRole("cashier").map(d => d.id)).not.toContain("review");
+  });
+
+  it("derives the command palette from the config rather than a hand list", () => {
+    const owner = paletteEntriesForRole("owner");
+    expect(owner.find(e => e.id === "products")?.domainLabelKey).toBe("catalogue");
+    expect(owner.find(e => e.id === "audit")?.domainLabelKey).toBe("review");
+    expect(paletteEntriesForRole("cashier").some(e => e.id === "audit")).toBe(false);
+  });
+
+  it("builds a breadcrumb so the user can see where they are", () => {
+    expect(breadcrumbForTab("products").map(c => c.labelKey)).toEqual(["catalogue", "products"]);
+    // A domain whose default tab is its only view needs no second crumb.
+    expect(breadcrumbForTab("purchasing").map(c => c.labelKey)).toEqual(["purchasing"]);
   });
 
   it("renders an exception-first home with no command tile wall", () => {
@@ -242,22 +298,4 @@ describe("OfficeAI workspace navigation", () => {
     ]);
   });
 
-  it("shows warnings in the header and omits healthy operational noise", () => {
-    const html = renderToStaticMarkup(createElement(OfficeAIShell, {
-      activeTab: "overview",
-      activeSpace: "home",
-      title: "Overview",
-      subtitle: "Live store command view",
-      dockOpen: false,
-      onToggleDock: () => {},
-      pulseItems: [
-        { id: "sync", label: "Sync offline", level: "critical", icon: createElement("span") },
-      ],
-      children: createElement("div", null, "Workspace"),
-    }));
-
-    expect(html).toContain("Active warnings");
-    expect(html).toContain("Sync offline");
-    expect(html).not.toContain("Healthy");
-  });
 });

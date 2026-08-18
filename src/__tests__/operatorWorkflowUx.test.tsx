@@ -1,8 +1,16 @@
+import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import CartPanel from "../components/CartPanel";
+import DiscountModal, { calculateDiscountMinor } from "../components/DiscountModal";
+import PriceInputModal from "../components/PriceInputModal";
 import DeliveriesTab, { deliveryStatusActionLabel } from "../components/DeliveriesTab";
 import PaymentModal from "../components/PaymentModal";
+import PosNumpadPanel from "../components/pos/PosNumpadPanel";
+import PosSidebar from "../components/pos/PosSidebar";
+import TodayReportModal from "../components/TodayReportModal";
+import BusinessTab from "../components/settings/BusinessTab";
+import { operationsTranslator } from "../i18n/operationsStrings";
 import StickyNotesPanel from "../components/StickyNotesPanel";
 import LoginScreen, { isValidLoginPin } from "../pages/LoginScreen";
 import { toLocalDateTimeInput, tomorrowMorningInput } from "../utils/stickyNotes";
@@ -30,6 +38,19 @@ const cart: Cart = {
   bill_discount_reason: null,
 };
 
+type CheckoutJourney = "receipt" | "delivery" | "digital";
+
+function renderPaymentJourney(journey: CheckoutJourney, initialMethod: "cash" | "card" | "wallet" = "cash") {
+  const props: ComponentProps<typeof PaymentModal> & { journey: CheckoutJourney } = {
+    netTotal: 220,
+    initialMethod,
+    onConfirm: vi.fn(),
+    onCancel: vi.fn(),
+    journey,
+  };
+  return renderToStaticMarkup(createElement(PaymentModal, props));
+}
+
 describe("operator-first workflow hierarchy", () => {
   it("frames login as a fast register handoff", () => {
     const html = renderToStaticMarkup(<LoginScreen onLogin={vi.fn()} />);
@@ -50,10 +71,8 @@ describe("operator-first workflow hierarchy", () => {
         cart={cart}
         netTotal={0}
         taxTotal={0}
-        onUpdateQty={vi.fn()}
         onRemove={vi.fn()}
-        onApplyLineDiscount={vi.fn()}
-        onSetLineNote={vi.fn()}
+        onEditPrice={vi.fn()}
         onPaySplit={vi.fn()}
         onPayFast={vi.fn()}
         onPayDirect={vi.fn()}
@@ -68,27 +87,240 @@ describe("operator-first workflow hierarchy", () => {
     expect(html).toContain("<kbd>F2</kbd>");
   });
 
-  it("makes amount due and the completion action explicit in payment", () => {
+  it("uses a cart-line click for price editing instead of line discounting", () => {
+    const cartWithItem: Cart = {
+      ...cart,
+      lines: [{
+        cart_line_id: "line-1",
+        product_id: "product-1",
+        product_name: "Cola",
+        sku: "COLA",
+        barcode: "123456789",
+        quantity: "1",
+        unit_price_minor: 400,
+        line_discount_minor: 0,
+        line_discount_reason: null,
+        tax_rule_id: "tax-1",
+        tax_rate_basis_points: 0,
+        tax_inclusive: false,
+        tax_amount_minor: 0,
+        line_total_minor: 400,
+        note: null,
+        voided: false,
+      }],
+    };
+
     const html = renderToStaticMarkup(
-      <PaymentModal netTotal={220} initialMethod="card" onConfirm={vi.fn()} onCancel={vi.fn()} />,
+      <CartPanel
+        cart={cartWithItem}
+        netTotal={400}
+        taxTotal={0}
+        onRemove={vi.fn()}
+        onEditPrice={vi.fn()}
+        onPaySplit={vi.fn()}
+        onPayFast={vi.fn()}
+        onPayDirect={vi.fn()}
+        recentLineId={null}
+        onBumpLine={vi.fn()}
+        compact
+      />,
     );
+
+    expect(html).toContain('title="Change item price"');
+    expect(html).not.toContain("Tap to edit quantity, discount, or note");
+  });
+
+  it("shows the scanned product image in its cart row", () => {
+    const cartWithImage = {
+      ...cart,
+      lines: [{
+        cart_line_id: "line-image",
+        product_id: "product-cola",
+        product_name: "Cola",
+        sku: "COLA",
+        barcode: "123456789",
+        image_path: "https://images.example.test/cola.jpg",
+        quantity: "1",
+        unit_price_minor: 400,
+        line_discount_minor: 0,
+        line_discount_reason: null,
+        tax_rule_id: "tax-1",
+        tax_rate_basis_points: 0,
+        tax_inclusive: false,
+        tax_amount_minor: 0,
+        line_total_minor: 400,
+        note: null,
+        voided: false,
+      }],
+    } as unknown as Cart;
+
+    const html = renderToStaticMarkup(
+      <CartPanel
+        cart={cartWithImage}
+        netTotal={400}
+        taxTotal={0}
+        onRemove={vi.fn()}
+        onEditPrice={vi.fn()}
+        onPaySplit={vi.fn()}
+        onPayFast={vi.fn()}
+        onPayDirect={vi.fn()}
+        recentLineId={null}
+        onBumpLine={vi.fn()}
+        compact
+      />,
+    );
+
+    expect(html).toContain('class="cart-line-image"');
+    expect(html).toContain('src="https://images.example.test/cola.jpg"');
+  });
+
+  it("offers whole-bill and individual-item discount scopes from one modal", () => {
+    const html = renderToStaticMarkup(
+      <DiscountModal
+        grossMinor={400}
+        currentBillDiscountMinor={0}
+        lines={[{
+          cart_line_id: "line-1",
+          product_id: "product-1",
+          product_name: "Cola",
+          sku: "COLA",
+          barcode: "123456789",
+          quantity: "2",
+          unit_price_minor: 200,
+          line_discount_minor: 0,
+          line_discount_reason: null,
+          tax_rule_id: "tax-1",
+          tax_rate_basis_points: 0,
+          tax_inclusive: false,
+          tax_amount_minor: 0,
+          line_total_minor: 400,
+          note: null,
+          voided: false,
+        }]}
+        initialLineId="line-1"
+        onApplyBill={vi.fn()}
+        onApplyLine={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("Whole bill");
+    expect(html).toContain("Individual item");
+    expect(html).toContain("Percentage");
+    expect(html).toContain("Fixed amount");
+    expect(html).toContain("Cola × 2");
+    expect(html).toContain("Item subtotal");
+  });
+
+  it("calculates per-item percentage and fixed discounts in integer minor units", () => {
+    expect(calculateDiscountMinor("pct", "12.5", 800, 3)).toBe(100);
+    expect(calculateDiscountMinor("flat", "0.125", 800, 3)).toBe(125);
+    expect(calculateDiscountMinor("flat", "9.000", 800, 3)).toBe(800);
+  });
+
+  it("prefills the cart-line price editor with the current item price", () => {
+    const html = renderToStaticMarkup(
+      <PriceInputModal
+        productName="Cola"
+        currentPriceMinor={400}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain("Change item price");
+    expect(html).toContain("Current price: BHD 0.400");
+    expect(html).toContain('value="0.400"');
+  });
+
+  it("makes amount due and the completion action explicit in payment", () => {
+    const html = renderPaymentJourney("receipt", "card");
     expect(html).toContain("Amount due");
     expect(html).toContain("Complete card sale");
-    expect(html).toContain("Optional order details");
+    expect(html).toContain("Print receipt");
+    expect(html).not.toContain("Optional order details");
+    expect(html).not.toContain("Customer phone");
+    expect(html).not.toContain("House number");
     expect(html).toContain('aria-label="Payment method"');
     expect(html).toContain('role="radio"');
     expect(html).toContain('aria-checked="true"');
     expect(html).not.toContain("autofocus");
   });
 
-  it("replaces the dialpad with a readiness summary for exact card payments", () => {
+  it("offers three checkout journeys below Fast Cash instead of payment methods", () => {
+    const html = renderToStaticMarkup(
+      <PosNumpadPanel
+        cart={cart}
+        numpadValue="1"
+        recentLineId={null}
+        taxTotal={0}
+        payableTotal={0}
+        exchangeCredit={null}
+        exchangeBalance={null}
+        payFastLoading={false}
+        paymentStarted={false}
+        onNumpadKey={vi.fn()}
+        onCancelExchange={vi.fn()}
+        onCompleteCoveredExchange={vi.fn()}
+        onPayFast={vi.fn()}
+        onOpenPaymentJourney={vi.fn()}
+      />,
+    );
+    expect(html).toContain("Fast Cash");
+    expect(html).toContain("Receipt");
+    expect(html).toContain("Delivery");
+    expect(html).toContain("Digital");
+    expect(html).not.toContain(">Wallet<");
+    expect(html).not.toContain(">Split<");
+  });
+
+  it("shows direct contact and required address fields for delivery checkout", () => {
+    const html = renderPaymentJourney("delivery");
+    expect(html).toContain("pm-shell-contact");
+    expect(html).toContain("Customer phone");
+    expect(html).toContain('aria-label="Open customer directory"');
+    expect(html).toContain("Tap the phone field, then use the dialpad");
+    expect(html).toContain("House number");
+    expect(html).toContain("Flat");
+    expect(html).toContain("Road");
+    expect(html).toContain('autoComplete="address-line1"');
+    expect(html).toContain('autoComplete="address-line2"');
+    expect(html).toContain('enterKeyHint="next"');
+    expect(html).toContain("BenefitPay");
+    expect(html).not.toContain("Optional order details");
+  });
+
+  it("keeps digital checkout contactable without showing delivery address fields", () => {
+    const html = renderPaymentJourney("digital");
+    expect(html).toContain("pm-shell-contact");
+    expect(html).toContain("Customer phone");
+    expect(html).toContain('aria-label="Open customer directory"');
+    expect(html).toContain("Tap the phone field, then use the dialpad");
+    expect(html).toContain("Digital receipt destination");
+    expect(html).toContain("BenefitPay");
+    expect(html).not.toContain("House number");
+    expect(html).not.toContain("Flat");
+    expect(html).not.toContain("Road");
+  });
+
+  /*
+   * This used to assert the opposite — that an exact card payment *replaced*
+   * the dialpad with the readiness summary. That reasoned only about the cash
+   * amount, which a card sale has no need to type. It missed the other fields
+   * in the same modal: the customer phone on a digital receipt, and the house,
+   * flat and road on a delivery, none of which have any on-screen keypad on a
+   * till with no physical keyboard. The summary now shares the column with the
+   * dialpad instead of standing in for it.
+   */
+  it("keeps the dialpad beside the readiness summary for exact card payments", () => {
     const html = renderToStaticMarkup(
       <PaymentModal netTotal={220} initialMethod="card" onConfirm={vi.fn()} onCancel={vi.fn()} />,
     );
     expect(html).toContain("Ready to complete");
     expect(html).toContain("Confirm approval on the card terminal");
     expect(html).toContain("BHD 0.220");
-    expect(html).not.toContain('aria-label="Dialpad"');
+    expect(html).toContain("pm-ready-panel-compact");
+    expect(html).toContain('aria-label="Dialpad"');
   });
 
   it("starts cash checkout on amount received with a visible change preview", () => {
@@ -108,8 +340,16 @@ describe("operator-first workflow hierarchy", () => {
   });
 
   it("keeps delivery transitions distinct for pending orders", () => {
-    expect(deliveryStatusActionLabel("dispatched")).toBe("Out for delivery");
-    expect(deliveryStatusActionLabel("delivered")).toBe("Delivered");
+    // The label is translated now; the persisted status identifier is not.
+    const en = operationsTranslator("en");
+    expect(deliveryStatusActionLabel("dispatched", en)).toBe("Out for delivery");
+    expect(deliveryStatusActionLabel("delivered", en)).toBe("Delivered");
+  });
+
+  it("translates delivery transition labels rather than hardcoding English", () => {
+    const ar = operationsTranslator("ar");
+    expect(deliveryStatusActionLabel("dispatched", ar)).not.toMatch(/[A-Za-z]/);
+    expect(deliveryStatusActionLabel("delivered", ar)).not.toMatch(/[A-Za-z]/);
   });
 
   it("gives notes a clear capture-first hierarchy", () => {
@@ -123,5 +363,55 @@ describe("operator-first workflow hierarchy", () => {
   it("keeps reminder presets in the operator's local wall-clock time", () => {
     expect(toLocalDateTimeInput(new Date(2026, 6, 24, 22, 30))).toBe("2026-07-24T22:30");
     expect(tomorrowMorningInput(new Date(2026, 6, 24, 22, 30))).toBe("2026-07-25T09:00");
+  });
+
+  it("exposes one reports destination and no practice shortcut in the POS rail", () => {
+    const html = renderToStaticMarkup(
+      <PosSidebar
+        visible
+        t={key => key}
+        canOpenBackOffice
+        commerceEnabled
+        notifCount={0}
+        orderCount={0}
+        onOpenReport={vi.fn()}
+        onOpenOfficeAI={vi.fn()}
+        onOpenNotes={vi.fn()}
+        onOpenOrders={vi.fn()}
+        onOpenNotifications={vi.fn()}
+        onCloseShift={vi.fn()}
+        onLogout={vi.fn()}
+      />,
+    );
+    expect(html.match(/>Reports</g)).toHaveLength(1);
+    expect(html).not.toContain("X-Report");
+    expect(html).not.toContain("practice");
+    expect(html).not.toContain("training mode");
+  });
+
+  it("presents sales and drawer reconciliation in one POS report view", () => {
+    const props: ComponentProps<typeof TodayReportModal> & { shiftId: string; actorUserId: string } = {
+      sessionUserId: "u-1",
+      shiftId: "shift-1",
+      actorUserId: "u-1",
+      onClose: vi.fn(),
+    };
+    const html = renderToStaticMarkup(createElement(TodayReportModal, props));
+    expect(html).toContain("POS reports");
+    expect(html).toContain("Today’s sales");
+    expect(html).toContain("Cash drawer");
+  });
+
+  it("places the Practice launch inside sales settings", () => {
+    const props: ComponentProps<typeof BusinessTab> & { onStartPractice: () => void } = {
+      flags: { allow_negative_stock: false, require_discount_reason: true, cashier_can_discount: false, auto_print_receipt: false },
+      setFlags: vi.fn(), taxRules: [], editingRule: null, setEditingRule: vi.fn(),
+      taxRuleError: null, setTaxRuleError: vi.fn(), savingFlags: false, savedFlags: false,
+      flagsError: null, savingRule: false, handleSaveFlags: vi.fn(), handleSaveTaxRule: vi.fn(),
+      handleDeleteTaxRule: vi.fn(), sessionUserId: "u-1", onStartPractice: vi.fn(),
+    };
+    const html = renderToStaticMarkup(createElement(BusinessTab, props));
+    expect(html).toContain("Practice mode");
+    expect(html).toContain("Start practice sale");
   });
 });

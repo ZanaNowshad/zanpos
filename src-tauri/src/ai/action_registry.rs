@@ -1,9 +1,8 @@
 use crate::ai::tool_registry::{Confirmation, ToolKind, ToolRegistry, UndoPolicy};
 /// ZANPOS Action Registry — single source of truth for all AI tools.
 ///
-/// Populated from the authoritative `tools_catalogue::all_tool_definitions()`.
+/// Populated from the authoritative `ToolRegistry`.
 /// Provider tool schemas and prompt catalogues are generated from this registry.
-use crate::ai::tools_catalogue::all_tool_definitions;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -43,24 +42,17 @@ impl ActionRegistry {
             actions: HashMap::new(),
         };
 
-        for def in all_tool_definitions() {
-            let descriptor = policy
-                .get(&def.name)
-                .ok_or_else(|| format!("AI action has no authoritative policy: {}", def.name))?;
+        for descriptor in policy.iter() {
             let is_mutation = descriptor.kind == ToolKind::Mutation;
             let action = ActionDefinition {
-                name: def.name.clone(),
-                description: def.description.clone(),
+                name: descriptor.name.clone(),
+                description: descriptor.description.clone(),
                 kind: if is_mutation {
                     ActionKind::Mutation
                 } else {
                     ActionKind::Read
                 },
-                required_role: if is_mutation {
-                    "manager".into()
-                } else {
-                    "cashier".into()
-                },
+                required_role: descriptor.required_role.as_str().into(),
                 timeout_seconds: 30,
                 confirmation: match descriptor.confirmation {
                     Confirmation::Always => ConfirmationPolicy::Required,
@@ -68,9 +60,9 @@ impl ActionRegistry {
                     Confirmation::Never => ConfirmationPolicy::Automatic,
                 },
                 has_undo: descriptor.undo != UndoPolicy::None,
-                input_schema: def.input_schema.clone(),
+                input_schema: descriptor.schema.clone(),
             };
-            reg.actions.insert(def.name.clone(), action);
+            reg.actions.insert(descriptor.name.clone(), action);
         }
 
         Ok(reg)
@@ -156,6 +148,7 @@ impl ActionRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::tools_catalogue::all_tool_definitions;
 
     #[test]
     fn registry_loads_all_catalogue_tools() {

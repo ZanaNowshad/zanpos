@@ -1,4 +1,6 @@
-import { useState, useEffect, useCallback, useRef, Fragment } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLanguage } from "../hooks/useLanguage";
+import { operationsTranslator, type OperationsStringKey } from "../i18n/operationsStrings";
 import type {
   DeliveryRow,
   DeliveryListFilter,
@@ -20,16 +22,24 @@ type FilterPreset = "unpaid" | "paid" | "today" | "all";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function paymentBadge(status: string) {
+function paymentBadge(status: string, t: (k: OperationsStringKey) => string) {
   const cls: Record<string, string> = {
     unpaid: "dlv-badge dlv-badge-unpaid",
     paid: "dlv-badge dlv-badge-paid",
     cancelled: "dlv-badge dlv-badge-cancelled",
   };
-  return <span className={cls[status] ?? "dlv-badge"}>{status}</span>;
+  // Display label only — `status` remains the persisted identifier.
+  const labels: Record<string, OperationsStringKey> = {
+    unpaid: "unpaid", paid: "paid", cancelled: "cancelledStatus",
+  };
+  return (
+    <span className={cls[status] ?? "dlv-badge"}>
+      {labels[status] ? t(labels[status]) : status}
+    </span>
+  );
 }
 
-function deliveryBadge(status: string) {
+function deliveryBadge(status: string, t: (k: OperationsStringKey) => string) {
   // FIX: standardize on "dispatched" — backend uses this status string for WhatsApp trigger
   const cls: Record<string, string> = {
     pending: "dlv-badge dlv-badge-pending",
@@ -38,14 +48,14 @@ function deliveryBadge(status: string) {
     delivered: "dlv-badge dlv-badge-delivered",
     cancelled: "dlv-badge dlv-badge-cancelled",
   };
-  const labels: Record<string, string> = {
-    pending: "Pending",
-    dispatched: "Out for Delivery",
-    out_for_delivery: "Out for Delivery",
-    delivered: "Delivered",
-    cancelled: "Cancelled",
+  const labels: Record<string, OperationsStringKey> = {
+    pending: "pendingStatus",
+    dispatched: "outForDelivery",
+    out_for_delivery: "outForDelivery",
+    delivered: "delivered",
+    cancelled: "cancelledStatus",
   };
-  return <span className={cls[status] ?? "dlv-badge"}>{labels[status] ?? status}</span>;
+  return <span className={cls[status] ?? "dlv-badge"}>{labels[status] ? t(labels[status]) : status}</span>;
 }
 
 function methodLabel(m: string) {
@@ -55,10 +65,14 @@ function methodLabel(m: string) {
   return m.charAt(0).toUpperCase() + m.slice(1);
 }
 
-export function deliveryStatusActionLabel(status: string) {
+/** Display label only — the persisted status identifier is never translated. */
+export function deliveryStatusActionLabel(
+  status: string,
+  t: (k: OperationsStringKey) => string,
+) {
   return status === "dispatched" || status === "out_for_delivery"
-    ? "Out for delivery"
-    : "Delivered";
+    ? t("outForDelivery")
+    : t("delivered");
 }
 
 function fmtDateTime(iso: string) {
@@ -91,6 +105,8 @@ function isReminderExpired(row: DeliveryRow): boolean {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function DeliveriesTab({ sessionUser }: Props) {
+  const { language } = useLanguage();
+  const t = useMemo(() => operationsTranslator(language), [language]);
   const isManager = sessionUser.role_name === "owner" || sessionUser.role_name === "manager";
   const fmt = (n: number) => `${DEVICE.currency} ${formatMoney(n, DEVICE.currency_exponent)}`;
 
@@ -184,11 +200,11 @@ export default function DeliveriesTab({ sessionUser }: Props) {
       }
       setRows(data);
     } catch (e: unknown) {
-      setError(typeof e === "string" ? e : "Failed to load deliveries");
+      setError(typeof e === "string" ? e : t("deliveriesLoadFailed"));
     } finally {
       setLoading(false);
     }
-  }, [buildFilter, sessionUser.user_id, filterMethod]);
+  }, [buildFilter, sessionUser.user_id, filterMethod, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -203,7 +219,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
       });
       setRows(prev => prev.map(r => r.delivery_id === updated.delivery_id ? updated : r));
     } catch (e: unknown) {
-      setActionError(typeof e === "string" ? e : "Failed to update status");
+      setActionError(typeof e === "string" ? e : t("statusUpdateFailed"));
     }
   };
 
@@ -223,7 +239,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
       setConfirmRef("");
       setConfirmNote("");
     } catch (e: unknown) {
-      setActionError(typeof e === "string" ? e : "Failed to confirm payment");
+      setActionError(typeof e === "string" ? e : t("paymentConfirmFailed"));
     } finally {
       setConfirmLoading(false);
     }
@@ -245,7 +261,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
       });
       setRows(prev => prev.map(r => r.delivery_id === updated.delivery_id ? updated : r));
     } catch (e: unknown) {
-      setActionError(typeof e === "string" ? e : "Failed to cancel delivery");
+      setActionError(typeof e === "string" ? e : t("deliveryCancelFailed"));
     }
   };
 
@@ -260,7 +276,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
       const updated = await cmd.deliveryRevertPayment(input);
       setRows(prev => prev.map(r => r.delivery_id === updated.delivery_id ? updated : r));
     } catch (e: unknown) {
-      setActionError(typeof e === "string" ? e : "Failed to revert payment");
+      setActionError(typeof e === "string" ? e : t("paymentRevertFailed"));
     }
   };
 
@@ -325,35 +341,38 @@ export default function DeliveriesTab({ sessionUser }: Props) {
     <div className="dlv-tab">
       <header className="dlv-command-header">
         <div>
-          <span>Operations queue</span>
-          <h2>Delivery queue</h2>
-          <p>Handle payment exceptions and move each order to its next stage.</p>
+          <span>{t("operationsQueue")}</span>
+          <h1>{t("deliveryQueue")}</h1>
+          <p>{t("deliveryQueueIntro")}</p>
         </div>
-        <strong>{rows.length}<small>{preset === "all" ? " shown" : ` ${preset}`}</small></strong>
+        <strong>{rows.length}<small>{preset === "all" ? t("shown")
+          : preset === "unpaid" ? t("unpaid")
+          : preset === "paid" ? t("paid")
+          : t("today")}</small></strong>
       </header>
 
       {/* ── Top bar ── */}
       <div className="dlv-topbar">
         <div className="dlv-presets">
           {([
-            ["unpaid", "Unpaid"],
-            ["paid", "Paid"],
-            ["today", "Today"],
-            ["all", "All"],
-          ] as [FilterPreset, string][]).map(([p, label]) => (
+            ["unpaid", "unpaid"],
+            ["paid", "paid"],
+            ["today", "today"],
+            ["all", "allFilter"],
+          ] as [FilterPreset, OperationsStringKey][]).map(([p, label]) => (
             <button
               key={p}
               className={`dlv-preset-btn${preset === p ? " active" : ""}`}
               onClick={() => setPreset(p)}
             >
-              {label}
+              {t(label)}
             </button>
           ))}
         </div>
 
         <input
           className="dlv-search"
-          placeholder="Search contact / name…"
+          placeholder={t("searchContactOrName")}
           value={search}
           onChange={e => setSearch(e.target.value)}
           onKeyDown={e => e.key === "Enter" && load()}
@@ -362,12 +381,12 @@ export default function DeliveriesTab({ sessionUser }: Props) {
         <button
           className={`dlv-filter-toggle${hasAdvancedFilters ? " dlv-filter-toggle-active" : ""}`}
           onClick={() => setShowFilters(f => !f)}
-          title="Advanced filters"
+          title={t("advancedFilters")}
         >
-          ⊞ Filters{hasAdvancedFilters ? " ●" : ""}
+          ⊞ {t("filters")}{hasAdvancedFilters ? " ●" : ""}
         </button>
 
-        <button className="dlv-refresh-btn" onClick={load} title="Refresh">↺</button>
+        <button className="dlv-refresh-btn" onClick={load} title={t("refresh")}>↺</button>
       </div>
 
       {/* ── Advanced filters panel ── */}
@@ -381,10 +400,10 @@ export default function DeliveriesTab({ sessionUser }: Props) {
               onChange={e => setFilterMethod(e.target.value)}
             >
               <option value="">Any</option>
-              <option value="cash">Cash</option>
-              <option value="card">Card</option>
-              <option value="wallet">BenefitPay</option>
-              <option value="other">Other</option>
+              <option value="cash">{t("cash")}</option>
+              <option value="card">{t("card")}</option>
+              <option value="wallet">{t("benefitPay")}</option>
+              <option value="other">{t("otherMethod")}</option>
             </select>
           </label>
 
@@ -394,7 +413,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
               <input
                 ref={riderRef}
                 className="dlv-filter-input"
-                placeholder="Rider name…"
+                placeholder={t("riderNamePlaceholder")}
                 value={filterRider}
                 onChange={e => { setFilterRider(e.target.value); setShowRiderSuggestions(true); }}
                 onFocus={() => setShowRiderSuggestions(true)}
@@ -459,14 +478,14 @@ export default function DeliveriesTab({ sessionUser }: Props) {
       {/* ── Status ── */}
       {error && <div className="dlv-error" role="alert">{error}</div>}
       {actionError && <div className="dlv-error" role="alert">⚠ {actionError}<button className="dlv-error-dismiss" onClick={() => setActionError(null)}>✕</button></div>}
-      {loading && <div className="dlv-loading">Loading…</div>}
+      {loading && <div className="dlv-loading">{t("loading")}</div>}
 
       {/* ── Empty state ── */}
       {!loading && rows.length === 0 && (
         <div className="dlv-empty">
           <span aria-hidden="true">✓</span>
-          <strong>No deliveries need attention</strong>
-          <p>{hasAdvancedFilters || search ? "Clear filters to see the full queue." : "New delivery orders will appear here automatically."}</p>
+          <strong>{t("noDeliveriesNeedAttention")}</strong>
+          <p>{hasAdvancedFilters || search ? t("clearFiltersToSeeQueue") : t("newDeliveriesAppearHere")}</p>
         </div>
       )}
 
@@ -477,15 +496,15 @@ export default function DeliveriesTab({ sessionUser }: Props) {
             <thead>
               <tr>
                 <th className="dlv-th dlv-col-id">ID</th>
-                <th className="dlv-th dlv-col-receipt">Receipt</th>
-                <th className="dlv-th dlv-col-date">Date / Time</th>
-                <th className="dlv-th dlv-col-customer">Customer</th>
-                <th className="dlv-th dlv-col-contact">Contact</th>
-                <th className="dlv-th dlv-col-rider">Rider</th>
-                <th className="dlv-th dlv-col-amount">Amount</th>
-                <th className="dlv-th dlv-col-method">Method</th>
-                <th className="dlv-th dlv-col-pay">Payment</th>
-                <th className="dlv-th dlv-col-dlv">Delivery</th>
+                <th className="dlv-th dlv-col-receipt">{t("receipt")}</th>
+                <th className="dlv-th dlv-col-date">{t("dateTime")}</th>
+                <th className="dlv-th dlv-col-customer">{t("customer")}</th>
+                <th className="dlv-th dlv-col-contact">{t("contact")}</th>
+                <th className="dlv-th dlv-col-rider">{t("rider")}</th>
+                <th className="dlv-th dlv-col-amount">{t("amount")}</th>
+                <th className="dlv-th dlv-col-method">{t("method")}</th>
+                <th className="dlv-th dlv-col-pay">{t("payment")}</th>
+                <th className="dlv-th dlv-col-dlv">{t("delivery")}</th>
                 <th className="dlv-th dlv-col-actions"></th>
               </tr>
             </thead>
@@ -529,8 +548,8 @@ export default function DeliveriesTab({ sessionUser }: Props) {
                       <td className="dlv-td dlv-col-method">
                         <span className="dlv-method">{methodLabel(row.expected_payment_method)}</span>
                       </td>
-                      <td className="dlv-td dlv-col-pay">{paymentBadge(row.payment_status)}</td>
-                      <td className="dlv-td dlv-col-dlv">{deliveryBadge(row.delivery_status)}</td>
+                      <td className="dlv-td dlv-col-pay">{paymentBadge(row.payment_status, t)}</td>
+                      <td className="dlv-td dlv-col-dlv">{deliveryBadge(row.delivery_status, t)}</td>
                       <td role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="dlv-td dlv-col-actions" onClick={e => e.stopPropagation()}>
                         <div className="dlv-quick-actions">
                           {/* Call — always visible when contact exists */}
@@ -550,7 +569,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
                               className={`dlv-quick-btn dlv-quick-remind${waSent[row.delivery_id] === "reminder" ? " dlv-quick-sent" : ""}`}
                               disabled={!!waLoading[row.delivery_id] || isReminderExpired(row)}
                               onClick={() => handlePaymentReminder(row)}
-                              title={isReminderExpired(row) ? "Payment reminders can only be sent on the same day as the delivery bill" : "Send payment reminder"}
+                              title={isReminderExpired(row) ? "Payment reminders can only be sent on the same day as the delivery bill" : t("sendPaymentReminder")}
                             >
                               💳
                             </button>
@@ -563,7 +582,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
                                 setExpanded(row.delivery_id);   // ensure detail panel is visible
                                 setConfirmingId(row.delivery_id);
                               }}
-                              title="Mark as paid"
+                              title={t("markAsPaid")}
                             >
                               ✓
                             </button>
@@ -573,7 +592,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
                             <button
                               className="dlv-quick-btn dlv-quick-unpay"
                               onClick={() => handleRevertPayment(row)}
-                              title="Revert to unpaid"
+                              title={t("revertToUnpaid")}
                             >
                               ↺
                             </button>
@@ -592,7 +611,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
                             {/* Left: address + info */}
                             <div className="dlv-detail-info">
                               <div className="dlv-detail-section">
-                                <span className="dlv-detail-heading">Address</span>
+                                <span className="dlv-detail-heading">{t("address")}</span>
                                 <div className="dlv-detail-address">
                                   {row.house_number && <span>{row.house_number}</span>}
                                   {row.area && <span>{row.area}</span>}
@@ -605,9 +624,9 @@ export default function DeliveriesTab({ sessionUser }: Props) {
 
                               {isManager && (
                                 <div className="dlv-detail-section">
-                                  <span className="dlv-detail-heading">Audit</span>
+                                  <span className="dlv-detail-heading">{t("auditLabel")}</span>
                                   <div className="dlv-detail-audit">
-                                    <span>Created by: <b>{userName(row.created_by_user_id)}</b></span>
+                                    <span>{t("createdBy")} <b>{userName(row.created_by_user_id)}</b></span>
                                     {row.paid_confirmed_by_user_id && (
                                       <span>
                                         Confirmed by: <b>{userName(row.paid_confirmed_by_user_id)}</b>
@@ -615,7 +634,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
                                       </span>
                                     )}
                                     {row.payment_reference && (
-                                      <span>Ref: <b>{row.payment_reference}</b></span>
+                                      <span>{t("refShort")} <b>{row.payment_reference}</b></span>
                                     )}
                                     {row.payment_note && (
                                       <span>Note: {row.payment_note}</span>
@@ -631,7 +650,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
                               {/* Status advance */}
                               {opts.length > 0 && (
                                 <div className="dlv-action-group">
-                                  <span className="dlv-action-label">Update status:</span>
+                                  <span className="dlv-action-label">{t("updateStatus")}</span>
                                   {opts.map(s => (
                                     <button
                                       key={s}
@@ -639,7 +658,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
                                       onClick={() => handleStatusChange(row, s)}
                                     >
                                       <span className="icon-directional" aria-hidden="true">→</span>{" "}
-                                      {deliveryStatusActionLabel(s)}
+                                      {deliveryStatusActionLabel(s, t)}
                                     </button>
                                   ))}
                                 </div>
@@ -687,13 +706,13 @@ export default function DeliveriesTab({ sessionUser }: Props) {
                                   <div className="dlv-confirm-form">
                                     <input
                                       className="dlv-input"
-                                      placeholder="Reference # (optional)"
+                                      placeholder={t("referenceOptional")}
                                       value={confirmRef}
                                       onChange={e => setConfirmRef(e.target.value)}
                                     />
                                     <input
                                       className="dlv-input"
-                                      placeholder="Note (optional)"
+                                      placeholder={t("noteOptional")}
                                       value={confirmNote}
                                       onChange={e => setConfirmNote(e.target.value)}
                                     />
@@ -733,7 +752,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
                                     <button
                                       className="dlv-action-btn dlv-action-revert"
                                       onClick={() => handleRevertPayment(row)}
-                                      title="Revert payment to unpaid"
+                                      title={t("revertPaymentTitle")}
                                     >
                                       ↺ Mark Unpaid
                                     </button>
@@ -767,7 +786,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
       {cancelConfirm && (
         <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="settings-confirm-overlay" onClick={() => setCancelConfirm(null)}>
           <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="settings-confirm-dialog" onClick={e => e.stopPropagation()}>
-            <div className="settings-confirm-header">Cancel Delivery</div>
+            <div className="settings-confirm-header">{t("cancelDelivery")}</div>
             <p className="settings-confirm-msg">
               Cancel delivery <strong>#{cancelConfirm.receipt_number}</strong>?<br />
               This will release any assigned rider.
@@ -776,7 +795,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
               <button className="btn-primary" style={{ background: "var(--error, #ef4444)" }} onClick={executeCancel}>
                 Yes, Cancel Delivery
               </button>
-              <button className="btn-secondary" onClick={() => setCancelConfirm(null)}>Go Back</button>
+              <button className="btn-secondary" onClick={() => setCancelConfirm(null)}>{t("goBack")}</button>
             </div>
           </div>
         </div>

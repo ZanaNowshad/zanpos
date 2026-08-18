@@ -15,6 +15,7 @@ interface BusinessTabProps {
   handleSaveFlags: () => void; handleSaveTaxRule: () => void;
   handleDeleteTaxRule: (tax_rule_id: string) => void;
   sessionUserId: string;
+  onStartPractice?: () => void;
 }
 
 export default function BusinessTab(props: BusinessTabProps) {
@@ -22,7 +23,7 @@ export default function BusinessTab(props: BusinessTabProps) {
     flags, setFlags, taxRules,
     editingRule, setEditingRule, taxRuleError, setTaxRuleError,
     savingFlags, savedFlags, flagsError, savingRule,
-    handleSaveFlags, handleSaveTaxRule, handleDeleteTaxRule, sessionUserId,
+    handleSaveFlags, handleSaveTaxRule, handleDeleteTaxRule, sessionUserId, onStartPractice,
   } = props;
 
   const [reportsCfg, setReportsCfg]       = useState<ReportsConfig | null>(null);
@@ -76,6 +77,17 @@ export default function BusinessTab(props: BusinessTabProps) {
 
   return (
     <div className="settings-page">
+      {onStartPractice && (
+        <section className="practice-settings-card">
+          <div>
+            <span className="practice-settings-kicker">Training workspace</span>
+            <h3 className="settings-page-title">Practice mode</h3>
+            <p className="settings-hint">Open a safe practice till. Practice sales are clearly marked and never affect stock, revenue, or reports.</p>
+          </div>
+          <button type="button" className="btn-primary" onClick={onStartPractice}>Start practice sale</button>
+        </section>
+      )}
+
       <section>
         <h3 className="settings-page-title">Business Rules</h3>
         <p className="settings-hint">
@@ -90,11 +102,11 @@ export default function BusinessTab(props: BusinessTabProps) {
                 Sales proceed even if stock quantity is zero or negative.
               </div>
             </div>
-            <div className="biz-toggle">
+            <label className="biz-toggle">
               <input id="a11y-input-1" type="checkbox" checked={flags.allow_negative_stock}
                 onChange={e => setFlags(f => ({ ...f, allow_negative_stock: e.target.checked }))} />
               <span className="biz-toggle-track" />
-            </div>
+            </label>
           </div>
 
           <div className="biz-flag-row">
@@ -104,11 +116,11 @@ export default function BusinessTab(props: BusinessTabProps) {
                 When ON, cashier must type a reason before applying any discount.
               </div>
             </div>
-            <div className="biz-toggle">
+            <label className="biz-toggle">
               <input id="a11y-input-2" type="checkbox" checked={flags.require_discount_reason}
                 onChange={e => setFlags(f => ({ ...f, require_discount_reason: e.target.checked }))} />
               <span className="biz-toggle-track" />
-            </div>
+            </label>
           </div>
 
           <div className="biz-flag-row">
@@ -118,11 +130,11 @@ export default function BusinessTab(props: BusinessTabProps) {
                 When OFF, only managers and owners can apply discounts.
               </div>
             </div>
-            <div className="biz-toggle">
+            <label className="biz-toggle">
               <input id="a11y-input-3" type="checkbox" checked={flags.cashier_can_discount}
                 onChange={e => setFlags(f => ({ ...f, cashier_can_discount: e.target.checked }))} />
               <span className="biz-toggle-track" />
-            </div>
+            </label>
           </div>
 
           <div className="biz-flag-row">
@@ -133,11 +145,11 @@ export default function BusinessTab(props: BusinessTabProps) {
                 Requires a thermal printer configured in the Printers section.
               </div>
             </div>
-            <div className="biz-toggle">
+            <label className="biz-toggle">
               <input id="a11y-input-4" type="checkbox" checked={flags.auto_print_receipt}
                 onChange={e => setFlags(f => ({ ...f, auto_print_receipt: e.target.checked }))} />
               <span className="biz-toggle-track" />
-            </div>
+            </label>
           </div>
         </div>
       </section>
@@ -163,12 +175,12 @@ export default function BusinessTab(props: BusinessTabProps) {
                 terminal. Default for cashier accounts.
               </div>
             </div>
-            <div className="biz-toggle">
+            <label className="biz-toggle">
               <input id="a11y-input-5" type="radio" name="reports-scope"
                 checked={reportsCfg?.device_scope === "origin"}
                 onChange={() => setReportsCfg(c => c ? { ...c, device_scope: "origin" } : c)} />
               <span className="biz-toggle-track" />
-            </div>
+            </label>
           </div>
 
           <div className="biz-flag-row">
@@ -180,12 +192,12 @@ export default function BusinessTab(props: BusinessTabProps) {
                 view.
               </div>
             </div>
-            <div className="biz-toggle">
+            <label className="biz-toggle">
               <input id="a11y-input-6" type="radio" name="reports-scope"
                 checked={reportsCfg?.device_scope === "all"}
                 onChange={() => setReportsCfg(c => c ? { ...c, device_scope: "all" } : c)} />
               <span className="biz-toggle-track" />
-            </div>
+            </label>
           </div>
         </div>
 
@@ -350,11 +362,11 @@ export default function BusinessTab(props: BusinessTabProps) {
                 <div className="biz-flag-label">Active</div>
                 <div className="biz-flag-hint">Inactive rules are hidden in the product editor.</div>
               </div>
-              <div className="biz-toggle">
+              <label className="biz-toggle">
                 <input id="a11y-input-14" type="checkbox" checked={editingRule.is_active ?? true}
                   onChange={e => setEditingRule(r => r ? { ...r, is_active: e.target.checked } : r)} />
                 <span className="biz-toggle-track" />
-              </div>
+              </label>
             </div>
 
             {taxRuleError && <div className="modal-error" style={{ marginTop: "8px" }}>{taxRuleError}</div>}

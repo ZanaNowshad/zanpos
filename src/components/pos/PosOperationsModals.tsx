@@ -7,7 +7,6 @@ import RecentSalesModal from "../RecentSalesModal";
 import RefundModal from "../RefundModal";
 import ShiftModal from "../ShiftModal";
 import TodayReportModal from "../TodayReportModal";
-import XReportModal from "../XReportModal";
 import type { ActiveModal, ExchangeCredit } from "./posModalState";
 
 interface Props {
@@ -113,13 +112,11 @@ export default function PosOperationsModals({
       )}
 
       {activeModal.kind === "report" && (
-        <TodayReportModal sessionUserId={sessionUser.user_id} onClose={close} />
-      )}
-
-      {activeModal.kind === "xReport" && (
-        <XReportModal
+        <TodayReportModal
+          sessionUserId={sessionUser.user_id}
           shiftId={shift.shift_id}
           actorUserId={sessionUser.user_id}
+          includeCashDrawer={sessionUser.role_name === "owner" || sessionUser.role_name === "manager"}
           onClose={close}
         />
       )}

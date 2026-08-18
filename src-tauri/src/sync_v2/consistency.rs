@@ -22,6 +22,8 @@ pub const CONSISTENCY_TABLES: &[&str] = &[
     "suppliers",
     "purchase_orders",
     "purchase_order_lines",
+    "po_receipts",
+    "riders",
     "app_config",
 ];
 

@@ -41,7 +41,11 @@ function applyTheme(theme: Theme) {
 export function useTheme() {
   const [theme, setTheme] = useState<Theme>(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
-    return isValidTheme(saved) ? saved : "dark";
+    // Light is the product's design default: the reference designs the shell is
+    // built against are light, and a retail back office is used under shop
+    // lighting rather than in a dark room. Every other theme, including dark,
+    // remains available and a stored choice always wins.
+    return isValidTheme(saved) ? saved : "light";
   });
 
   useEffect(() => {

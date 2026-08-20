@@ -38,7 +38,7 @@
   overflow-wrap: anywhere;
 }
 
-.zp-review-detail-tech { margin-top: 12px; color: var(--text-muted); font-size: 0.6875rem; }
+.zp-review-detail-tech { margin-top: 12px; color: var(--text-muted); font-size: var(--type-office-micro); }
 .zp-review-detail-tech summary { cursor: pointer; }
 .zp-review-detail-tech code { display: block; margin-top: 6px; overflow-wrap: anywhere; }
 
@@ -109,7 +109,7 @@
   padding-top: 12px;
   border-top: 1px solid var(--border2);
   color: var(--text-muted);
-  font-size: 0.6875rem;
+  font-size: var(--type-office-micro);
 }
 
 @media (max-width: 1024px) {

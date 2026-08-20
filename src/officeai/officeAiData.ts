@@ -3,13 +3,16 @@ import type {
   OfficeAiAuditTimelineItem,
   OfficeAiOverviewSnapshot,
   OfficeAiWorkflowInboxItem,
+  OfficeAttentionItem,
   OfficePulseModel,
+  OfficeTab,
 } from "./officeAiTypes";
 import type { ChatController } from "./useChatController";
 import { officeAiFormat, type OfficeAiTranslator } from "../i18n/officeAiStrings";
 import {
   adminGetAiConfig,
   adminGetAiEnabled,
+  adminGetAlerts,
   adminGetFeatureToggles,
   adminGetProviderConfig,
   appConfigLoad,
@@ -56,6 +59,7 @@ export async function officeAiOverview(
     whatsappUnread,
     payments,
     health,
+    alerts,
   ] = await Promise.all([
     capture(t("aiProvider"), adminGetProviderConfig(sessionToken), errors),
     capture(t("aiEnabled"), adminGetAiEnabled(sessionToken), errors),
@@ -70,6 +74,13 @@ export async function officeAiOverview(
     capture(t("whatsappInbox"), whatsappPollMessages(actorUserId), errors),
     capture(t("paymentConfirmations"), paymentConfirmationsList(actorUserId), errors),
     capture(t("systemHealth"), systemHealthCheck(actorUserId), errors),
+    /* The proactive detector's output. It has been running every five minutes
+       since the app started — margin erosion, dead stock, refund spikes, cash
+       discrepancies — and until now the only place it surfaced was a sidebar
+       inside the ZanAI chat. Today is where someone actually looks. */
+    branchId
+      ? capture(t("alerts"), adminGetAlerts(sessionToken, branchId), errors)
+      : Promise.resolve(null),
   ]);
 
   const levels = stock ?? [];
@@ -89,12 +100,47 @@ export async function officeAiOverview(
     aiConfig,
     featureToggles,
     health,
+    alerts: (alerts ?? []).filter(a => !a.dismissed_at),
     benefitNumber: appConfig?.whatsapp_benefit_number ?? null,
   };
 }
 
 function money(minor: number, exponent: number): string {
   return `BHD ${(minor / Math.pow(10, exponent)).toFixed(exponent)}`;
+}
+
+/**
+ * Where each kind of proactive alert sends the operator, and what the button
+ * says when it gets there.
+ *
+ * The detector reports thirteen conditions and every one of them has somewhere
+ * to go: a margin problem is a catalogue job, a cash discrepancy is a shift
+ * job, stuck sync is a health job. An alert that names a problem without a
+ * destination is just bad news, which is most of why these were easy to leave
+ * in a chat sidebar.
+ */
+const ALERT_ROUTE: Record<string, { destination: OfficeTab; labelKey: string }> = {
+  margin_erosion:   { destination: "products",  labelKey: "reviewPricing" },
+  negative_margin:  { destination: "products",  labelKey: "reviewPricing" },
+  high_discounts:   { destination: "reports",   labelKey: "reviewSales" },
+  refund_spike:     { destination: "reports",   labelKey: "reviewSales" },
+  sales_drop:       { destination: "reports",   labelKey: "reviewSales" },
+  dead_stock:       { destination: "inventory", labelKey: "reviewStock" },
+  overstock:        { destination: "inventory", labelKey: "reviewStock" },
+  near_expiry:      { destination: "inventory", labelKey: "reviewStock" },
+  low_stock:        { destination: "inventory", labelKey: "reviewStock" },
+  stock_out:        { destination: "inventory", labelKey: "reviewStock" },
+  cash_discrepancy: { destination: "cashier",   labelKey: "reviewShifts" },
+  shift_too_long:   { destination: "cashier",   labelKey: "reviewShifts" },
+  sync_stuck:       { destination: "health",    labelKey: "openSystem" },
+};
+
+/** The detector's severity words, mapped onto the three the UI draws. */
+function alertSeverity(raw: string): OfficeAttentionItem["severity"] {
+  const s = raw.toLowerCase();
+  if (s === "critical" || s === "high") return "critical";
+  if (s === "info" || s === "low") return "info";
+  return "warning";
 }
 
 export function buildOfficePulseModel(
@@ -106,6 +152,26 @@ export function buildOfficePulseModel(
   const transactions = snapshot.today?.transaction_count ?? 0;
   const stockExceptions = snapshot.lowStockCount + snapshot.outOfStockCount;
   const attention: OfficePulseModel["attention"] = [];
+
+  /* Proactive alerts lead the list.
+     Everything below this loop is plumbing — sync lag, WhatsApp login, stock
+     counts — and plumbing is not what a shopkeeper opens the app to find out.
+     These are the money findings: margin gone, stock dead, refunds spiking,
+     the drawer short. They were computed every five minutes and shown only in
+     the chat sidebar. */
+  for (const alert of snapshot.alerts ?? []) {
+    const route = ALERT_ROUTE[alert.alert_type];
+    attention.push({
+      id: `alert:${alert.alert_id}`,
+      title: alert.title,
+      detail: alert.description,
+      severity: alertSeverity(alert.severity),
+      // An unrecognised alert type still shows; it just sends the operator to
+      // Health rather than nowhere. New detectors must never render a dead row.
+      destination: route?.destination ?? "health",
+      actionLabel: t((route?.labelKey ?? "openSystem") as never),
+    });
+  }
 
   for (const finding of snapshot.health?.findings ?? []) {
     if (finding.severity !== "critical" && finding.severity !== "warning") continue;

@@ -23,12 +23,19 @@ interface Options {
   removeRecentLine: ReturnType<typeof useCart>["removeRecentLine"];
   onLock?: () => void;
   onLogout: () => void;
+  /* The rearranged till's contextual strip and tender journeys. */
+  onLineQty: () => void;
+  onLinePrice: () => void;
+  onVoidLine: () => void;
+  onMoreOptions: () => void;
+  onJourney: (journey: "receipt" | "delivery" | "digital") => void;
 }
 
 export function usePosShortcutBindings({
   noModalOpen, lineCount, recentLineId, lastReceiptNumber, canRefund,
   canViewXReport, setActiveModal, focusBarcode, openHold, openPay, payFast,
   clearCart, reprintLast, noSale, bumpRecentQty, removeRecentLine, onLock, onLogout,
+  onLineQty, onLinePrice, onVoidLine, onMoreOptions, onJourney,
 }: Options) {
   const handlers = useMemo(() => ({
     noModalOpen,
@@ -58,11 +65,18 @@ export function usePosShortcutBindings({
     onReport: () => setActiveModal({ kind: "report" }),
     onCustomItem: () => setActiveModal({ kind: "customItem" }),
     onHelp: () => setActiveModal({ kind: "help" }),
+    onLineQty,
+    onLinePrice,
+    onVoidLine,
+    onMoreOptions,
+    onJourneyReceipt: () => onJourney("receipt"),
+    onJourneyDelivery: () => onJourney("delivery"),
+    onJourneyDigital: () => onJourney("digital"),
   }), [
     bumpRecentQty, canRefund, canViewXReport, clearCart, focusBarcode,
     lastReceiptNumber, lineCount, noModalOpen, noSale, onLock, onLogout,
     openHold, openPay, payFast, recentLineId, removeRecentLine, reprintLast,
-    setActiveModal,
+    setActiveModal, onLineQty, onLinePrice, onVoidLine, onMoreOptions, onJourney,
   ]);
 
   usePosShortcuts(handlers);

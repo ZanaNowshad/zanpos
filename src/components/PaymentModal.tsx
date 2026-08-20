@@ -7,7 +7,7 @@ import DeliveryForm from "./DeliveryForm";
 import { normalizePhone } from "./DeliveryForm";
 import { applyDialpadKey } from "./Dialpad";
 import { typeIntoFocusedField } from "./paymentFieldTyping";
-import { buildPaymentInputs, canConfirmPayment, paymentBlockReason } from "./paymentValidation";
+import { buildPaymentInputs, canConfirmPayment, paymentBlockReason, paymentBlockers } from "./paymentValidation";
 import { mkLine, type ActiveField, type PaymentLine } from "./paymentLines";
 import { PaymentCommandPanel, PaymentMethodPicker } from "./PaymentExperience";
 import { useFocusTrap } from "../hooks/useFocusTrap";
@@ -17,6 +17,7 @@ import RiderPicker from "./RiderPicker";
 import { useLanguage } from "../hooks/useLanguage";
 import { detailTranslator } from "../i18n/detailStrings";
 import { systemKeyboardOpen } from "../tauri/commands";
+import { useFocusedField } from "./PaymentInputSurface";
 export type PaymentJourney = "receipt" | "delivery" | "digital";
 
 export interface PaymentCompletionOptions {
@@ -45,8 +46,14 @@ interface Props {
 
 export default function PaymentModal({
   netTotal, onConfirm, onCancel, loading,
-  initialMethod, splitMode, sessionUserId, journey = "receipt", defaultPrintReceipt = false,
+  initialMethod, splitMode, sessionUserId, journey: initialJourney = "receipt",
+  defaultPrintReceipt = false,
 }: Props) {
+  /* The journey is chosen before the modal opens, but customers change their
+     mind at the counter — "actually, can you deliver it?". Switching in place
+     keeps whatever has already been typed; making them cancel and start over
+     is the kind of friction that gets a POS blamed for a queue. */
+  const [journey, setJourney] = useState<PaymentJourney>(initialJourney);
   const { language } = useLanguage();
   const dt = useMemo(() => detailTranslator(language), [language]);
   const EXP = DEVICE.currency_exponent;
@@ -67,8 +74,8 @@ export default function PaymentModal({
   });
 
   const [activeField, setActiveField] = useState<ActiveField>(
-    () => journey !== "receipt"
-      ? { kind: "phone" }
+    () => initialJourney !== "receipt"
+      ? null
       : splitMode
       ? { kind: "amount", lineId: lines[0].id }
       : lines[0].method === "cash"
@@ -87,10 +94,20 @@ export default function PaymentModal({
   const [printReceipt, setPrintReceipt] = useState(defaultPrintReceipt);
   const requiresContact = journey !== "receipt";
   const isDelivery = journey === "delivery";
+  /* Only a counter sale takes cash here and now. A delivery is collected by
+     the rider later; a digital sale already cleared on a terminal. Neither has
+     a "cash received" or change to count. */
+  const takesCashNow = journey === "receipt";
 
   const [showSplit, setShowSplit] = useState(splitMode ?? false);
   const [rider, setRider] = useState<RiderRow | null>(null);
   const [keyboardError, setKeyboardError] = useState<string | null>(null);
+  /* Set the first time a blocked confirm is pressed. Until then the modal stays
+     quiet — listing faults at a cashier who has not finished typing is noise. */
+  const [attempted, setAttempted] = useState(false);
+  /* null = follow the focused field; set = the cashier chose, and that choice
+     holds until they move to another field. */
+  const [inputModeOverride, setInputModeOverride] = useState<"pad" | "keys" | null>(null);
 
   /* Raising the OS keyboard moves focus to it, so the field the cashier was in
      has to be put back — otherwise the keys would go nowhere. */
@@ -200,6 +217,22 @@ export default function PaymentModal({
     setActiveField({ kind: "tendered", lineId: cashLine.id });
   };
 
+  /* Switching journey keeps the basket, the customer and anything typed. Only
+     the caret moves, to whatever that journey asks for first: a phone number
+     for delivery and digital, the cash tendered for a receipt. */
+  const switchJourney = useCallback((next: PaymentJourney) => {
+    setJourney(next);
+    // Cash is not a digital method. Landing on it left the cashier confirming
+    // a "cash" digital sale, which is not a thing the shop can do.
+    if (next === "digital" && lines[0]?.method === "cash") selectMethod("card");
+    if (next === "receipt") {
+      const cashLine = lines.find(line => line.method === "cash");
+      setActiveField(cashLine ? { kind: "tendered", lineId: cashLine.id } : null);
+    } else {
+      setActiveField(null);
+    }
+  }, [lines, selectMethod]);
+
   const validationInput = {
     lines, netTotal, allocatedMinor, remainingMinor,
     currencyExponent: EXP, requiresContact, isDelivery, deliveryData, loading,
@@ -263,12 +296,61 @@ export default function PaymentModal({
     mainLine?.method === "card" ? dt("confirmCardApproval") :
     mainLine?.method === "wallet" ? dt("confirmWalletReceived") :
     dt("confirmPaymentReceived");
+  const focusedField = useFocusedField(containerRef);
+  /* Resting state is the order summary. It becomes the keypad only while a
+     field is being edited — the receipt journey opens straight into the cash
+     field, so it lands on the keypad without anyone tapping anything. */
+  const surface: "summary" | "input" =
+    focusedField || activeField ? "input" : "summary";
+  /* Numeric fields open on the pad, text fields on the letters, and either can
+     be swapped — a flat is "3B" and a road is sometimes a name. */
+  const inputMode: "pad" | "keys" =
+    inputModeOverride ?? (focusedField && !focusedField.numeric ? "keys" : "pad");
+
+  /* Moving to a different field drops a manual pad/keys choice — the next
+     field gets whatever suits it. */
+  const focusedLabel = focusedField?.label ?? null;
+  useEffect(() => { setInputModeOverride(null); }, [focusedLabel]);
+
+  const summaryRows = (() => {
+    const rows = [
+      { label: isDelivery ? "Delivery total" : "Total", value: `${DEVICE.currency} ${fmt(netTotal)}`, strong: true },
+      { label: "Payment", value: isDelivery ? "Collect on delivery" : methodName },
+    ];
+    if (isDelivery) rows.push({ label: "Rider", value: rider?.name ?? "Not assigned" });
+    if (selectedCust) rows.push({ label: "Customer", value: selectedCust.name });
+    if (isDelivery && deliveryData.area) rows.push({ label: "Area", value: String(deliveryData.area) });
+    return rows;
+  })();
+
   const showNumericEntry = showSplit || mainLine?.method === "cash" || activeField?.kind === "phone";
   const confirmBlockReason = paymentBlockReason(validationInput, dt, fmt);
+  const blockers = paymentBlockers(validationInput, dt, fmt);
+
+  /* Pressing a blocked confirm lists every fault and puts the caret in the
+     first field that needs one, so the fix starts where the finger already is. */
+  const handleAttemptBlocked = () => {
+    setAttempted(true);
+    const target = blockers.find(blocker => blocker.focus);
+    if (!target?.focus) return;
+    const el = containerRef.current?.querySelector<HTMLElement>(target.focus);
+    el?.focus();
+    if (el && !(el instanceof HTMLInputElement)) el.click();
+  };
+  /* The button states what pressing it does, and the three journeys do
+     different things. "Confirm … received" on the digital path is deliberate:
+     the cashier is attesting that money arrived on another device, not moving
+     it from this one. */
+  const money = `${DEVICE.currency} ${fmt(netTotal)}`;
   const completionLabel = loading
     ? dt("completingSale")
-    : language === "en" ? `Complete ${methodName.toLowerCase()} sale · ${DEVICE.currency} ${fmt(netTotal)}`
-    : `${dt("completeSale")} (${methodName}) · ${DEVICE.currency} ${fmt(netTotal)}`;
+    : language !== "en"
+      ? `${dt("completeSale")} (${methodName}) · ${money}`
+      : isDelivery
+        ? `${rider ? `Send to ${rider.name}` : "Save delivery"} · ${money} to collect`
+        : journey === "digital"
+          ? `Confirm ${money} received`
+          : `Take ${money} · ${methodName.toLowerCase()}`;
 
   return (
     <button className="modal-overlay" type="button" onClick={e => e.target === e.currentTarget && onCancel()}>
@@ -276,24 +358,56 @@ export default function PaymentModal({
 
         <div className="pm-left">
           <div className="pm-header">
-            <div className="pm-header-copy">
-              <span className={`pm-journey-tag pm-journey-${journey}`}>
-                {journey === "receipt" ? <ReceiptText size={14} /> : journey === "delivery" ? <Truck size={14} /> : <MessageCircle size={14} />}
-                {journey === "receipt" ? "Receipt sale" : journey === "delivery" ? "Delivery order" : "Digital receipt"}
-              </span>
-              <h2 id="pm-dialog-title">{dt("amountDue")}</h2>
+            <div className="pm-journey-switch" role="group" aria-label="Checkout type">
+              {([
+                ["receipt", "Receipt", <ReceiptText key="r" size={15} aria-hidden="true" />],
+                ["delivery", "Delivery", <Truck key="d" size={15} aria-hidden="true" />],
+                ["digital", "Digital", <MessageCircle key="g" size={15} aria-hidden="true" />],
+              ] as const).map(([id, label, icon]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={`pm-journey-opt${journey === id ? " is-on" : ""}`}
+                  aria-pressed={journey === id}
+                  disabled={loading}
+                  onClick={() => switchJourney(id)}
+                >
+                  {icon}<span>{label}</span>
+                </button>
+              ))}
             </div>
-            <span className="pm-total-badge">{DEVICE.currency} {fmt(netTotal)}</span>
             <button className="pm-close-btn" onClick={onCancel} disabled={loading} aria-label={dt("closePayment")}>
               <X size={19} />
             </button>
           </div>
 
-          <div className="pm-step-label"><span>1</span> {dt("choosePaymentMethod")}</div>
-          <PaymentMethodPicker selected={mainLine.method} onSelect={selectMethod} walletLabel={journey === "receipt" ? undefined : "BenefitPay"} />
-          <div className="pm-method-guidance">{methodHint}</div>
+          {/* The one number the customer is asking about. Display size, not a
+              row in a table — everything else on this screen is in service of
+              it. */}
+          <div className="pm-due">
+            <span className="pm-due-label" id="pm-dialog-title">{dt("amountDue")}</span>
+            <span className="pm-due-value">
+              <span className="pm-due-cur">{DEVICE.currency}</span>{fmt(netTotal)}
+            </span>
+          </div>
 
-          <div className="pm-step-label"><span>2</span> {dt("confirmAmount")}</div>
+          {/* On a delivery the money is not taken here: the order is recorded
+              unpaid with an expected method and the rider collects it. Calling
+              this "payment method" invited cashiers to believe the counter had
+              been paid. */}
+          <div className="pm-step-label">
+            <span>1</span> {isDelivery ? "Rider collects with" : dt("choosePaymentMethod")}
+          </div>
+          <PaymentMethodPicker selected={mainLine.method} onSelect={selectMethod} walletLabel={journey === "receipt" ? undefined : "BenefitPay"} />
+          <div className="pm-method-guidance">
+            {isDelivery
+              ? "Recorded as the method the rider expects to collect. The order stays unpaid until it is marked collected."
+              : methodHint}
+          </div>
+
+          <div className="pm-step-label">
+            <span>2</span> {isDelivery ? "Amount to collect" : dt("confirmAmount")}
+          </div>
           <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }} 
             className={`pm-amount-box${showSplit ? " pm-amount-editable" : " pm-amount-locked"}${activeField?.kind === "amount" ? " pm-field-active" : ""}`}
             onClick={() => showSplit && setActiveField({ kind: "amount", lineId: mainLine.id })}
@@ -305,7 +419,10 @@ export default function PaymentModal({
             </span>
           </div>
 
-          {mainLine.method === "cash" && (
+          {/* Cash received and change belong to money crossing the counter.
+              On a delivery the rider collects later, so showing a tender field
+              here invited the cashier to believe the order had been paid. */}
+          {mainLine.method === "cash" && takesCashNow && (
             <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }} 
               className={`pm-amount-box pm-tendered-box${activeField?.kind === "tendered" ? " pm-field-active" : ""}`}
               onClick={() => setActiveField({ kind: "tendered", lineId: mainLine.id })}
@@ -318,14 +435,23 @@ export default function PaymentModal({
             </div>
           )}
 
-          {mainLine.method === "cash" && (
-            <div className="pm-change-pill" aria-live="polite" aria-atomic="true">
-              <span><Check size={16} /> {dt("changeDue")}</span>
-              <strong>{DEVICE.currency} {fmt(change)}</strong>
+          {/* Change is the number the cashier reads aloud and counts back, so
+              it carries the same weight as the total rather than sitting in a
+              pill under it. */}
+          {mainLine.method === "cash" && takesCashNow && (
+            <div
+              className={`pm-change${change > 0 ? " pm-change-live" : ""}`}
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              <span className="pm-change-label"><Check size={15} aria-hidden="true" /> {dt("changeDue")}</span>
+              <span className="pm-change-value">
+                <span className="pm-due-cur">{DEVICE.currency}</span>{fmt(change)}
+              </span>
             </div>
           )}
 
-          {mainLine.method === "cash" && (
+          {mainLine.method === "cash" && takesCashNow && (
             <div className="pm-quick">
               <button className="pm-quick-btn pm-quick-exact" onClick={() => applyQuick(netTotal)}>
                 {dt("exact")} <kbd>E</kbd>
@@ -382,7 +508,11 @@ export default function PaymentModal({
 
         <div className={`pm-mid pm-mid-${journey}`}>
           <div className="pm-step-label pm-step-muted"><span>3</span> {requiresContact ? "Order contact" : "Receipt options"}</div>
-          <div className="pm-mid-title">{requiresContact ? (isDelivery ? "Delivery details" : "Digital receipt destination") : "Finish the receipt"}</div>
+          <div className="pm-mid-title">
+            {isDelivery ? "Where it goes, and who takes it"
+              : journey === "digital" ? "Where the receipt is sent"
+              : "Finish the receipt"}
+          </div>
 
           {journey === "receipt" && !showSplit && (
             <button
@@ -436,7 +566,13 @@ export default function PaymentModal({
           {journey === "digital" && (
             <div className="pm-digital-guide">
               <MessageCircle size={20} />
-              <div><strong>Send it straight to WhatsApp</strong><span>Enter a mobile number or choose a saved customer. The receipt is sent after payment.</span></div>
+              <div>
+                <strong>Confirming money already received</strong>
+                <span>
+                  The card terminal or wallet app takes the payment; this records that it
+                  arrived and sends the receipt to WhatsApp.
+                </span>
+              </div>
             </div>
           )}
 
@@ -460,6 +596,17 @@ export default function PaymentModal({
 
         {/* ── PANEL 3: Numpad + save ──────────────────────────────────── */}
         <PaymentCommandPanel
+          surface={surface}
+          summaryTitle="Order summary"
+          summaryRows={summaryRows}
+          fieldLabel={focusedField?.label ?? ""}
+          fieldValue={focusedField?.value ?? ""}
+          inputMode={inputMode}
+          onToggleInputMode={() => setInputModeOverride(inputMode === "keys" ? "pad" : "keys")}
+          onDone={() => {
+            (document.activeElement as HTMLElement | null)?.blur();
+            setActiveField(null);
+          }}
           showNumericEntry={showNumericEntry}
           showTendered={activeField?.kind === "tendered"}
           activeLabel={activeLabel}
@@ -469,6 +616,9 @@ export default function PaymentModal({
           methodName={methodName}
           readinessInstruction={readinessInstruction}
           confirmBlockReason={confirmBlockReason}
+          blockers={blockers}
+          attempted={attempted}
+          onAttemptBlocked={handleAttemptBlocked}
           canConfirm={canConfirm}
           loading={loading}
           completionLabel={completionLabel}

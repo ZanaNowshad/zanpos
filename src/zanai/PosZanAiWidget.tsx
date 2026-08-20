@@ -147,7 +147,6 @@ interface Props {
   branchName: string;
   suppressed: boolean;
   buildContext: (capturedAt: string) => PosAiContext;
-  onBarcode: (barcode: string, quantity?: number) => void;
   focusBarcode: () => void;
 }
 
@@ -156,7 +155,6 @@ export default function PosZanAiWidget({
   branchName,
   suppressed,
   buildContext,
-  onBarcode,
   focusBarcode,
 }: Props) {
   const { ctrl, registerSurfaceContext, uiState, dispatchUi } = useZanAi();
@@ -184,12 +182,7 @@ export default function PosZanAiWidget({
     dispatchUi({ type: windowState.visible ? "open_widget" : "minimize_widget" });
   }, [dispatchUi, windowState.visible]);
 
-  const onComposerKeyDown = useScannerBurstGuard({
-    draft: ctrl.input,
-    setDraft: ctrl.setInput,
-    onBarcode,
-    focusBarcode,
-  });
+  const onComposerKeyDown = useScannerBurstGuard({ focusBarcode });
 
   return (
     <PosZanAiWidgetView

@@ -24,6 +24,7 @@ pub mod phase10a_commands;
 pub mod pos_commands;
 pub mod product_commands;
 pub mod purchasing_commands;
+pub mod quick_pos_commands;
 pub mod rbac;
 pub mod receipt_pdf;
 pub mod refund_commands;

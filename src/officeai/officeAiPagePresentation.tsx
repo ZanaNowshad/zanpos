@@ -80,5 +80,6 @@ export const EMPTY_OFFICE_OVERVIEW: OfficeAiOverviewSnapshot = {
   aiConfig: null,
   featureToggles: null,
   health: null,
+  alerts: [],
   benefitNumber: null,
 };

@@ -123,8 +123,11 @@ export default function OfficeAIPurchasingWorkspace({ actorUserId, currencyExp, 
       <PageTemplate
         contentFlat
         header={{
+          /* No subtitle: "Track purchase orders, receive stock, and control
+             supplier costs" is the definition of Purchasing, printed under a
+             rail entry that already says Purchasing. It kept a 111px band
+             alive on the page with the busiest tables in the back office. */
           title: t("purchasing"),
-          subtitle: t("purchasingSubtitle"),
           primaryAction: { label: t("createPurchaseOrder"), onClick: () => setCreateOpen(true) },
           secondaryActions: [
             { label: t("suppliers"), onClick: () => setSuppliersOpen(true) },

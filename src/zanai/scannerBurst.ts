@@ -31,6 +31,3 @@ export function classifyScannerBurst(events: TimedKey[]): ScannerBurstResult {
     : { kind: "text" };
 }
 
-export function removeBurstSuffix(draft: string, burst: string): string {
-  return draft.endsWith(burst) ? draft.slice(0, -burst.length) : draft;
-}

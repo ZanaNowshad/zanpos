@@ -5,6 +5,7 @@ import type { SettingsSection } from "../command/pages/settings/SettingsShell";
 
 import ProductsTab from "../components/ProductsTab";
 import CategoriesTab from "../components/CategoriesTab";
+import QuickPosTab from "../command/pages/catalogue/QuickPosTab";
 import UsersTab from "../components/UsersTab";
 import ReportsTab from "../components/ReportsTab";
 import InventoryTab from "../components/InventoryTab";
@@ -52,6 +53,7 @@ export function renderDataTab(ctx: DataTabContext): ReactNode {
       case "operations": return <ProductsTab key={tabKey} sessionUserId={sessionUser.user_id} prefill={productPrefill} onPrefillConsumed={() => ctx.onPrefillConsumed()} />;
       case "products": return <ProductsTab key={tabKey} sessionUserId={sessionUser.user_id} prefill={productPrefill} onPrefillConsumed={() => ctx.onPrefillConsumed()} />;
       case "categories": return <CategoriesTab key={tabKey} sessionUserId={sessionUser.user_id} />;
+      case "quickpos": return <QuickPosTab key={tabKey} sessionUserId={sessionUser.user_id} />;
       case "users": return <UsersTab key={tabKey} sessionUserId={sessionUser.user_id} sessionRole={sessionUser.role_name} />;
       case "riders": return <RidersPage key={tabKey} actorUserId={sessionUser.user_id} />;
       case "reports": return <ReportsTab key={tabKey} sessionUserId={sessionUser.user_id} />;

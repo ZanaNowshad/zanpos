@@ -25,13 +25,11 @@
 import type { ReactNode } from "react";
 import {
   BarChart3,
-  ClipboardCheck,
   Gauge,
   LayoutDashboard,
   Package,
   PackagePlus,
   ShieldCheck,
-  ShoppingCart,
   Users,
 } from "lucide-react";
 import type { OfficeTab } from "../officeai/officeAiTypes";
@@ -39,14 +37,12 @@ import type { OfficeAiStringKey } from "../i18n/officeAiStrings";
 
 export type DomainId =
   | "today"
-  | "sell"
   | "catalogue"
   | "purchasing"
   | "customers"
   | "team"
   | "insights"
-  | "review"
-  | "system";
+  | "operations";
 
 export interface NavSection {
   /** The OfficeTab this section renders. */
@@ -87,18 +83,6 @@ export const NAVIGATION: NavDomain[] = [
     sections: [],
   },
   {
-    id: "sell",
-    labelKey: "sell",
-    icon: <ShoppingCart {...ICON} />,
-    path: "/sell",
-    defaultTab: "cashier",
-    sections: [
-      { id: "cashier",    labelKey: "cashiers",   path: "/sell/shifts" },
-      { id: "eod",        labelKey: "endOfDay",   path: "/sell/end-of-day" },
-      { id: "deliveries", labelKey: "deliveries", path: "/sell/deliveries" },
-    ],
-  },
-  {
     id: "catalogue",
     labelKey: "catalogue",
     icon: <Package {...ICON} />,
@@ -108,6 +92,7 @@ export const NAVIGATION: NavDomain[] = [
       { id: "products",   labelKey: "products",   path: "/catalogue/products" },
       { id: "categories", labelKey: "categories", path: "/catalogue/categories" },
       { id: "inventory",  labelKey: "inventory",  path: "/catalogue/inventory" },
+      { id: "quickpos",   labelKey: "quickPos",   path: "/catalogue/quick-pos" },
     ],
   },
   {
@@ -158,36 +143,33 @@ export const NAVIGATION: NavDomain[] = [
     defaultTab: "reports",
     sections: [
       { id: "reports",  labelKey: "reports",  path: "/insights/reports" },
+      // Shift takings and the end-of-day cash-up are reporting, not selling —
+      // they answer "what happened", which is what this domain is for.
+      { id: "cashier",  labelKey: "cashiers", path: "/insights/shifts" },
+      { id: "eod",      labelKey: "endOfDay", path: "/insights/end-of-day" },
       { id: "insights", labelKey: "insights", path: "/insights/signals", managerOnly: true },
     ],
   },
   {
-    id: "review",
-    labelKey: "review",
-    icon: <ClipboardCheck {...ICON} />,
-    path: "/review",
-    defaultTab: "actions",
-    sections: [
-      { id: "actions",   labelKey: "actionReview",  path: "/review/actions" },
-      { id: "workflows", labelKey: "inbox",         path: "/review/inbox" },
-      { id: "conflicts", labelKey: "conflictInbox", path: "/review/conflicts" },
-      { id: "audit",     labelKey: "audit",         path: "/review/audit", ownerOnly: true },
-    ],
-    managerOnly: true,
-  },
-  {
-    id: "system",
-    labelKey: "system",
+    // Review and System were separate rail slots for work done a handful of
+    // times a month, which is how "where do I check sync?" became a guess.
+    // One place for the machinery: what needs approving, what disagrees, what
+    // is broken, and how it is configured.
+    id: "operations",
+    labelKey: "operations",
     icon: <Gauge {...ICON} />,
-    path: "/system",
+    path: "/operations",
     defaultTab: "health",
     sections: [
-      { id: "health",   labelKey: "health",   path: "/system/health" },
-      { id: "devices",  labelKey: "devices",  path: "/system/devices",  ownerOnly: true },
-      { id: "settings", labelKey: "settings", path: "/system/settings" },
+      { id: "health",    labelKey: "health",        path: "/operations/health" },
+      { id: "actions",   labelKey: "actionReview",  path: "/operations/actions" },
+      { id: "workflows", labelKey: "inbox",         path: "/operations/inbox" },
+      { id: "conflicts", labelKey: "conflictInbox", path: "/operations/conflicts" },
+      { id: "devices",   labelKey: "devices",       path: "/operations/devices", ownerOnly: true },
+      { id: "settings",  labelKey: "settings",      path: "/operations/settings" },
+      { id: "audit",     labelKey: "audit",         path: "/operations/audit",   ownerOnly: true },
     ],
-    // Machinery and configuration are not a cashier's job; the previous shell
-    // hid this domain from non-managers too, so this preserves that behaviour.
+    // Machinery and configuration are not a cashier's job.
     managerOnly: true,
   },
 ];

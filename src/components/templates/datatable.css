@@ -46,7 +46,7 @@
   color: var(--text-dim);
   background: var(--surface2);
   border-bottom: 1px solid var(--border);
-  font-size: 0.6875rem;
+  font-size: var(--type-office-micro);
   font-weight: 600;
   letter-spacing: 0.03em;
   text-align: start;
@@ -90,6 +90,9 @@
 .zp-numeric {
   font-family: var(--font-num, ui-monospace, "Cascadia Mono", monospace);
   font-variant-numeric: tabular-nums;
+  /* "BHD 0.650" is one value, not two words. Left to wrap it broke at the
+     space and made every row in the catalogue two lines tall. */
+  white-space: nowrap;
 }
 
 /* The row activator fills its cell so the whole first column is clickable,
@@ -110,7 +113,7 @@
 .zp-row-activator:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 .zp-cell-primary { display: block; font-weight: 550; }
-.zp-cell-sub { display: block; color: var(--text-muted); font-size: 0.7188rem; }
+.zp-cell-sub { display: block; color: var(--text-muted); font-size: var(--type-office-micro); }
 
 /* ── Toolbar ─────────────────────────────────────────────────────────────── */
 
@@ -246,19 +249,44 @@
   padding: 0 0.625rem;
   font-size: 0.75rem;
   line-height: 1;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   white-space: nowrap;
 }
 @media (pointer: coarse) {
   .zp-row-action { height: 40px; padding: 0 0.875rem; }
 }
 
-/* Once the table is narrow enough that priority-2 has gone, the row actions
-   drop their labels and keep their icons. Each such button carries its own
-   aria-label, so the accessible name survives the collapse. */
-@container zp-table (max-width: 760px) {
+/* Row actions drop their labels and keep their icons. Each such button carries
+   its own aria-label, so the accessible name survives the collapse.
+
+   The threshold is 1000px, not 760: on a 1024px till the table container sits
+   around 840px, where "Fetch image" + "Label" spent ~230px of every row while
+   the product name — the thing being looked for — truncated at ~120px and lost
+   its tail. Labelled actions are worth their width only on a desk monitor. */
+@container zp-table (max-width: 1000px) {
   .zp-action-label { display: none; }
   .zp-row-action { padding: 0 0.5rem; }
+  .product-image-search__action { padding: 0 0.5rem; }
+}
+
+/* Dropping the label must not shrink the tap target. On a touch till the label
+   was carrying the button's width, so an icon-only button collapsed to ~31px —
+   narrower than a fingertip, on the one device where every action is a finger.
+   Both actions become a square at the 40px coarse-pointer size this file
+   already sets for `.zp-row-action`; the image control never picked that rule
+   up and was rendering 38px tall even with a label. */
+@media (pointer: coarse) {
+  .product-image-search__action { height: 40px; }
+
+  @container zp-table (max-width: 1000px) {
+    .zp-row-action,
+    .product-image-search__action {
+      min-width: 40px;
+      height: 40px;
+      padding: 0;
+      justify-content: center;
+    }
+  }
 }
 
 /* Catalogue counts strip. Total is the server's count for the whole filtered
@@ -278,11 +306,11 @@
   gap: 0.125rem;
   padding: 0.625rem 0.75rem;
   border: 1px solid var(--border, #e5e7eb);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--surface, #fff);
 }
 .zp-cat-counts > div > span {
-  font-size: 0.6875rem;
+  font-size: var(--type-office-micro);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -302,7 +330,7 @@
   font-weight: 500;
 }
 .zp-cat-counts small {
-  font-size: 0.6875rem;
+  font-size: var(--type-office-micro);
   font-weight: 500;
   color: var(--text-muted);
 }
@@ -320,7 +348,7 @@
 
 /* PO pipeline position, e.g. "Ordered 2/4" — states the order's place in the
    lifecycle without a separate stepper widget. */
-.zp-po-step { opacity: 0.65; font-size: 0.6875rem; }
+.zp-po-step { opacity: 0.65; font-size: var(--type-office-micro); }
 
 /* Primary/sub cell text truncates instead of wrapping to three lines when a
    detail pane narrows the list column. */
@@ -341,9 +369,36 @@
    `max-width: 0` tells the table algorithm the lead column may be as narrow as
    it likes, and `width: 100%` makes it the column that absorbs the slack. Every
    DataTable in the app leads with its identifying text column, so this is the
-   right column to make elastic in all of them. */
+   right column to make elastic in all of them.
+
+   `min-width` is the floor that pair forgot. Absorbing the slack and being
+   arbitrarily squeezable are the same property from opposite ends: once the
+   other columns' content demands exceed the space available — a page of
+   13-digit barcodes, long category names and a wide action cell — the lead
+   column is the one that gives, and with no floor it gave everything. On the
+   real 28,000-product catalogue it collapsed to the width of its 42px
+   thumbnail, so every row showed a barcode and no product name. The floor
+   steps down with the table's own width so it never forces a scrollbar on the
+   till. */
 .zp-table thead th:first-child,
 .zp-table tbody td:first-child {
   width: 100%;
   max-width: 0;
+  min-width: 260px;
+}
+@container zp-table (max-width: 1000px) {
+  .zp-table thead th:first-child,
+  .zp-table tbody td:first-child { min-width: 200px; }
+}
+@container zp-table (max-width: 700px) {
+  .zp-table thead th:first-child,
+  .zp-table tbody td:first-child { min-width: 150px; }
+}
+
+/* Touch till: the row activator fills its cell, so its height is the row's.
+   A two-line customer row landed at 39px — one pixel under the 40px this file
+   sets for every other coarse-pointer target, which is the kind of gap that
+   only shows up when something measures it. */
+@media (pointer: coarse) {
+  .zp-row-activator { min-height: 40px; }
 }

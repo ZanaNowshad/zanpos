@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { AlertTriangle, CheckCircle2, Clock, CircleSlash, Loader2 } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, Clock, CircleSlash, Loader2 } from "lucide-react";
 import type { AiActionSummary, UndoAvailability } from "../../../types";
 import { DEVICE } from "../../../types";
 import { aiListActions, aiUndoAction, aiUndoAvailability } from "../../../tauri/commands";
@@ -51,6 +51,8 @@ export default function ReviewWorkspace({
   const [filterId, setFilterId] = useState("pending");
   const [undo, setUndo] = useState<UndoAvailability | null>(null);
   const [undoConfirm, setUndoConfirm] = useState(false);
+  /** Pending row-level approval awaiting its confirm step. */
+  const [approveConfirm, setApproveConfirm] = useState<AiActionSummary | null>(null);
   const [actions, setActions] = useState<AiActionSummary[]>([]);
   const [selected, setSelected] = useState<AiActionSummary | null>(null);
   const [loading, setLoading] = useState(false);
@@ -150,11 +152,24 @@ export default function ReviewWorkspace({
         const state = displayState(a);
         const meta = ACTION_STATE[state];
         const Icon = hasFailed(a) ? AlertTriangle : STATE_ICON[state];
+        const mins = expiresInMinutes(a);
         return (
-          <span className={`zp-status zp-status-${hasFailed(a) ? "danger" : meta.tone}`}>
-            <Icon size={13} aria-hidden="true" />
-            {hasFailed(a) ? t("actionFailed") : t(meta.labelKey as never)}
-          </span>
+          <>
+            <span className={`zp-status zp-status-${hasFailed(a) ? "danger" : meta.tone}`}>
+              <Icon size={13} aria-hidden="true" />
+              {hasFailed(a) ? t("actionFailed") : t(meta.labelKey as never)}
+            </span>
+            {/* The countdown rides the status rather than sitting in its own
+                column. It had priority 3, which made the most time-critical
+                field on the page the first one dropped — on the till, where
+                the table is narrowest, an action with three minutes left
+                looked exactly like one with eleven. */}
+            {mins !== null && state === "prepared" && (
+              <span className={`zp-cell-sub${mins < 5 ? " zp-status-warn" : ""}`}>
+                {mins <= 0 ? t("actionExpired") : `${mins} min left`}
+              </span>
+            )}
+          </>
         );
       },
     },
@@ -164,19 +179,6 @@ export default function ReviewWorkspace({
       width: "150px",
       priority: 2,
       cell: a => new Date(a.prepared_at).toLocaleString(),
-    },
-    {
-      id: "expires",
-      header: t("expires"),
-      width: "120px",
-      priority: 3,
-      cell: a => {
-        const mins = expiresInMinutes(a);
-        if (mins === null) return <span className="zp-status-muted">—</span>;
-        return mins <= 0
-          ? <span className="zp-status-muted">{t("actionExpired")}</span>
-          : <span className={mins < 5 ? "zp-status-warn" : undefined}>{mins} min</span>;
-      },
     },
   ];
 
@@ -258,6 +260,24 @@ export default function ReviewWorkspace({
                   onRowClick={setSelected}
                   isRowActive={a => selected?.action_id === a.action_id}
                   isRowMuted={a => ACTION_STATE[displayState(a)].terminal}
+                  /* Reviewing is the whole job of this page, so the decision
+                     belongs on the row. It used to require selecting an action
+                     first and finding the buttons in the detail panel — three
+                     interactions to approve something that expires in minutes.
+                     Only offered while the action is still pending and only to
+                     someone who may approve; everyone else opens the detail. */
+                  rowAction={a => canConfirm(a) && canApprove ? (
+                    <button
+                      type="button"
+                      className="btn-primary zp-row-action"
+                      disabled={busyId === a.action_id}
+                      onClick={() => setApproveConfirm(a)}
+                      aria-label={`${t("approve")} ${toolLabel(a.tool_name)}`}
+                    >
+                      <span className="zp-action-label">{t("approve")}</span>
+                      <Check size={14} aria-hidden="true" />
+                    </button>
+                  ) : null}
                 />
               )}
             </div>
@@ -347,6 +367,28 @@ export default function ReviewWorkspace({
             )}
           </div>
         </>
+      )}
+
+      {/* The row button is one tap on a touch screen and some of these actions
+          are bulk writes — "raise the selling price of 412 products" is not
+          something to do by brushing a checkmark. The detail-panel button
+          keeps its direct path, because getting there is already deliberate;
+          this one restates what will happen first. */}
+      {approveConfirm && (
+        <ConfirmDialog
+          open
+          title={toolLabel(approveConfirm.tool_name)}
+          message={approveConfirm.preview_text}
+          confirmLabel={t("approve")}
+          cancelLabel={t("cancel")}
+          severity="warning"
+          onConfirm={() => {
+            const action = approveConfirm;
+            setApproveConfirm(null);
+            void decide(action, "confirm");
+          }}
+          onCancel={() => setApproveConfirm(null)}
+        />
       )}
 
       {undoConfirm && undo && selected && (

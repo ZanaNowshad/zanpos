@@ -27,6 +27,19 @@
 
 .zp-caps-full .zp-cap { min-height: 104px; padding: 14px; }
 
+/* The healthy capabilities, folded into one line. Centred rather than
+   top-aligned because there is no second line to align to, and muted because
+   its whole job is to be skipped — the rows below it are the ones to read. */
+.zp-cap-folded { align-items: center; }
+.zp-cap-folded-names {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: var(--type-office-caption);
+}
+
 .zp-cap-icon { display: inline-flex; flex: 0 0 auto; padding-top: 1px; }
 
 .zp-cap-ok      .zp-cap-icon { color: var(--success); }
@@ -57,11 +70,11 @@
 
 .zp-cap-note {
   color: var(--text-muted);
-  font-size: 0.6875rem;
+  font-size: var(--type-office-micro);
   overflow-wrap: anywhere;
 }
 
-.zp-cap-meta { color: var(--text-muted); font-size: 0.6563rem; }
+.zp-cap-meta { color: var(--text-muted); font-size: var(--type-office-micro); }
 
 .zp-cap-action {
   flex: 0 0 auto;
@@ -73,7 +86,7 @@
   color: var(--text);
   background: var(--surface2);
   font: inherit;
-  font-size: 0.6875rem;
+  font-size: var(--type-office-micro);
   white-space: nowrap;
   cursor: pointer;
 }

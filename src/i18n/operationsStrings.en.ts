@@ -31,7 +31,8 @@ export const EN = {
   undoWillReverse: "This will restore the previous value of",
   undoImmediate: "The reversal is applied immediately and is itself recorded in history.",
   undone: "Reversed",
-  review: "Review",
+  /* Matches the Operations tab ("Action Review") so the heading collapses. */
+  review: "Action Review",
   managerApprovalOnly: "Only managers and owners can approve AI changes.",
   executed: "Executed",
   actionDetail: "Action detail",
@@ -50,6 +51,9 @@ export const EN = {
   prepared: "Prepared",
   expires: "Expires",
   executing: "Executing…",
+  /* Row-level approve. The detail panel labels its button with the tool name;
+     on a row there is no room, and "Approve" is what the manager is doing. */
+  approve: "Approve",
   technicalDetail: "Technical detail",
   receiveStock: "Receive stock",
   receiveStockHint: "Enter what actually arrived. Receiving updates stock immediately.",
@@ -318,6 +322,9 @@ export const EN = {
   pinMinimum: "PIN must be at least 4 digits.",
   pinsMismatch: "PINs do not match.",
   staffUsers: "Staff Users",
+  /* Matches the section tab exactly so the page heading collapses instead of
+     saying "Staff" then "Staff Users" one line apart. */
+  staff: "Staff",
   noUsers: "No users.",
   newUser: "New User",
   editUser: "Edit User",
@@ -341,7 +348,8 @@ export const EN = {
   deviceCreateFailed: "Failed to create device",
   deviceUpdateFailed: "Failed to update device",
   loadingDevices: "Loading devices…",
-  posTerminals: "POS Terminals",
+  /* Matches the Operations tab ("Devices") so the heading collapses. */
+  posTerminals: "Devices",
   registerDevice: "+ Register Device",
   newDevice: "New Device",
   deviceCode: "Device Code",

@@ -63,27 +63,71 @@ export const PRODUCTS = [
   { barcode: "6280310045581", name: "Green foods Cashew 130gm",                        category: "Food", cost: 800, price: 800, stock: 0 },
   { barcode: "6280310045598", name: "Al Karamah Sunflower Cooking Oil 1.8 Litre Bottle", category: "Grocery", cost: 1450, price: 1750, stock: 24 },
   { barcode: "6280310045604", name: "Bahrain Fresh Farms Free Range Large Eggs (30 pack)", category: "Dairy", cost: 1800, price: 2100, stock: 9 },
-].map((p, i) => ({
-  product_id: `prd_${i + 1}`,
-  category_id: `cat_${p.category.toLowerCase()}`,
-  category_name: p.category,
-  name: p.name,
-  sku: p.barcode,
-  barcode: p.barcode,
-  barcodes: [p.barcode],
-  track_inventory: true,
-  allow_decimal_quantity: false,
-  is_active: true,
-  tax_rule_id: null,
-  tax_rule_name: null,
-  price_minor: p.price,
-  reorder_point: 10,
-  image_path: null,
-  // Extra fields consumed by list/table views.
-  cost_minor: p.cost,
-  stock_qty: p.stock,
-  updated_at: new Date(Date.now() - i * 3_600_000).toISOString(),
-}));
+  /* A page-sized tail shaped like the store's actual imported catalogue:
+     28,032 products, mostly long-category general goods with 13-digit
+     barcodes and no stock row. Sixteen short rows never put any pressure on
+     the table's column algorithm, so the product-name column always won the
+     slack in QA — and collapsed to the width of its thumbnail against real
+     data, leaving the barcode as the only thing on the row. */
+  /* Two rows the import got wrong. A catalogue this size always has some, and
+     without them the "(no product name)" fallback was unreachable in QA. */
+  { barcode: "6941057409991", name: "", category: "General Merchandise", cost: 700, price: 1500, stock: 0 },
+  { barcode: "6941057409992", name: "   ", category: "Stationery & Office", cost: 300, price: 500, stock: 0 },
+  ...Array.from({ length: 82 }, (_, i) => ({
+    /* Mixed identifier lengths, because they are mixed in the real catalogue:
+       13-digit EAN alongside short internal codes like C011567. */
+    barcode: i % 5 === 2 ? `C0${String(11000 + i)}` : `694105740${String(1000 + i).padStart(4, "0")}`,
+    /* Real product names run long and start with numbers — "10 Inch Dinner
+       Plate", "1000Amp Booster Cable" — so the name column has to be the one
+       that gets the width. */
+    name: [
+      "10 Inch Dinner Plate with Wide Rim",
+      "1000Amp Booster Cable Heavy Duty Set",
+      "10 Colour Flame Candle Assorted Pack",
+      "1 oz White Bowls Disposable (50 pack)",
+    ][i % 4] + ` — variant ${i + 1}`,
+    /* Long, multi-word categories. These wrapped to four lines and tripled
+       every row's height before the column was bounded. */
+    category: [
+      "Air Fresheners & Home Fragrance",
+      "Chocolate & Confectionery",
+      "Tableware & Drinkware",
+      "Electronics & Electrical",
+      "Stationery & Office",
+      "General Merchandise",
+    ][i % 6],
+    cost: 500 + i * 25,
+    price: 900 + i * 30,
+    stock: 0,
+  })),
+].map((p, i) => {
+  /* Every saved view has to be reachable in QA, or a view is only ever tested
+     in the case that returns rows. A loose item sold by weight has no barcode;
+     a delisted line stays in the catalogue but inactive. */
+  const noBarcode = i % 19 === 4;
+  const inactive = i % 23 === 7;
+  return {
+    product_id: `prd_${i + 1}`,
+    category_id: `cat_${p.category.toLowerCase()}`,
+    category_name: p.category,
+    name: p.name,
+    sku: p.barcode,
+    barcode: noBarcode ? null : p.barcode,
+    barcodes: noBarcode ? [] : [p.barcode],
+    track_inventory: true,
+    allow_decimal_quantity: false,
+    is_active: !inactive,
+    tax_rule_id: null,
+    tax_rule_name: null,
+    price_minor: p.price,
+    reorder_point: 10,
+    image_path: null,
+    // Extra fields consumed by list/table views.
+    cost_minor: p.cost,
+    stock_qty: p.stock,
+    updated_at: new Date(Date.now() - i * 3_600_000).toISOString(),
+  };
+});
 
 /** adminListProducts returns a page, not a bare array. */
 export const PRODUCT_PAGE = { items: PRODUCTS, total: PRODUCTS.length };
@@ -112,10 +156,35 @@ export const cartLine = (product: (typeof PRODUCTS)[number], quantity: number, i
   voided: false,
 });
 
-export const CATEGORIES = ["Dairy", "Beverages", "Grocery", "Bakery", "Household"].map((name, i) => ({
-  category_id: `cat_${name.toLowerCase()}`,
+/**
+ * A real store's category list, not a handful of samples.
+ *
+ * Volume is part of the fixture's job. A five-row mock keeps every list short
+ * enough to fit the viewport, so nothing ever scrolls and layout defects that
+ * only appear once content overflows — toolbars sliding under content panels,
+ * nested scrollbars — cannot reproduce. The names are the real ones from the
+ * store's catalogue so column widths are exercised honestly too.
+ */
+export const CATEGORY_NAMES = [
+  "Cosmetics & Makeup", "Cleaning Supplies", "Art Supplies", "Laundry Care",
+  "Hair Care", "Miscellaneous", "Chocolate & Candy", "Nuts & Dried Fruits",
+  "Tableware", "Candles & Home Fragrance", "Dairy", "Beverages", "Grocery",
+  "Bakery", "Household", "Frozen Foods", "Canned & Jarred", "Baby Care",
+  "Personal Hygiene", "Paper Goods", "Pet Supplies", "Spices & Seasoning",
+  "Rice & Pasta", "Cooking Oils", "Tea & Coffee", "Biscuits & Wafers",
+  "Soft Drinks", "Water", "Juices", "Health & Wellness",
+];
+
+export const CATEGORIES = CATEGORY_NAMES.map((name, i) => ({
+  category_id: `cat_${name.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`,
   name,
-  product_count: i === 1 ? 3 : 1,
+  /* Shapes match admin_list_categories. `is_active` was missing entirely, so
+     every category rendered as Inactive — a state the real query cannot
+     produce for a live catalogue. A few empty and a few archived, because both
+     are what a manager is scanning this list to find. */
+  product_count: i % 7 === 3 ? 0 : (i * 13) % 240 + 1,
+  is_active: i % 11 !== 5,
+  parent_category_id: null,
   sort_order: i,
 }));
 
@@ -194,11 +263,61 @@ export const HANDLERS: Record<string, unknown> = {
   admin_get_provider_config: { provider: "anthropic", anthropic_model: "claude-opus-5" },
   admin_list_products: PRODUCT_PAGE,
   products_list: PRODUCTS,
-  admin_find_duplicate_products: [],
+  /* Duplicate groups, not an empty array. Returning [] meant the only state
+     this modal could ever reach in QA was "catalog looks clean" — the populated
+     list, which is the state that actually needs designing, was unreachable.
+     Enough groups to force paging, because a real catalogue produces hundreds. */
+  admin_find_duplicate_products: Array.from({ length: 42 }, (_, g) => {
+    const base = PRODUCTS[g % PRODUCTS.length];
+    const kinds = ["shared barcode", "exact name", "similar name", "shared SKU"];
+    const match_type = kinds[g % kinds.length];
+    /* The key is whatever actually collided, which is what the SQL returns:
+       the barcode for a barcode match, the SKU for a SKU match, and the
+       lower-cased name for either name match. This used to alternate between
+       barcode and name irrespective of the match type, which produced
+       "similar name" groups identified by a barcode — a shape the backend
+       cannot return, so the header read as broken against real data only. */
+    const match_key =
+      match_type === "shared barcode" ? base.barcode
+      : match_type === "shared SKU"   ? base.sku
+      : base.name.toLowerCase().trim();
+    return {
+      match_type,
+      match_key,
+      confidence: 100 - (g % 4) * 12,
+      reason: g % 3 === 0 ? "Same barcode on more than one product." : null,
+      products: Array.from({ length: 2 + (g % 2) }, (_, i) => ({
+        ...base,
+        product_id: `${base.product_id}_dup${g}_${i}`,
+        name: i === 0 ? base.name : `${base.name} (${i === 1 ? "old" : "copy"})`,
+        total_stock: i === 0 ? base.stock_qty : 0,
+        price_minor: base.price_minor + i * 5,
+        is_active: i < 2,
+      })),
+    };
+  }),
   admin_list_tax_rules: [],
-  admin_list_roles: [{ role_id: "role_owner", name: "owner" }],
+  /* A single owner and a single role made two states unreachable in QA: the
+     role picker had nothing to pick (the owner option is filtered out for a
+     manager, leaving an empty list) and no inactive row existed to prove the
+     muted styling. A real shop rota is a handful of cashiers, a manager, an
+     accountant and someone who has left. Roles are the four the schema
+     actually seeds — inventing a fifth would make the picker testable against
+     a set the product does not have. */
+  admin_list_roles: [
+    { role_id: "role_owner", name: "owner" },
+    { role_id: "role_manager", name: "manager" },
+    { role_id: "role_accountant", name: "accountant" },
+    { role_id: "role_cashier", name: "cashier" },
+  ],
   admin_list_users_all: [
-    { user_id: "usr_renihal", display_name: "Renihal", username: "renihal", role_name: "owner", is_active: true },
+    { user_id: "usr_renihal", display_name: "Renihal", username: "renihal", role_id: "role_owner", role_name: "owner", is_active: true },
+    { user_id: "usr_ahmed", display_name: "Ahmed Salman", username: "ahmed.s", role_id: "role_manager", role_name: "manager", is_active: true },
+    { user_id: "usr_fatima", display_name: "Fatima Abdulla", username: "fatima.a", role_id: "role_accountant", role_name: "accountant", is_active: true },
+    { user_id: "usr_rahul", display_name: "Rahul Menon", username: "rahul.m", role_id: "role_cashier", role_name: "cashier", is_active: true },
+    { user_id: "usr_jomon", display_name: "Jomon Thomas", username: "jomon.t", role_id: "role_cashier", role_name: "cashier", is_active: true },
+    { user_id: "usr_sameer", display_name: "Sameer Khan", username: "sameer.k", role_id: "role_cashier", role_name: "cashier", is_active: true },
+    { user_id: "usr_leena", display_name: "Leena Varghese", username: "leena.v", role_id: "role_cashier", role_name: "cashier", is_active: false },
   ],
   ai_list_actions: [
     { action_id: "01KZ6M2G4BWD", session_user_id: "usr_renihal", branch_id: "br_amwaj",
@@ -264,7 +383,41 @@ export const HANDLERS: Record<string, unknown> = {
   sync_stock_drift_report: [],
   hub_truth_compare: { differences: [], checked_at: new Date().toISOString() },
   ai_load_history: [],
-  admin_get_alerts: [],
+  /* The proactive detector's output, which returned [] here — so thirteen
+     detection types that run every five minutes against the real database
+     were unreachable in QA, and the panel that shows them could never be
+     designed against anything. These are the shapes proactive.rs emits, with
+     the severities it assigns. */
+  admin_get_alerts: [
+    { alert_id: "alr_margin", branch_id: BRANCH_ID, alert_type: "margin_erosion", severity: "critical",
+      title: "Margin fell on 14 products",
+      description: "Supplier cost rose but the selling price did not follow. Worst case is now 2.1% margin.",
+      detail_json: null, detected_at: new Date(Date.now() - 12 * 60_000).toISOString(),
+      dismissed_at: null, dismissed_by_user_id: null, created_at: new Date(Date.now() - 12 * 60_000).toISOString() },
+    { alert_id: "alr_cash", branch_id: BRANCH_ID, alert_type: "cash_discrepancy", severity: "critical",
+      title: "Drawer short BHD 4.250 on yesterday's close",
+      description: "Counted cash did not match expected takings for the shift closed by Ahmed Salman.",
+      detail_json: null, detected_at: new Date(Date.now() - 3 * 3_600_000).toISOString(),
+      dismissed_at: null, dismissed_by_user_id: null, created_at: new Date(Date.now() - 3 * 3_600_000).toISOString() },
+    { alert_id: "alr_dead", branch_id: BRANCH_ID, alert_type: "dead_stock", severity: "warning",
+      title: "31 products have not sold in 90 days",
+      description: "BHD 412.500 of stock is sitting still. Consider clearance or delisting.",
+      detail_json: null, detected_at: new Date(Date.now() - 40 * 60_000).toISOString(),
+      dismissed_at: null, dismissed_by_user_id: null, created_at: new Date(Date.now() - 40 * 60_000).toISOString() },
+    { alert_id: "alr_expiry", branch_id: BRANCH_ID, alert_type: "near_expiry", severity: "warning",
+      title: "6 lots expire within 7 days",
+      description: "Sell or discount these first — FEFO order is in Inventory.",
+      detail_json: null, detected_at: new Date(Date.now() - 55 * 60_000).toISOString(),
+      dismissed_at: null, dismissed_by_user_id: null, created_at: new Date(Date.now() - 55 * 60_000).toISOString() },
+    /* Dismissed, so it must NOT appear on Today. Without one of these the
+       dismissal filter is never exercised. */
+    { alert_id: "alr_refund", branch_id: BRANCH_ID, alert_type: "refund_spike", severity: "warning",
+      title: "Refunds up 3x this week",
+      description: "Nine refunds against a four-week average of three.",
+      detail_json: null, detected_at: new Date(Date.now() - 26 * 3_600_000).toISOString(),
+      dismissed_at: new Date(Date.now() - 20 * 3_600_000).toISOString(),
+      dismissed_by_user_id: "usr_renihal", created_at: new Date(Date.now() - 26 * 3_600_000).toISOString() },
+  ],
   admin_get_feature_toggles: { zanshop_enabled: false },
   admin_get_ai_enabled: true,
   admin_get_ai_config: { enabled: true },
@@ -406,6 +559,19 @@ export const HANDLERS: Record<string, unknown> = {
     { device_id: "dev_mock_03", device_code: "POS03", device_name: "Old kiosk", is_active: false, created_at: new Date(Date.now() - 400 * 86_400_000).toISOString() },
   ],
   device_delete: null,
+
+  /* Six of the ten slots filled: the till has to look right with gaps, which is
+     the normal state — a shop rarely uses all ten. */
+  quick_pos_load: PRODUCTS.slice(0, 10).map((p, i) => (
+    i < 6
+      ? { slot: i, product_id: p.product_id, name: p.name, price_minor: p.price_minor, image_path: p.image_path ?? null }
+      : { slot: i, product_id: null, name: null, price_minor: null, image_path: null }
+  )),
+  quick_pos_save: PRODUCTS.slice(0, 10).map((p, i) => (
+    i < 6
+      ? { slot: i, product_id: p.product_id, name: p.name, price_minor: p.price_minor, image_path: p.image_path ?? null }
+      : { slot: i, product_id: null, name: null, price_minor: null, image_path: null }
+  )),
 
   rider_list: [
     { rider_id: "rdr_1", branch_id: BRANCH_ID, name: "Sami Al Hawaj", phone: "+97336112233", notes: "Bike 4471 · evenings", is_active: true, created_at: new Date(Date.now() - 40 * 86_400_000).toISOString() },

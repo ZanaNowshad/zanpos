@@ -1,12 +1,12 @@
 import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import CartPanel from "../components/CartPanel";
+import PosCartTable from "../components/pos/PosCartTable";
 import DiscountModal, { calculateDiscountMinor } from "../components/DiscountModal";
 import PriceInputModal from "../components/PriceInputModal";
 import DeliveriesTab, { deliveryStatusActionLabel } from "../components/DeliveriesTab";
 import PaymentModal from "../components/PaymentModal";
-import PosNumpadPanel from "../components/pos/PosNumpadPanel";
+import PosTotalsPanel from "../components/pos/PosTotalsPanel";
 import PosSidebar from "../components/pos/PosSidebar";
 import TodayReportModal from "../components/TodayReportModal";
 import BusinessTab from "../components/settings/BusinessTab";
@@ -67,24 +67,19 @@ describe("operator-first workflow hierarchy", () => {
 
   it("turns the empty cart into a next-action runway", () => {
     const html = renderToStaticMarkup(
-      <CartPanel
+      <PosCartTable
         cart={cart}
-        netTotal={0}
-        taxTotal={0}
-        onRemove={vi.fn()}
+        selectedLineId={null}
+        disabled={false}
+        onSelectLine={vi.fn()}
+        onBumpQty={vi.fn()}
         onEditPrice={vi.fn()}
-        onPaySplit={vi.fn()}
-        onPayFast={vi.fn()}
-        onPayDirect={vi.fn()}
-        recentLineId={null}
-        onBumpLine={vi.fn()}
-        compact
       />,
     );
-    expect(html).toContain("Ready for the next sale");
-    expect(html).toContain("Scan barcode");
-    expect(html).toContain("Search");
-    expect(html).toContain("<kbd>F2</kbd>");
+    // The empty till names the next action and where focus lives, because a
+    // blank basket is the moment a new cashier most needs telling.
+    expect(html).toContain("Scan an item to start the sale");
+    expect(html).toContain("F2");
   });
 
   it("uses a cart-line click for price editing instead of line discounting", () => {
@@ -111,23 +106,54 @@ describe("operator-first workflow hierarchy", () => {
     };
 
     const html = renderToStaticMarkup(
-      <CartPanel
+      <PosCartTable
         cart={cartWithItem}
-        netTotal={400}
-        taxTotal={0}
-        onRemove={vi.fn()}
+        selectedLineId="line-1"
+        disabled={false}
+        onSelectLine={vi.fn()}
+        onBumpQty={vi.fn()}
         onEditPrice={vi.fn()}
-        onPaySplit={vi.fn()}
-        onPayFast={vi.fn()}
-        onPayDirect={vi.fn()}
-        recentLineId={null}
-        onBumpLine={vi.fn()}
-        compact
       />,
     );
 
-    expect(html).toContain('title="Change item price"');
+    // A tap selects the row, and the selected row reveals the two corrections
+    // a till actually needs on a line: quantity, and a price that disagrees
+    // with the shelf. No double-tap target — slow and undiscoverable on touch.
+    expect(html).toContain("till-row-select");
+    expect(html).toContain("is-selected");
+    expect(html).toContain("till-qty-step");
+    expect(html).toContain("till-price-btn");
+    expect(html).toContain("Change the price of Cola");
+    expect(html).toContain("One more Cola");
+    expect(html).toContain("One fewer Cola");
     expect(html).not.toContain("Tap to edit quantity, discount, or note");
+  });
+
+  it("keeps unselected rows free of controls so the basket reads as a list", () => {
+    const cartWithTwo: Cart = {
+      ...cart,
+      lines: [
+        {
+          cart_line_id: "line-1", product_id: "p1", product_name: "Cola", sku: "COLA",
+          barcode: "1", quantity: "1", unit_price_minor: 400, line_discount_minor: 0,
+          line_discount_reason: null, tax_rule_id: "t", tax_rate_basis_points: 0,
+          tax_inclusive: false, tax_amount_minor: 0, line_total_minor: 400,
+          note: null, voided: false,
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <PosCartTable
+        cart={cartWithTwo}
+        selectedLineId={null}
+        disabled={false}
+        onSelectLine={vi.fn()}
+        onBumpQty={vi.fn()}
+        onEditPrice={vi.fn()}
+      />,
+    );
+    expect(html).not.toContain("till-qty-step");
+    expect(html).not.toContain("till-price-btn");
   });
 
   it("shows the scanned product image in its cart row", () => {
@@ -155,22 +181,17 @@ describe("operator-first workflow hierarchy", () => {
     } as unknown as Cart;
 
     const html = renderToStaticMarkup(
-      <CartPanel
+      <PosCartTable
         cart={cartWithImage}
-        netTotal={400}
-        taxTotal={0}
-        onRemove={vi.fn()}
+        selectedLineId={null}
+        disabled={false}
+        onSelectLine={vi.fn()}
+        onBumpQty={vi.fn()}
         onEditPrice={vi.fn()}
-        onPaySplit={vi.fn()}
-        onPayFast={vi.fn()}
-        onPayDirect={vi.fn()}
-        recentLineId={null}
-        onBumpLine={vi.fn()}
-        compact
       />,
     );
 
-    expect(html).toContain('class="cart-line-image"');
+    expect(html).toContain("till-c-thumb");
     expect(html).toContain('src="https://images.example.test/cola.jpg"');
   });
 
@@ -236,7 +257,11 @@ describe("operator-first workflow hierarchy", () => {
   it("makes amount due and the completion action explicit in payment", () => {
     const html = renderPaymentJourney("receipt", "card");
     expect(html).toContain("Amount due");
-    expect(html).toContain("Complete card sale");
+    // The button names the action and the sum, not a generic "complete".
+    expect(html).toContain("Take BHD 0.220");
+    // The journey is switchable in place — a customer who changes their mind
+    // must not cost the cashier everything they have typed.
+    expect(html).toContain('aria-label="Checkout type"');
     expect(html).toContain("Print receipt");
     expect(html).not.toContain("Optional order details");
     expect(html).not.toContain("Customer phone");
@@ -249,21 +274,19 @@ describe("operator-first workflow hierarchy", () => {
 
   it("offers three checkout journeys below Fast Cash instead of payment methods", () => {
     const html = renderToStaticMarkup(
-      <PosNumpadPanel
+      <PosTotalsPanel
         cart={cart}
-        numpadValue="1"
-        recentLineId={null}
         taxTotal={0}
         payableTotal={0}
         exchangeCredit={null}
         exchangeBalance={null}
         payFastLoading={false}
         paymentStarted={false}
-        onNumpadKey={vi.fn()}
         onCancelExchange={vi.fn()}
         onCompleteCoveredExchange={vi.fn()}
         onPayFast={vi.fn()}
         onOpenPaymentJourney={vi.fn()}
+        onOpenMore={vi.fn()}
       />,
     );
     expect(html).toContain("Fast Cash");
@@ -271,7 +294,9 @@ describe("operator-first workflow hierarchy", () => {
     expect(html).toContain("Delivery");
     expect(html).toContain("Digital");
     expect(html).not.toContain(">Wallet<");
+    // Split moved into More Options rather than competing with the journeys.
     expect(html).not.toContain(">Split<");
+    expect(html).toContain("More Options");
   });
 
   it("shows direct contact and required address fields for delivery checkout", () => {
@@ -296,7 +321,7 @@ describe("operator-first workflow hierarchy", () => {
     expect(html).toContain("Customer phone");
     expect(html).toContain('aria-label="Open customer directory"');
     expect(html).toContain("Tap the phone field, then use the dialpad");
-    expect(html).toContain("Digital receipt destination");
+    expect(html).toContain("Where the receipt is sent");
     expect(html).toContain("BenefitPay");
     expect(html).not.toContain("House number");
     expect(html).not.toContain("Flat");
@@ -312,15 +337,17 @@ describe("operator-first workflow hierarchy", () => {
    * till with no physical keyboard. The summary now shares the column with the
    * dialpad instead of standing in for it.
    */
-  it("keeps the dialpad beside the readiness summary for exact card payments", () => {
+  /* The right-hand column is one fixed input surface: the order summary at
+     rest, the keypad while a field is being edited. A card sale types nothing
+     at the counter — the terminal takes it — so it rests on the summary. Cash
+     opens straight into the tender field and therefore onto the keypad. */
+  it("rests the input column on the order summary when nothing is being typed", () => {
     const html = renderToStaticMarkup(
       <PaymentModal netTotal={220} initialMethod="card" onConfirm={vi.fn()} onCancel={vi.fn()} />,
     );
-    expect(html).toContain("Ready to complete");
-    expect(html).toContain("Confirm approval on the card terminal");
+    expect(html).toContain("Order summary");
     expect(html).toContain("BHD 0.220");
-    expect(html).toContain("pm-ready-panel-compact");
-    expect(html).toContain('aria-label="Dialpad"');
+    expect(html).not.toContain('aria-label="Dialpad"');
   });
 
   it("starts cash checkout on amount received with a visible change preview", () => {
@@ -330,7 +357,10 @@ describe("operator-first workflow hierarchy", () => {
     expect(html).toContain("Cash received");
     expect(html).toContain("Change due");
     expect(html).toContain('aria-label="Dialpad"');
-    expect(html).toContain("Complete cash sale");
+    expect(html).toContain("Take BHD 0.220");
+    // Change only reads as "live" once there is some to hand back; a permanent
+    // green 0.000 trains the eye to skip it.
+    expect(html).not.toContain("pm-change-live");
   });
 
   it("labels deliveries as an exception queue with an actionable empty state", () => {

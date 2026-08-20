@@ -76,7 +76,15 @@ export function usePosAlerts(options: {
         whatsappPollMessages(userId).catch(() => 0),
         paymentConfirmationsUnseenCount(userId).catch(() => 0),
       ]);
-      setNotifCount(ghosts.pending + ghosts.found + waUnread + payUnseen);
+      /* Coerced, not just added. `+` on a null or a string concatenates rather
+         than sums, and the badge then held "0null" — which is also truthy past
+         the `count <= 0` guard that is supposed to hide an empty badge, so the
+         till showed a permanent alert for no alerts. */
+      const n = (value: unknown) => {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : 0;
+      };
+      setNotifCount(n(ghosts.pending) + n(ghosts.found) + n(waUnread) + n(payUnseen));
     } catch { /* non-fatal */ }
   }, [canOpenBackOffice, userId]);
 

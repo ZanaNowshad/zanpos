@@ -3,8 +3,8 @@ import type { CategoryRow } from "../types";
 import * as cmd from "../tauri/commands";
 import BulkImportModal from "./BulkImportModal";
 import CategoryFormModal from "./CategoryFormModal";
-import { PageTemplate, EmptyState, LoadingSkeleton } from "./templates";
-import { Tag } from "lucide-react";
+import { PageTemplate, EmptyState, LoadingSkeleton, DataTable } from "./templates";
+import { Pencil, Tag } from "lucide-react";
 
 interface Props { sessionUserId: string; }
 
@@ -72,21 +72,70 @@ export default function CategoriesTab({ sessionUserId }: Props) {
           actions={[{ label: "+ New Category", onClick: startCreate, primary: true }]}
         />
       ) : (
-        <div className="bo-list">
-          {categories.map(c => (
+        /* The same table every other list in the back office uses. This page
+           was a bare list of names in an otherwise empty panel: no columns, no
+           product counts, no status a manager could scan, and a row so tall
+           that six categories filled the screen. Reusing DataTable brings the
+           column priorities, the container-query narrowing and the 40px touch
+           targets with it, for free. */
+        <DataTable
+          caption="Product categories"
+          columns={[
+            {
+              id: "name",
+              header: "Category",
+              cell: c => (
+                <span className="zp-cell-primary">{c.name}</span>
+              ),
+            },
+            {
+              id: "products",
+              header: "Products",
+              align: "end",
+              numeric: true,
+              width: "110px",
+              // The question actually asked of a category list: is anything in
+              // it? An empty category is usually a mistake or a leftover.
+              cell: c => c.product_count > 0
+                ? c.product_count
+                : <span className="zp-status-muted">0</span>,
+            },
+            {
+              id: "order",
+              header: "Sort",
+              align: "end",
+              numeric: true,
+              width: "84px",
+              priority: 2,
+              cell: c => c.sort_order,
+            },
+            {
+              id: "status",
+              header: "Status",
+              width: "120px",
+              priority: 2,
+              cell: c => c.is_active
+                ? <span className="zp-status zp-status-ok">Active</span>
+                : <span className="zp-status zp-status-muted">Inactive</span>,
+            },
+          ]}
+          rows={categories}
+          rowKey={c => c.category_id}
+          onRowClick={startEdit}
+          isRowActive={c => selected?.category_id === c.category_id}
+          isRowMuted={c => !c.is_active}
+          rowAction={c => (
             <button
-              key={c.category_id}
-              className={`bo-list-row ${selected?.category_id === c.category_id ? "bo-list-row-active" : ""} ${!c.is_active ? "bo-list-row-inactive" : ""}`}
+              type="button"
+              className="btn-secondary zp-row-action"
               onClick={() => startEdit(c)}
+              aria-label={`Edit ${c.name}`}
             >
-              <div className="bo-list-row-main">
-                <span className="bo-list-row-name">{c.name}</span>
-                <span className="bo-list-row-sub">Sort #{c.sort_order}</span>
-              </div>
-              {!c.is_active && <span className="bo-badge-inactive">Inactive</span>}
+              <Pencil size={14} aria-hidden="true" />
+              <span className="zp-action-label">Edit</span>
             </button>
-          ))}
-        </div>
+          )}
+        />
       )}
     </PageTemplate>
     </>

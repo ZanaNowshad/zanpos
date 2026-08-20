@@ -48,6 +48,19 @@ describe("dialpad typing into a focused field", () => {
 
 describe("payment command panel", () => {
   const props = {
+    /* These cases all exercise the input surface — the summary surface is the
+       resting state and has no dialpad to assert on. */
+    surface: "input" as const,
+    summaryTitle: "Order summary",
+    summaryRows: [],
+    fieldLabel: "",
+    fieldValue: "",
+    onDone: () => {},
+    blockers: [],
+    attempted: false,
+    onAttemptBlocked: () => {},
+    inputMode: "pad" as const,
+    onToggleInputMode: () => {},
     showTendered: false,
     activeLabel: "Amount",
     currency: "BHD",
@@ -77,14 +90,18 @@ describe("payment command panel", () => {
   });
 
   it("keeps the dialpad on screen when there is no cash amount to type", () => {
-    // It used to be swapped out for the readiness panel, which left card,
-    // wallet and delivery sales with no keypad for their own fields.
+    // It used to be swapped out for a readiness panel, which left card, wallet
+    // and delivery sales with no keypad for their own fields. That panel is
+    // gone — the resting state is now the order summary on the other surface —
+    // but the rule it existed to break still holds: while this surface is up,
+    // there is always something to type into.
     const html = renderToStaticMarkup(
       <PaymentCommandPanel {...props} showNumericEntry={false} />,
     );
 
     expect(html).toContain('class="dialpad"');
-    expect(html).toContain("pm-ready-panel-compact");
+    expect(html).toContain("pm-keyboard-btn");
+    expect(html).not.toContain("pm-ready-panel");
   });
 
   it("shows the entry heading instead of the readiness panel while typing cash", () => {

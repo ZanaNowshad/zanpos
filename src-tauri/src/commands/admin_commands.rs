@@ -68,6 +68,10 @@ pub struct CategoryRow {
     pub sort_order: i64,
     pub is_active: bool,
     pub parent_category_id: Option<String>,
+    /// Live products filed under this category. The question actually asked of
+    /// a category list is whether anything is in it — an empty one is usually a
+    /// leftover or a mis-file, and without the count that is invisible.
+    pub product_count: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -189,11 +193,53 @@ fn is_windows_drive_path(value: &str) -> bool {
         && (bytes[2] == b'\\' || bytes[2] == b'/')
 }
 
+/// Server-side predicate for a catalogue saved view.
+///
+/// These exist because the counts they answer have to be catalogue-wide. Stock
+/// reaches the UI from a separate command joined by product_id, so anything the
+/// front end filtered was page-scoped: an "out of stock" view built there would
+/// have shown the out-of-stock rows *on the current page* and silently claimed
+/// to be the answer. The predicate has to run next to the LIMIT to be true.
+///
+/// Returns `None` for an unrecognised view rather than erroring: a client on an
+/// older build asking for a view this one does not know should get the whole
+/// catalogue, not a failure.
+fn product_view_predicate(view: &str) -> Option<&'static str> {
+    match view {
+        "all" => None,
+        "active" => Some("p.is_active = 1"),
+        "inactive" => Some("p.is_active = 0"),
+        // A product that does not track inventory cannot be out of stock; one
+        // with no stock row has never been counted, which is not the same thing
+        // as counted-and-empty, so both are excluded.
+        "out_of_stock" => Some(
+            "p.track_inventory = 1 AND EXISTS (
+                 SELECT 1 FROM stock_levels sl
+                 WHERE sl.product_id = p.product_id AND sl.quantity_on_hand <= 0)",
+        ),
+        "low_stock" => Some(
+            "p.track_inventory = 1 AND EXISTS (
+                 SELECT 1 FROM stock_levels sl
+                 WHERE sl.product_id = p.product_id
+                   AND sl.quantity_on_hand > 0
+                   AND sl.quantity_on_hand <= p.reorder_point)",
+        ),
+        // Not scannable at the till — the cashier has to search by name.
+        "no_barcode" => Some(
+            "(p.barcode IS NULL OR TRIM(p.barcode) = '')
+             AND NOT EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.product_id = p.product_id)",
+        ),
+        "no_image" => Some("(p.image_path IS NULL OR TRIM(p.image_path) = '')"),
+        _ => None,
+    }
+}
+
 #[tauri::command]
 pub async fn admin_list_products(
     actor_user_id: String,
     search: Option<String>,
     category_id: Option<String>,
+    view: Option<String>,
     offset: Option<i64>,
     limit: Option<i64>,
     state: State<'_, AppState>,
@@ -226,6 +272,14 @@ pub async fn admin_list_products(
         if !trimmed.is_empty() {
             where_clauses.push("p.category_id = ?");
             bind_category = Some(trimmed.to_string());
+        }
+    }
+    // The view predicate carries no user data — it is chosen from a fixed set
+    // by `product_view_predicate`, never interpolated from the argument — so it
+    // needs no bind and cannot carry injection.
+    if let Some(ref v) = view {
+        if let Some(clause) = product_view_predicate(v.trim()) {
+            where_clauses.push(clause);
         }
     }
 
@@ -856,8 +910,11 @@ pub async fn admin_list_categories(
     // so managers can re-activate archived categories. Product-grid and POS
     // code paths use a separate query filtered to is_active=1.
     let rows = sqlx::query(
-        "SELECT category_id, name, sort_order, is_active, parent_category_id
-         FROM categories ORDER BY is_active DESC, sort_order, name",
+        "SELECT c.category_id, c.name, c.sort_order, c.is_active, c.parent_category_id,
+                (SELECT COUNT(*) FROM products p
+                  WHERE p.category_id = c.category_id
+                    AND p.is_active = 1 AND p.deleted_at IS NULL) AS product_count
+         FROM categories c ORDER BY c.is_active DESC, c.sort_order, c.name",
     )
     .fetch_all(&state.db)
     .await?;
@@ -872,6 +929,7 @@ pub async fn admin_list_categories(
                 sort_order: r.get("sort_order"),
                 is_active: active != 0,
                 parent_category_id: r.get("parent_category_id"),
+                product_count: r.get("product_count"),
             }
         })
         .collect())
@@ -1218,7 +1276,11 @@ pub async fn admin_save_category(
     };
 
     let row = sqlx::query(
-        "SELECT category_id, name, sort_order, is_active, parent_category_id FROM categories WHERE category_id = ?",
+        "SELECT c.category_id, c.name, c.sort_order, c.is_active, c.parent_category_id,
+                (SELECT COUNT(*) FROM products p
+                  WHERE p.category_id = c.category_id
+                    AND p.is_active = 1 AND p.deleted_at IS NULL) AS product_count
+         FROM categories c WHERE c.category_id = ?",
     )
     .bind(&category_id)
     .fetch_one(&state.db)
@@ -1231,6 +1293,7 @@ pub async fn admin_save_category(
         sort_order: row.get("sort_order"),
         is_active: active != 0,
         parent_category_id: row.get("parent_category_id"),
+        product_count: row.get("product_count"),
     };
 
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up

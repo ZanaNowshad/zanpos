@@ -25,7 +25,10 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  height: 34px;
+  /* 40px is the project's touch minimum. This used to be 34px with the
+     override living in the narrow-screen branch, so on the till — which no
+     longer takes that branch — the search box was a 34px target. */
+  min-height: 40px;
   margin-bottom: 8px;
   padding: 0 10px;
   border: 1px solid var(--border);
@@ -42,6 +45,9 @@
 .zp-set-search input {
   flex: 1 1 auto;
   min-width: 0;
+  /* Fill the 40px wrapper rather than sitting as an 18px line inside it, so a
+     thumb landing anywhere on the box puts the caret in the field. */
+  align-self: stretch;
   border: 0;
   color: var(--text);
   background: transparent;
@@ -65,6 +71,10 @@
   align-items: flex-start;
   gap: 10px;
   width: 100%;
+  /* Same story as the search box: the 44px touch size was set only in the
+     narrow-screen branch, so the column layout the till now uses left these
+     at 36px. */
+  min-height: 40px;
   padding: 9px 10px;
   border: 0;
   border-radius: var(--radius-sm, 6px);
@@ -112,7 +122,7 @@
 
 .zp-set-nav-desc {
   color: var(--text-muted);
-  font-size: 0.6875rem;
+  font-size: var(--type-office-micro);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -133,7 +143,7 @@
 .zp-set-nav-hint {
   margin: 6px 2px;
   color: var(--text-muted);
-  font-size: 0.6875rem;
+  font-size: var(--type-office-micro);
 }
 
 /* ── Work area ───────────────────────────────────────────────────────────── */
@@ -187,8 +197,15 @@
 }
 
 /* Below tablet the rail stops being a column: a permanent 224px nav beside a
-   narrow form leaves neither usable. */
-@media (max-width: 1024px) {
+   narrow form leaves neither usable.
+
+   The threshold was 1024px, which is the till's exact width — so on the
+   shipping hardware this fallback was the only layout Settings ever had. The
+   rail became a wrapping row of pills that took 226px of a 768px screen
+   before the first field, and the sticky column it replaced was never seen.
+   Inside the Operations workspace there is ~880px to work with, which is a
+   224px rail and still 636px of form. 800px is where that stops being true. */
+@media (max-width: 800px) {
   .zp-settings { grid-template-columns: minmax(0, 1fr); gap: 16px; }
 
   .zp-set-nav {
@@ -260,7 +277,7 @@
 
 .zp-set-content .settings-hint {
   color: var(--text-muted);
-  font-size: 0.6875rem;
+  font-size: var(--type-office-micro);
 }
 
 /* Primary save actions follow the brand accent, like every other surface. */
@@ -282,9 +299,20 @@
   outline-offset: 2px;
 }
 
+/* Touch sizing applies on the till and below — it is about fingers, not width.
+   Field widths are a separate question: cancelling them at 1024px made Store
+   Name and Timezone run the full 648px while Phone and Tax stayed short, which
+   reads as a broken form rather than a deliberate one. Now that Settings keeps
+   its two-column layout at the till's width there is no reason to drop the
+   grammar until the content column is genuinely narrow. */
 @media (max-width: 1024px) {
+  .zp-set-content .bo-input,
+  .zp-set-content .bo-select { min-height: 44px; }
+}
+
+@media (max-width: 800px) {
   .zp-set-content .bo-row-two { grid-template-columns: minmax(0, 1fr); }
   .zp-set-content .bo-input,
-  .zp-set-content .bo-select { max-width: none; min-height: 44px; }
+  .zp-set-content .bo-select { max-width: none; }
   .zp-set-content textarea.bo-input { max-width: none; }
 }

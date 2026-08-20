@@ -84,6 +84,26 @@ export function useCart(
     }
   }, [cart]);
 
+  /* The quick-add rail knows a product_id and nothing else. Sharing this path
+     with `addProduct` keeps a tile and a scan identical — same command, same
+     recent-line tracking, same error surface — rather than a second way to put
+     an item in the basket that can drift from the first. */
+  const addProductById = useCallback(async (productId: string, qty?: string): Promise<Cart> => {
+    setLoading(true);
+    setError(null);
+    try {
+      const updated = await cmd.posAddItem(cart, productId, qty);
+      setRecentLineId(findChangedLineId(cart, updated));
+      setCart(updated);
+      return updated;
+    } catch (e: unknown) {
+      setError(typeof e === "string" ? e : "Failed to add item");
+      throw e;
+    } finally {
+      setLoading(false);
+    }
+  }, [cart]);
+
   const addProduct = useCallback(async (product: ProductWithPrice, qty?: string): Promise<Cart> => {
     setLoading(true);
     setError(null);
@@ -273,6 +293,7 @@ export function useCart(
     recentLineId,
     addByBarcode,
     addProduct,
+    addProductById,
     addCustomItem,
     updateQuantity,
     removeLine,

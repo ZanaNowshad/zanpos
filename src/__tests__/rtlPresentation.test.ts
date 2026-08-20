@@ -73,6 +73,7 @@ describe("RTL presentation contract", () => {
         aiConfig: null,
         featureToggles: null,
         health: null,
+        alerts: [],
         benefitNumber: null,
       },
       currencyExp: 3,

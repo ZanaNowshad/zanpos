@@ -13,6 +13,10 @@ import { useLanguage } from "../hooks/useLanguage";
 import { modalTranslator } from "../i18n/modalStrings";
 import { detailTranslator } from "../i18n/detailStrings";
 
+/** Groups shown at once. Each holds 2-3 product rows, so this is ~50 rows a
+ *  page — enough to work through without the panel becoming unscrollable. */
+const GROUPS_PER_PAGE = 15;
+
 interface Props {
   sessionUserId: string;
   onClose: () => void;
@@ -71,6 +75,16 @@ export default function DuplicateProductsModal({ sessionUserId, onClose, onResol
   }, [dt, sessionUserId, includeInactive]);
 
   useEffect(() => { scan(); }, [scan]);
+
+  /* Paged. A real catalogue produces hundreds of groups, each holding two or
+     three products — rendering the lot put thousands of rows in one scrolling
+     panel, which is slow to paint and impossible to work through. Merge-all
+     still plans across every group; only the view is paged. */
+  const [page, setPage] = useState(0);
+  useEffect(() => { setPage(0); }, [groups]);
+  const pageCount = Math.max(1, Math.ceil(groups.length / GROUPS_PER_PAGE));
+  const pageStart = page * GROUPS_PER_PAGE;
+  const visibleGroups = groups.slice(pageStart, pageStart + GROUPS_PER_PAGE);
 
   const runPending = async () => {
     if (!pending) return;
@@ -212,10 +226,22 @@ export default function DuplicateProductsModal({ sessionUserId, onClose, onResol
             </div>
           )}
 
-          {!loading && groups.map((g, i) => {
+          {!loading && visibleGroups.map((g, offset) => {
+            const i = pageStart + offset;
             const gid = gidOf(g, i);
             const keeperId = keepers[gid];
             const sources = g.products.filter(p => p.product_id !== keeperId).map(p => p.product_id);
+            /* Name the group by the product, not by whatever collided.
+               `match_key` is the raw key the scan matched on, so a barcode
+               group announced itself as “6280123456781” — thirteen digits that
+               tell the person deciding what to merge nothing about what they
+               are looking at. The name goes in the heading; the key stays
+               beside it, smaller, because *why* these collided still matters
+               and for a name match it would just repeat the heading. */
+            const groupLabel = g.products[0]?.name?.trim() || g.match_key;
+            const keyIsDistinct =
+              !!g.match_key.trim()
+              && g.match_key.trim().toLowerCase() !== groupLabel.trim().toLowerCase();
             return (
               <div key={gid} className="dup-group">
                 <div className="dup-group-head">
@@ -223,7 +249,10 @@ export default function DuplicateProductsModal({ sessionUserId, onClose, onResol
                     {g.match_type}
                   </span>
                   <span className="dup-confidence">{g.confidence}% {dt("confidence")}</span>
-                  <span className="dup-group-key">“{g.match_key}”</span>
+                  <span className="dup-group-key">“{groupLabel}”</span>
+                  {keyIsDistinct && (
+                    <span className="dup-group-matchkey numeric-ltr">{g.match_key}</span>
+                  )}
                   <span className="dup-group-count">{g.products.length} {dt("products")}</span>
                 </div>
                 {g.reason && <div className="dup-group-reason">{g.reason}</div>}
@@ -307,6 +336,24 @@ export default function DuplicateProductsModal({ sessionUserId, onClose, onResol
               </div>
             );
           })}
+
+          {!loading && pageCount > 1 && (
+            <div className="dup-pager">
+              <span className="dup-pager-count">
+                Groups {pageStart + 1}–{Math.min(pageStart + GROUPS_PER_PAGE, groups.length)} of {groups.length}
+              </span>
+              <button type="button" disabled={page === 0} onClick={() => setPage(p => p - 1)}>
+                Previous
+              </button>
+              <button
+                type="button"
+                disabled={page >= pageCount - 1}
+                onClick={() => setPage(p => p + 1)}
+              >
+                Next
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </button>

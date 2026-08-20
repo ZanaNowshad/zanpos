@@ -6,8 +6,15 @@ import "./capabilities.css";
 /**
  * Store condition: six capabilities, each reporting independently.
  *
- * `compact` is the Today variant — one line per capability, only the ones that
- * need a human are expanded. The full variant is used by System → Health.
+ * `full` (System → Health) lists every capability with its notes — that page
+ * exists to be read in full. `compact` (Today) shows only what needs a person
+ * and folds the rest into one line.
+ *
+ * The compact variant used to render all six as equal rows, which meant the
+ * landing page spent roughly 350px of a 768px screen saying "selling and
+ * printing available", "connected", "ready" — three ways of saying nothing is
+ * wrong — while the two capabilities that actually wanted attention sat at the
+ * bottom of the list. A manager opens Today to find out what needs them.
  */
 const ICON: Record<SeverityLevel, typeof CircleCheck> = {
   ok: CircleCheck,
@@ -44,12 +51,28 @@ export default function CapabilityStrip({
   actionLabelFor,
   variant = "compact",
 }: Props) {
+  /* `info` counts as healthy: "catching up" is sync working, not sync broken,
+     and promoting it to an exception would cry wolf every few minutes. */
+  const needsAttention = (cap: Capability) => cap.severity !== "ok" && cap.severity !== "info";
+  const shown = variant === "compact" ? capabilities.filter(needsAttention) : capabilities;
+  const folded = variant === "compact" ? capabilities.filter(cap => !needsAttention(cap)) : [];
+
   return (
     <ul className={`zp-caps zp-caps-${variant}`}>
-      {capabilities.map(cap => {
+      {folded.length > 0 && (
+        /* One line, names only. No prose, so it needs no new strings and reads
+           the same in Arabic: a tick and the list of things that are fine. */
+        <li className="zp-cap zp-cap-ok zp-cap-folded">
+          <span className="zp-cap-icon" aria-hidden="true"><CircleCheck size={15} strokeWidth={1.9} /></span>
+          <span className="zp-cap-folded-names">
+            {folded.map(cap => labelFor(cap.labelKey)).join(" · ")}
+          </span>
+        </li>
+      )}
+      {shown.map(cap => {
         const Icon = ICON[cap.severity];
         const tone = TONE[cap.severity];
-        const needsHuman = cap.severity !== "ok" && cap.severity !== "info";
+        const needsHuman = needsAttention(cap);
         return (
           <li key={cap.id} className={`zp-cap zp-cap-${tone}`}>
             <span className="zp-cap-icon" aria-hidden="true"><Icon size={15} strokeWidth={1.9} /></span>

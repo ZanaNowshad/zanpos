@@ -57,6 +57,7 @@ describe("OfficeAI strings", () => {
       aiConfig: null,
       featureToggles: null,
       health: null,
+      alerts: [],
       benefitNumber: null,
     };
     const model = buildOfficePulseModel(snapshot, 0, 3, officeAiTranslator("ar"));

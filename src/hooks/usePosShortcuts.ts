@@ -24,6 +24,16 @@ export interface PosShortcutHandlers {
   onReport: () => void;
   onCustomItem: () => void;
   onHelp?: () => void;
+  /* Added with the rearranged till: the contextual line strip and the three
+     tender journeys. Optional so a surface that has no selected line — the
+     training till, a future compact layout — can omit them without a stub. */
+  onLineQty?: () => void;
+  onLinePrice?: () => void;
+  onVoidLine?: () => void;
+  onJourneyReceipt?: () => void;
+  onJourneyDelivery?: () => void;
+  onJourneyDigital?: () => void;
+  onMoreOptions?: () => void;
 }
 
 /**
@@ -56,8 +66,21 @@ export function usePosShortcuts(h: PosShortcutHandlers) {
       const inBarcode = target.classList.contains("barcode-input");
       const inFreeText = (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") && !inBarcode;
 
-      // ── F-keys always intercept (any field, any modal) ──────────────────────
-      if (e.key === "F2" || e.key === "F3") {
+      /* ── F-key map ────────────────────────────────────────────────────────────
+         Rearranging the till moved five of these, because a keycap printed on a
+         button has to be the key that works — a label that lies is worse than a
+         remap. What changed, and where the old function went:
+
+           F3  focus barcode  → quantity pad        (F2 still focuses barcode)
+           F6  hold/resume    → Receipt journey     (hold is now F1)
+           F7  resume held    → Delivery journey    (same F1 dialog)
+           F8  bill discount  → Digital journey     (More Options, or Ctrl+D
+                                                     for the selected line)
+           F9  open payment   → More Options        (tender is F6/F7/F8/F12)
+
+         Unmoved: F2 barcode, F10 refund, F11 no sale, F12 Fast Cash, and every
+         Ctrl combo. */
+      if (e.key === "F2") {
         e.preventDefault();
         h.onFocusBarcode();
         return;
@@ -66,10 +89,15 @@ export function usePosShortcuts(h: PosShortcutHandlers) {
       // ── F-keys that require no modal ─────────────────────────────────────────
       if (h.noModalOpen) {
         switch (e.key) {
-          case "F6": e.preventDefault(); h.onHold(); return;
-          case "F7": e.preventDefault(); h.onResumeHeld(); return;
-          case "F8": e.preventDefault(); if (h.lineCount > 0) h.onDiscount(); return;
-          case "F9": e.preventDefault(); if (h.lineCount > 0) h.onPay(); return;
+          case "F1": e.preventDefault(); h.onHold(); return;
+          case "F3": e.preventDefault(); h.onLineQty?.(); return;
+          case "F4": e.preventDefault(); h.onLinePrice?.(); return;
+          case "F5": e.preventDefault(); h.onLineDiscount(); return;
+          case "Delete": e.preventDefault(); h.onVoidLine?.(); return;
+          case "F6": e.preventDefault(); if (h.lineCount > 0) h.onJourneyReceipt?.(); return;
+          case "F7": e.preventDefault(); if (h.lineCount > 0) h.onJourneyDelivery?.(); return;
+          case "F8": e.preventDefault(); if (h.lineCount > 0) h.onJourneyDigital?.(); return;
+          case "F9": e.preventDefault(); h.onMoreOptions?.(); return;
           case "F10": e.preventDefault(); h.onRefund(); return;
           case "F11": e.preventDefault(); h.onNoSale(); return;
           case "F12": e.preventDefault(); if (h.lineCount > 0) h.onPayFast(); return;
@@ -162,5 +190,7 @@ export function usePosShortcuts(h: PosShortcutHandlers) {
     h.onDiscount, h.onLineDiscount, h.onRefund, h.onClearCart, h.onReprintLast, h.onNoSale,
     h.onXReport, h.onIncrementRecent, h.onDecrementRecent, h.onRemoveRecent,
     h.onLock, h.onReport, h.onCustomItem, h.onHelp,
+    h.onLineQty, h.onLinePrice, h.onVoidLine, h.onMoreOptions,
+    h.onJourneyReceipt, h.onJourneyDelivery, h.onJourneyDigital,
   ]);
 }

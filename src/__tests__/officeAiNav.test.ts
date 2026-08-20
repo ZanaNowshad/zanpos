@@ -24,8 +24,13 @@ import type { MarginSummary, PurchaseOrderRow, SupplierRow, SyncDiagnostics, Sys
 describe("ZANPOS Command navigation", () => {
   it("declares nine domains in one canonical model", () => {
     expect(NAVIGATION.map(d => d.id)).toEqual([
-      "today", "sell", "catalogue", "purchasing",
-      "customers", "team", "insights", "review", "system",
+      // Sell is gone: shift takings and end-of-day are reporting, so they moved
+      // to Insights, and deliveries are handled at the till where the person
+      // handling them stands. Review and System folded into one Operations
+      // domain — both are monthly work, and splitting them made "where do I
+      // check sync?" a guess.
+      "today", "catalogue", "purchasing",
+      "customers", "team", "insights", "operations",
     ]);
   });
 
@@ -57,10 +62,10 @@ describe("ZANPOS Command navigation", () => {
   it("resolves every destination back to its rail domain", () => {
     expect(domainForTab("products")).toBe("catalogue");
     expect(domainForTab("purchasing")).toBe("purchasing");
-    expect(domainForTab("settings")).toBe("system");
+    expect(domainForTab("settings")).toBe("operations");
     expect(domainForTab("loyalty")).toBe("customers");
     expect(domainForTab("zanshop")).toBe("customers");
-    expect(domainForTab("audit")).toBe("review");
+    expect(domainForTab("audit")).toBe("operations");
     // Legacy alias must keep resolving so old deep links do not break.
     expect(domainForTab("operations")).toBe("catalogue");
     // The assistant is global, not a silo — it keeps Today lit in the rail.
@@ -74,8 +79,10 @@ describe("ZANPOS Command navigation", () => {
     }
     expect(sectionsForDomain("today", "owner")).toEqual([]);
     expect(sectionsForDomain("purchasing", "owner")).toEqual([]);
+    // Quick POS chooses the till's one-tap row; it belongs with the catalogue
+    // because it is a merchandising decision about products, not a setting.
     expect(sectionsForDomain("catalogue", "owner").map(s => s.id))
-      .toEqual(["products", "categories", "inventory"]);
+      .toEqual(["products", "categories", "inventory", "quickpos"]);
   });
 
   it("keeps manager-only workspaces out of cashier navigation", () => {
@@ -94,16 +101,17 @@ describe("ZANPOS Command navigation", () => {
   });
 
   it("hides owner-only sections from a manager", () => {
-    const review = sectionsForDomain("review", "manager").map(s => s.id);
-    expect(review).not.toContain("audit");
-    expect(sectionsForDomain("review", "owner").map(s => s.id)).toContain("audit");
-    expect(domainsForRole("cashier").map(d => d.id)).not.toContain("review");
+    const ops = sectionsForDomain("operations", "manager").map(s => s.id);
+    expect(ops).not.toContain("audit");
+    expect(ops).not.toContain("devices");
+    expect(sectionsForDomain("operations", "owner").map(s => s.id)).toContain("audit");
+    expect(domainsForRole("cashier").map(d => d.id)).not.toContain("operations");
   });
 
   it("derives the command palette from the config rather than a hand list", () => {
     const owner = paletteEntriesForRole("owner");
     expect(owner.find(e => e.id === "products")?.domainLabelKey).toBe("catalogue");
-    expect(owner.find(e => e.id === "audit")?.domainLabelKey).toBe("review");
+    expect(owner.find(e => e.id === "audit")?.domainLabelKey).toBe("operations");
     expect(paletteEntriesForRole("cashier").some(e => e.id === "audit")).toBe(false);
   });
 
@@ -130,6 +138,7 @@ describe("ZANPOS Command navigation", () => {
       aiConfig: null,
       featureToggles: null,
       health: null,
+      alerts: [],
       benefitNumber: null,
     };
 
@@ -176,6 +185,7 @@ describe("ZANPOS Command navigation", () => {
       aiConfig: null,
       featureToggles: null,
       health: null,
+      alerts: [],
       benefitNumber: null,
     };
 

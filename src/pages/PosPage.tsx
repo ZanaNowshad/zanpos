@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Cart, PaymentInput, SaleResult } from "../types";
 import { DEVICE } from "../types";
 import PosSidebar from "../components/pos/PosSidebar";
-import PosActionBar from "../components/pos/PosActionBar";
+import PosLineActions from "../components/pos/PosLineActions";
+import PosMoreDrawer from "../components/pos/PosMoreDrawer";
+import PosQtyPad from "../components/pos/PosQtyPad";
 import PosSecondaryOverlays from "../components/pos/PosSecondaryOverlays";
 import PosCartModals from "../components/pos/PosCartModals";
 import PosOperationsModals from "../components/pos/PosOperationsModals";
@@ -10,7 +12,7 @@ import PosTenderOverlays from "../components/pos/PosTenderOverlays";
 import PosTopBar from "../components/pos/PosTopBar";
 import PosStatusBanners from "../components/pos/PosStatusBanners";
 import PosCartColumn from "../components/pos/PosCartColumn";
-import PosNumpadPanel from "../components/pos/PosNumpadPanel";
+import PosTotalsPanel from "../components/pos/PosTotalsPanel";
 import type { ActiveModal, ExchangeCredit } from "../components/pos/posModalState";
 
 import { buildTrainingSale } from "../utils/trainingSale";
@@ -31,6 +33,7 @@ import { usePosRegisterActions } from "../hooks/usePosRegisterActions";
 import { usePosConfiguration } from "../hooks/usePosConfiguration";
 import { useCustomItemSuggestions } from "../hooks/useCustomItemSuggestions";
 import { usePosZanAiContext } from "../hooks/usePosZanAiContext";
+import { useQuickPosSlots } from "../hooks/useQuickPosSlots";
 import { posLayoutClass } from "./posLayoutClass";
 import { usePosOverlays } from "../hooks/usePosOverlays";
 import type { PosPageProps } from "./posPageProps";
@@ -39,6 +42,7 @@ import { usePosShortcutBindings } from "../hooks/usePosShortcutBindings";
 import { type ReceiptConfidenceStatus } from "../utils/posConfidence";
 import { getExchangeBalance } from "../utils/posExchange";
 import PosZanAiWidget from "../zanai/PosZanAiWidget";
+import "../components/pos/till.css";
 
 
 export default function PosPage({
@@ -59,6 +63,12 @@ export default function PosPage({
   const [lastReceiptNumber, setLastReceiptNumber] = useState<string | null>(null);
   const [receiptStatus, setReceiptStatus] = useState<ReceiptConfidenceStatus>("not_ready");
   const [exchangeCredit, setExchangeCredit] = useState<ExchangeCredit | null>(null);
+  /* The line the contextual action strip acts on. Follows the scan by default —
+     the item just added is nearly always the one being corrected — but a tap on
+     any row takes over until the next scan. */
+  const [pickedLineId, setPickedLineId] = useState<string | null>(null);
+  const [showMore, setShowMore] = useState(false);
+  const [qtyPadLineId, setQtyPadLineId] = useState<string | null>(null);
   const {
     showWaQR, setShowWaQR, showSyncDetails, setShowSyncDetails,
     showNotes, setShowNotes, showNotifications, setShowNotifications,
@@ -71,6 +81,7 @@ export default function PosPage({
     commerceEnabled,
   } = usePosConfiguration(sessionUser.user_id);
   const { suggestions, refreshSuggestions } = useCustomItemSuggestions();
+  const { slots: quickSlots } = useQuickPosSlots(sessionUser.user_id);
 
   const canOpenBackOffice = ["owner", "manager"].includes(sessionUser.role_name);
   const canViewXReport    = canOpenBackOffice;
@@ -119,15 +130,31 @@ export default function PosPage({
   const {
     cart, loading, error, clearError, setError,
     recentLineId,
-    addByBarcode, addProduct, addCustomItem,
+    addByBarcode, addProduct, addProductById, addCustomItem,
     updateQuantity, removeLine, removeRecentLine, bumpRecentQty, bumpLine,
     applyBillDiscount, applyLineDiscount, setLinePrice,
     finalizeSale, clearCart, replaceCart,
     netTotal, taxTotal, lineCount,
   } = useCart(session, buildTrainingResult);
 
+  /* A scan always takes the selection back — the cashier's attention is on the
+     item that just landed, not the row they inspected three items ago. */
+  const selectedLineId = pickedLineId ?? recentLineId;
+  const selectedLine = cart.lines.find(
+    line => line.cart_line_id === selectedLineId && !line.voided,
+  ) ?? null;
+
+  /* Keyed to the selected line rather than the scanned one. Identical
+     behaviour while nothing is picked — the two are the same line — and the
+     quantity pad now also works on a row the cashier tapped further up. */
   const { numpadValue, setNumpadValue, handleNumpadKey } =
-    usePosNumpad(recentLineId, updateQuantity);
+    usePosNumpad(selectedLineId, updateQuantity);
+  const qtyPadLine = cart.lines.find(
+    line => line.cart_line_id === qtyPadLineId && !line.voided,
+  ) ?? null;
+
+  useEffect(() => { setPickedLineId(null); }, [recentLineId]);
+
 
   const exchangeBalance = useMemo(
     () => exchangeCredit ? getExchangeBalance(exchangeCredit.creditMinor, netTotal) : null,
@@ -161,6 +188,16 @@ export default function PosPage({
     focusBarcode,
   });
 
+  /* A quick tile is the same add as a scan: one command, one error surface, so
+     an out-of-stock or unpriced item behaves identically either way. Focus
+     returns to the scan field, because the tap was a detour from scanning. */
+  const handleQuickAdd = useCallback(async (productId: string) => {
+    try {
+      await addProductById(productId);
+    } catch { /* useCart already surfaced it in the banner */ }
+    focusBarcode();
+  }, [addProductById, focusBarcode]);
+
   const { printSaleNow } = usePosReceipt({
     userId: sessionUser.user_id,
     setBizFlags,
@@ -176,8 +213,13 @@ export default function PosPage({
   const noModalOpen = activeModal.kind === "none";
 
   const {
+    // `openPayDirect` (straight to cash/card/wallet) stays on the hook but has
+    // no caller here: its buttons lived behind CartPanel's `!compact` branch,
+    // and the till has always rendered that panel compact, so they were already
+    // unreachable before the rearrangement. Method choice happens in the
+    // payment modal each journey opens.
     payFastLoading, restockAlerts, dismissRestockAlerts, handlePayFast,
-    openPayDirect, openPaySplit, openPay, openPaymentJourney, handleConfirmPayment,
+    openPaySplit, openPay, openPaymentJourney, handleConfirmPayment,
     handleCompleteCoveredExchange,
   } = usePosPaymentActions({
     cart,
@@ -222,6 +264,20 @@ export default function PosPage({
   const handleOpenHold = useCallback(() => setActiveModal({ kind: "hold" }), []);
 
   usePosShortcutBindings({
+    onLineQty: () => { if (selectedLine) setQtyPadLineId(selectedLine.cart_line_id); },
+    onLinePrice: () => {
+      if (!selectedLine) return;
+      setActiveModal({
+        kind: "priceInput",
+        mode: "setExisting",
+        lineId: selectedLine.cart_line_id,
+        productName: selectedLine.product_name,
+        currentPriceMinor: selectedLine.unit_price_minor,
+      });
+    },
+    onVoidLine: () => { if (selectedLine) { removeLine(selectedLine.cart_line_id); focusBarcode(); } },
+    onMoreOptions: () => setShowMore(true),
+    onJourney: journey => { if (lineCount > 0) openPaymentJourney(journey); },
     noModalOpen,
     lineCount,
     recentLineId,
@@ -314,7 +370,10 @@ export default function PosPage({
       />
 
       {/* ── Main area ── */}
-      <div className="pos-main" style={{ gridTemplateColumns: showSidebar ? "76px minmax(0, 1fr) 344px" : "0px minmax(0, 1fr) 344px" }}>
+      <div
+        className="pos-main till-layout"
+        style={{ gridTemplateColumns: showSidebar ? "76px minmax(0, 1fr) 322px" : "0px minmax(0, 1fr) 322px" }}
+      >
         <PosSidebar
           visible={showSidebar}
           t={t}
@@ -339,56 +398,78 @@ export default function PosPage({
           onLogout={onLogout}
         />
 
-        <PosCartColumn
-          barcodeRef={barcodeRef}
-          actorUserId={sessionUser.user_id}
-          cart={cart}
-          netTotal={netTotal}
-          taxTotal={taxTotal}
-          numpadValue={numpadValue}
-          suggestions={suggestions}
-          loading={loading}
-          payFastLoading={payFastLoading}
-          paymentStarted={activeModal.kind === "payment"}
-          recentLineId={recentLineId}
-          setNumpadValue={setNumpadValue}
-          setActiveModal={setActiveModal}
-          setError={setError}
-          addProduct={addProduct}
-          addCustomItem={addCustomItem}
-          removeLine={removeLine}
-          bumpLine={bumpLine}
-          onBarcode={handleBarcode}
-          onPaySplit={openPaySplit}
-          onPayFast={handlePayFast}
-          onPayDirect={openPayDirect}
-          focusBarcode={focusBarcode}
-        />
+        <div className="till-centre">
+          <PosCartColumn
+            barcodeRef={barcodeRef}
+            actorUserId={sessionUser.user_id}
+            cart={cart}
+            numpadValue={numpadValue}
+            suggestions={suggestions}
+            loading={loading}
+            payFastLoading={payFastLoading}
+            selectedLineId={selectedLineId}
+            quickSlots={quickSlots}
+            setNumpadValue={setNumpadValue}
+            setActiveModal={setActiveModal}
+            setError={setError}
+            addProduct={addProduct}
+            addCustomItem={addCustomItem}
+            onBarcode={handleBarcode}
+            onQuickAdd={handleQuickAdd}
+            onSelectLine={setPickedLineId}
+            onBumpQty={bumpLine}
+            onEditPrice={line => setActiveModal({
+              kind: "priceInput",
+              mode: "setExisting",
+              lineId: line.cart_line_id,
+              productName: line.product_name,
+              currentPriceMinor: line.unit_price_minor,
+            })}
+            focusBarcode={focusBarcode}
+          />
 
-        <PosNumpadPanel
+          <PosLineActions
+            line={selectedLine}
+            scannedAt={null}
+            canDiscount={canOpenBackOffice || bizFlags.cashier_can_discount}
+            onQty={() => selectedLine && setQtyPadLineId(selectedLine.cart_line_id)}
+            onPrice={() => selectedLine && setActiveModal({
+              kind: "priceInput",
+              mode: "setExisting",
+              lineId: selectedLine.cart_line_id,
+              productName: selectedLine.product_name,
+              currentPriceMinor: selectedLine.unit_price_minor,
+            })}
+            onVoid={() => { if (selectedLine) { removeLine(selectedLine.cart_line_id); focusBarcode(); } }}
+            onDiscount={() => selectedLine && setActiveModal({
+              kind: "discount", lineId: selectedLine.cart_line_id,
+            })}
+          />
+        </div>
+
+        <PosTotalsPanel
           cart={cart}
-          numpadValue={numpadValue}
-          recentLineId={recentLineId}
           taxTotal={taxTotal}
           payableTotal={payableTotal}
           exchangeCredit={exchangeCredit}
           exchangeBalance={exchangeBalance}
           payFastLoading={payFastLoading}
           paymentStarted={activeModal.kind === "payment"}
-          onNumpadKey={handleNumpadKey}
           onCancelExchange={() => setExchangeCredit(null)}
           onCompleteCoveredExchange={handleCompleteCoveredExchange}
           onPayFast={handlePayFast}
           onOpenPaymentJourney={openPaymentJourney}
+          onOpenMore={() => setShowMore(true)}
         />
       </div>
 
-      {/* ── Action bar ── */}
-      <PosActionBar
+      <PosMoreDrawer
+        open={showMore}
         lineCount={lineCount}
         canDiscount={canOpenBackOffice || bizFlags.cashier_can_discount}
         canRefund={canRefund}
         lastReceiptNumber={lastReceiptNumber}
+        onClose={() => { setShowMore(false); focusBarcode(); }}
         onClearCart={handleClearCartRequest}
         onOpenHold={handleOpenHold}
         onOpenDiscount={() => setActiveModal({ kind: "discount" })}
@@ -397,6 +478,18 @@ export default function PosPage({
         onOpenDeliveries={() => setShowDeliveries(true)}
         onOpenRecent={() => setActiveModal({ kind: "recent" })}
         onReprintLast={handleReprintLast}
+        onCustomItem={() => setActiveModal({ kind: "customItem" })}
+        onNoSale={handleNoSale}
+        onPaySplit={openPaySplit}
+        onHelp={() => setActiveModal({ kind: "help" })}
+      />
+
+      <PosQtyPad
+        line={qtyPadLine}
+        value={numpadValue}
+        onKey={handleNumpadKey}
+        onBump={delta => { if (qtyPadLine) bumpLine(qtyPadLine.cart_line_id, delta); }}
+        onClose={() => { setQtyPadLineId(null); setNumpadValue("1"); focusBarcode(); }}
       />
 
       <PosZanAiWidget
@@ -404,7 +497,6 @@ export default function PosPage({
         branchName={DEVICE.branch_name}
         suppressed={zanAiSuppressed}
         buildContext={buildZanAiContext}
-        onBarcode={handleBarcode}
         focusBarcode={focusBarcode}
       />
 

@@ -1,0 +1,17 @@
+import { chromium } from "playwright-core";
+const EXE = "C:/Users/super/AppData/Local/ms-playwright/chromium-1234/chrome-win64/chrome.exe";
+const b = await chromium.launch({ executablePath: EXE });
+const p = await (await b.newContext({ viewport:{width:1024,height:728}, hasTouch:true })).newPage();
+p.on("pageerror", e => console.log("[pageerror]", String(e).slice(0,160)));
+await p.goto("http://127.0.0.1:1421/?uimock=1", { waitUntil: "domcontentloaded" });
+await p.waitForTimeout(2400);
+await p.locator(".oa-nav-item", { hasText: /^Catalogue$/ }).first().click();
+await p.waitForTimeout(900);
+await p.locator("button", { hasText: /^Duplicates$/ }).first().click();
+await p.waitForTimeout(1500);
+console.log("groups rendered:", await p.locator(".dup-group").count());
+console.log("rows rendered  :", await p.locator(".dup-row").count());
+console.log("pager          :", (await p.locator(".dup-pager-count").textContent().catch(()=>"none")) || "none");
+console.log("first name     :", (await p.locator(".dup-row-name").first().textContent().catch(()=>"")).trim().slice(0,40));
+await p.screenshot({ path: "qa/layout/admin-duplicates.png" });
+await b.close();

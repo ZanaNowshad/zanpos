@@ -112,7 +112,7 @@
 
 .zp-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
-.zp-field-hint { color: var(--text-muted); font-size: 0.6875rem; }
+.zp-field-hint { color: var(--text-muted); font-size: var(--type-office-micro); }
 
 /* Supplier rows inside the drawer. */
 .zp-supplier-row {
@@ -126,7 +126,7 @@
 .zp-supplier-row:last-child { border-bottom: 0; }
 .zp-supplier-main { flex: 1 1 auto; min-width: 0; }
 .zp-supplier-name { display: block; color: var(--text); font-size: 0.8125rem; font-weight: 550; }
-.zp-supplier-sub { display: block; color: var(--text-muted); font-size: 0.7188rem; }
+.zp-supplier-sub { display: block; color: var(--text-muted); font-size: var(--type-office-micro); }
 
 @media (max-width: 1024px) {
   .zp-drawer { width: 100%; }

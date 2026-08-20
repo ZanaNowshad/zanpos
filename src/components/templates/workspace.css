@@ -81,6 +81,89 @@
   background: none;
 }
 
+/* The merged variant: the page's own header collapsed and handed its buttons
+   down to this line, so filters sit left and actions sit hard right on one
+   strip instead of two. `min-width: 0` on the toolbar because it is the part
+   that may hold a search field and must be allowed to give up width first —
+   the actions are fixed-size buttons and shrinking them just clips labels. */
+.zp-workspace .oa-subnav-line-merged {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-gap);
+}
+/* The toolbar, when there is one. Excluded by name because a page with no
+   filters (Staff) has the actions as the only child, and giving *those*
+   flex: 1 would stretch the button row across the strip instead of parking
+   it at the end. */
+.zp-workspace .oa-subnav-line-merged > :first-child:not(.oa-subnav-actions) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.zp-workspace .oa-subnav-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: auto;
+}
+
+/* ── Overflow menu ──────────────────────────────────────────────────────
+   Anchored to its trigger and opening inward from the end edge, so it never
+   runs off the side of a 1024px panel. `inset-inline-end: 0` rather than
+   `right`, because the whole shell mirrors under Arabic. */
+.oa-overflow {
+  position: relative;
+  display: inline-flex;
+}
+.oa-overflow-trigger {
+  min-width: 40px;
+  font-size: var(--type-office-section);
+  line-height: 1;
+}
+.oa-overflow-trigger-open {
+  background: var(--surface2);
+  border-color: var(--accent);
+}
+.oa-overflow-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  inset-inline-end: 0;
+  z-index: 60;
+  min-width: 200px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);
+}
+.oa-overflow-item {
+  /* 40px is the project's touch minimum; a menu row is a tap target like any
+     other, and these rows are pressed with a thumb on a standing till. */
+  min-height: 40px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  text-align: start;
+  white-space: nowrap;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--type-office-body);
+  cursor: pointer;
+}
+.oa-overflow-item:hover:not(:disabled) {
+  background: var(--surface2);
+}
+.oa-overflow-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* 5. Below tablet width the page header wrapped and the title centred itself.
       Stack it left-aligned so title, then actions, read in the normal order. */
 @media (max-width: 1024px) {

@@ -12,6 +12,16 @@ export const EN = {
   status: "Status",
   allCategories: "All categories",
   allStatuses: "All statuses",
+  /** Labels the internal code shown when a product has no scannable barcode. */
+  skuPrefix: "SKU",
+  /* Catalogue saved views — filtered server-side, so each one counts the whole
+     catalogue rather than the loaded page. */
+  savedView: "Saved view",
+  allProducts: "All products",
+  viewOutOfStock: "Out of stock",
+  viewLowStock: "Low stock",
+  viewNoBarcode: "No barcode",
+  viewNoImage: "No image",
   clearFilters: "Clear filters",
   noMatchingProducts: "No products match your filters",
   noMatchingProductsHint: "Try a different search term, or clear the filters to see the whole catalogue.",
@@ -135,6 +145,9 @@ export const EN = {
   addProduct: "Add Product",
   editProduct: "Edit Product",
   productName: "Product name",
+  /* Shown in place of a blank name cell so an unmapped import column reads as
+     a data problem rather than a broken table. */
+  unnamedProduct: "(no product name)",
   taxRule: "Tax Rule",
   none: "None",
   trackInventory: "Track Inventory",

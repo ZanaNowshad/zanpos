@@ -24,7 +24,7 @@ import {
   visibleTabsForRole,
 } from "../navigation/config";
 import SectionNav from "../navigation/SectionNav";
-import Breadcrumb from "../navigation/Breadcrumb";
+import { PageHeadingProvider } from "../navigation/PageHeadingContext";
 import CommandShell from "../command/CommandShell";
 import type { CommandDomain } from "../command/CommandSidebar";
 import type { HeaderStatusPill } from "../command/CommandHeader";
@@ -270,6 +270,13 @@ export default function OfficeAIPage({
     return activeSections.some(s => s.id === aliased) ? aliased : (activeDomain?.defaultTab ?? aliased);
   }, [tab, activeSections, activeDomain]);
 
+  /* The label the active tab is showing. A page whose own heading says the same
+     word suppresses it rather than stating the location a third time. */
+  const activeSectionLabel = useMemo(() => {
+    const section = activeSections.find(s => s.id === activeSectionTab);
+    return section ? t(section.labelKey) : null;
+  }, [activeSections, activeSectionTab, t]);
+
   const commandDomains = useMemo<CommandDomain[]>(
     () => navDomains.map(d => ({
       id: d.id,
@@ -410,7 +417,16 @@ export default function OfficeAIPage({
             onSelect={setTab}
           />
         )}
-        <div className="zp-domain-content">{renderWorkspaceContent()}</div>
+        <div className="zp-domain-content">
+          <PageHeadingProvider
+            value={{
+              domain: activeDomain ? t(activeDomain.labelKey) : null,
+              section: hasSections ? activeSectionLabel : null,
+            }}
+          >
+            {renderWorkspaceContent()}
+          </PageHeadingProvider>
+        </div>
       </div>
     );
   };
@@ -454,11 +470,6 @@ export default function OfficeAIPage({
             }
             onDismiss={() => { ctrl.dismissError(); setDiagResult(null); }}
           />
-        )}
-        {tab !== "overview" && tab !== "assistant" && (
-          <div className="zp-breadcrumb-bar">
-            <Breadcrumb tab={tab} onNavigate={setTab} />
-          </div>
         )}
         {renderWorkspace()}
       </CommandShell>

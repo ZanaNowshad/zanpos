@@ -1,8 +1,10 @@
 import { useEffect, useRef } from "react";
-import { Banknote, Check, CreditCard, Keyboard, Smartphone } from "lucide-react";
+import { Banknote, CreditCard, Keyboard, Smartphone } from "lucide-react";
 import type { PaymentInput } from "../types";
 import Dialpad from "./Dialpad";
+import TouchKeyboard from "./TouchKeyboard";
 import { useLanguage } from "../hooks/useLanguage";
+import { PaymentOrderSummary, type OrderSummaryRow } from "./PaymentInputSurface";
 import { detailTranslator, type DetailStringKey } from "../i18n/detailStrings";
 
 const METHODS: {
@@ -80,6 +82,14 @@ export function PaymentMethodPicker({
 }
 
 interface CommandPanelProps {
+  /** Resting state shows the order; editing a field shows the keypad. One
+   *  physical place for input, contents driven by the caret. */
+  surface: "summary" | "input";
+  summaryTitle: string;
+  summaryRows: OrderSummaryRow[];
+  fieldLabel: string;
+  fieldValue: string;
+  onDone: () => void;
   showNumericEntry: boolean;
   showTendered: boolean;
   activeLabel: string;
@@ -89,6 +99,14 @@ interface CommandPanelProps {
   methodName: string;
   readinessInstruction: string;
   confirmBlockReason: string | null;
+  /** Every outstanding problem, shown when a blocked confirm is pressed. */
+  blockers: { message: string; focus?: string }[];
+  attempted: boolean;
+  onAttemptBlocked: () => void;
+  /** Which set of keys the input surface is showing. Defaults from the focused
+   *  field but the cashier can switch — a flat number is "3B". */
+  inputMode: "pad" | "keys";
+  onToggleInputMode: () => void;
   canConfirm: boolean;
   loading?: boolean;
   completionLabel: string;
@@ -111,9 +129,52 @@ export function PaymentCommandPanel(props: CommandPanelProps) {
    * so the readiness panel becomes a compact strip above it rather than a
    * replacement for it.
    */
+  if (props.surface === "summary") {
+    return (
+      <div className="pm-right">
+        <PaymentOrderSummary
+          title={props.summaryTitle}
+          rows={props.summaryRows}
+          note={props.readinessInstruction}
+        />
+        <div className="pm-actions">
+          {props.attempted && props.blockers.length > 0 ? (
+            <div className="pm-blockers" id="pm-blockers" role="alert">
+              <strong>{props.blockers.length === 1 ? "One thing to fix" : `${props.blockers.length} things to fix`}</strong>
+              <ul>{props.blockers.map(b => <li key={b.message}>{b.message}</li>)}</ul>
+            </div>
+          ) : (
+            <div className={`pm-confirm-status${props.confirmBlockReason ? " pm-confirm-status-blocked" : ""}`} role="status">
+              {props.confirmBlockReason ?? <>{t("readyPressEnter")}</>}
+            </div>
+          )}
+          {/* Never disabled except while saving. A dead button teaches the cashier
+              nothing; pressing it should say what is missing and put the caret in
+              the field that needs fixing. */}
+          <button
+            className={`pm-confirm-btn${!props.canConfirm ? " pm-confirm-btn-blocked" : ""}`}
+            onClick={() => (props.canConfirm ? props.onConfirm() : props.onAttemptBlocked())}
+            disabled={props.loading}
+          >
+            {props.completionLabel}
+          </button>
+          <button className="pm-cancel-btn" onClick={props.onCancel} disabled={props.loading}>
+            {t("cancel")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="pm-right">
-      {props.showNumericEntry ? (
+      {props.fieldLabel && (
+        <div className="pm-entry-heading pm-entry-field">
+          <span>{props.fieldLabel}</span>
+          <strong>{props.fieldValue || "—"}</strong>
+        </div>
+      )}
+      {!props.fieldLabel && props.showNumericEntry ? (
         <div className="pm-entry-heading">
           <span>{props.showTendered ? t("cashReceived") : props.activeLabel}</span>
           <strong>
@@ -122,26 +183,21 @@ export function PaymentCommandPanel(props: CommandPanelProps) {
               : t("useDialpad")}
           </strong>
         </div>
-      ) : (
-        <div className="pm-ready-panel pm-ready-panel-compact">
-          <div className="pm-ready-icon"><Check size={24} strokeWidth={2.5} /></div>
-          <span className="pm-ready-kicker">{t("readyToComplete")}</span>
-          <h3>{props.methodName} {t("payment")}</h3>
-          <div className="pm-ready-amount">{props.currency} {props.totalLabel}</div>
-          <div className="pm-ready-check">
-            <Check size={16} />
-            <span>{t("exactAmountMatched")}</span>
-          </div>
-          <div className="pm-ready-check pm-ready-check-action">
-            <CreditCard size={16} />
-            <span>{props.readinessInstruction}</span>
-          </div>
-        </div>
-      )}
+      ) : null}
       {/* The dialpad covers digits. A delivery sale also asks for a road name
           and a customer name, so the letters have to come from somewhere on a
           till with no keyboard plugged in. */}
       <div className="pm-keyboard-row">
+        <button
+          type="button"
+          className={`pm-mode-btn${props.inputMode === "keys" ? " is-on" : ""}`}
+          onMouseDown={event => event.preventDefault()}
+          onClick={props.onToggleInputMode}
+          aria-pressed={props.inputMode === "keys"}
+          title="Switch between the number pad and letters"
+        >
+          {props.inputMode === "keys" ? "123" : "ABC"}
+        </button>
         <button
           type="button"
           className="pm-keyboard-btn"
@@ -159,15 +215,33 @@ export function PaymentCommandPanel(props: CommandPanelProps) {
       {props.keyboardError && (
         <div className="pm-keyboard-error" role="status">{props.keyboardError}</div>
       )}
-      <Dialpad onKey={props.onKey} />
+      {props.inputMode === "keys"
+        ? <TouchKeyboard onKey={props.onKey} />
+        : <Dialpad onKey={props.onKey} />}
+      {/* Done is the way back to the summary. Without it the column has no
+          resting state on a touch till, where there is nowhere neutral to
+          click to blur a field. */}
+      <button type="button" className="pm-done-btn" onMouseDown={e => e.preventDefault()} onClick={props.onDone}>
+        Done
+      </button>
       <div className="pm-actions">
-        <div className={`pm-confirm-status${props.confirmBlockReason ? " pm-confirm-status-blocked" : ""}`} role="status">
-          {props.confirmBlockReason ?? <>{t("readyPressEnter")}</>}
-        </div>
+        {props.attempted && props.blockers.length > 0 ? (
+          <div className="pm-blockers" id="pm-blockers" role="alert">
+            <strong>{props.blockers.length === 1 ? "One thing to fix" : `${props.blockers.length} things to fix`}</strong>
+            <ul>{props.blockers.map(b => <li key={b.message}>{b.message}</li>)}</ul>
+          </div>
+        ) : (
+          <div className={`pm-confirm-status${props.confirmBlockReason ? " pm-confirm-status-blocked" : ""}`} role="status">
+            {props.confirmBlockReason ?? <>{t("readyPressEnter")}</>}
+          </div>
+        )}
+        {/* Never disabled except while saving. A dead button teaches the cashier
+            nothing; pressing it should say what is missing and put the caret in
+            the field that needs fixing. */}
         <button
-          className="pm-confirm-btn"
-          onClick={props.onConfirm}
-          disabled={!props.canConfirm || props.loading}
+          className={`pm-confirm-btn${!props.canConfirm ? " pm-confirm-btn-blocked" : ""}`}
+          onClick={() => (props.canConfirm ? props.onConfirm() : props.onAttemptBlocked())}
+          disabled={props.loading}
         >
           {props.completionLabel}
         </button>

@@ -50,13 +50,25 @@
   --border:  rgba(255,255,255,0.11);  /* was 0.07 — cards now visible */
   --border2: rgba(255,255,255,0.06);  /* was 0.04 */
 
-  /* ── Geometry: rounded enterprise cards ── */
-  --radius:    14px;
-  --radius-sm: 10px;
-  --radius-md: 14px;
-  --radius-lg: 20px;
-  --radius-xl: 28px;
+  /* ── Geometry: one radius scale, five steps ────────────────────────────
+     There used to be two scales that disagreed (--radius-* at 10/14/20 and
+     --ui-radius-* at 8/6) plus fourteen distinct hardcoded values, so a chip
+     next to a card next to a panel had three different corners and the eye
+     read it as three unrelated components. Five steps is enough vocabulary
+     for a back office; anything finer is noise nobody can name.
+
+     xs  badges, progress bars, the very small
+     sm  controls — buttons, inputs, chips, rows
+     md  cards and panels
+     lg  modals and full surfaces
+     xl  the rare hero surface                                            */
+  --radius-xs:   6px;
+  --radius-sm:   8px;
+  --radius-md:  12px;
+  --radius-lg:  16px;
+  --radius-xl:  24px;
   --radius-pill: 999px;
+  --radius: var(--radius-md);
 
   /* ── Transition tokens (T28) ── */
   /* Decelerate-dominant curve — same as modal-in; starts fast, settles gently */
@@ -373,8 +385,10 @@
 
 /* Layout primitives — radius, gaps, padding, hairlines. */
 :root {
-  --ui-radius: 8px;
-  --ui-radius-sm: 6px;
+  /* Aliases, not a second scale — these predate the unified steps above and
+     are kept only so the components already using them keep working. */
+  --ui-radius: var(--radius-md);
+  --ui-radius-sm: var(--radius-sm);
   --ui-gap: 12px;
   --ui-gap-lg: 16px;
   --ui-pad: 16px;
@@ -541,11 +555,24 @@
   --leading-pos-base:  1.45;
   --leading-pos-large: 1.25;
 
-  /* Back office: page title → section heading → body → caption. */
-  --type-office-page:    1.25rem;
-  --type-office-section: 1rem;
-  --type-office-body:    0.875rem;
-  --type-office-caption: 0.75rem;
+  /* Back office: page title → section heading → body → caption → micro.
+     Stated in px, deliberately. These were written in rem against an assumed
+     16px root, but the root here is 15px, so every step rendered ~6% smaller
+     than its name claimed — caption was 11.25px, not 12. Legibility on a
+     fixed 1024x768 panel is a physical property, not a relative one: the
+     operator is standing, at arm's length, and the screen never changes size.
+     Pinning the small end to px makes the scale mean what it says and stops
+     a root-size change from silently shrinking every label in the app.
+
+     Micro is the floor. Nothing in the back office goes below it — sizes had
+     drifted to 0.6rem (9px) on tags nobody could read. If a label only fits
+     at 10px the layout is wrong, not the type. */
+  --type-office-page:    20px;
+  --type-office-section: 16px;
+  --type-office-body:    14px;
+  --type-office-caption: 12px;
+  --type-office-micro:   11px;
+  --leading-office-micro: 1.4;
   --leading-office-page:    1.3;
   --leading-office-section: 1.35;
   --leading-office-body:    1.5;

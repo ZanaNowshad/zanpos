@@ -93,7 +93,36 @@ export function installUiMock(): void {
             p.name.toLowerCase().includes(search) || (p.barcode ?? "").includes(search));
         }
         if (categoryId) items = items.filter(p => p.category_id === categoryId);
-        return Promise.resolve(structuredClone({ items, total: items.length }));
+        /* Saved views filter here for the same reason they filter next to the
+           LIMIT in SQL: a view applied after paging would answer "which of
+           these hundred are out of stock", which is not the question asked.
+           Mirrors product_view_predicate in admin_commands.rs — if the two
+           drift, QA passes on a rule the database does not apply. */
+        const view = String(args?.view ?? "").trim();
+        if (view && view !== "all") {
+          items = items.filter(p => {
+            const qty = Number(p.stock_qty);
+            switch (view) {
+              case "active":       return p.is_active;
+              case "inactive":     return !p.is_active;
+              case "out_of_stock": return p.track_inventory && Number.isFinite(qty) && qty <= 0;
+              case "low_stock":    return p.track_inventory && Number.isFinite(qty) && qty > 0 && qty <= p.reorder_point;
+              case "no_barcode":   return !(p.barcode ?? "").trim() && !(p.barcodes ?? []).length;
+              case "no_image":     return !(p.image_path ?? "").trim();
+              default:             return true;
+            }
+          });
+        }
+        /* Paging is part of the contract, not a detail. Returning every row
+           while reporting a page-sized total let a paginated picker render
+           sixteen rows under a "1-8 of 16" footer and push its own Next button
+           out of reach — a state the real command cannot produce. */
+        const total = items.length;
+        const offset = Number(args?.offset ?? 0) || 0;
+        const limit = Number(args?.limit ?? 0) || total;
+        return Promise.resolve(structuredClone({
+          items: items.slice(offset, offset + limit), total, offset, limit,
+        }));
       }
       // The till asks for active riders only; the admin roster asks for all.
       // Honouring the flag here is what makes "a rider who left is not offered

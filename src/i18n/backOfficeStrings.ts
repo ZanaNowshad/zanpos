@@ -103,12 +103,12 @@ const EN = {
   value: "Value",
   period: "Period",
   dismiss: "Dismiss",
-  cashierReport: "Sales by Cashier",
+  cashierReport: "Cashiers",  /* Matches the Insights tab so the page heading collapses. */
   from: "From",
   to: "To",
   noSalesPeriod: "No sales found for this period.",
   totalNet: "Total Net",
-  endOfDayCashup: "End-of-Day Cash-up",
+  endOfDayCashup: "End of Day",  /* Matches the Insights tab so the page heading collapses. */
   businessDate: "Business Date",
   noShiftsForDate: "No shifts found for",
   totalNetSales: "Total Net Sales",

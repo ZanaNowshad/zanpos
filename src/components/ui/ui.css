@@ -105,9 +105,9 @@
   align-items: center;
   gap: 5px;
   padding: 3px 9px;
-  border-radius: 99px;
+  border-radius: var(--radius-pill);
   border: 1px solid transparent;
-  font-size: 0.72rem;
+  font-size: var(--type-office-micro);
   font-weight: 600;
   white-space: nowrap;
 }

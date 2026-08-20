@@ -39,7 +39,19 @@ export function productCatalogueColumns(
             )}
           </span>
           <span>
-            <span className="zp-cell-primary">{p.name}</span>
+            {/* An imported catalogue can arrive with the name column unmapped,
+                and a blank cell is indistinguishable from a rendering fault —
+                the manager cannot tell whether the product has no name or the
+                table is broken. Say which, and fall back to the barcode so the
+                row is still identifiable enough to go and fix. */}
+            {p.name?.trim()
+              ? <span className="zp-cell-primary">{p.name}</span>
+              : (
+                <span className="zp-cell-primary zp-status-muted">
+                  {t("unnamedProduct")}
+                  {(p.barcode ?? p.sku) && ` · ${p.barcode ?? p.sku}`}
+                </span>
+              )}
             <span className="zp-cell-sub zp-cell-sub-p2">{p.category_name}</span>
           </span>
         </span>
@@ -50,13 +62,34 @@ export function productCatalogueColumns(
       header: t("barcode"),
       priority: 2,
       numeric: true,
-      cell: p => p.barcode ?? p.sku ?? <span className="zp-status-muted">—</span>,
+      /* Fixed, because the content is. A barcode is at most 13 digits and a
+         SKU little more, but the column was declared width-less, so it was
+         free to absorb whatever slack the elastic name column gave up — on
+         the real catalogue it took ~600px to display 13 characters while the
+         product name truncated beside it. Bounded content, bounded column. */
+      width: "160px",
+      /* The SKU fallback used to render bare, so a product with no barcode
+         showed a number under a column headed "Barcode" — which is exactly
+         backwards for the one product the "No barcode" view exists to find.
+         It still shows, because an internal code is better than nothing when
+         you are hunting the row down, but it is labelled as what it is. */
+      cell: p => p.barcode?.trim()
+        ? p.barcode
+        : p.sku?.trim()
+          ? <span className="zp-status-muted">{t("skuPrefix")} {p.sku}</span>
+          : <span className="zp-status-muted">—</span>,
     },
     {
       id: "category",
       header: t("category"),
       priority: 2,
-      cell: p => p.category_name || <span className="zp-status-muted">—</span>,
+      /* Also fixed, and clamped to two lines. Left to size itself,
+         "Air Fresheners & Home Fragrance" wrapped to four lines and made
+         every row in the table three times taller than it needed to be. */
+      width: "150px",
+      cell: p => p.category_name
+        ? <span className="product-catalogue-category">{p.category_name}</span>
+        : <span className="zp-status-muted">—</span>,
     },
     {
       id: "price",

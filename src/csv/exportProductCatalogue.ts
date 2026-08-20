@@ -18,9 +18,10 @@ export async function exportProductCatalogue(options: {
   sessionUserId: string;
   search: string;
   categoryFilter: string;
-  /** Applied client-side, exactly as the status chip does, so the file matches
-   *  what the screen claims to be showing. */
-  statusFilter: "" | "active" | "inactive";
+  /** The saved view on screen. Sent with the query rather than applied to the
+   *  result, so the file is the whole view and not the view of one page — the
+   *  same reason the pages are walked at all. */
+  view: cmd.ProductView;
   currencyExponent: number;
   pageSize: number;
 }): Promise<void> {
@@ -29,6 +30,7 @@ export async function exportProductCatalogue(options: {
     const page = await cmd.adminListProducts(options.sessionUserId, {
       search: options.search,
       categoryId: options.categoryFilter || undefined,
+      view: options.view === "all" ? undefined : options.view,
       offset: off,
       limit: options.pageSize,
     });
@@ -36,9 +38,6 @@ export async function exportProductCatalogue(options: {
     if (all.length >= page.total || page.items.length === 0) break;
   }
 
-  const rows = options.statusFilter
-    ? all.filter(p => (options.statusFilter === "active" ? p.is_active : !p.is_active))
-    : all;
   const stamp = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" });
-  downloadCsv(`products_export_${stamp}.csv`, productsToCsv(rows, options.currencyExponent));
+  downloadCsv(`products_export_${stamp}.csv`, productsToCsv(all, options.currencyExponent));
 }

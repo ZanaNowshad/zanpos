@@ -40,6 +40,7 @@ import {
   UserCog,
   Users,
   Bike,
+  Zap,
 } from "lucide-react";
 import type { OfficeTab } from "./officeAiTypes";
 
@@ -55,6 +56,7 @@ export const TAB_ICON: Record<OfficeTab, React.ReactNode> = {
   operations: <Boxes size={17} strokeWidth={1.75} />,
   products: <Package size={17} strokeWidth={1.75} />,
   categories: <Archive size={17} strokeWidth={1.75} />,
+  quickpos: <Zap size={17} strokeWidth={1.75} />,
   inventory: <Boxes size={17} strokeWidth={1.75} />,
   purchasing: <PackagePlus size={17} strokeWidth={1.75} />,
   zanshop: <Globe size={17} strokeWidth={1.75} />,

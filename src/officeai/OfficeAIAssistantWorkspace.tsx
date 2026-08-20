@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { RefObject } from "react";
 import { DEVICE, type ProviderConfig, type SessionUser } from "../types";
 import ChatPanel from "./ChatPanel";
+import WorkflowLauncher from "./WorkflowLauncher";
 import { KpiSidebar } from "./KpiSidebar";
 import ProviderSetup from "./ProviderSetup";
 import { useLanguage } from "../hooks/useLanguage";
@@ -75,6 +76,21 @@ export default function OfficeAIAssistantWorkspace({
         </button>
       </div>
       <div className="oa-assistant-main">
+        {/* Before the first message, offer the procedures rather than a blank
+            composer. `workflows.rs` already holds 21 written guides; the only
+            way to reach one was to phrase a question that made the model
+            choose to load it, which requires knowing it exists. */}
+        {/* Keyed on whether the operator has asked anything, not on whether the
+            transcript is empty: the controller seeds an automatic stock-alert
+            message on open, so `messages.length === 0` is never true and the
+            launcher would never have appeared. */}
+        {!ctrl.messages.some(m => m.role === "user") && (
+          <WorkflowLauncher
+            heading={t("workflowLauncherHeading")}
+            subheading={t("workflowLauncherHint")}
+            onRun={prompt => void ctrl.handleSend(prompt)}
+          />
+        )}
         <ChatPanel
           ctrl={ctrl}
           variant="full"

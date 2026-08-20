@@ -7,7 +7,7 @@ export type OfficeTab =
   | "conflicts"
   | "insights" | "loyalty"
   | "operations" | "purchasing"
-  | "products" | "categories" | "users" | "reports"
+  | "products" | "categories" | "quickpos" | "users" | "reports"
   | "inventory" | "customers" | "settings" | "audit" | "devices"
   | "cashier" | "eod" | "deliveries" | "riders"
   | "zanshop";
@@ -136,6 +136,8 @@ export interface OfficeAiOverviewSnapshot {
   aiConfig: import("../types").AiConfigPayload | null;
   featureToggles: import("../types").FeatureToggles | null;
   health: import("../types").SystemHealthReport | null;
+  /** Undismissed output of the proactive detection loop. */
+  alerts: import("../types").ProactiveAlert[];
   benefitNumber: string | null;
 }
 

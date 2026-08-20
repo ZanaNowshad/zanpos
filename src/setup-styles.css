@@ -98,7 +98,7 @@
   margin-top: 4px;
   padding: 8px 24px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   background: var(--bg);
   color: var(--text);
   font-size: 0.88rem;
@@ -121,7 +121,7 @@
 .error-boundary-panel {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   padding: 40px 36px;
   max-width: 440px;
   width: 100%;
@@ -226,7 +226,7 @@
 }
 
 .setup-dot-label {
-  font-size: 0.68rem;
+  font-size: var(--type-office-micro);
   color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -238,7 +238,7 @@
 .setup-panel {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   width: 100%;
   max-width: 560px;
   padding: 36px 40px;
@@ -379,7 +379,7 @@
 }
 .setup-path-card {
   display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
-  padding: 18px 20px; border-radius: 10px; border: 1px solid var(--border);
+  padding: 18px 20px; border-radius: var(--radius-sm); border: 1px solid var(--border);
   background: var(--surface); cursor: pointer; text-align: left;
   transition: border-color 0.15s, background 0.15s;
 }
@@ -391,17 +391,17 @@
 /* ── Cloud setup step extras ────────────────────────────────────────────────── */
 .setup-btn-skip {
   background: transparent; border: 1px solid var(--border); color: var(--text-dim);
-  padding: 14px 24px; border-radius: 8px; cursor: pointer; font-size: 0.95rem;
+  padding: 14px 24px; border-radius: var(--radius-sm); cursor: pointer; font-size: 0.95rem;
   min-height: 64px;
 }
 .setup-btn-skip:hover { border-color: var(--text-dim); }
 .setup-hint {
   font-size: 0.8rem; color: var(--text-dim); margin-top: 12px;
-  padding: 10px 14px; background: #92400e11; border-radius: 8px;
+  padding: 10px 14px; background: #92400e11; border-radius: var(--radius-sm);
   border-left: 3px solid #b45309;
 }
 .setup-warn-banner {
-  background: #92400e22; color: #b45309; border-radius: 8px;
+  background: #92400e22; color: #b45309; border-radius: var(--radius-sm);
   padding: 10px 14px; font-size: 0.85rem; margin-bottom: 14px;
 }
 .setup-body-dim { color: var(--text-dim); font-size: 0.88rem; }

@@ -56,7 +56,15 @@ export function clampWidgetRect(candidate: WidgetRect, viewport: ViewportSize): 
 }
 
 export function clampLauncherPosition(candidate: LauncherPosition, viewport: ViewportSize): LauncherPosition {
-  const fallback = { x: Math.round(viewport.width / 2 + 76), y: TOP_BAR_HEIGHT + EDGE_GAP };
+  /* Bottom-right: the one part of the till nothing else claims, below the
+     tender column's last button. The previous default sat directly under the
+     top bar, which is where the scan field now lives — the single control that
+     must never be covered — and anywhere in the middle hides a cart row's
+     price. The cashier can drag it, and that choice is what persists. */
+  const fallback = {
+    x: viewport.width - LAUNCHER_WIDTH - EDGE_GAP,
+    y: viewport.height - LAUNCHER_HEIGHT - EDGE_GAP,
+  };
   const source = Number.isFinite(candidate.x) && Number.isFinite(candidate.y) ? candidate : fallback;
   const lowestTop = Math.max(0, viewport.height - LAUNCHER_HEIGHT);
   return {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Monitor, Power, Trash2 } from "lucide-react";
 import { useAutoFocus } from "../hooks/useAutoFocus";
 import type { DeviceRow } from "../types";
 import { DEVICE } from "../types";
@@ -7,9 +7,20 @@ import * as cmd from "../tauri/commands";
 import { useLanguage } from "../hooks/useLanguage";
 import { deviceStatusText, operationsTranslator } from "../i18n/operationsStrings";
 import ConfirmDialog from "./templates/ConfirmDialog";
+import { PageTemplate, DataTable, Drawer, EmptyState, LoadingSkeleton } from "./templates";
 
 interface Props { sessionUserId: string; }
 
+/**
+ * The last back-office list still drawing its own table.
+ *
+ * It had a hand-rolled `<table class="devices-table">`, its own status badges,
+ * a bare text node for loading, an empty state that was a `colspan` row, and a
+ * form that pushed the table down the page when it opened. None of that was
+ * wrong so much as separate: it missed the column priorities, the 40px touch
+ * rows and the container queries every other list gets for free, and it was
+ * the one page where registering something moved the thing you were reading.
+ */
 export default function DevicesTab({ sessionUserId }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => operationsTranslator(language), [language]);
@@ -36,6 +47,10 @@ export default function DevicesTab({ sessionUserId }: Props) {
   }, [sessionUserId, t]);
 
   useEffect(() => { load(); }, [load]);
+
+  function openForm() {
+    setShowForm(true); setCode(""); setName(""); setError(null);
+  }
 
   async function handleAdd() {
     if (!code.trim() || !name.trim()) {
@@ -77,90 +92,121 @@ export default function DevicesTab({ sessionUserId }: Props) {
     }
   }
 
-  if (loading) return <div className="bo-empty">{t("loadingDevices")}</div>;
-
   return (
-    <div className="devices-layout">
-      <div className="devices-header">
-        <h2 className="settings-title">{t("posTerminals")}</h2>
-        <button className="btn-primary" onClick={() => { setShowForm(s => !s); setError(null); }}>
-          {t(showForm ? "cancel" : "registerDevice")}
-        </button>
-      </div>
+    <PageTemplate
+      contentFlat
+      header={{
+        title: t("posTerminals"),
+        icon: <Monitor size={18} strokeWidth={1.7} aria-hidden="true" />,
+        primaryAction: { label: t("registerDevice"), onClick: openForm },
+      }}
+      degraded={error ? {
+        severity: "warning",
+        message: error,
+        onDismiss: () => setError(null),
+      } : undefined}
+    >
+      {loading ? (
+        <LoadingSkeleton variant="table" count={4} />
+      ) : devices.length === 0 ? (
+        <EmptyState
+          icon={<Monitor size={36} strokeWidth={1.5} />}
+          title={t("noDevicesRegistered")}
+          actions={[{ label: t("registerDevice"), onClick: openForm, primary: true }]}
+        />
+      ) : (
+        <DataTable
+          caption={t("posTerminals")}
+          columns={[
+            {
+              id: "code",
+              header: t("code"),
+              width: "130px",
+              cell: d => <code className="numeric-ltr">{d.device_code}</code>,
+            },
+            {
+              id: "name",
+              header: t("name"),
+              /* "This terminal" was its own column, which meant a column of
+                 blanks for every device but one. It rides the name instead —
+                 same information, one less column on a 1024px screen. */
+              cell: d => (
+                <span className="zp-cell-primary">
+                  {d.device_name}
+                  {d.device_id === DEVICE.device_id && (
+                    <span className="devices-current-chip">{t("thisTerminal")}</span>
+                  )}
+                </span>
+              ),
+            },
+            {
+              id: "status",
+              header: t("status"),
+              width: "120px",
+              priority: 2,
+              cell: d => (
+                <span className={`zp-status ${d.is_active ? "zp-status-ok" : "zp-status-muted"}`}>
+                  {deviceStatusText(language, d.is_active)}
+                </span>
+              ),
+            },
+          ]}
+          rows={devices}
+          rowKey={d => d.device_id}
+          isRowActive={d => d.device_id === DEVICE.device_id}
+          isRowMuted={d => !d.is_active}
+          rowAction={d => d.device_id === DEVICE.device_id ? null : (
+            /* No actions on the terminal you are standing at: the backend
+               refuses to deactivate or remove it, so offering the buttons
+               would only produce an error banner. */
+            <div className="devices-row-actions">
+              <button
+                type="button"
+                className={d.is_active ? "btn-secondary zp-row-action" : "btn-primary zp-row-action"}
+                onClick={() => handleToggle(d)}
+                aria-label={`${t(d.is_active ? "deactivate" : "activate")} ${d.device_name}`}
+              >
+                {/* The icon carries the meaning once the table narrows: the
+                    label is dropped below a 1000px container and a bare text
+                    button would collapse to nothing but padding. */}
+                <Power size={14} aria-hidden="true" />
+                <span className="zp-action-label">{t(d.is_active ? "deactivate" : "activate")}</span>
+              </button>
+              <button
+                type="button"
+                className="btn-secondary zp-row-action devices-remove-btn"
+                onClick={() => { setPendingRemove(d); setError(null); }}
+                aria-label={`${t("remove")} ${d.device_name}`}
+              >
+                <Trash2 size={14} aria-hidden="true" />
+                <span className="zp-action-label">{t("remove")}</span>
+              </button>
+            </div>
+          )}
+        />
+      )}
 
-      {showForm && (
-        <div className="devices-form-card">
-          <h3>{t("newDevice")}</h3>
-          {error && <div className="bo-form-error">{error}</div>}
-          <div className="bo-row-two">
-            <div>
-              <label htmlFor="a11y-input-1" className="bo-label">{t("deviceCode")} *</label>
-              <input id="a11y-input-1" className="bo-input" value={code} onChange={e => setCode(e.target.value)} placeholder="POS02" ref={codeRef} />
-            </div>
-            <div>
-              <label htmlFor="a11y-input-2" className="bo-label">{t("deviceName")} *</label>
-              <input id="a11y-input-2" className="bo-input" value={name} onChange={e => setName(e.target.value)} placeholder={t("counterTwo")} />
-            </div>
-          </div>
+      <Drawer
+        open={showForm}
+        onOpenChange={open => { if (!open) { setShowForm(false); setError(null); } }}
+        title={t("newDevice")}
+        footer={
           <div className="bo-form-actions">
+            <button className="btn-secondary" onClick={() => setShowForm(false)}>{t("cancel")}</button>
             <button className="btn-primary" onClick={handleAdd} disabled={saving}>
               {t(saving ? "saving" : "register")}
             </button>
           </div>
-        </div>
-      )}
+        }
+      >
+        <label htmlFor="a11y-input-1" className="bo-label">{t("deviceCode")} *</label>
+        <input id="a11y-input-1" className="bo-input" value={code} onChange={e => setCode(e.target.value)}
+          placeholder="POS02" ref={codeRef} />
 
-      {!showForm && error && <div className="bo-form-error">{error}</div>}
-
-      <table className="devices-table">
-        <thead>
-          <tr>
-            <th>{t("code")}</th>
-            <th>{t("name")}</th>
-            <th>{t("status")}</th>
-            <th>{t("thisDevice")}</th>
-            <th>{t("action")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {devices.map(d => {
-            const isCurrent = d.device_id === DEVICE.device_id;
-            return (
-              <tr key={d.device_id} className={isCurrent ? "devices-row-current" : ""}>
-                <td><code>{d.device_code}</code></td>
-                <td>{d.device_name}</td>
-                <td>
-                  <span className={`devices-badge ${d.is_active ? "devices-badge-active" : "devices-badge-inactive"}`}>
-                    {deviceStatusText(language, d.is_active)}
-                  </span>
-                </td>
-                <td>{isCurrent ? <span className="devices-current-chip">{t("thisTerminal")}</span> : ""}</td>
-                <td>
-                  {!isCurrent && (
-                    <div className="devices-row-actions">
-                      <button
-                        className={d.is_active ? "btn-secondary" : "btn-primary"}
-                        onClick={() => handleToggle(d)}
-                      >
-                        {t(d.is_active ? "deactivate" : "activate")}
-                      </button>
-                      <button
-                        className="btn-secondary devices-remove-btn"
-                        onClick={() => { setPendingRemove(d); setError(null); }}
-                      >
-                        <Trash2 size={14} aria-hidden="true" /> {t("remove")}
-                      </button>
-                    </div>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-          {devices.length === 0 && (
-            <tr><td colSpan={5} className="bo-empty">{t("noDevicesRegistered")}</td></tr>
-          )}
-        </tbody>
-      </table>
+        <label htmlFor="a11y-input-2" className="bo-label">{t("deviceName")} *</label>
+        <input id="a11y-input-2" className="bo-input" value={name} onChange={e => setName(e.target.value)}
+          placeholder={t("counterTwo")} />
+      </Drawer>
 
       <ConfirmDialog
         open={pendingRemove !== null}
@@ -171,6 +217,6 @@ export default function DevicesTab({ sessionUserId }: Props) {
         onConfirm={() => { if (pendingRemove) void handleRemove(pendingRemove); }}
         onCancel={() => setPendingRemove(null)}
       />
-    </div>
+    </PageTemplate>
   );
 }

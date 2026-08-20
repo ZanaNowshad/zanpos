@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Bike, Pencil, Trash2 } from "lucide-react";
 import type { RiderRow } from "../../../types";
 import { riderCreate, riderDelete, riderList, riderUpdate } from "../../../tauri/commands";
-import { DataTable, EmptyState, LoadingSkeleton, PageTemplate } from "../../../components/templates";
+import { DataTable, Drawer, EmptyState, LoadingSkeleton, PageTemplate } from "../../../components/templates";
 import type { Column } from "../../../components/templates";
 import ConfirmDialog from "../../../components/templates/ConfirmDialog";
 
@@ -177,70 +177,75 @@ export default function RidersPage({ actorUserId }: Props) {
         />
       )}
 
-      {draft && (
-        <button className="modal-overlay" type="button" onClick={event => { if (event.target === event.currentTarget) setDraft(null); }}>
-          <div className="modal bo-form-modal" role="dialog" aria-modal="true" aria-labelledby="rider-dialog-title">
-            <div className="bo-form-modal-header">
-              <h2 id="rider-dialog-title">{draft.rider_id ? "Edit rider" : "New rider"}</h2>
-              <button className="bo-form-modal-close" onClick={() => setDraft(null)} aria-label="Close">✕</button>
-            </div>
-            <div className="bo-form-modal-body">
-              <div className="bo-form-field">
-                <label className="bo-label" htmlFor="rider-name">Name *</label>
-                <input
-                  id="rider-name"
-                  className="bo-input"
-                  value={draft.name}
-                  onChange={event => setDraft({ ...draft, name: event.target.value })}
-                />
-              </div>
-              <div className="bo-form-field">
-                <label className="bo-label" htmlFor="rider-phone">WhatsApp number *</label>
-                <input
-                  id="rider-phone"
-                  className="bo-input"
-                  inputMode="numeric"
-                  dir="ltr"
-                  placeholder="33050666"
-                  value={draft.phone}
-                  onChange={event => setDraft({ ...draft, phone: event.target.value })}
-                />
-                <small className="bo-hint">8-digit Bahrain mobile. Drops are sent here.</small>
-              </div>
-              <div className="bo-form-field">
-                <label className="bo-label" htmlFor="rider-notes">Notes</label>
-                <input
-                  id="rider-notes"
-                  className="bo-input"
-                  placeholder="Bike plate, shift, anything useful"
-                  value={draft.notes}
-                  onChange={event => setDraft({ ...draft, notes: event.target.value })}
-                />
-              </div>
-              {draft.rider_id && (
-                <label className="bo-checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={draft.is_active}
-                    onChange={event => setDraft({ ...draft, is_active: event.target.checked })}
-                  />
-                  <span>Active — an inactive rider is not offered at checkout</span>
-                </label>
-              )}
-            </div>
-            <div className="bo-form-modal-footer">
-              <button className="btn-secondary" onClick={() => setDraft(null)} disabled={saving}>Cancel</button>
-              <button
-                className="btn-primary"
-                onClick={() => void save()}
-                disabled={saving || !draft.name.trim() || !draft.phone.trim()}
-              >
-                {saving ? "Saving…" : draft.rider_id ? "Save rider" : "Add rider"}
-              </button>
-            </div>
+      {/* Was a hand-rolled overlay: a <button> wrapping a role="dialog", with
+          no focus trap and no Escape. The shared Drawer is the Radix dialog,
+          so trapping, Escape, scroll lock and aria-modal come from a
+          maintained implementation — and Riders now opens the same way Staff
+          and Devices do. */}
+      <Drawer
+        open={draft !== null}
+        onOpenChange={open => { if (!open && !saving) setDraft(null); }}
+        title={draft?.rider_id ? "Edit rider" : "New rider"}
+        footer={
+          <div className="bo-form-actions">
+            <button className="btn-secondary" onClick={() => setDraft(null)} disabled={saving}>Cancel</button>
+            <button
+              className="btn-primary"
+              onClick={() => void save()}
+              disabled={saving || !draft?.name.trim() || !draft?.phone.trim()}
+            >
+              {saving ? "Saving…" : draft?.rider_id ? "Save rider" : "Add rider"}
+            </button>
           </div>
-        </button>
-      )}
+        }
+      >
+        {draft && (
+          <>
+            <div className="bo-form-field">
+              <label className="bo-label" htmlFor="rider-name">Name *</label>
+              <input
+                id="rider-name"
+                className="bo-input"
+                value={draft.name}
+                onChange={event => setDraft({ ...draft, name: event.target.value })}
+              />
+            </div>
+            <div className="bo-form-field">
+              <label className="bo-label" htmlFor="rider-phone">WhatsApp number *</label>
+              <input
+                id="rider-phone"
+                className="bo-input"
+                inputMode="numeric"
+                dir="ltr"
+                placeholder="33050666"
+                value={draft.phone}
+                onChange={event => setDraft({ ...draft, phone: event.target.value })}
+              />
+              <small className="bo-hint">8-digit Bahrain mobile. Drops are sent here.</small>
+            </div>
+            <div className="bo-form-field">
+              <label className="bo-label" htmlFor="rider-notes">Notes</label>
+              <input
+                id="rider-notes"
+                className="bo-input"
+                placeholder="Bike plate, shift, anything useful"
+                value={draft.notes}
+                onChange={event => setDraft({ ...draft, notes: event.target.value })}
+              />
+            </div>
+            {draft.rider_id && (
+              <label className="bo-checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={draft.is_active}
+                  onChange={event => setDraft({ ...draft, is_active: event.target.checked })}
+                />
+                <span>Active — an inactive rider is not offered at checkout</span>
+              </label>
+            )}
+          </>
+        )}
+      </Drawer>
 
       <ConfirmDialog
         open={pendingDelete !== null}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AdminProduct, CategoryRow, ProductPrefill, StockLevel, TaxRuleRow } from "../types";
 import { DEVICE } from "../types";
 import * as cmd from "../tauri/commands";
+import type { ProductView } from "../tauri/commands";
 import BarcodesPrintModal from "./BarcodesPrintModal";
 import BulkImportModal from "./BulkImportModal";
 import DuplicateProductsModal from "./DuplicateProductsModal";
@@ -48,7 +49,11 @@ export default function ProductsTab({
   const [showDupModal, setShowDupModal] = useState(false);
   const [duplicateCount, setDuplicateCount] = useState<number | null>(null);
   const [categoryFilter, setCategoryFilter] = useState("");
-  const [statusFilter, setStatusFilter]     = useState<"" | "active" | "inactive">("");
+  /* Saved views replace the old client-side status filter. That filter ran
+     over the loaded page, so "Inactive" answered "which of these hundred are
+     inactive" while the count beside it said 28,032 — two different questions
+     on one line. The view goes to the server with the query. */
+  const [view, setView] = useState<ProductView>("all");
   /** Stock is a separate command; joined by product_id. Null = unavailable. */
   const [stockByProduct, setStockByProduct] = useState<Map<string, StockLevel> | null>(null);
   const [loadError, setLoadError]           = useState<string | null>(null);
@@ -73,13 +78,14 @@ export default function ProductsTab({
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  const fetchProducts = useCallback(async (q: string, off: number, categoryId: string) => {
+  const fetchProducts = useCallback(async (q: string, off: number, categoryId: string, v: ProductView) => {
     setLoading(true);
     setLoadError(null);
     try {
       const page = await cmd.adminListProducts(sessionUserId, {
         search: q,
         categoryId: categoryId || undefined,
+        view: v === "all" ? undefined : v,
         offset: off,
         limit: PAGE_SIZE,
       });
@@ -109,8 +115,8 @@ export default function ProductsTab({
   }, [sessionUserId]);
 
   useEffect(() => {
-    fetchProducts(search, offset, categoryFilter);
-  }, [search, offset, categoryFilter, fetchProducts]);
+    fetchProducts(search, offset, categoryFilter, view);
+  }, [search, offset, categoryFilter, view, fetchProducts]);
 
   useEffect(() => {
     Promise.all([cmd.adminListCategories(sessionUserId), cmd.adminListTaxRules(sessionUserId)])
@@ -167,7 +173,7 @@ export default function ProductsTab({
   const showingForm = creating || selected !== null;
 
   async function refreshProducts() {
-    await fetchProducts(search, 0, categoryFilter);
+    await fetchProducts(search, 0, categoryFilter, view);
     setOffset(0);
   }
 
@@ -176,25 +182,23 @@ export default function ProductsTab({
     p => !p.image_path?.trim() && p.barcode?.trim(),
   ).length;
 
-  const hasQuery = search.trim() !== "" || categoryFilter !== "" || statusFilter !== "";
+  const hasQuery = search.trim() !== "" || categoryFilter !== "" || view !== "all";
 
   function clearQuery() {
     setSearchInput("");
     setSearch("");
     setCategoryFilter("");
-    setStatusFilter("");
+    setView("all");
     setOffset(0);
   }
 
 
-  // Status is a client-side filter: the backend command has no status param, so
-  // filtering server-side would silently drop rows from the page count.
   const exportProducts = useCallback(async () => {
     setExporting(true);
     setExportError(null);
     try {
       await exportProductCatalogue({
-        sessionUserId, search, categoryFilter, statusFilter,
+        sessionUserId, search, categoryFilter, view,
         currencyExponent: exp, pageSize: PAGE_SIZE,
       });
     } catch (e) {
@@ -202,7 +206,7 @@ export default function ProductsTab({
     } finally {
       setExporting(false);
     }
-  }, [sessionUserId, search, categoryFilter, statusFilter, exp]);
+  }, [sessionUserId, search, categoryFilter, view, exp]);
 
   /**
    * Catalogue counts.
@@ -228,10 +232,10 @@ export default function ProductsTab({
     return { low, out };
   }, [products, stockByProduct]);
 
-  const visibleProducts = useMemo(() => {
-    if (!statusFilter) return products;
-    return products.filter(p => (statusFilter === "active" ? p.is_active : !p.is_active));
-  }, [products, statusFilter]);
+  /* No client-side filter step any more: the view is part of the query, so the
+     rows returned are the rows to show and `total` counts the same set. The
+     old pair disagreed — the list was filtered, the total was not. */
+  const visibleProducts = products;
 
   const columns = useMemo(
     () => productCatalogueColumns(t, cur, exp, stockByProduct),
@@ -272,8 +276,11 @@ export default function ProductsTab({
     <PageTemplate
       contentFlat
       header={{
+        /* No subtitle: "Manage your products, prices, stock levels and
+           availability" describes the Products tab to someone who just
+           pressed the Products tab. Dropping it lets the header band merge
+           into the toolbar and gives the table back ~85px of a 768px screen. */
         title: t("products"),
-        subtitle: t("catalogueSubtitle"),
         primaryAction: { label: `+ ${t("newProduct")}`, onClick: startCreate },
         secondaryActions: [
           {
@@ -325,13 +332,20 @@ export default function ProductsTab({
                   <option key={c.category_id} value={c.category_id}>{c.name}</option>
                 ))}
               </select>
+              {/* Saved views. The recurring questions a manager opens this
+                  page to ask, as one control instead of a status dropdown that
+                  could only answer one of them — and only for the loaded page. */}
               <select
                 className="zp-filter"
-                value={statusFilter}
-                aria-label={t("status")}
-                onChange={e => setStatusFilter(e.target.value as "" | "active" | "inactive")}
+                value={view}
+                aria-label={t("savedView")}
+                onChange={e => { setView(e.target.value as ProductView); setOffset(0); }}
               >
-                <option value="">{t("allStatuses")}</option>
+                <option value="all">{t("allProducts")}</option>
+                <option value="out_of_stock">{t("viewOutOfStock")}</option>
+                <option value="low_stock">{t("viewLowStock")}</option>
+                <option value="no_barcode">{t("viewNoBarcode")}</option>
+                <option value="no_image">{t("viewNoImage")}</option>
                 <option value="active">{t("active")}</option>
                 <option value="inactive">{t("inactive")}</option>
               </select>

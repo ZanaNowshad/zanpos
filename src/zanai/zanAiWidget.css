@@ -9,7 +9,7 @@
   min-height: 48px;
   padding: 0 18px;
   border: 1px solid color-mix(in srgb, var(--accent, #0788c9) 55%, transparent);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: #fff;
   background: linear-gradient(135deg, #087fb9, #075e91);
   box-shadow: 0 12px 32px rgb(0 42 75 / 28%);
@@ -30,7 +30,7 @@
   min-width: 20px;
   height: 20px;
   padding: 0 5px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: #075e91;
   background: #fff;
   font-size: 11px;
@@ -44,7 +44,7 @@
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--border, #d8e0e7);
-  border-radius: 18px;
+  border-radius: var(--radius-lg);
   background: var(--surface, #fff);
   box-shadow: 0 22px 65px rgb(15 37 55 / 28%);
 }
@@ -86,7 +86,7 @@
   height: 32px;
   place-items: center;
   border: 0;
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   color: inherit;
   background: transparent;
 }
@@ -110,7 +110,7 @@
   margin: 8px 12px 0;
   padding: 5px 6px 5px 11px;
   border: 1px solid #b8dceb;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   color: #145b7c;
   background: #f4fbfe;
   font-size: 12px;
@@ -121,7 +121,7 @@
   margin: 8px 12px 0;
   padding: 6px 10px;
   border: 1px dashed #8fc8df;
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   color: #145b7c;
   background: #f8fcfe;
   font-size: 12px;

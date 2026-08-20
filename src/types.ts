@@ -729,6 +729,8 @@ export interface CategoryRow {
   sort_order: number;
   is_active: boolean;
   parent_category_id?: string;
+  /** Live products filed here. Resolved by the query, not stored. */
+  product_count: number;
 }
 
 export interface TaxRuleRow {

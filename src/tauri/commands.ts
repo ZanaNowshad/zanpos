@@ -697,14 +697,24 @@ export interface AdminProductPage {
   limit: number;
 }
 
+/**
+ * A catalogue saved view. Filtered server-side, next to the LIMIT, so the
+ * counts are the whole catalogue rather than the page currently loaded.
+ */
+export type ProductView =
+  | "all" | "active" | "inactive"
+  | "out_of_stock" | "low_stock"
+  | "no_barcode" | "no_image";
+
 export const adminListProducts = (
   actor_user_id: string,
-  opts?: { search?: string; categoryId?: string; offset?: number; limit?: number }
+  opts?: { search?: string; categoryId?: string; view?: ProductView; offset?: number; limit?: number }
 ): Promise<AdminProductPage> =>
   invoke("admin_list_products", {
     actorUserId: actor_user_id,
     search: opts?.search ?? null,
     categoryId: opts?.categoryId ?? null,
+    view: opts?.view ?? null,
     offset: opts?.offset ?? 0,
     limit: opts?.limit ?? 100,
   });
@@ -1595,3 +1605,26 @@ export const riderUpdate = (input: {
 
 export const riderDelete = (riderId: string, actorUserId: string): Promise<void> =>
   invoke("rider_delete", { riderId, actorUserId });
+
+// ── Quick POS slots ───────────────────────────────────────────────────────────
+
+/** One position in the till's quick-add row. Empty slots come back too, so the
+ *  caller renders the gaps rather than inferring them from the index. */
+export interface QuickPosSlot {
+  slot: number;
+  product_id: string | null;
+  name: string | null;
+  price_minor: number | null;
+  image_path: string | null;
+}
+
+/** Ten slots, always. Name and price are resolved live, so a repricing reaches
+ *  the till without anyone re-picking the item. */
+export const quickPosLoad = (actorUserId: string): Promise<QuickPosSlot[]> =>
+  invoke("quick_pos_load", { actorUserId });
+
+export const quickPosSave = (
+  actorUserId: string,
+  productIds: (string | null)[],
+): Promise<QuickPosSlot[]> =>
+  invoke("quick_pos_save", { input: { actor_user_id: actorUserId, product_ids: productIds } });

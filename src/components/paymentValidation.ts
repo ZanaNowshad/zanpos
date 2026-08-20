@@ -51,6 +51,66 @@ export function canConfirmPayment(input: PaymentValidationInput): boolean {
   return true;
 }
 
+/** One thing standing between the cashier and a completed sale. */
+export interface PaymentBlocker {
+  message: string;
+  /** CSS selector for the field to focus so the fix is one tap away. */
+  focus?: string;
+}
+
+/**
+ * Every reason this sale cannot complete, not just the first.
+ *
+ * The button used to be disabled with a single hint beside it, which is the
+ * worst of both: nothing happens when you press it, and fixing the reason shown
+ * reveals another. Listing them all, on demand, lets the cashier clear the lot
+ * in one pass with a queue waiting.
+ */
+export function paymentBlockers(
+  input: PaymentValidationInput,
+  dt: (key: DetailStringKey) => string,
+  fmt: (minor: number) => string,
+): PaymentBlocker[] {
+  const { lines, remainingMinor, currencyExponent: EXP,
+          requiresContact, isDelivery, deliveryData } = input;
+  const out: PaymentBlocker[] = [];
+
+  if (!lines.length || lines.some(line => parseMoney(line.amountStr, EXP) <= 0)) {
+    out.push({ message: dt("everyPaymentAmount") });
+  }
+  const shortCash = lines.find(line =>
+    line.method === "cash"
+    && parseMoney(line.tenderedStr || line.amountStr, EXP) < parseMoney(line.amountStr, EXP)
+  );
+  if (shortCash) {
+    const short = parseMoney(shortCash.amountStr, EXP)
+      - parseMoney(shortCash.tenderedStr || shortCash.amountStr, EXP);
+    out.push({
+      message: `${DEVICE.currency} ${fmt(short)} ${dt("moreCashNeeded")}`,
+      focus: ".pm-tendered-box",
+    });
+  }
+  if (remainingMinor > 1) {
+    out.push({ message: `${DEVICE.currency} ${fmt(remainingMinor)} ${dt("stillDue")}` });
+  }
+  if (remainingMinor < -1) {
+    out.push({ message: `${dt("reducePaymentsBy")} ${DEVICE.currency} ${fmt(-remainingMinor)}.` });
+  }
+  if (requiresContact && !deliveryData.contact_number) {
+    out.push({
+      message: "Enter the customer's 8-digit mobile number. Any number works — it does not have to be a saved customer.",
+      focus: ".pm-contact-input",
+    });
+  }
+  if (isDelivery && !deliveryData.house_number?.trim()) {
+    out.push({
+      message: "House or building number is required so the rider can find it.",
+      focus: ".pm-address-form input",
+    });
+  }
+  return out;
+}
+
 export function paymentBlockReason(
   input: PaymentValidationInput,
   dt: (key: DetailStringKey) => string,

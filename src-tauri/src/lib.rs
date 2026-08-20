@@ -997,6 +997,8 @@ pub fn run() {
             commands::osk_commands::system_keyboard_open,
             commands::device_commands::device_delete,
             // Delivery riders
+            commands::quick_pos_commands::quick_pos_load,
+            commands::quick_pos_commands::quick_pos_save,
             commands::rider_commands::rider_list,
             commands::rider_commands::rider_create,
             commands::rider_commands::rider_update,

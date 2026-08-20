@@ -69,6 +69,7 @@ pub const ALLOWED_CONFIG_KEYS: &[&str] = &[
     "loyalty_points_per_bhd",
     "openai_base_url",
     "openai_model",
+    "quick_pos_products",
     "reports_device_scope",
     "retention_days_logs",
     "retention_days_sales",

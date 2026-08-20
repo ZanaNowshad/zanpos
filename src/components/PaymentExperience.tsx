@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Banknote, CreditCard, Keyboard, Smartphone } from "lucide-react";
+import { Banknote, CreditCard, Keyboard, MessageCircle, Printer, Smartphone } from "lucide-react";
 import type { PaymentInput } from "../types";
 import Dialpad from "./Dialpad";
 import TouchKeyboard from "./TouchKeyboard";
@@ -250,5 +250,47 @@ export function PaymentCommandPanel(props: CommandPanelProps) {
         </button>
       </div>
     </div>
+  );
+}
+
+/* ── Small pieces of the modal's middle panel ────────────────────────────
+   Extracted from PaymentModal to keep it under the 500-line limit the ship
+   gate enforces. Each is a fixed block of presentation with no state of its
+   own, which is what makes them the right things to move out first. */
+
+/** Offers a second tender. Receipt sales only — a delivery is collected once. */
+export function SplitToggle({ label, onSplit }: { label: string; onSplit: () => void }) {
+  return (
+    <button className="pm-split-toggle" onClick={onSplit}>
+      {label}
+    </button>
+  );
+}
+
+/** Says plainly that a digital sale records money that already arrived. */
+export function DigitalReceiptGuide() {
+  return (
+    <div className="pm-digital-guide">
+      <MessageCircle size={20} />
+      <div>
+        <strong>Confirming money already received</strong>
+        <span>
+          The card terminal or wallet app takes the payment; this records that it
+          arrived and sends the receipt to WhatsApp.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+export function PrintReceiptOption({
+  checked, onChange,
+}: { checked: boolean; onChange: (next: boolean) => void }) {
+  return (
+    <label className="pm-print-option">
+      <input type="checkbox" checked={checked} onChange={event => onChange(event.target.checked)} />
+      <Printer size={17} />
+      <span><strong>Print receipt now</strong><small>Print immediately after payment</small></span>
+    </label>
   );
 }

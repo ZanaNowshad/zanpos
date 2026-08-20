@@ -15,16 +15,14 @@ import OfficeAICommandPalette from "./OfficeAICommandPalette";
 import type { OfficePulseItem } from "./officeAiTypes";
 // Canonical navigation — the single source of truth (src/navigation/config).
 import {
-  ALIAS_TABS,
-  domainForTab,
   domainsForRole,
   entryTabForDomain,
   paletteEntriesForRole,
-  sectionsForDomain,
   visibleTabsForRole,
 } from "../navigation/config";
 import SectionNav from "../navigation/SectionNav";
 import { PageHeadingProvider } from "../navigation/PageHeadingContext";
+import { useActiveNavigation } from "./useActiveNavigation";
 import CommandShell from "../command/CommandShell";
 import type { CommandDomain } from "../command/CommandSidebar";
 import type { HeaderStatusPill } from "../command/CommandHeader";
@@ -255,27 +253,8 @@ export default function OfficeAIPage({
     onApplied: () => { setTabEpoch(e => e + 1); void refreshOverview(); },
   });
 
-  const activeDomainId = useMemo(() => domainForTab(tab), [tab]);
-  const activeSections = useMemo(
-    () => sectionsForDomain(activeDomainId, sessionUser.role_name),
-    [activeDomainId, sessionUser.role_name],
-  );
-  const activeDomain = useMemo(
-    () => navDomains.find(d => d.id === activeDomainId),
-    [navDomains, activeDomainId],
-  );
-  /** The section highlighted in L2 — resolves aliases so "operations" lights up "products". */
-  const activeSectionTab = useMemo<OfficeTab>(() => {
-    const aliased = (ALIAS_TABS[tab] ?? tab) as OfficeTab;
-    return activeSections.some(s => s.id === aliased) ? aliased : (activeDomain?.defaultTab ?? aliased);
-  }, [tab, activeSections, activeDomain]);
-
-  /* The label the active tab is showing. A page whose own heading says the same
-     word suppresses it rather than stating the location a third time. */
-  const activeSectionLabel = useMemo(() => {
-    const section = activeSections.find(s => s.id === activeSectionTab);
-    return section ? t(section.labelKey) : null;
-  }, [activeSections, activeSectionTab, t]);
+  const { activeDomainId, activeSections, activeDomain, activeSectionTab, activeSectionLabel } =
+    useActiveNavigation(tab, sessionUser.role_name, navDomains, t);
 
   const commandDomains = useMemo<CommandDomain[]>(
     () => navDomains.map(d => ({

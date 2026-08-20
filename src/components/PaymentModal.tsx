@@ -1,23 +1,22 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { Check, MessageCircle, Printer, ReceiptText, Truck, X } from "lucide-react";
+import { MessageCircle, ReceiptText, Truck, X } from "lucide-react";
 import type { CustomerRow, DeliveryInput, PaymentInput, RiderRow } from "../types";
 import { formatMoney, parseMoney } from "../money";
 import { DEVICE } from "../types";
 import DeliveryForm from "./DeliveryForm";
-import { normalizePhone } from "./DeliveryForm";
-import { applyDialpadKey } from "./Dialpad";
-import { typeIntoFocusedField } from "./paymentFieldTyping";
 import { buildPaymentInputs, canConfirmPayment, paymentBlockReason, paymentBlockers } from "./paymentValidation";
 import { mkLine, type ActiveField, type PaymentLine } from "./paymentLines";
-import { PaymentCommandPanel, PaymentMethodPicker } from "./PaymentExperience";
+import { DigitalReceiptGuide, PaymentCommandPanel, PaymentMethodPicker, PrintReceiptOption, SplitToggle } from "./PaymentExperience";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { usePaymentCustomer } from "../hooks/usePaymentCustomer";
-import PaymentContactField from "./PaymentContactField";
+import { PaymentContactBlock } from "./PaymentContactField";
 import RiderPicker from "./RiderPicker";
 import { useLanguage } from "../hooks/useLanguage";
 import { detailTranslator } from "../i18n/detailStrings";
 import { systemKeyboardOpen } from "../tauri/commands";
 import { useFocusedField } from "./PaymentInputSurface";
+import { PaymentCashTender, PaymentSplitLines } from "./PaymentCashFields";
+import { usePaymentKeyboard } from "./usePaymentKeyboard";
 export type PaymentJourney = "receipt" | "delivery" | "digital";
 
 export interface PaymentCompletionOptions {
@@ -151,55 +150,6 @@ export default function PaymentModal({
   );
   const remainingMinor = netTotal - allocatedMinor;
 
-  const handleDialpadKey = useCallback((key: string) => {
-    // A focused text field wins over the virtual display fields below.
-    if (typeIntoFocusedField(key)) return;
-    // Fall through to virtual-display-field logic
-    if (!activeField) return;
-    if (activeField.kind === "amount" || activeField.kind === "tendered") {
-      const line = lines.find(l => l.id === activeField.lineId);
-      if (!line) return;
-      const cur = activeField.kind === "amount" ? line.amountStr : line.tenderedStr;
-      const startsFreshTendered = activeField.kind === "tendered" && freshTenderedEntryRef.current;
-      const next = applyDialpadKey(startsFreshTendered && key !== "⌫" ? "" : cur, key);
-      if (activeField.kind === "amount") updateLine(activeField.lineId, { amountStr: next });
-      else {
-        freshTenderedEntryRef.current = false;
-        updateLine(activeField.lineId, { tenderedStr: next });
-      }
-    } else if (activeField.kind === "phone") {
-      setPhoneRaw(prev => {
-        if (key === "⌫") return prev.slice(0, -1);
-        if (key === "C")  return "";
-        if (key === "." || key === "00") return prev;
-        if (prev.length >= 8) return prev;
-        return prev + key;
-      });
-    }
-  }, [activeField, lines, updateLine]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement).tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
-      const k = e.key.toLowerCase();
-      if (e.key >= "0" && e.key <= "9") { e.preventDefault(); handleDialpadKey(e.key); }
-      else if (e.key === "Backspace")   { e.preventDefault(); handleDialpadKey("⌫"); }
-      else if (e.key === "Delete")      { e.preventDefault(); handleDialpadKey("C"); }
-      else if (e.key === ".")           { e.preventDefault(); handleDialpadKey("."); }
-      else if (k === "c" || e.key === "F1") { e.preventDefault(); selectMethod("cash"); }
-      else if (k === "a" || e.key === "F2") { e.preventDefault(); selectMethod("card"); }
-      else if (k === "w" || e.key === "F3") { e.preventDefault(); selectMethod("wallet"); }
-      else if (k === "e") {
-        e.preventDefault();
-        const due = formatMoney(netTotal, EXP);
-        setLines(p => p.map((l, i) => i === 0 ? { ...l, amountStr: due, tenderedStr: due } : l));
-      }
-      else if (e.key === "Escape")      { e.preventDefault(); onCancel(); }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [handleDialpadKey, onCancel, netTotal, EXP, selectMethod]);
 
   const quickAmts = (() => {
     const unit = Math.pow(10, EXP);
@@ -260,19 +210,14 @@ export default function PaymentModal({
   };
   // Keep ref current so Enter-key handler always calls the latest handleConfirm
   useEffect(() => { handleConfirmRef.current = handleConfirm; });
-  useEffect(() => {
-    const onEnterKey = (e: KeyboardEvent) => {
-      // Only skip if a dropdown/autocomplete is visible (avoid accidental confirm)
-      const active = document.activeElement as HTMLElement | null;
-      if (active && active.closest(".bo-select-dropdown, [role='listbox'], .customer-drop")) return;
-      if (e.key === "Enter" || e.key === "NumpadEnter") {
-        e.preventDefault();
-        if (canConfirm && !loading) handleConfirmRef.current();
-      }
-    };
-    document.addEventListener("keydown", onEnterKey);
-    return () => document.removeEventListener("keydown", onEnterKey);
-  }, [canConfirm, loading]);
+
+  /* Dialpad, keyboard shortcuts and Enter-to-confirm all live together: a
+     keystroke belongs to a focused text field first and only falls through to
+     the virtual display fields when nothing real has the caret. */
+  const handleDialpadKey = usePaymentKeyboard({
+    activeField, lines, updateLine, setLines, setPhoneRaw, freshTenderedEntryRef,
+    selectMethod, onCancel, netTotal, exp: EXP, canConfirm, loading, handleConfirmRef,
+  });
 
   const activeLabel =
     activeField?.kind === "tendered" ? dt("tendered") :
@@ -423,86 +368,30 @@ export default function PaymentModal({
               On a delivery the rider collects later, so showing a tender field
               here invited the cashier to believe the order had been paid. */}
           {mainLine.method === "cash" && takesCashNow && (
-            <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }} 
-              className={`pm-amount-box pm-tendered-box${activeField?.kind === "tendered" ? " pm-field-active" : ""}`}
-              onClick={() => setActiveField({ kind: "tendered", lineId: mainLine.id })}
-            >
-              <span className="pm-amount-label">{dt("cashReceived")}</span>
-              <span className="pm-amount-value">
-                {mainLine.tenderedStr || mainLine.amountStr || "0"}
-                {activeField?.kind === "tendered" && <span className="pm-cursor">|</span>}
-              </span>
-            </div>
-          )}
-
-          {/* Change is the number the cashier reads aloud and counts back, so
-              it carries the same weight as the total rather than sitting in a
-              pill under it. */}
-          {mainLine.method === "cash" && takesCashNow && (
-            <div
-              className={`pm-change${change > 0 ? " pm-change-live" : ""}`}
-              aria-live="polite"
-              aria-atomic="true"
-            >
-              <span className="pm-change-label"><Check size={15} aria-hidden="true" /> {dt("changeDue")}</span>
-              <span className="pm-change-value">
-                <span className="pm-due-cur">{DEVICE.currency}</span>{fmt(change)}
-              </span>
-            </div>
-          )}
-
-          {mainLine.method === "cash" && takesCashNow && (
-            <div className="pm-quick">
-              <button className="pm-quick-btn pm-quick-exact" onClick={() => applyQuick(netTotal)}>
-                {dt("exact")} <kbd>E</kbd>
-              </button>
-              {quickAmts.slice(0, 3).map(a => (
-                <button key={a} className="pm-quick-btn" onClick={() => applyQuick(a)}>
-                  {DEVICE.currency} {fmt(a)}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {showSplit && lines.length > 1 && (
-            <div className="pm-split-section">
-              {lines.slice(1).map(line => (
-                <div key={line.id} className="pm-split-line">
-                  <select
-                    className="pm-split-method"
-                    value={line.method}
-                    onChange={e => updateLine(line.id, { method: e.target.value as PaymentInput["method"] })}
-                  >
-                    <option value="card">{dt("card")}</option>
-                    <option value="cash">{dt("cash")}</option>
-                    <option value="wallet">{dt("wallet")}</option>
-                  </select>
-                  <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }} 
-                    className={`pm-amount-box pm-split-amount${activeField?.kind === "amount" && activeField.lineId === line.id ? " pm-field-active" : ""}`}
-                    onClick={() => setActiveField({ kind: "amount", lineId: line.id })}
-                  >
-                    <span className="pm-amount-value" style={{fontSize: "1rem"}}>
-                      {line.amountStr || "0"}
-                      {activeField?.kind === "amount" && activeField.lineId === line.id && <span className="pm-cursor">|</span>}
-                    </span>
-                  </div>
-                  <button className="pm-split-remove" onClick={() => removeLine(line.id)} aria-label={dt("removeSplitPayment")}>
-                    <X size={15} />
-                  </button>
-                </div>
-              ))}
-              <div className="pm-split-remaining">
-                {dt("remaining")}: {DEVICE.currency} {fmt(remainingMinor)}
-              </div>
-            </div>
+            <PaymentCashTender
+              mainLine={mainLine}
+              activeField={activeField}
+              onFocusTendered={() => setActiveField({ kind: "tendered", lineId: mainLine.id })}
+              change={change}
+              quickAmts={quickAmts}
+              onQuick={applyQuick}
+              netTotal={netTotal}
+              fmt={fmt}
+              dt={dt}
+            />
           )}
 
           {showSplit && (
-            <div className={`pm-remaining${remainingMinor < 0 ? " pm-remaining-change" : remainingMinor === 0 ? " pm-remaining-ok" : ""}`}>
-              {remainingMinor > 0 ? `${dt("due")}: ${DEVICE.currency} ${fmt(remainingMinor)}` :
-               remainingMinor < 0 ? `${dt("changeDue")}: ${DEVICE.currency} ${fmt(-remainingMinor)}` :
-               `✓ ${dt("fullyPaid")}`}
-            </div>
+            <PaymentSplitLines
+              lines={lines}
+              activeField={activeField}
+              remainingMinor={remainingMinor}
+              onChangeMethod={(id, method) => updateLine(id, { method })}
+              onFocusAmount={id => setActiveField({ kind: "amount", lineId: id })}
+              onRemove={removeLine}
+              fmt={fmt}
+              dt={dt}
+            />
           )}
         </div>
 
@@ -515,22 +404,20 @@ export default function PaymentModal({
           </div>
 
           {journey === "receipt" && !showSplit && (
-            <button
-              className="pm-split-toggle"
-              onClick={() => {
+            <SplitToggle
+              label={dt("splitPayment")}
+              onSplit={() => {
                 setShowSplit(true);
                 const rem = formatMoney(remainingMinor, EXP);
                 const newLine = mkLine("card");
                 if (remainingMinor > 0) newLine.amountStr = rem;
                 setLines(previous => [...previous, newLine]);
               }}
-            >
-              {dt("splitPayment")}
-            </button>
+            />
           )}
 
           {requiresContact && (
-            <PaymentContactField
+            <PaymentContactBlock
               phoneRaw={phoneRaw}
               phoneError={phoneError}
               selectedCustomer={selectedCust}
@@ -539,42 +426,16 @@ export default function PaymentModal({
               sessionUserId={sessionUserId}
               onFocus={() => setActiveField({ kind: "phone" })}
               onPhoneBlur={blurCustomerSearch}
-              onPhoneChange={raw => {
-                const normalized = normalizePhone(raw);
-                setPhoneRaw(raw);
-                setPhoneError(raw && !normalized ? "Enter 8 digits" : null);
-                setDeliveryData(previous => ({ ...previous, contact_number: normalized ?? "" }));
-                changeCustomerSearch(raw);
-              }}
-              onSelect={customer => {
-                const raw = (customer.phone ?? "").replace(/\D/g, "").replace(/^(00)?973/, "").slice(-8);
-                const normalized = normalizePhone(raw);
-                selectCustomer(customer);
-                setPhoneRaw(raw);
-                setPhoneError(normalized ? null : "This customer does not have a valid Bahrain mobile number");
-                setDeliveryData(previous => ({ ...previous, contact_number: normalized ?? "" }));
-              }}
-              onClearCustomer={() => {
-                removeCustomer();
-                setPhoneRaw("");
-                setPhoneError(null);
-                setDeliveryData(previous => ({ ...previous, contact_number: "" }));
-              }}
+              changeCustomerSearch={changeCustomerSearch}
+              selectCustomer={selectCustomer}
+              removeCustomer={removeCustomer}
+              setPhoneRaw={setPhoneRaw}
+              setPhoneError={setPhoneError}
+              setContactNumber={n => setDeliveryData(previous => ({ ...previous, contact_number: n }))}
             />
           )}
 
-          {journey === "digital" && (
-            <div className="pm-digital-guide">
-              <MessageCircle size={20} />
-              <div>
-                <strong>Confirming money already received</strong>
-                <span>
-                  The card terminal or wallet app takes the payment; this records that it
-                  arrived and sends the receipt to WhatsApp.
-                </span>
-              </div>
-            </div>
-          )}
+          {journey === "digital" && <DigitalReceiptGuide />}
 
           {isDelivery && (
             <>
@@ -587,11 +448,7 @@ export default function PaymentModal({
             </>
           )}
 
-          <label className="pm-print-option">
-            <input type="checkbox" checked={printReceipt} onChange={event => setPrintReceipt(event.target.checked)} />
-            <Printer size={17} />
-            <span><strong>Print receipt now</strong><small>Print immediately after payment</small></span>
-          </label>
+          <PrintReceiptOption checked={printReceipt} onChange={setPrintReceipt} />
         </div>
 
         {/* ── PANEL 3: Numpad + save ──────────────────────────────────── */}

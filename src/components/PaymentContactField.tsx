@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Search, UserRound, UsersRound, X } from "lucide-react";
 import type { CustomerRow } from "../types";
 import { customerList } from "../tauri/commands";
+import { normalizePhone } from "./DeliveryForm";
 
 interface Props {
   phoneRaw: string;
@@ -133,5 +134,72 @@ export default function PaymentContactField({
         </div>
       )}
     </div>
+  );
+}
+
+interface BlockProps {
+  phoneRaw: string;
+  phoneError: string | null;
+  selectedCustomer: CustomerRow | null;
+  suggestions: CustomerRow[];
+  showSuggestions: boolean;
+  sessionUserId?: string;
+  onFocus: () => void;
+  onPhoneBlur: () => void;
+  changeCustomerSearch: (raw: string) => void;
+  selectCustomer: (customer: CustomerRow) => void;
+  removeCustomer: () => void;
+  setPhoneRaw: (raw: string) => void;
+  setPhoneError: (message: string | null) => void;
+  setContactNumber: (normalized: string) => void;
+}
+
+/**
+ * The contact field plus the three ways its value changes: typing, picking a
+ * saved customer, and clearing one.
+ *
+ * Those handlers were thirty lines of inline arrow functions in PaymentModal,
+ * which is where the 500-line limit first bit. They belong next to the field
+ * they drive anyway — each one has to keep `phoneRaw`, the error and the
+ * normalised `contact_number` in step, and doing that in three places written
+ * far apart is how they drift.
+ */
+export function PaymentContactBlock({
+  phoneRaw, phoneError, selectedCustomer, suggestions, showSuggestions, sessionUserId,
+  onFocus, onPhoneBlur, changeCustomerSearch, selectCustomer, removeCustomer,
+  setPhoneRaw, setPhoneError, setContactNumber,
+}: BlockProps) {
+  return (
+    <PaymentContactField
+      phoneRaw={phoneRaw}
+      phoneError={phoneError}
+      selectedCustomer={selectedCustomer}
+      suggestions={suggestions}
+      showSuggestions={showSuggestions}
+      sessionUserId={sessionUserId}
+      onFocus={onFocus}
+      onPhoneBlur={onPhoneBlur}
+      onPhoneChange={raw => {
+        const normalized = normalizePhone(raw);
+        setPhoneRaw(raw);
+        setPhoneError(raw && !normalized ? "Enter 8 digits" : null);
+        setContactNumber(normalized ?? "");
+        changeCustomerSearch(raw);
+      }}
+      onSelect={customer => {
+        const raw = (customer.phone ?? "").replace(/\D/g, "").replace(/^(00)?973/, "").slice(-8);
+        const normalized = normalizePhone(raw);
+        selectCustomer(customer);
+        setPhoneRaw(raw);
+        setPhoneError(normalized ? null : "This customer does not have a valid Bahrain mobile number");
+        setContactNumber(normalized ?? "");
+      }}
+      onClearCustomer={() => {
+        removeCustomer();
+        setPhoneRaw("");
+        setPhoneError(null);
+        setContactNumber("");
+      }}
+    />
   );
 }

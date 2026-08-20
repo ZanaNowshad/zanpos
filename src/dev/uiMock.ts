@@ -19,11 +19,11 @@ import {
   BRANCH_ID,
   CUSTOMERS,
   DEVICE_ID,
-  HANDLERS,
   MOCK_SESSION,
   PRODUCTS,
   cartLine,
 } from "./uiMockData";
+import { HANDLERS } from "./uiMockHandlers";
 import type { MockCart } from "./uiMockData";
 
 /** Commands whose names imply a list, so an unknown one should yield []. */

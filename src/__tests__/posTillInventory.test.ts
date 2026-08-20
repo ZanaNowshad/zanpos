@@ -18,7 +18,15 @@ import path from "node:path";
 
 const POS_DIR = path.resolve(__dirname, "../components/pos");
 const SOURCES = [
-  path.resolve(__dirname, "../pages/PosPage.tsx"),
+  /* Every file the till page is made of, not just PosPage.tsx.
+     PosPage was split into a state hook and a view, and this test immediately
+     reported removeLine, bumpLine and openPaymentJourney as "dropped from the
+     till" when they had only moved one file across. A capability that is gone
+     is a real defect; a capability that relocated is not, and reading the
+     directory keeps the two from looking alike. */
+  ...readdirSync(path.resolve(__dirname, "../pages"))
+    .filter(f => /^(PosPage|usePosPage|usePos|usePractice)/.test(f) && /\.tsx?$/.test(f))
+    .map(f => path.resolve(__dirname, "../pages", f)),
   path.resolve(__dirname, "../hooks/usePosShortcuts.ts"),
   path.resolve(__dirname, "../hooks/usePosShortcutBindings.ts"),
   path.resolve(__dirname, "../hooks/usePosOverlays.ts"),

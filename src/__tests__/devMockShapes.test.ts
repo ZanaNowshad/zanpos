@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 /**
@@ -17,14 +17,20 @@ import path from "node:path";
  * sprinkling `?.` through components would have hidden a fixture that lies
  * about the backend contract.
  */
-/* The mock is two files: uiMock.ts holds the dispatcher, uiMockData.ts the
-   fixtures it serves. Both are read because a stub can legitimately live in
-   either — a canned response in the data table, or an argument-honouring
-   branch in the dispatcher. */
-const MOCK = [
-  readFileSync(path.resolve(__dirname, "../dev/uiMock.ts"), "utf8"),
-  readFileSync(path.resolve(__dirname, "../dev/uiMockData.ts"), "utf8"),
-].join("\n");
+/* The mock is three files: uiMock.ts holds the dispatcher, uiMockHandlers.ts
+   the command→response table, and uiMockData.ts the fixtures that table serves.
+   All three are read because a stub can legitimately live in any of them — a
+   canned response in the handler map, or an argument-honouring branch in the
+   dispatcher.
+
+   Read as a directory rather than a hand-listed set: this test failed the
+   moment the handler map was split out of uiMock.ts, reporting a missing stub
+   that had simply moved. A missing stub is a real defect; a moved one is not,
+   and the test should not confuse them. */
+const MOCK = readdirSync(path.resolve(__dirname, "../dev"))
+  .filter(f => f.startsWith("uiMock") && f.endsWith(".ts"))
+  .map(f => readFileSync(path.resolve(__dirname, "../dev", f), "utf8"))
+  .join("\n");
 
 /** Commands whose frontend signature is `Promise<T[]>` and are used by Review. */
 const ARRAY_COMMANDS = [

@@ -1,205 +1,185 @@
-import { useEffect, useState } from "react";
-import { Search, UserRound, UsersRound, X } from "lucide-react";
-import type { CustomerRow } from "../types";
-import { customerList } from "../tauri/commands";
-import { normalizePhone } from "./DeliveryForm";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { Check, MessageCircle, UserRound, UsersRound, X } from "lucide-react";
+import type { PaymentContactState } from "../hooks/usePaymentContact";
+import type { ContactSuggestion } from "./paymentContacts";
+import ContactSuggestions, { type SuggestionListHandle } from "./ContactSuggestions";
+import CustomerDirectoryDialog from "./CustomerDirectoryDialog";
 
 interface Props {
-  phoneRaw: string;
-  phoneError: string | null;
-  selectedCustomer: CustomerRow | null;
-  suggestions: CustomerRow[];
-  showSuggestions: boolean;
+  contact: PaymentContactState;
   sessionUserId?: string;
-  onPhoneChange: (raw: string) => void;
-  onPhoneBlur: () => void;
-  onSelect: (customer: CustomerRow) => void;
-  onClearCustomer: () => void;
   onFocus: () => void;
+  /** True when this journey sends the receipt over WhatsApp rather than paper. */
+  isDelivery: boolean;
 }
 
-function phoneDigits(phone: string | null | undefined): string {
-  return (phone ?? "").replace(/\D/g, "").replace(/^(00)?973/, "").slice(-8);
-}
-
-export default function PaymentContactField({
-  phoneRaw,
-  phoneError,
-  selectedCustomer,
-  suggestions,
-  showSuggestions,
-  sessionUserId,
-  onPhoneChange,
-  onPhoneBlur,
-  onSelect,
-  onClearCustomer,
-  onFocus,
-}: Props) {
+/**
+ * Who the sale is for — one box that takes a name or a number.
+ *
+ * It used to strip every non-digit as it was typed, so a cashier told "it's for
+ * Fatima" had to leave the field, open a separate directory, and come back. The
+ * customer standing at the counter says whichever of the two they think of
+ * first, and the till should take either.
+ *
+ * The list underneath merges the customer table with the WhatsApp address book
+ * and recent chats, so someone the shop has messaged but never saved is as
+ * findable as one who is on file. It is a separate component for a reason worth
+ * knowing before merging it back: see ContactSuggestions.
+ */
+export default function PaymentContactField({ contact, sessionUserId, onFocus, isDelivery }: Props) {
   const [directoryOpen, setDirectoryOpen] = useState(false);
-  const [directoryQuery, setDirectoryQuery] = useState("");
-  const [directoryResults, setDirectoryResults] = useState<CustomerRow[]>([]);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<SuggestionListHandle>(null);
+  /* Closing on blur has to be deferred, or the list is gone before the tap that
+     chose a row lands on it. The timer then has to be cancelled when focus
+     comes back: without that, tapping away and returning within the delay let a
+     stale timer close the list a moment after the cashier had reopened it, and
+     no amount of typing brought it back. */
+  const blurTimer = useRef<number | null>(null);
+  const cancelClose = () => {
+    if (blurTimer.current !== null) window.clearTimeout(blurTimer.current);
+    blurTimer.current = null;
+  };
+  useEffect(() => cancelClose, []);
 
-  useEffect(() => {
-    if (!directoryOpen) return;
-    let cancelled = false;
-    const timer = window.setTimeout(() => {
-      customerList(sessionUserId ?? "", directoryQuery.trim(), 0, 20)
-        .then(page => { if (!cancelled) setDirectoryResults(page.items); })
-        .catch(() => { if (!cancelled) setDirectoryResults([]); });
-    }, 180);
-    return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [directoryOpen, directoryQuery, sessionUserId]);
-
-  const choose = (customer: CustomerRow) => {
-    onSelect(customer);
+  const choose = (row: ContactSuggestion) => {
+    contact.select(row);
+    setDropdownOpen(false);
     setDirectoryOpen(false);
-    setDirectoryQuery("");
+    inputRef.current?.focus();
+  };
+
+  /* Arrow keys walk the list and Enter takes the highlighted row. Enter with
+     nothing highlighted is left alone so it can reach the modal's own
+     field-advance handler. */
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      setDropdownOpen(true);
+      listRef.current?.move(event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+    if (event.key === "Enter") {
+      const pick = listRef.current?.take();
+      if (!pick) return;
+      event.preventDefault();
+      event.stopPropagation();
+      choose(pick);
+    }
   };
 
   return (
     <div className="pm-contact-block">
       <div className="pm-contact-heading">
         <div>
-          <span className="pm-contact-kicker">Send receipt by WhatsApp</span>
-          <label htmlFor="payment-customer-phone">Customer phone <span aria-hidden="true">*</span></label>
+          <span className="pm-contact-kicker">
+            {isDelivery ? "Order contact" : "Send receipt by WhatsApp"}
+          </span>
+          <label htmlFor="payment-customer-phone">Customer name or number <span aria-hidden="true">*</span></label>
         </div>
-        {selectedCustomer && (
-          <button className="pm-contact-clear" onClick={onClearCustomer} aria-label="Clear selected customer">
-            <X size={14} />
+        <button
+          type="button"
+          className="pm-directory-btn"
+          aria-label="Browse the customer directory"
+          title="Browse the customer directory"
+          onClick={() => setDirectoryOpen(true)}
+        >
+          <UsersRound size={17} aria-hidden="true" />
+          <span>Browse</span>
+        </button>
+      </div>
+
+      <div className={`pm-contact-input-row${contact.error ? " is-error" : ""}${contact.e164 ? " is-ready" : ""}`}>
+        <input
+          ref={inputRef}
+          id="payment-customer-phone"
+          className="pm-contact-input"
+          /* Not `numeric`: the field takes a name too, and an inputmode of
+             numeric tells a touch keyboard to offer digits only. The keypad is
+             still what opens for it — see data-keyboard. */
+          inputMode="text"
+          data-keyboard="pad"
+          autoComplete="off"
+          enterKeyHint="next"
+          aria-autocomplete="list"
+          aria-expanded={dropdownOpen}
+          aria-controls="payment-contact-suggestions"
+          role="combobox"
+          placeholder="Fatima, or 33050666"
+          value={contact.query}
+          onFocus={() => { cancelClose(); onFocus(); setDropdownOpen(true); }}
+          onBlur={() => {
+            cancelClose();
+            blurTimer.current = window.setTimeout(() => setDropdownOpen(false), 160);
+          }}
+          onKeyDown={onKeyDown}
+          onChange={event => { cancelClose(); contact.setQuery(event.target.value); setDropdownOpen(true); }}
+        />
+        {contact.query && (
+          <button
+            type="button"
+            className="pm-contact-clear"
+            aria-label="Clear customer"
+            onMouseDown={event => event.preventDefault()}
+            onClick={() => { contact.clear(); inputRef.current?.focus(); }}
+          >
+            <X size={15} />
           </button>
         )}
       </div>
 
-      <div className="pm-contact-input-row">
-        <span className="pm-contact-prefix">+973</span>
-        <input
-          id="payment-customer-phone"
-          className={phoneError ? "pm-contact-input pm-contact-input-error" : "pm-contact-input"}
-          inputMode="numeric"
-          autoComplete="tel"
-          enterKeyHint="next"
-          aria-describedby="payment-phone-help"
-          placeholder="33050666"
-          value={phoneRaw}
-          onFocus={onFocus}
-          onBlur={onPhoneBlur}
-          onChange={event => onPhoneChange(event.target.value.replace(/\D/g, "").slice(0, 8))}
-        />
-        <button
-          className="pm-directory-btn"
-          aria-label="Open customer directory"
-          title="Open customer directory"
-          onClick={() => setDirectoryOpen(true)}
-        >
-          <UsersRound size={18} />
-        </button>
-      </div>
+      <ContactStatus contact={contact} />
 
-      <div id="payment-phone-help" className="pm-contact-help">Tap the phone field, then use the dialpad</div>
-
-      {selectedCustomer ? (
-        <div className="pm-contact-match"><UserRound size={14} /> {selectedCustomer.name}</div>
-      ) : phoneRaw.length === 8 && !phoneError ? (
-        <div className="pm-contact-new">No saved match is required — this number will receive the WhatsApp receipt.</div>
-      ) : null}
-      {phoneError && <div className="pm-contact-error">{phoneError}</div>}
-
-      {showSuggestions && suggestions.length > 0 && !selectedCustomer && (
-        <div className="pm-contact-suggestions" role="listbox" aria-label="Matching customers">
-          {suggestions.map(customer => (
-            <button key={customer.customer_id} role="option" onMouseDown={() => choose(customer)}>
-              <span>{customer.name}</span><small>{customer.phone}</small>
-            </button>
-          ))}
-        </div>
-      )}
+      <ContactSuggestions
+        ref={listRef}
+        query={contact.query}
+        sessionUserId={sessionUserId}
+        open={dropdownOpen && !contact.selected}
+        onPick={choose}
+      />
 
       {directoryOpen && (
-        <div className="pm-directory-backdrop" role="presentation" onMouseDown={() => setDirectoryOpen(false)}>
-          <div className="pm-directory-dialog" role="dialog" aria-modal="true" aria-labelledby="customer-directory-title" onMouseDown={event => event.stopPropagation()}>
-            <div className="pm-directory-header">
-              <div><span>Customers</span><h3 id="customer-directory-title">Customer directory</h3></div>
-              <button aria-label="Close customer directory" onClick={() => setDirectoryOpen(false)}><X size={18} /></button>
-            </div>
-            <div className="pm-directory-search"><Search size={17} /><input autoFocus placeholder="Search name or phone" value={directoryQuery} onChange={event => setDirectoryQuery(event.target.value)} /></div>
-            <div className="pm-directory-results">
-              {directoryResults.map(customer => (
-                <button key={customer.customer_id} onClick={() => choose(customer)}>
-                  <span>{customer.name}</span><small>{phoneDigits(customer.phone) || "No phone"}</small>
-                </button>
-              ))}
-              {directoryResults.length === 0 && <div className="pm-directory-empty">No matching customers</div>}
-            </div>
-          </div>
-        </div>
+        <CustomerDirectoryDialog
+          sessionUserId={sessionUserId}
+          onPick={choose}
+          onClose={() => setDirectoryOpen(false)}
+        />
       )}
     </div>
   );
 }
 
-interface BlockProps {
-  phoneRaw: string;
-  phoneError: string | null;
-  selectedCustomer: CustomerRow | null;
-  suggestions: CustomerRow[];
-  showSuggestions: boolean;
-  sessionUserId?: string;
-  onFocus: () => void;
-  onPhoneBlur: () => void;
-  changeCustomerSearch: (raw: string) => void;
-  selectCustomer: (customer: CustomerRow) => void;
-  removeCustomer: () => void;
-  setPhoneRaw: (raw: string) => void;
-  setPhoneError: (message: string | null) => void;
-  setContactNumber: (normalized: string) => void;
-}
-
 /**
- * The contact field plus the three ways its value changes: typing, picking a
- * saved customer, and clearing one.
- *
- * Those handlers were thirty lines of inline arrow functions in PaymentModal,
- * which is where the 500-line limit first bit. They belong next to the field
- * they drive anyway — each one has to keep `phoneRaw`, the error and the
- * normalised `contact_number` in step, and doing that in three places written
- * far apart is how they drift.
+ * One line under the field saying where the receipt is going, or what is
+ * stopping it. Never both, and never blank once anything has been typed —
+ * silence after typing reads as "still thinking" and the cashier waits.
  */
-export function PaymentContactBlock({
-  phoneRaw, phoneError, selectedCustomer, suggestions, showSuggestions, sessionUserId,
-  onFocus, onPhoneBlur, changeCustomerSearch, selectCustomer, removeCustomer,
-  setPhoneRaw, setPhoneError, setContactNumber,
-}: BlockProps) {
+function ContactStatus({ contact }: { contact: PaymentContactState }) {
+  if (contact.error) {
+    return <div className="pm-contact-error" role="status">{contact.error}</div>;
+  }
+  if (contact.selected) {
+    return (
+      <div className="pm-contact-match" role="status">
+        <UserRound size={14} aria-hidden="true" />
+        <strong>{contact.selected.name}</strong>
+        <span>{contact.selected.e164 ?? "no WhatsApp number on file"}</span>
+        {contact.selected.sources.includes("chat") && <MessageCircle size={13} aria-hidden="true" />}
+      </div>
+    );
+  }
+  if (contact.e164) {
+    return (
+      <div className="pm-contact-match" role="status">
+        <Check size={14} aria-hidden="true" />
+        <span>Receipt goes to {contact.e164}</span>
+      </div>
+    );
+  }
   return (
-    <PaymentContactField
-      phoneRaw={phoneRaw}
-      phoneError={phoneError}
-      selectedCustomer={selectedCustomer}
-      suggestions={suggestions}
-      showSuggestions={showSuggestions}
-      sessionUserId={sessionUserId}
-      onFocus={onFocus}
-      onPhoneBlur={onPhoneBlur}
-      onPhoneChange={raw => {
-        const normalized = normalizePhone(raw);
-        setPhoneRaw(raw);
-        setPhoneError(raw && !normalized ? "Enter 8 digits" : null);
-        setContactNumber(normalized ?? "");
-        changeCustomerSearch(raw);
-      }}
-      onSelect={customer => {
-        const raw = (customer.phone ?? "").replace(/\D/g, "").replace(/^(00)?973/, "").slice(-8);
-        const normalized = normalizePhone(raw);
-        selectCustomer(customer);
-        setPhoneRaw(raw);
-        setPhoneError(normalized ? null : "This customer does not have a valid Bahrain mobile number");
-        setContactNumber(normalized ?? "");
-      }}
-      onClearCustomer={() => {
-        removeCustomer();
-        setPhoneRaw("");
-        setPhoneError(null);
-        setContactNumber("");
-      }}
-    />
+    <div className="pm-contact-help">
+      Type a name to search, or 8 digits to send to a number that is not saved.
+    </div>
   );
 }

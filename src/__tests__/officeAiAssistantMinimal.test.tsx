@@ -19,6 +19,14 @@ const user: SessionUser = {
 
 const ctrl = {
   input: "",
+  conversationId: null,
+  conversations: [],
+  conversationsLoading: false,
+  refreshConversations: async () => {},
+  startNewConversation: () => {},
+  openConversation: async () => {},
+  deleteConversation: async () => {},
+  renameConversation: async () => {},
   setInput: () => {},
   messages: [],
   chatState: "idle",

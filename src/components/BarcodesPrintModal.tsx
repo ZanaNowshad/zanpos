@@ -4,6 +4,8 @@ import { DEVICE } from "../types";
 import { formatMoney } from "../money";
 import JsBarcode from "jsbarcode";
 import { useTranslation } from "react-i18next";
+import ModalShell from "./modal/ModalShell";
+import { ModalActions } from "./modal/ModalParts";
 
 interface Props {
   products: AdminProduct[];
@@ -67,24 +69,29 @@ export default function BarcodesPrintModal({ products, onClose }: Props) {
   const currency = DEVICE.currency;
 
   return (
-    <button className="modal-overlay" type="button" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal barcodes-modal">
-        <div className="barcodes-modal-header">
-          <h2>{t("printLabels")}</h2>
-          <div className="barcodes-modal-actions">
-            <button className="btn-secondary" onClick={onClose}>{t("cancel")}</button>
-            <button className="btn-primary" onClick={() => window.print()}>{t("printLabels")}</button>
-          </div>
-        </div>
-        <p className="barcodes-hint">
-          {products.length} {t("labelsReadyToPrint")}
-        </p>
-        <div className="barcode-labels-grid" id="barcode-print-area">
-          {products.map(p => (
-            <BarcodeLabel key={p.product_id} product={p} exp={exp} currency={currency} />
-          ))}
-        </div>
+    /* `barcodes-modal` is kept purely so the print stylesheet can still name
+       this dialog and hide everything that is not the label sheet. */
+    <ModalShell
+      kicker="Catalogue"
+      title={t("printLabels")}
+      subtitle={`${products.length} ${t("labelsReadyToPrint")}`}
+      size="xl"
+      className="barcodes-modal"
+      onClose={onClose}
+      footer={
+        <ModalActions note="Labels print three across at 50 x 30mm.">
+          <button type="button" className="btn-secondary" onClick={onClose}>{t("cancel")}</button>
+          <button type="button" className="btn-primary" onClick={() => window.print()}>
+            {t("printLabels")}
+          </button>
+        </ModalActions>
+      }
+    >
+      <div className="barcode-labels-grid" id="barcode-print-area">
+        {products.map(p => (
+          <BarcodeLabel key={p.product_id} product={p} exp={exp} currency={currency} />
+        ))}
       </div>
-    </button>
+    </ModalShell>
   );
 }

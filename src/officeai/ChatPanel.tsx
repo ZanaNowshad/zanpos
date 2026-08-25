@@ -1,7 +1,9 @@
 import { useEffect, useRef, type ChangeEvent, type RefObject, type KeyboardEvent } from "react";
 import { Camera, ImagePlus, ReceiptText, Search, SendHorizontal, Square, X } from "lucide-react";
 import type { ChatController } from "./useChatController";
-import { ChatMessageList, QuickChipsBar } from "./ChatMessages";
+import { ChatMessageList, QuickActionBar, QuickChipsBar } from "./ChatMessages";
+import WorkflowLauncher from "./WorkflowLauncher";
+import ConversationBar from "./ConversationBar";
 import { LiveActivityBar } from "./toolCards";
 import RunPanel from "./RunPanel";
 import { useLanguage } from "../hooks/useLanguage";
@@ -56,6 +58,26 @@ export default function ChatPanel({
 
   const send = (overrideText?: string) => ctrl.handleSend(overrideText, getSendContext?.());
 
+  /* The 21 written procedures used to render only on the fullscreen Assistant,
+     and only before the first message — so the till and the docked copilot,
+     which are where somebody actually stands when they need "end-of-day
+     reconciliation", never showed them at all. They live here now, which puts
+     them on every surface, and a chip in the quick bar brings them back once a
+     conversation has started. */
+  const hasAsked = ctrl.messages.some(m => m.role === "user");
+  // Keyed on whether the operator has asked anything, not on an empty
+  // transcript: the controller seeds a stock-alert message on open, so
+  // `messages.length === 0` is never true and the launcher would never show.
+  const showLauncher = ctrl.launcherOpen || !hasAsked;
+
+  /* Answers leave as an ordinary message on the ordinary path — the form is
+     taken off the bubble first so a scrolled-back conversation cannot answer
+     the same question a second time. */
+  const submitForm = (msgId: string, text: string) => {
+    ctrl.dismissForm(msgId);
+    void send(text);
+  };
+
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (onComposerKeyDown?.(e)) return;
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); }
@@ -100,6 +122,15 @@ export default function ChatPanel({
 
   return (
     <div className={`chat-panel chat-panel-${variant}`}>
+      <ConversationBar
+        conversations={ctrl.conversations}
+        activeId={ctrl.conversationId}
+        loading={ctrl.conversationsLoading}
+        onNew={ctrl.startNewConversation}
+        onOpen={id => void ctrl.openConversation(id)}
+        onDelete={id => void ctrl.deleteConversation(id)}
+        onRename={(id, title) => void ctrl.renameConversation(id, title)}
+      />
       <ChatMessageList
         messages={ctrl.messages}
         chatState={ctrl.chatState}
@@ -108,6 +139,15 @@ export default function ChatPanel({
         onUndo={canMutate ? ctrl.handleUndo : undefined}
         onFeedback={ctrl.handleFeedback}
         onChip={send}
+        onFormSubmit={submitForm}
+        onFormDismiss={ctrl.dismissForm}
+        launcher={showLauncher ? (
+          <WorkflowLauncher
+            heading={t("workflowLauncherHeading")}
+            subheading={t("workflowLauncherHint")}
+            onRun={prompt => { ctrl.setLauncherOpen(false); void send(prompt); }}
+          />
+        ) : undefined}
         userName={userName}
         businessName={businessName}
       />
@@ -163,18 +203,22 @@ export default function ChatPanel({
           </>
         )}
 
-        {ctrl.chatState === "idle" &&
-          ctrl.messages.length > 0 &&
-          ctrl.messages[ctrl.messages.length - 1]?.role === "assistant" && (
-          <div className="chat-continue-bar">
-            <button
-              className="chat-continue-chip"
-              onClick={() => void send("Continue — pick up exactly where you left off and finish the remaining work.")}
-              title={t("continueTask")}
-            >
-              {t("continueAction")} <span className="icon-directional" aria-hidden="true">▸</span>
-            </button>
-          </div>
+        {/* Always within reach once a conversation is running, on every
+            surface. Continue rides in the same row rather than claiming one of
+            its own, so a permanent bar costs the till a single line — and it is
+            the wrong offer while a form is waiting, where the next move is to
+            fill the form in. */}
+        {ctrl.chatState === "idle" && hasAsked && (
+          <QuickActionBar
+            onSelect={text => void send(text)}
+            onShowProcedures={showLauncher ? undefined : () => ctrl.setLauncherOpen(true)}
+            onContinue={
+              ctrl.messages[ctrl.messages.length - 1]?.role === "assistant" &&
+              !ctrl.messages[ctrl.messages.length - 1]?.form
+                ? () => void send("Continue — pick up exactly where you left off and finish the remaining work.")
+                : undefined
+            }
+          />
         )}
 
         {ctrl.imageAttachment && (
@@ -237,7 +281,6 @@ export default function ChatPanel({
           {t("sendHint")}
           {ctrl.messages.length > 0 && (
             <>
-              <button className="chat-clear-link" onClick={ctrl.handleClearChat}>· {t("clearChat")}</button>
               <button className="chat-clear-link" onClick={handleExport}>· {t("export")}</button>
             </>
           )}

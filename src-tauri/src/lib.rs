@@ -22,7 +22,9 @@ pub mod hub;
 mod inventory;
 mod license;
 pub mod printing;
+mod price_intelligence;
 mod product_image_search;
+mod product_image_worker;
 mod secure_store;
 mod sidecar_paths;
 pub mod storefront;
@@ -127,68 +129,6 @@ pub struct HubRuntime {
     pub last_error: Option<String>,
 }
 
-/// Bind the sidecar child process to a Windows Job Object with
-/// JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE so that when ZanPOS exits — cleanly or
-/// via crash / Task Manager kill — the OS closes the job handle and immediately
-/// terminates every process in the job, including the sidecar.
-///
-/// Without this, Windows child processes are NOT automatically killed when
-/// the parent exits (unlike Unix where the parent's exit sends SIGHUP to the
-/// process group).  This makes the sidecar a strict subprocess: it cannot
-/// exist outside ZanPOS.
-#[cfg(target_os = "windows")]
-fn bind_to_job_object(pid: u32) {
-    use winapi::um::handleapi::CloseHandle;
-    use winapi::um::jobapi2::{
-        AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
-    };
-    use winapi::um::processthreadsapi::OpenProcess;
-    use winapi::um::winnt::{
-        JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    };
-    unsafe {
-        let job = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
-        if job.is_null() {
-            tracing::warn!("WA sidecar job object: CreateJobObjectW failed");
-            return;
-        }
-        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        if SetInformationJobObject(
-            job,
-            JobObjectExtendedLimitInformation,
-            &mut info as *mut _ as *mut _,
-            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-        ) == 0
-        {
-            tracing::warn!("WA sidecar job object: SetInformationJobObject failed");
-            CloseHandle(job);
-            return;
-        }
-        // PROCESS_SET_QUOTA | PROCESS_TERMINATE — minimum for AssignProcessToJobObject
-        let proc = OpenProcess(0x0001 | 0x0100, 0, pid);
-        if proc.is_null() {
-            tracing::warn!("WA sidecar job object: OpenProcess({}) failed", pid);
-            CloseHandle(job);
-            return;
-        }
-        if AssignProcessToJobObject(job, proc) == 0 {
-            tracing::warn!("WA sidecar job object: AssignProcessToJobObject({}) failed — sidecar will not be auto-killed on exit", pid);
-            CloseHandle(proc);
-            CloseHandle(job);
-            return;
-        }
-        CloseHandle(proc);
-        // Intentionally keep `job` open — Windows HANDLE has no Rust Drop.
-        // The handle stays open until ZanPOS exits, at which point the OS closes
-        // it and kills every process in the job (including the sidecar).
-        tracing::info!(
-            "WA sidecar PID {} bound to job object (strict subprocess)",
-            pid
-        );
-    }
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -323,6 +263,14 @@ pub fn run() {
             let sync_worker = SyncWorker::new(db.clone());
             SyncWorker::spawn(sync_worker.clone());
 
+            /* Fills in product images on its own, one every few seconds. Newest
+               products first, so an item added at the counter gets its picture
+               while the manager is still looking at the page, and the rest of
+               the catalogue fills in behind it over the following days. */
+            crate::product_image_worker::ProductImageWorker::spawn(
+                crate::product_image_worker::ProductImageWorker::new(db.clone()),
+            );
+
             // ── Start LAN hub server when this device is the hub ─────────────────────
             let hub_runtime: Arc<tokio::sync::Mutex<HubRuntime>> = Arc::new(Default::default());
             {
@@ -391,102 +339,6 @@ pub fn run() {
             let sidecar_script = sidecar_paths::script(app.handle())
                 .unwrap_or_else(|| exe_dir.join("sidecar").join("server.mjs"));
             let node_exe = sidecar_paths::node(app.handle());
-
-            /// Spawn the sidecar with up to `max_attempts` retries.
-            /// `log_path` receives the sidecar's stdout + stderr so crashes are
-            /// visible in logs/whatsapp-sidecar.log instead of disappearing silently.
-            async fn spawn_sidecar(
-                node: &std::ffi::OsStr,
-                script: &std::path::Path,
-                session_dir: &std::path::Path,
-                log_path: &std::path::Path,
-                max_attempts: u32,
-            ) -> Option<tokio::process::Child> {
-                // Log rotation: if log > 5 MB, rename to .1 before appending
-                if let Ok(meta) = std::fs::metadata(log_path) {
-                    if meta.len() > 5 * 1024 * 1024 {
-                        let rotated = log_path.with_extension("log.1");
-                        let _ = std::fs::remove_file(&rotated);
-                        let _ = std::fs::rename(log_path, &rotated);
-                    }
-                }
-
-                tracing::info!(
-                    "[wa-sidecar] spawn: node={:?} script={:?} session_dir={:?}",
-                    node, script, session_dir
-                );
-
-                for attempt in 1..=max_attempts {
-                    let mut cmd = tokio::process::Command::new(node);
-
-                    // On Windows, paths under "Program Files" contain spaces.
-                    // Passing a path-with-spaces as a command-line argument is
-                    // prone to Win32 quoting edge cases that cause Node to
-                    // receive a bare drive letter (e.g. "C:") instead of the
-                    // full path, crashing immediately with EISDIR.
-                    //
-                    // Fix: set CWD to the script's parent directory and pass
-                    // only the filename — "server.mjs" has no spaces and
-                    // requires no quoting.  ESM import.meta.url is resolved
-                    // from the file's real location, not from CWD, so all
-                    // relative imports inside the sidecar still work correctly.
-                    if let Some(dir) = script.parent() {
-                        cmd.current_dir(dir);
-                        cmd.arg(script.file_name().unwrap_or(script.as_os_str()));
-                    } else {
-                        cmd.arg(script);
-                    }
-                    cmd.arg(format!("--session-dir={}", session_dir.to_string_lossy()));
-
-                    let out_file = std::fs::OpenOptions::new()
-                        .create(true).append(true).open(log_path);
-                    let err_file = std::fs::OpenOptions::new()
-                        .create(true).append(true).open(log_path);
-                    match (out_file, err_file) {
-                        (Ok(out), Ok(err)) => { cmd.stdout(out).stderr(err); }
-                        _ => {
-                            cmd.stdout(std::process::Stdio::null())
-                               .stderr(std::process::Stdio::null());
-                        }
-                    }
-
-                    #[cfg(target_os = "windows")]
-                    {
-                        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-                        cmd.creation_flags(CREATE_NO_WINDOW);
-                    }
-
-                    match cmd.spawn() {
-                        Ok(child) => {
-                            tracing::info!(
-                                "WhatsApp sidecar started (pid {:?}, attempt {})",
-                                child.id(), attempt
-                            );
-                            // Bind to a Job Object so the sidecar is killed if
-                            // ZanPOS exits for any reason (clean close OR crash).
-                            #[cfg(target_os = "windows")]
-                            if let Some(pid) = child.id() {
-                                bind_to_job_object(pid);
-                            }
-                            return Some(child);
-                        }
-                        Err(e) if attempt < max_attempts => {
-                            tracing::warn!(
-                                "WhatsApp sidecar start attempt {}/{} failed: {} — retrying in 1 s",
-                                attempt, max_attempts, e
-                            );
-                            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                "WhatsApp sidecar failed to start after {} attempts: {}",
-                                max_attempts, e
-                            );
-                        }
-                    }
-                }
-                None
-            }
 
             /// Kill any process holding `port` on 127.0.0.1 so the sidecar always
             /// gets a clean start when the app opens or reopens.
@@ -584,7 +436,7 @@ pub fn run() {
             tauri::async_runtime::block_on(kill_port(3131));
 
             let initial_child = if sidecar_script.exists() {
-                tauri::async_runtime::block_on(spawn_sidecar(&node_exe, &sidecar_script, &wa_session_dir, &wa_log_path, 3))
+                tauri::async_runtime::block_on(sidecar_paths::spawn(&node_exe, &sidecar_script, &wa_session_dir, &wa_log_path, 3))
             } else {
                 tracing::warn!(
                     "WhatsApp sidecar script not found at {:?} — watchdog will keep retrying",
@@ -652,7 +504,7 @@ pub fn run() {
                         if needs_restart {
                             if script_watch.exists() {
                                 if let Some(child) =
-                                    spawn_sidecar(&node_watch, &script_watch, &session_watch, &log_watch, 3).await
+                                    sidecar_paths::spawn(&node_watch, &script_watch, &session_watch, &log_watch, 3).await
                                 {
                                     let mut guard = wa_child_watch
                                         .lock()
@@ -758,6 +610,37 @@ pub fn run() {
                     tokio::time::sleep(std::time::Duration::from_secs(86_400)).await;
                     let now = Utc::now().to_rfc3339();
                     let mut alerts: Vec<serde_json::Value> = Vec::new();
+
+                    // The sync inbox gains a row per record received, so it has
+                    // to be swept or it outgrows the data it describes. Settled
+                    // rows only: failures are what somebody still has to look
+                    // at, and an inbox that discards its own evidence is worse
+                    // than not having one.
+                    match crate::sync_v2::inbox::prune(&db, 30).await {
+                        Ok(removed) if removed > 0 => {
+                            tracing::info!("Auto-maintenance: pruned {removed} settled sync events");
+                        }
+                        Err(e) => tracing::warn!("Auto-maintenance: sync inbox prune failed: {e}"),
+                        _ => {}
+                    }
+
+                    // A row set aside is data this terminal knows it is missing,
+                    // so it is surfaced every cycle until someone deals with it
+                    // rather than sitting quietly in a table nobody opens.
+                    let quarantined = crate::sync_v2::dead_letter::pending_count(&db).await;
+                    if quarantined > 0 {
+                        alerts.push(serde_json::json!({
+                            "alert_id": format!("maint_dlq_{}", now),
+                            "severity": "warning",
+                            "title": "Records could not be synced",
+                            "detail": format!(
+                                "{quarantined} record(s) could not be applied and have been set \
+                                 aside so the rest of sync could continue. They are stored in \
+                                 full and can be replayed once the cause is fixed."
+                            ),
+                            "created_at": now,
+                        }));
+                    }
 
                     match sqlx::query_scalar::<_, String>("PRAGMA quick_check")
                         .fetch_one(&db)
@@ -985,6 +868,7 @@ pub fn run() {
             commands::sync_commands::sync_queue_stats,
             commands::sync_commands::sync_diagnostics,
             commands::sync_commands::hub_truth_compare,
+            commands::sync_commands::sync_parity_report,
             commands::sync_commands::hub_truth_pull,
             commands::sync_commands::sync_conflicts_list,
             commands::sync_commands::sync_conflict_resolve,
@@ -1050,6 +934,10 @@ pub fn run() {
             commands::ai_admin_commands::ai_load_history,
             commands::ai_admin_commands::ai_get_task_ledger_resume,
             commands::ai_admin_commands::ai_clear_history,
+            commands::ai_admin_commands::ai_list_conversations,
+            commands::ai_admin_commands::ai_open_conversation,
+            commands::ai_admin_commands::ai_delete_conversation,
+            commands::ai_admin_commands::ai_rename_conversation,
             commands::ai_admin_commands::ai_submit_feedback,
             // AI Admin — kill-switch (P0-04)
             commands::ai_admin_commands::admin_set_ai_enabled,

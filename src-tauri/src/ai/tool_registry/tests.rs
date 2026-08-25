@@ -131,6 +131,50 @@ fn registry_exposes_tool_centre_permission_and_risk_metadata() {
     assert_eq!(outbound.confirmation, Confirmation::Always);
 }
 
+/// A form draws boxes and returns. If it were ever reclassified as a mutation
+/// it would start demanding confirmation to ask a question; if it needed a
+/// manager it would be dead weight on the till, where the cashier widget is the
+/// surface that most needs "which one did you mean?".
+#[test]
+fn asking_the_operator_for_input_is_a_cashier_level_read() {
+    let registry = ToolRegistry::build().unwrap();
+    let descriptor = registry.get("request_input").unwrap();
+
+    assert_eq!(descriptor.kind, ToolKind::Read);
+    assert_eq!(descriptor.confirmation, Confirmation::Never);
+    assert_eq!(descriptor.execution, ExecutionPath::Read);
+    assert_eq!(descriptor.required_role, RequiredRole::Cashier);
+    assert_eq!(descriptor.risk, RiskLevel::Low);
+    assert_eq!(descriptor.trust, TrustLevel::Internal);
+    assert_eq!(descriptor.undo, UndoPolicy::None);
+    // No feature toggle: a shop that switched the form tool off would get a
+    // model asking for barcodes in prose with no way to know why.
+    assert_eq!(descriptor.feature_key, None);
+    assert!(!crate::ai::tools::is_mutation_tool("request_input"));
+}
+
+/// The widget renders whatever the model sends, so the boundary is here.
+#[test]
+fn form_specs_are_validated_before_anything_is_drawn() {
+    let registry = ToolRegistry::build().unwrap();
+    let form = registry.get("request_input").unwrap();
+
+    assert!(form
+        .validate(&serde_json::json!({
+            "title": "Update price",
+            "fields": [{ "name": "barcode", "label": "Barcode", "type": "barcode" }]
+        }))
+        .is_ok());
+    // A title is the one thing every form needs.
+    assert!(form.validate(&serde_json::json!({})).is_err());
+    assert!(form
+        .validate(&serde_json::json!({"title": "T", "fields": "not-an-array"}))
+        .is_err());
+    assert!(form
+        .validate(&serde_json::json!({"title": "T", "surprise": true}))
+        .is_err());
+}
+
 #[test]
 fn no_undo_mutation_is_never_automatic() {
     let registry = ToolRegistry::build().unwrap();

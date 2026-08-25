@@ -118,8 +118,10 @@ async fn dead_stock(
     let days = period_days(input, 30);
     let lim = limit_i(input, 50);
     let rows = sqlx::query(
-        "SELECT p.product_id, p.name, p.price_minor
-         FROM products p WHERE p.is_active = 1
+        "SELECT p.product_id, p.name, pp.price_minor
+         FROM products p
+         JOIN product_prices pp ON pp.product_id = p.product_id AND pp.price_type = 'selling' AND pp.effective_to IS NULL
+         WHERE p.is_active = 1
          AND NOT EXISTS (
              SELECT 1 FROM sale_items si JOIN sales s ON s.sale_id = si.sale_id
              WHERE si.product_id = p.product_id AND s.sold_at >= date('now','-'||?||' days')
@@ -336,9 +338,12 @@ async fn profit_margin(
 
 async fn shelf_label_gap(pool: &SqlitePool, fmt: &impl Fn(i64) -> String) -> AppResult<String> {
     let rows = sqlx::query(
-        "SELECT name, price_minor, cost_minor FROM products
-         WHERE is_active = 1 AND cost_minor IS NOT NULL AND cost_minor > price_minor
-         ORDER BY (cost_minor - price_minor) DESC LIMIT 50",
+        "SELECT p.name, pp.price_minor, p.cost_minor
+         FROM products p
+         JOIN product_prices pp ON pp.product_id = p.product_id AND pp.price_type = 'selling' AND pp.effective_to IS NULL
+         WHERE p.is_active = 1 AND p.cost_minor IS NOT NULL
+           AND p.cost_minor > pp.price_minor
+         ORDER BY (p.cost_minor - pp.price_minor) DESC LIMIT 50",
     )
     .fetch_all(pool)
     .await?;
@@ -748,7 +753,7 @@ async fn tax_collected_report(
         .unwrap_or("2999-12-31");
     let rows = sqlx::query(
         "SELECT COALESCE(tr.name,'No tax rule') AS rule,
-                COALESCE(tr.rate_pct,0) AS rate,
+                COALESCE(tr.rate_basis_points,0) / 100.0 AS rate,
                 SUM(s.tax_total_minor) AS tax_collected,
                 COUNT(DISTINCT s.sale_id) AS tx
          FROM sales s
@@ -1236,19 +1241,19 @@ async fn loyalty_summary(
 ) -> AppResult<String> {
     let lim = limit_i(input, 10);
     let total_points: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(points_balance),0) FROM customers WHERE points_balance > 0",
+        "SELECT COALESCE(SUM(loyalty_points),0) FROM customers WHERE loyalty_points > 0",
     )
     .fetch_one(pool)
     .await
     .unwrap_or(0);
     let customer_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM customers WHERE points_balance > 0")
+        sqlx::query_scalar("SELECT COUNT(*) FROM customers WHERE loyalty_points > 0")
             .fetch_one(pool)
             .await
             .unwrap_or(0);
     let rows = sqlx::query(
-        "SELECT name, points_balance FROM customers WHERE points_balance > 0
-         ORDER BY points_balance DESC LIMIT ?",
+        "SELECT name, loyalty_points FROM customers WHERE loyalty_points > 0
+         ORDER BY loyalty_points DESC LIMIT ?",
     )
     .bind(lim)
     .fetch_all(pool)
@@ -1266,7 +1271,7 @@ async fn loyalty_summary(
             format!(
                 "  {} | {} pts",
                 s_str(r, "name"),
-                s_i64(r, "points_balance")
+                s_i64(r, "loyalty_points")
             )
         })
         .collect();
@@ -1569,7 +1574,10 @@ async fn product_versions(
     .bind(pid)
     .fetch_all(pool)
     .await?;
-    let current: i64 = sqlx::query_scalar("SELECT price_minor FROM products WHERE product_id = ?")
+    let current: i64 = sqlx::query_scalar(
+        "SELECT price_minor FROM product_prices
+          WHERE product_id = ? AND price_type = 'selling' AND effective_to IS NULL",
+    )
         .bind(pid)
         .fetch_optional(pool)
         .await?
@@ -1931,9 +1939,11 @@ async fn export_product_catalog(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let rows = sqlx::query(
-        "SELECT p.name, p.price_minor, COALESCE(c.name,'—') AS cat,
+        "SELECT p.name, pp.price_minor, COALESCE(c.name,'—') AS cat,
                 p.is_active, p.sku
-         FROM products p LEFT JOIN categories c ON c.category_id = p.category_id
+         FROM products p
+         LEFT JOIN categories c ON c.category_id = p.category_id
+         JOIN product_prices pp ON pp.product_id = p.product_id AND pp.price_type = 'selling' AND pp.effective_to IS NULL
          WHERE (? = 1 OR p.is_active = 1)
          ORDER BY cat, p.name LIMIT 500",
     )
@@ -1991,7 +2001,11 @@ async fn user_permissions(pool: &SqlitePool, input: &serde_json::Value) -> AppRe
         .get("user_id")
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("user_id required".into()))?;
-    let row = sqlx::query("SELECT display_name, role, is_active FROM users WHERE user_id = ?")
+    let row = sqlx::query(
+        "SELECT u.display_name, r.name AS role, u.is_active
+           FROM users u JOIN roles r ON r.role_id = u.role_id
+          WHERE u.user_id = ?",
+    )
         .bind(uid)
         .fetch_optional(pool)
         .await?

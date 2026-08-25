@@ -98,7 +98,7 @@ export function paymentBlockers(
   }
   if (requiresContact && !deliveryData.contact_number) {
     out.push({
-      message: "Enter the customer's 8-digit mobile number. Any number works — it does not have to be a saved customer.",
+      message: "Name the customer or type their 8-digit number. It does not have to be someone already saved.",
       focus: ".pm-contact-input",
     });
   }
@@ -130,7 +130,7 @@ export function paymentBlockReason(
   }
   if (remainingMinor > 1) return `${DEVICE.currency} ${fmt(remainingMinor)} ${dt("stillDue")}`;
   if (remainingMinor < -1) return `${dt("reducePaymentsBy")} ${DEVICE.currency} ${fmt(-remainingMinor)}.`;
-  if (requiresContact && !deliveryData.contact_number) return "Enter a valid 8-digit Bahrain customer phone.";
+  if (requiresContact && !deliveryData.contact_number) return "Name the customer, or type their 8-digit number.";
   if (isDelivery && !deliveryData.house_number?.trim()) return "House number is required.";
   return null;
 }

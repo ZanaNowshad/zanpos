@@ -51,6 +51,57 @@ fn plain_read_run_end(calls: &[ParsedToolCall], start: usize) -> usize {
         + start
 }
 
+/// Read tools whose point is an effect on the screen, not their return value.
+///
+/// `open_tab` steers the workspace and `request_input` draws a form in the
+/// chat; in both the model's tool result is only an acknowledgement, and the
+/// real output is the event raised here. A read result is consumed in four
+/// places across the two provider loops, so the mapping lives in one function —
+/// otherwise every UI tool has to remember all four, and the one that forgets
+/// fails silently on whichever provider the shop happens to use.
+fn ui_event_for_read_tool(
+    tool_name: &str,
+    tool_input: &Value,
+    content: &str,
+    is_error: Option<bool>,
+) -> Option<StreamEvent> {
+    if is_error.unwrap_or(false) {
+        return None;
+    }
+    match tool_name {
+        "open_tab" => serde_json::from_str::<Value>(content)
+            .ok()?
+            .get("tab")
+            .and_then(Value::as_str)
+            .map(|tab| StreamEvent::Navigate {
+                tab: tab.to_string(),
+            }),
+        // Re-parsed from the input the model sent rather than echoed through the
+        // tool result: the form can run to sixty rows, and paying for it twice
+        // in context would make the feature expensive exactly when it is most
+        // useful. `execute_read_tool` already accepted this same input, so the
+        // parse cannot fail here.
+        "request_input" => crate::ai::forms::parse_form_spec(tool_input)
+            .ok()
+            .map(|form| StreamEvent::FormRequest { form }),
+        _ => None,
+    }
+}
+
+/// A turn that asks the operator for values must not also write them.
+///
+/// The model calls `request_input` precisely because something is missing, so a
+/// mutation queued in the same breath is acting on a guess. Nothing downstream
+/// would catch it either: `update_product_price` is reversible and routine, so
+/// the default confirmation policy executes it automatically. Refusing here is
+/// recoverable — the model gets the operator's answer next turn and writes the
+/// value it was actually given.
+const FORM_TURN_BLOCKED: &str = "Blocked: you asked the operator for input in this same step, so you do not have the values this needs yet. Wait for their answer, then call this again.";
+
+fn writes_data(tool_name: &str) -> bool {
+    tools::is_mutation_tool(tool_name) || crate::ai::engine::ops::is_registered_operation(tool_name)
+}
+
 async fn collect_bounded_ordered<I, T, F, Fut, R>(items: I, limit: usize, operation: F) -> Vec<R>
 where
     I: IntoIterator<Item = T>,
@@ -836,6 +887,14 @@ pub async fn run_streaming_chat(
         for (_, tool_name, _) in &parsed_tools {
             crate::ai::tool_policy::require_role_allows_tool(actor_role, tool_name)?;
         }
+        // Decided before anything runs, so a mutation the model listed *first*
+        // is still caught. `form_shown` is separate and set only once a form
+        // actually reached the screen: a spec that failed validation must leave
+        // the turn running so the model can correct it.
+        let form_requested = parsed_tools
+            .iter()
+            .any(|(_, name, _)| name == "request_input");
+        let mut form_shown = false;
         let engine_calls: Vec<_> = parsed_tools
             .iter()
             .filter(|(_, name, _)| crate::ai::engine::ops::is_registered_operation(name))
@@ -852,6 +911,13 @@ pub async fn run_streaming_chat(
         }
         let mut prepared_reads = std::collections::HashMap::new();
         for (tool_index, (tool_id, tool_name, tool_input)) in parsed_tools.iter().enumerate() {
+            if form_requested && writes_data(tool_name) {
+                let (tool_use, tool_result) =
+                    anthropic_recoverable_tool_error(tool_id, tool_name, tool_input, FORM_TURN_BLOCKED);
+                assist_blocks.push(tool_use);
+                result_blocks.push(tool_result);
+                continue;
+            }
             if let Some(prepared) = prepared_reads.remove(tool_id) {
                 match prepared {
                     PreparedRead::AuthorizationError(message) => {
@@ -872,17 +938,11 @@ pub async fn run_streaming_chat(
                             full_tool_access = true;
                             tracing::info!("ZanAI tool catalogue widened for the next step");
                         }
-                        if tool_name == "open_tab" {
-                            if let Ok(parsed) = serde_json::from_str::<Value>(&content) {
-                                if let Some(tab) = parsed.get("tab").and_then(Value::as_str) {
-                                    send_or_log!(
-                                        ev,
-                                        StreamEvent::Navigate {
-                                            tab: tab.to_string()
-                                        }
-                                    );
-                                }
-                            }
+                        if let Some(event) =
+                            ui_event_for_read_tool(tool_name, tool_input, &content, is_error)
+                        {
+                            form_shown |= matches!(event, StreamEvent::FormRequest { .. });
+                            send_or_log!(ev, event);
                         }
                         assist_blocks.push(MsgContent::ToolUse {
                             id: tool_id.clone(),
@@ -1261,17 +1321,11 @@ pub async fn run_streaming_chat(
                         full_tool_access = true;
                         tracing::info!("ZanAI tool catalogue widened for the next step");
                     }
-                    if tool_name == "open_tab" {
-                        if let Ok(parsed) = serde_json::from_str::<Value>(&content) {
-                            if let Some(tab) = parsed.get("tab").and_then(Value::as_str) {
-                                send_or_log!(
-                                    ev,
-                                    StreamEvent::Navigate {
-                                        tab: tab.to_string()
-                                    }
-                                );
-                            }
-                        }
+                    if let Some(event) =
+                        ui_event_for_read_tool(tool_name, tool_input, &content, is_error)
+                    {
+                        form_shown |= matches!(event, StreamEvent::FormRequest { .. });
+                        send_or_log!(ev, event);
                     }
                     assist_blocks.push(MsgContent::ToolUse {
                         id: tool_id.clone(),
@@ -1285,6 +1339,25 @@ pub async fn run_streaming_chat(
                     });
                 }
             }
+        }
+
+        // A form on screen ends the turn. The stop is what makes the guarantee
+        // real: whatever the tool result told the model, it gets no further
+        // step in which to act on values the operator has not supplied yet.
+        if form_shown {
+            send_or_log!(ev, StreamEvent::Done);
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            record_turn(
+                pool,
+                session_id,
+                turn_num as i32 + 1,
+                0,
+                turn_output_tokens as i32,
+                turn_ms,
+                provider_name,
+                model_name,
+            );
+            return Ok(accumulated_text);
         }
 
         // Emit all accumulated high-risk pending mutations, then stop this turn.
@@ -1563,6 +1636,13 @@ pub async fn run_streaming_chat_openai(
         for tool_call in &result.tool_calls {
             crate::ai::tool_policy::require_role_allows_tool(actor_role, &tool_call.name)?;
         }
+        // Same rule as the Anthropic loop above: a turn that asks for values
+        // does not get to write them. See `writes_data` / `FORM_TURN_BLOCKED`.
+        let form_requested = result
+            .tool_calls
+            .iter()
+            .any(|call| call.name == "request_input");
+        let mut form_shown = false;
         let engine_calls: Vec<_> = result
             .tool_calls
             .iter()
@@ -1584,6 +1664,14 @@ pub async fn run_streaming_chat_openai(
             let tool_name = &tc.name;
             let tool_id = &tc.id;
             let tool_input = &tc.input;
+
+            if form_requested && writes_data(tool_name) {
+                let (tool_call, tool_result) =
+                    openai_recoverable_tool_error(tool_id, tool_name, tool_input, FORM_TURN_BLOCKED);
+                acc_tool_calls.push(tool_call);
+                acc_results.push(tool_result);
+                continue;
+            }
 
             // ── Malformed arguments (truncated stream / broken model JSON) ──
             // Feed the parse error back as a recoverable tool result so the
@@ -1622,17 +1710,11 @@ pub async fn run_streaming_chat_openai(
                             full_tool_access = true;
                             tracing::info!("ZanAI tool catalogue widened for the next step");
                         }
-                        if tool_name == "open_tab" {
-                            if let Ok(parsed) = serde_json::from_str::<Value>(&content) {
-                                if let Some(tab) = parsed.get("tab").and_then(Value::as_str) {
-                                    send_or_log!(
-                                        ev,
-                                        StreamEvent::Navigate {
-                                            tab: tab.to_string()
-                                        }
-                                    );
-                                }
-                            }
+                        if let Some(event) =
+                            ui_event_for_read_tool(tool_name, tool_input, &content, is_error)
+                        {
+                            form_shown |= matches!(event, StreamEvent::FormRequest { .. });
+                            send_or_log!(ev, event);
                         }
                         acc_tool_calls.push(crate::ai::openai_client::OpenAIToolCall {
                             id: tool_id.clone(),
@@ -2020,17 +2102,11 @@ pub async fn run_streaming_chat_openai(
                         full_tool_access = true;
                         tracing::info!("ZanAI tool catalogue widened for the next step");
                     }
-                    if tool_name == "open_tab" {
-                        if let Ok(parsed) = serde_json::from_str::<Value>(&content) {
-                            if let Some(tab) = parsed.get("tab").and_then(Value::as_str) {
-                                send_or_log!(
-                                    ev,
-                                    StreamEvent::Navigate {
-                                        tab: tab.to_string()
-                                    }
-                                );
-                            }
-                        }
+                    if let Some(event) =
+                        ui_event_for_read_tool(tool_name, tool_input, &content, is_error)
+                    {
+                        form_shown |= matches!(event, StreamEvent::FormRequest { .. });
+                        send_or_log!(ev, event);
                     }
                     acc_tool_calls.push(crate::ai::openai_client::OpenAIToolCall {
                         id: tool_id.clone(),
@@ -2043,6 +2119,23 @@ pub async fn run_streaming_chat_openai(
                     acc_results.push(tool_result_msg(tool_id, content));
                 }
             }
+        }
+
+        // A form on screen ends the turn — see the Anthropic loop for why.
+        if form_shown {
+            send_or_log!(ev, StreamEvent::Done);
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            record_turn(
+                pool,
+                session_id,
+                turn_num as i32 + 1,
+                0,
+                turn_output_tokens as i32,
+                turn_start.elapsed().as_millis() as i32,
+                provider_name,
+                model_name,
+            );
+            return Ok(accumulated_text);
         }
 
         // Emit all accumulated high-risk pending mutations, then stop this turn.
@@ -2142,6 +2235,123 @@ fn build_openai_messages(input: &AiChatInput, max_chars: usize) -> Vec<OpenAIMes
         _ => user_msg(&input.message),
     });
     msgs
+}
+
+/// The rule that makes an interactive form safe: a turn that asks the operator
+/// for values does not get to write them.
+///
+/// Everything else about forms is tested elsewhere — the spec parser, the
+/// widget, the round trip. This is the part with teeth, and it was the one part
+/// asserted without proof. Without the guard the model can draw "what price?"
+/// and set a guessed price in the same step, and nothing downstream stops it:
+/// `update_product_price` is reversible and routine, so the default
+/// confirmation policy executes it automatically.
+#[cfg(test)]
+mod form_turn_tests {
+    use super::*;
+
+    fn price_form_input() -> Value {
+        serde_json::json!({
+            "title": "Update price",
+            "fields": [
+                { "name": "barcode", "label": "Product barcode", "type": "barcode", "required": true },
+                { "name": "new_price", "label": "New price (BHD)", "type": "money", "required": true }
+            ]
+        })
+    }
+
+    #[test]
+    fn everything_that_can_change_the_shop_is_recognised_as_a_write() {
+        // Plain mutations.
+        assert!(writes_data("update_product_price"));
+        assert!(writes_data("adjust_stock"));
+        assert!(writes_data("delete_product"));
+        assert!(writes_data("create_refund"));
+        // Engine operations run through a different execution path and would
+        // otherwise slip past a check that only knew about MUTATION_TOOLS.
+        assert!(writes_data("bulk_price_adjust"));
+        assert!(writes_data("create_product"));
+
+        // Reads are untouched: a form turn still has to be able to look things
+        // up, or the model cannot prefill the boxes it is drawing.
+        assert!(!writes_data("search_products"));
+        assert!(!writes_data("get_product"));
+        assert!(!writes_data("lookup_barcode"));
+        assert!(!writes_data("request_input"));
+        assert!(!writes_data("open_tab"));
+    }
+
+    /// Read tools whose whole purpose is the screen. A result is consumed in
+    /// four places across the two provider loops, so the mapping lives in one
+    /// function; these pin what it maps.
+    #[test]
+    fn a_valid_form_spec_becomes_the_event_the_widget_draws() {
+        let input = price_form_input();
+        let event = ui_event_for_read_tool("request_input", &input, "{\"ok\":true}", None)
+            .expect("no event raised");
+
+        match event {
+            StreamEvent::FormRequest { form } => {
+                assert_eq!(form.title, "Update price");
+                assert_eq!(form.fields.len(), 2);
+                assert_eq!(form.fields[0].name, "barcode");
+            }
+            other => panic!("expected a form request, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn navigation_still_comes_off_the_tool_result_as_it_always_did() {
+        let event = ui_event_for_read_tool(
+            "open_tab",
+            &serde_json::json!({ "tab": "products" }),
+            "{\"ok\":true,\"tab\":\"products\"}",
+            None,
+        );
+        assert!(matches!(event, Some(StreamEvent::Navigate { tab }) if tab == "products"));
+    }
+
+    /// A spec the model got wrong must leave the turn running so it can correct
+    /// itself. If a failed form still ended the turn, the operator would be
+    /// left looking at nothing with no way to ask again.
+    #[test]
+    fn a_rejected_spec_raises_no_event_so_the_turn_carries_on() {
+        // Empty: no fields, no choices, no table — nothing to submit.
+        let empty = serde_json::json!({ "title": "Hmm" });
+        assert!(ui_event_for_read_tool("request_input", &empty, "{}", None).is_none());
+
+        // A failed tool result never raises a UI event either, whatever the
+        // input said.
+        assert!(
+            ui_event_for_read_tool("request_input", &price_form_input(), "boom", Some(true))
+                .is_none()
+        );
+        assert!(ui_event_for_read_tool(
+            "open_tab",
+            &serde_json::json!({ "tab": "products" }),
+            "Tool 'open_tab' failed",
+            Some(true)
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn ordinary_read_tools_raise_nothing() {
+        for name in ["search_products", "get_product", "get_today_summary"] {
+            assert!(
+                ui_event_for_read_tool(name, &serde_json::json!({}), "some result", None).is_none(),
+                "{name} raised a UI event"
+            );
+        }
+    }
+
+    /// The message the model gets back has to say what to do next, or it
+    /// retries the same blocked call and burns the turn budget.
+    #[test]
+    fn the_block_tells_the_model_to_wait_rather_than_retry_immediately() {
+        assert!(FORM_TURN_BLOCKED.contains("Wait for their answer"));
+        assert!(FORM_TURN_BLOCKED.contains("do not have the values"));
+    }
 }
 
 #[cfg(test)]

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { BatchPendingAction, ChatMessage, ProactiveAlert, SessionUser, StreamEvent, StockLevel } from "../types";
+import type { AiChatMessage, AiConversation, BatchPendingAction, ChatMessage, ProactiveAlert, SessionUser, StreamEvent, StockLevel } from "../types";
 import { DEVICE } from "../types";
 import {
   aiChatStream, aiCancelChat, aiExecuteAction, aiExecuteBatchActions, aiCancelAction, aiUndoAction,
   aiRunExecute, aiRunUndo, aiRunCancel,
   aiLoadHistory, aiGetTaskLedgerResume, aiClearHistory, aiSubmitFeedback,
+  aiListConversations, aiOpenConversation, aiDeleteConversation, aiRenameConversation,
   reportToday, inventoryGetLevels, syncStatus,
   adminGetAlerts, adminDismissAlert,
 } from "../tauri/commands";
@@ -16,6 +17,7 @@ import type { ZanAiSurfaceContext } from "../zanai/zanAiTypes";
 import { selectSendContext, serializeSurfaceContext } from "../zanai/zanAiState";
 import { appendBoundedMessages, boundLoadedMessages } from "../zanai/messageRetention";
 import { shouldAutoExecuteRun } from "../zanai/confirmationPolicy";
+import { describeFormForHistory, normalizeAiForm } from "./aiForm";
 
 const MAX_HISTORY = 40;
 
@@ -68,6 +70,28 @@ export interface ChatController {
   handleCancel: () => Promise<void>;
   handleUndo: (undoId: string, msgId: string) => Promise<void>;
   handleFeedback: (messageId: string, rating: "up" | "down", aiSessionId?: string) => Promise<void>;
+  /** Take the form off a message, so a scrolled-back conversation cannot answer
+   *  the same question twice. Sending the answers is a normal `handleSend`. */
+  dismissForm: (messageId: string) => void;
+  /** The thread the next message joins. */
+  conversationId: string | null;
+  /** Reopenable threads, most recent first. Refreshed after each exchange. */
+  conversations: AiConversation[];
+  conversationsLoading: boolean;
+  refreshConversations: () => Promise<void>;
+  /** Start a clean thread. Keeps everything already said — the old thread is
+   *  still in the list, which is the difference between this and clearing. */
+  startNewConversation: () => void;
+  openConversation: (conversationId: string) => Promise<void>;
+  /** Archives one thread: out of the list, still in the record. */
+  deleteConversation: (conversationId: string) => Promise<void>;
+  renameConversation: (conversationId: string, title: string) => Promise<void>;
+  /** Whether the operator has reopened the procedure launcher mid-conversation.
+   *  Held here rather than in the panel because the obvious next move after
+   *  opening it in the 260px dock is to expand to fullscreen and read the
+   *  cards properly — which mounts a different panel and would have closed it. */
+  launcherOpen: boolean;
+  setLauncherOpen: (open: boolean) => void;
   handleClearChat: () => void;
   handleRunExecute: () => Promise<void>;
   handleRunCancel: () => void;
@@ -113,7 +137,11 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
   // Session tracking for history persistence.
   // Start null so handleSend blocks until history loads — prevents the first
   // message from being saved to a brand-new (wrong) session.
+  // The thread. Named for what it is: `ai_sessions` rows are minted per request
+  // for usage accounting and cannot group a chat.
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<AiConversation[]>([]);
+  const [conversationsLoading, setConversationsLoading] = useState(false);
   const historyLoadedRef = useRef(false);
   const ledgerResumeShownRef = useRef(false);
 
@@ -190,35 +218,32 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
     return full;
   }, []);
 
+  /** Render a thread's stored messages, and rebuild the model's context from
+   *  them so reopening one continues it rather than starting blank. */
+  const applyLoaded = useCallback((loaded: AiChatMessage[]) => {
+    const usable = loaded.filter(m => m.role === "user" || m.role === "assistant");
+    setMessages(boundLoadedMessages(usable.map(m => ({
+      id: m.message_id,
+      role: m.role as "user" | "assistant",
+      text: m.content,
+      timestamp: new Date(m.created_at.replace(" ", "T")),
+      feedbackReady: m.role === "assistant",
+      aiSessionId: m.session_id,
+    }))));
+    setHistory(usable.map(m => ({ role: m.role as "user" | "assistant", content: m.content })));
+  }, []);
+
   // ── Load persisted history on mount ─────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
     aiLoadHistory(sessionUser.session_token, sessionUser.branch_id)
-      .then(loaded => {
+      .then(view => {
         if (cancelled) return;
         historyLoadedRef.current = true;
-        if (loaded.length === 0) {
-          // No history yet — seed sessionId so the first send works.
-          setSessionId(crypto.randomUUID());
-          return;
-        }
-        setMessages(boundLoadedMessages(loaded
-          .filter(m => m.role === "user" || m.role === "assistant")
-          .map(m => ({
-            id: m.message_id,
-            role: m.role as "user" | "assistant",
-            text: m.content,
-            timestamp: new Date(m.created_at.replace(" ", "T")),
-            feedbackReady: m.role === "assistant",
-            aiSessionId: m.session_id,
-          }))
-        ));
-        setHistory(loaded
-          .filter(m => m.role === "user" || m.role === "assistant")
-          .map(m => ({ role: m.role as "user" | "assistant", content: m.content }))
-        );
-        const lastSessionId = loaded[loaded.length - 1]?.session_id;
-        if (lastSessionId) setSessionId(lastSessionId);
+        // The backend hands back the thread it reopened, so the next message
+        // joins that one rather than starting a stray thread beside it.
+        setSessionId(view.conversation_id);
+        applyLoaded(view.messages);
       })
       .catch(() => {
         if (cancelled) return;
@@ -244,7 +269,7 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
           });
       });
     return () => { cancelled = true; };
-  }, [addMessage, sessionUser.branch_id, sessionUser.session_token]);
+  }, [addMessage, applyLoaded, sessionUser.branch_id, sessionUser.session_token]);
 
   // ── KPI snapshot ────────────────────────────────────────────────────────────
   // Sequential (not parallel) to avoid spiking Rust thread pool + SQLite
@@ -344,6 +369,76 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
       setKpi(k => ({ ...k, alerts: next }));
     } catch { /* ignore */ }
   }, [sessionUser.session_token]);
+
+  const [launcherOpen, setLauncherOpen] = useState(false);
+
+  const dismissForm = useCallback((messageId: string) => {
+    setMessages(prev => prev.map(message =>
+      message.id === messageId ? { ...message, form: undefined } : message));
+  }, []);
+
+  const refreshConversations = useCallback(async () => {
+    setConversationsLoading(true);
+    try {
+      setConversations(
+        await aiListConversations(sessionUser.session_token, sessionUser.branch_id),
+      );
+    } catch {
+      // The history list is a convenience. Failing to load it must not take the
+      // chat down with it.
+    } finally {
+      setConversationsLoading(false);
+    }
+  }, [sessionUser.branch_id, sessionUser.session_token]);
+
+  useEffect(() => { void refreshConversations(); }, [refreshConversations]);
+
+  /* A new thread, not a deletion. What was already said stays in the list and
+     can be reopened — which is the whole difference between this and the old
+     "Clear chat" link, whose only behaviour was to destroy everything. */
+  const startNewConversation = useCallback(() => {
+    setMessages([]);
+    setHistory([]);
+    setSessionId(`conv-${crypto.randomUUID()}`);
+    void refreshConversations();
+  }, [refreshConversations]);
+
+  const openConversation = useCallback(async (conversationId: string) => {
+    const view = await aiOpenConversation(
+      sessionUser.session_token,
+      sessionUser.branch_id,
+      conversationId,
+    );
+    setSessionId(view.conversation_id);
+    applyLoaded(view.messages);
+  }, [applyLoaded, sessionUser.branch_id, sessionUser.session_token]);
+
+  const deleteConversation = useCallback(async (conversationId: string) => {
+    await aiDeleteConversation(
+      sessionUser.session_token,
+      sessionUser.branch_id,
+      conversationId,
+    );
+    // Removing the thread you are reading leaves the panel showing a thread
+    // that is no longer listed, so it also starts a fresh one.
+    setSessionId(prev => {
+      if (prev !== conversationId) return prev;
+      setMessages([]);
+      setHistory([]);
+      return `conv-${crypto.randomUUID()}`;
+    });
+    await refreshConversations();
+  }, [refreshConversations, sessionUser.branch_id, sessionUser.session_token]);
+
+  const renameConversation = useCallback(async (conversationId: string, title: string) => {
+    await aiRenameConversation(
+      sessionUser.session_token,
+      sessionUser.branch_id,
+      conversationId,
+      title,
+    );
+    await refreshConversations();
+  }, [refreshConversations, sessionUser.branch_id, sessionUser.session_token]);
 
   const handleClearChat = useCallback(() => {
     clearAdminChat({
@@ -449,6 +544,17 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
         } else if (event.type === "navigate") {
           // AI steered the workspace via the open_tab tool — caller validates RBAC.
           onNavigate(event.tab);
+        } else if (event.type === "form_request") {
+          const form = normalizeAiForm(event.form);
+          if (form) {
+            // The backend ends the turn here, so this message carries no prose.
+            // History still has to alternate, and the model needs its own field
+            // names back on the next request — the tool call that held them is
+            // not replayed. `describeFormForHistory` is both.
+            if (!finalText) finalText = describeFormForHistory(form);
+            const currentId = assistantMsgIdRef.current;
+            setMessages(prev => prev.map(m => m.id === currentId ? { ...m, form } : m));
+          }
         } else if (event.type === "run_preview") {
           const run: RunState = {
             runId: event.run_id, opId: event.op_id,
@@ -527,6 +633,9 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
           setChatState(prev => (
             prev === "confirm" || prev === "run_confirm" || prev === "run_executing"
           ) ? prev : "idle");
+          // The first message of a thread is what names it, so the list is
+          // stale the moment an exchange lands.
+          void refreshConversations();
           if (finalText) {
             // Keep in-memory context bounded at 60 entries (30 exchanges)
             setHistory(prev => {
@@ -589,6 +698,7 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
           history: cappedHistory,
           message: text,
           branch_id: sessionUser.branch_id,
+          conversation_id: sessionId,
           currency_exponent: DEVICE.currency_exponent,
           ui_context: serializeSurfaceContext(selectSendContext(
             { surface: "office", summary: getUiContext() },
@@ -619,7 +729,7 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
       setChatState("idle");
       setErrorMessage(friendly);
     }
-  }, [input, chatState, history, sessionId, sessionUser.branch_id, sessionUser.session_token, addMessage, executeRun, getUiContext, onNavigate, fetchKpi, onMutationApplied, setImageAttachment]);
+  }, [input, chatState, history, sessionId, sessionUser.branch_id, sessionUser.session_token, addMessage, executeRun, getUiContext, onNavigate, fetchKpi, onMutationApplied, refreshConversations, setImageAttachment]);
 
   const handleStop = useCallback(async () => {
     const requestId = activeRequestIdRef.current;
@@ -769,7 +879,10 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
     chatState, pendingAction, pendingBatchActions, liveToolCalls,
     streamingMsgId, tokenCount, streamStartTime, canStop,
     kpi, runState, bulkProgress, errorMessage, dismissError, fetchKpi, dismissAlert,
-    handleSend, handleStop, handleConfirm, handleCancel, handleUndo, handleFeedback, handleClearChat,
+    handleSend, handleStop, handleConfirm, handleCancel, handleUndo, handleFeedback,
+    dismissForm, launcherOpen, setLauncherOpen, handleClearChat,
+    conversationId: sessionId, conversations, conversationsLoading, refreshConversations,
+    startNewConversation, openConversation, deleteConversation, renameConversation,
     handleRunExecute, handleRunCancel, handleRunUndo,
   };
 }

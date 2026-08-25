@@ -18,8 +18,23 @@ import { join } from "node:path";
 
 const SRC = join(process.cwd(), "src");
 
+/**
+ * Directories that are not this project's design work.
+ *
+ * The walk used to descend into everything under `src/`. A stray npm cache —
+ * gitignored, dropped there by a tool run with the wrong working directory —
+ * put a few thousand third-party stylesheets inside the scan, and the gate
+ * started failing on `border-radius: 3px` in mocha's test CSS. The rule is
+ * about ZANPOS's own corners, so the scan has to be about ZANPOS's own files.
+ *
+ * The same skip list `scripts/ship.mjs` uses, plus dot-directories, which are
+ * caches and tool state by convention and never source.
+ */
+const SKIP_DIRS = new Set(["node_modules", "dist", "target", "gen", ".git"]);
+
 function cssFiles(dir: string): string[] {
   return readdirSync(dir).flatMap(entry => {
+    if (SKIP_DIRS.has(entry) || entry.startsWith(".")) return [];
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) return cssFiles(full);
     return full.endsWith(".css") ? [full] : [];

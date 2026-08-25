@@ -59,7 +59,6 @@ import type {
   ReprintQueueEntry,
   TopProduct,
   UndoActionResult,
-  AiChatMessage,
   StreamEvent,
   UserSummary,
   ValidateProviderResult,
@@ -646,11 +645,42 @@ export const aiSaveMessage = (
 ): Promise<string> =>
   invoke("ai_save_message", { sessionToken, sessionId, branchId, role, content, messageType });
 
+/** Reopens the thread last spoken to, with its id so the next message joins it. */
 export const aiLoadHistory = (
   sessionToken: string,
   branchId: string,
-): Promise<AiChatMessage[]> =>
+): Promise<import("../types").AiConversationView> =>
   invoke("ai_load_history", { sessionToken, branchId });
+
+export const aiListConversations = (
+  sessionToken: string,
+  branchId: string,
+): Promise<import("../types").AiConversation[]> =>
+  invoke("ai_list_conversations", { sessionToken, branchId });
+
+export const aiOpenConversation = (
+  sessionToken: string,
+  branchId: string,
+  conversationId: string,
+): Promise<import("../types").AiConversationView> =>
+  invoke("ai_open_conversation", { sessionToken, branchId, conversationId });
+
+/** Archives rather than destroys — the record of what the AI was asked to do
+ *  outlives a tidy-up of the sidebar. */
+export const aiDeleteConversation = (
+  sessionToken: string,
+  branchId: string,
+  conversationId: string,
+): Promise<void> =>
+  invoke("ai_delete_conversation", { sessionToken, branchId, conversationId });
+
+export const aiRenameConversation = (
+  sessionToken: string,
+  branchId: string,
+  conversationId: string,
+  title: string,
+): Promise<void> =>
+  invoke("ai_rename_conversation", { sessionToken, branchId, conversationId, title });
 
 export const aiGetTaskLedgerResume = (
   sessionToken: string,

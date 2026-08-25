@@ -37,27 +37,63 @@ export function useFocusedField(containerRef: RefObject<HTMLElement | null>) {
         ?? el.getAttribute("placeholder")
         ?? "Value";
       const mode = (el.getAttribute("inputmode") ?? "").toLowerCase();
-      const numeric = el.getAttribute("type") === "tel"
+      /* `data-keyboard` overrides the inputmode, for the fields where the two
+         disagree on purpose. The contact box takes a name as well as a number,
+         so its inputmode has to be `text` — but nine entries in ten are a phone
+         number, so it should still open on the keypad. */
+      const preferred = el.getAttribute("data-keyboard");
+      const numeric = preferred === "pad" || (preferred !== "keys" && (
+        el.getAttribute("type") === "tel"
         || el.getAttribute("type") === "number"
-        || mode === "numeric" || mode === "decimal" || mode === "tel";
+        || mode === "numeric" || mode === "decimal" || mode === "tel"));
       return { label: label.replace(/\s+/g, " ").slice(0, 40), value: el.value, numeric };
     };
 
+    /* Deferred for the same reason `onInput` below is, and the reason is worth
+       reading there before making either of them synchronous again. Focus does
+       not change a field's value, so this one looked safe — but a cashier who
+       taps a field and starts typing immediately gets the first keystrokes
+       inside the render this listener kicked off, and those were the ones that
+       disappeared. All three listeners now hand back to React first. */
     const onFocus = (event: FocusEvent) => {
       const el = event.target;
-      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-        if (el.type === "checkbox" || el.type === "radio") return;
-        setField(describe(el));
-      }
+      if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) return;
+      if (el.type === "checkbox" || el.type === "radio") return;
+      setTimeout(() => {
+        if (el === document.activeElement) setField(describe(el));
+      }, 0);
     };
-    /* Typing has to update the readout, and `input` fires on dialpad writes too
-       because those go through the native value setter. */
+    /*
+     * Typing has to update the readout, and `input` fires on dialpad writes too
+     * because those go through the native value setter.
+     *
+     * Deferred, and that is not a nicety. React delegates `change` from the
+     * root container, so this listener — bound to the dialog, which is *inside*
+     * the root — runs first. Updating state here re-rendered the modal
+     * synchronously, and React's commit wrote the controlled `value` prop back
+     * onto the input, resetting it to what it was before the keystroke. By the
+     * time React's own delegated handler ran, its value tracker compared the
+     * field against the value it had just restored, saw no change, and never
+     * dispatched `onChange`. The keystroke vanished. Every text field in the
+     * modal was unusable — the phone number, the address, the customer search —
+     * and the cause looked like a focus bug because the caret stayed put.
+     *
+     * A macrotask puts the re-render after the whole event dispatch, so React
+     * sees the change first. A microtask would not: the checkpoint runs between
+     * listeners.
+     */
     const onInput = (event: Event) => {
       const el = event.target;
-      if ((el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)
-          && el === document.activeElement) {
-        setField(describe(el));
-      }
+      if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) return;
+      if (el !== document.activeElement) return;
+      setTimeout(() => {
+        if (el !== document.activeElement) return;
+        const next = describe(el);
+        setField(current =>
+          current && current.label === next.label && current.value === next.value
+            ? current
+            : next);
+      }, 0);
     };
     /* Blur to nothing returns the column to the summary. Blur *into* another
        field is handled by that field's own focus event, so this defers. */

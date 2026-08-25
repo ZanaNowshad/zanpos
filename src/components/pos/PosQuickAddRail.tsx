@@ -1,9 +1,9 @@
 import { useRef } from "react";
-import { ChevronLeft, ChevronRight, Package } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { QuickPosSlot } from "../../tauri/commands";
 import { DEVICE } from "../../types";
 import { formatMoney } from "../../money";
-import { productImageSrc } from "../../productImage";
+import ProductThumb from "../ProductThumb";
 
 interface Props {
   slots: QuickPosSlot[];
@@ -67,14 +67,7 @@ export default function PosQuickAddRail({ slots, disabled, onAdd }: Props) {
             title={`${slot.name} — ${DEVICE.currency} ${formatMoney(slot.price_minor ?? 0, DEVICE.currency_exponent)}`}
           >
             <span className="till-quick-thumb">
-              <Package size={18} aria-hidden="true" />
-              {slot.image_path && (
-                <img
-                  src={productImageSrc(slot.image_path) ?? ""}
-                  alt=""
-                  onError={event => { event.currentTarget.style.display = "none"; }}
-                />
-              )}
+              <ProductThumb imagePath={slot.image_path} productName={slot.name} />
             </span>
             {/* Name and price are the caption, not the tile: at a glance the
                 photo is what identifies a bag of bananas, and the price is what

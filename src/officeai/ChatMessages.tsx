@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import type { ChatState, DisplayMessage, ToolCallEntry } from "./officeAiTypes";
 import { QUICK_ACTIONS } from "./officeAiTypes";
 import { MarkdownContent } from "./markdown";
+import AiFormCard from "./AiFormCard";
 import { ToolCallCard, toolMeta } from "./toolCards";
 import { useLanguage } from "../hooks/useLanguage";
 import {
@@ -30,9 +31,16 @@ export function QuickChipsBar({ onSelect }: { onSelect: (text: string) => void }
   );
 }
 
-// ─── Welcome panel ────────────────────────────────────────────────────────────
+// ─── Suggested prompts ────────────────────────────────────────────────────────
 
-const WELCOME_CHIPS = [
+/**
+ * One list, two presentations. The welcome panel draws these as cards on an
+ * empty chat; [`QuickActionBar`] draws the same six as a compact row that stays
+ * put for the rest of the conversation. Kept as a single array because two
+ * overlapping lists is how the fifth one ends up saying something different
+ * from the other four.
+ */
+export const WELCOME_CHIPS = [
   { icon: "📊", labelKey: "todaysSalesSummary", prompt: "Give me today's sales summary" },
   { icon: "📦", labelKey: "lowStockAlerts", prompt: "Which products are low on stock?" },
   { icon: "💵", labelKey: "cashDrawerStatus", prompt: "Show me the current cash drawer status" },
@@ -40,6 +48,60 @@ const WELCOME_CHIPS = [
   { icon: "↩", labelKey: "recentRefunds", prompt: "Show me recent refunds" },
   { icon: "👥", labelKey: "todaysTransactions", prompt: "How many transactions were made today?" },
 ] satisfies Array<{ icon: string; labelKey: OfficeAiStringKey; prompt: string }>;
+
+/**
+ * The suggestions, kept within reach for the whole conversation.
+ *
+ * They used to be part of the welcome panel and vanished the moment anything
+ * was sent — so the one-tap route to "today's sales" existed only before you
+ * had asked anything, which is the least likely moment to want it. On a till
+ * especially, the value is asking again tomorrow without typing.
+ *
+ * One scrolling row rather than a wrapping grid: the floating widget is about
+ * 360px wide and a grid of six would eat a third of the message area. Continue
+ * rides in the same row instead of claiming one of its own, so making these
+ * permanent costs the till a single line.
+ */
+export function QuickActionBar({ onSelect, onContinue, onShowProcedures }: {
+  onSelect: (text: string) => void;
+  onContinue?: () => void;
+  onShowProcedures?: () => void;
+}) {
+  const { language } = useLanguage();
+  const t = officeAiTranslator(language);
+  return (
+    <div className="chat-quick-bar" role="group" aria-label={t("suggestedQuestions")}>
+      {onContinue && (
+        <button
+          className="chat-quick-chip chat-quick-chip-continue"
+          onClick={onContinue}
+          title={t("continueTask")}
+        >
+          {t("continueAction")}
+          <span className="icon-directional" aria-hidden="true">▸</span>
+        </button>
+      )}
+      {onShowProcedures && (
+        <button className="chat-quick-chip" onClick={onShowProcedures}>
+          <span aria-hidden="true">🗂</span>
+          {t("showProcedures")}
+        </button>
+      )}
+      {WELCOME_CHIPS.map(chip => (
+        <button
+          key={chip.prompt}
+          className="chat-quick-chip"
+          onClick={() => onSelect(chip.prompt)}
+        >
+          <span aria-hidden="true">{chip.icon}</span>
+          {t(chip.labelKey)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── Welcome panel ────────────────────────────────────────────────────────────
 
 export function WelcomePanel({ userName, businessName, onChip }: {
   userName: string;
@@ -104,6 +166,9 @@ interface ChatBubbleProps {
   onUndo?: (undoId: string, msgId: string) => void | Promise<void>;
   onFeedback?: (messageId: string, rating: "up" | "down", aiSessionId?: string) => Promise<void>;
   onSuggestedPrompt?: (prompt: string) => void;
+  onFormSubmit?: (msgId: string, text: string) => void;
+  onFormDismiss?: (msgId: string) => void;
+  formsDisabled?: boolean;
   isStreaming?: boolean;
 }
 
@@ -112,6 +177,9 @@ function ChatBubbleImpl({
   onUndo,
   onFeedback,
   onSuggestedPrompt,
+  onFormSubmit,
+  onFormDismiss,
+  formsDisabled = false,
   isStreaming = false,
 }: ChatBubbleProps) {
   const { language } = useLanguage();
@@ -171,6 +239,14 @@ function ChatBubbleImpl({
                 )}
                 <MarkdownContent text={msg.text} />
                 {isStreaming && <span className="stream-cursor" aria-hidden="true" />}
+                {msg.form && onFormSubmit && onFormDismiss && (
+                  <AiFormCard
+                    form={msg.form}
+                    disabled={formsDisabled}
+                    onSubmit={text => onFormSubmit(msg.id, text)}
+                    onDismiss={() => onFormDismiss(msg.id)}
+                  />
+                )}
               </>
             )
           ) : (
@@ -265,8 +341,12 @@ function dayLabel(ts: Date): string {
 }
 
 export function ChatMessageList({
-  messages, chatState, streamingMsgId, liveToolCalls, onUndo, onFeedback, onChip, userName, businessName,
+  messages, chatState, streamingMsgId, liveToolCalls, onUndo, onFeedback, onChip,
+  onFormSubmit, onFormDismiss, launcher, userName, businessName,
 }: {
+  /** The procedure launcher, when the panel wants it. Rendered inside the
+   *  scroll region so it never squeezes the composer on a small surface. */
+  launcher?: React.ReactNode;
   messages: DisplayMessage[];
   chatState: ChatState;
   streamingMsgId: string | null;
@@ -274,22 +354,45 @@ export function ChatMessageList({
   onUndo?: (undoId: string, msgId: string) => void;
   onFeedback?: (messageId: string, rating: "up" | "down", aiSessionId?: string) => Promise<void>;
   onChip: (text: string) => void;
+  onFormSubmit?: (msgId: string, text: string) => void;
+  onFormDismiss?: (msgId: string) => void;
   userName: string;
   businessName: string;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   // Use "auto" (instant) during streaming to avoid queuing hundreds of smooth-
   // scroll animations per token which can hold DOM references and leak memory.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: chatState === "idle" ? "smooth" : "auto" });
-  }, [messages, chatState]);
+    const behavior = chatState === "idle" ? "smooth" : "auto";
+    /* The launcher sits above the transcript, so scrolling to the end of the
+       thread lands on its twenty-first card and hides the question it is
+       answering. It is the thing to read while it is up — and it is only up
+       before the operator has asked anything, so there is no transcript being
+       pulled away from them. */
+    if (launcher) {
+      listRef.current?.scrollTo({ top: 0, behavior });
+      return;
+    }
+    /* Scrolling a form to the end of the thread lands on its last input and
+       leaves the heading, the note and the first label above the fold — the
+       operator gets a bare box with no question attached to it. "nearest" is
+       the rule that serves both sizes: a two-field ask ends up fully visible
+       with its buttons, and a bill taller than the widget aligns to its top. */
+    const form = messages[messages.length - 1]?.form
+      ? listRef.current?.querySelector(".aiform")
+      : null;
+    if (form) form.scrollIntoView({ behavior, block: "nearest" });
+    else bottomRef.current?.scrollIntoView({ behavior });
+  }, [messages, chatState, launcher]);
 
   return (
-    <div className="chat-messages" role="log" aria-live="polite" aria-relevant="additions">
-      {messages.length === 0 && (
+    <div ref={listRef} className="chat-messages" role="log" aria-live="polite" aria-relevant="additions">
+      {messages.length === 0 && !launcher && (
         <WelcomePanel userName={userName} businessName={businessName} onChip={onChip} />
       )}
+      {launcher}
 
       {messages.map((msg, i) => {
         const msgDate = dayLabel(msg.timestamp);
@@ -304,6 +407,9 @@ export function ChatMessageList({
               onUndo={onUndo}
               onFeedback={onFeedback}
               onSuggestedPrompt={onChip}
+              onFormSubmit={onFormSubmit}
+              onFormDismiss={onFormDismiss}
+              formsDisabled={chatState !== "idle"}
             />
           </React.Fragment>
         );

@@ -1,8 +1,8 @@
 import type { AdminProduct, StockLevel } from "../types";
 import type { Column } from "./templates";
 import { formatMoney } from "../money";
-import { Check, CircleSlash, Package, TriangleAlert } from "lucide-react";
-import { productImageSrc } from "../productImage";
+import { Check, CircleSlash, TriangleAlert } from "lucide-react";
+import ProductThumb from "./ProductThumb";
 import type { ModalStringKey } from "../i18n/modalStrings";
 
 /**
@@ -29,14 +29,11 @@ export function productCatalogueColumns(
       cell: p => (
         <span className="product-catalogue-identity">
           <span className="product-catalogue-thumb">
-            <Package size={18} aria-hidden="true" />
-            {p.image_path && (
-              <img
-                src={productImageSrc(p.image_path) ?? ""}
-                alt=""
-                onError={event => { event.currentTarget.style.display = "none"; }}
-              />
-            )}
+            <ProductThumb
+              imagePath={p.image_path}
+              categoryName={p.category_name}
+              productName={p.name}
+            />
           </span>
           <span>
             {/* An imported catalogue can arrive with the name column unmapped,

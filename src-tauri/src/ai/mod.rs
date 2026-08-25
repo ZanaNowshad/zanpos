@@ -3,6 +3,7 @@ pub mod business_insights;
 pub mod client;
 pub mod config;
 pub mod engine;
+pub mod forms;
 pub mod intent_engine;
 pub mod oauth;
 pub mod openai_client;
@@ -18,6 +19,9 @@ pub mod tool_subsetting;
 pub mod tool_validators;
 pub mod tools;
 pub mod tools_catalogue;
+pub mod tools_parity;
+#[cfg(test)]
+mod tools_smoke_tests;
 pub mod tools_read_ext;
 pub mod tools_read_ext2;
 pub mod tools_read_ext3;

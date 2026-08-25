@@ -340,6 +340,8 @@ export interface AiChatInput {
   history: ChatMessage[];
   message: string;
   branch_id: string;
+  /** Which thread this message joins. */
+  conversation_id?: string | null;
   currency_exponent: number;
   ui_context?: string;
   image_base64?: string;
@@ -404,6 +406,25 @@ export interface ProactiveAlert {
   created_at: string;
 }
 
+/** A chat thread, as the operator thinks of one. Distinct from the per-request
+ *  `ai_sessions` row, which exists for usage accounting. */
+export interface AiConversation {
+  conversation_id: string;
+  branch_id: string;
+  user_id: string;
+  title: string;
+  message_count: number;
+  last_message_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AiConversationView {
+  conversation_id: string;
+  title: string;
+  messages: AiChatMessage[];
+}
+
 export type StreamEvent =
   | { type: "started" }
   | { type: "token"; text: string }
@@ -430,6 +451,10 @@ export type StreamEvent =
       description: string;
     }
   | { type: "navigate"; tab: string }
+  /* Deliberately `unknown`: the payload is a model-authored form spec, and
+     typing it here would let it be read straight into the message list.
+     `normalizeAiForm` is the only way in. */
+  | { type: "form_request"; form: unknown }
   | {
       type: "run_preview";
       run_id: string;
@@ -1102,7 +1127,14 @@ export interface ImportContactsResult {
 // ── WhatsApp → POS notification inbox ──────────────────────────────────────────
 export interface WaContact {
   id: string;   // JID, e.g. "97333050666@s.whatsapp.net"
+  /** Display name — prefers what this shop saved the person as. */
   name: string;
+  /** The address-book name: what the shop saved them as. */
+  savedName?: string | null;
+  /** The pushName: what the person set on their own WhatsApp profile. */
+  pushName?: string | null;
+  /** A WhatsApp Business verified name, when there is one. */
+  verifiedName?: string | null;
 }
 
 export interface WaGroup {

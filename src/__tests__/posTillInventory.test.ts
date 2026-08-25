@@ -61,7 +61,13 @@ const ACTIONS: Record<string, string[]> = {
   ],
   "sale operations": [
     "onClearCart",
-    "onOpenHold",         // hold / resume
+    /* Hold and Void traded places: Hold came out of the More drawer onto the
+       rail under the cart, Void went the other way. The prop names moved with
+       them, so this pins the handler the till actually calls rather than the
+       drawer prop it used to be passed as — `handleOpenHold` is the one thing
+       both the rail and the F1 shortcut go through. */
+    "handleOpenHold",     // hold / resume
+    "onVoidLine",         // void, now behind More Options
     "onOpenDiscount",     // bill discount
     "applyLineDiscount",  // line discount
     "onOpenRefund",

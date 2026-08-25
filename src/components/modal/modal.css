@@ -1,0 +1,334 @@
+/* ── The admin dialog system ──────────────────────────────────────────────
+   One shell, one field, one footer. Before this there were three conventions
+   competing inside the same product: `.modal`, `.bo-form-modal` and a handful
+   of one-offs, so Products, Categories and Import each greeted a manager with a
+   different header, a different close button and a different idea of where Save
+   lives. Everything here is scoped under `.zmodal` so the old classes keep
+   working untouched while screens move across one at a time. */
+
+.zmodal-overlay {
+  /* The old overlays centred with `align-items: center`, which on a short
+     window pushed a tall dialog off both ends at once. Starting the flex line
+     at the top and capping the dialog's height keeps the header reachable. */
+  align-items: center;
+  padding: 24px;
+}
+
+.zmodal {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: min(860px, calc(100vh - 48px));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.34);
+  overflow: hidden;
+}
+
+.zmodal-sm { max-width: 460px; }
+.zmodal-md { max-width: 660px; }
+.zmodal-lg { max-width: 900px; }
+.zmodal-xl { max-width: 1180px; }
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+.zmodal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--border);
+  /* A soft wash rather than a flat band: it separates the header from the
+     fields without spending a second border on it. */
+  background: linear-gradient(160deg,
+    color-mix(in srgb, var(--accent) 7%, var(--surface)), var(--surface));
+}
+.zmodal-heading { min-width: 0; }
+.zmodal-kicker {
+  display: block;
+  color: var(--accent-h);
+  font: 700 0.56rem/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.zmodal-head h2 {
+  margin: 6px 0 0;
+  font: 750 1.22rem/1.15 "Bricolage Grotesque", var(--font);
+  letter-spacing: -0.01em;
+}
+.zmodal-sub {
+  margin: 5px 0 0;
+  max-width: 62ch;
+  color: var(--text-dim);
+  font-size: var(--type-office-caption);
+  line-height: 1.45;
+}
+.zmodal-close {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.zmodal-close:hover { border-color: var(--danger); color: var(--danger); }
+
+/* ── Body ───────────────────────────────────────────────────────────────── */
+.zmodal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 20px 24px;
+  overflow-y: auto;
+}
+
+.zmodal-section { display: flex; flex-direction: column; gap: 11px; }
+/* A rule above each section but the first: cheaper than a card per group, and
+   it keeps the form reading as one column rather than a stack of boxes. */
+.zmodal-section + .zmodal-section {
+  padding-top: 17px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+.zmodal-section-head { display: flex; align-items: baseline; gap: 10px; }
+.zmodal-section-head h3 {
+  margin: 0;
+  font-size: var(--type-office-body);
+  font-weight: 750;
+}
+.zmodal-section-head span {
+  color: var(--text-dim);
+  font-size: var(--type-office-micro);
+}
+
+.zmodal-grid { display: grid; gap: 12px 14px; }
+.zmodal-grid-1 { grid-template-columns: 1fr; }
+.zmodal-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.zmodal-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.zmodal-field.is-wide { grid-column: 1 / -1; }
+
+/* ── Fields ─────────────────────────────────────────────────────────────── */
+.zmodal-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.zmodal-field > label {
+  /* Start-aligned, not centred. The product form centred every label, which
+     leaves the eye no column to run down and makes a twelve-field form read as
+     twelve unrelated announcements. */
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text);
+  font-size: var(--type-office-micro);
+  font-weight: 750;
+  letter-spacing: 0.01em;
+}
+.zmodal-req { color: var(--danger); font-weight: 800; }
+
+.zmodal-field input:not([type="checkbox"]),
+.zmodal-field select,
+.zmodal-field textarea {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--type-office-body);
+}
+.zmodal-field textarea { min-height: 84px; padding: 10px 12px; line-height: 1.5; resize: vertical; }
+.zmodal-field input:focus-visible,
+.zmodal-field select:focus-visible,
+.zmodal-field textarea:focus-visible {
+  border-color: var(--accent);
+  outline: 0;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.zmodal-field.is-error input,
+.zmodal-field.is-error select,
+.zmodal-field.is-error textarea {
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--border));
+}
+.zmodal-field-hint { color: var(--text-dim); font-size: var(--type-office-micro); line-height: 1.4; }
+.zmodal-field-error { color: var(--danger); font-size: var(--type-office-micro); font-weight: 650; }
+
+/* ── Toggles ────────────────────────────────────────────────────────────── */
+.zmodal-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 46px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+  cursor: pointer;
+}
+.zmodal-toggle:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.zmodal-toggle.is-on {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+.zmodal-toggle input { width: 17px; height: 17px; margin-top: 2px; accent-color: var(--accent); }
+.zmodal-toggle span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.zmodal-toggle strong { font-size: var(--type-office-caption); font-weight: 700; }
+.zmodal-toggle small { color: var(--text-dim); font-size: var(--type-office-micro); line-height: 1.4; }
+
+/* ── Errors and footer ──────────────────────────────────────────────────── */
+.zmodal-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+  color: var(--danger);
+  font-size: var(--type-office-caption);
+  font-weight: 650;
+}
+
+.zmodal-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 24px;
+  border-top: 1px solid var(--border);
+  background: var(--surface2);
+}
+.zmodal-foot-note {
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: var(--type-office-micro);
+  line-height: 1.4;
+}
+.zmodal-foot-actions { display: flex; align-items: center; gap: 10px; }
+.zmodal-foot-actions button { min-height: 42px; padding-inline: 18px; border-radius: var(--radius-sm); font-weight: 750; }
+
+/* The till is 1024x768 and several of these dialogs open over it. Below that
+   the columns collapse rather than the dialog scrolling sideways. */
+@media (max-width: 900px) {
+  .zmodal-grid-2, .zmodal-grid-3 { grid-template-columns: 1fr; }
+  .zmodal-overlay { padding: 12px; }
+}
+
+/* ── Product form specifics ─────────────────────────────────────────────── */
+/* An input with a button welded to its end. The old markup did this with two
+   inline `style` objects and a flex:1, in three different places. */
+.zprod-barcode-add { display: flex; gap: 8px; }
+.zprod-barcode-add input { flex: 1 1 auto; min-width: 0; }
+.zprod-barcode-add .btn-secondary { flex: 0 0 auto; min-height: 42px; padding-inline: 16px; white-space: nowrap; }
+
+/* Codes already on the product, as chips rather than full-width rows: a
+   product with four barcodes used to push the image controls off the screen. */
+.zprod-barcode-list {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.zprod-barcode-list li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 6px 5px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface2);
+}
+.zprod-barcode-list code {
+  font-family: var(--font-mono);
+  font-size: var(--type-office-micro);
+  letter-spacing: 0.02em;
+}
+.zprod-barcode-list button {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.zprod-barcode-list button:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+
+.zprod-image { display: flex; align-items: flex-start; gap: 14px; }
+.zprod-image > *:first-child { flex: 1 1 auto; min-width: 0; }
+.zprod-image-actions { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; }
+.zprod-image-actions .btn-secondary { min-height: 40px; padding-inline: 16px; white-space: nowrap; }
+
+/* ── Two-column body ────────────────────────────────────────────────────────
+   A form long enough to scroll is one where a manager fills in the top, cannot
+   see the bottom, and presses Save wondering what they missed. The product form
+   is twelve fields; in one column that is 1100px of dialog on a 900px screen.
+   Split across the width it fits whole, which is the difference between
+   reviewing a form and scrolling one. */
+.zmodal-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0 30px;
+  align-items: start;
+}
+.zmodal-col { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+/* The rule belongs between the columns, not around them. */
+.zmodal-col + .zmodal-col {
+  padding-inline-start: 30px;
+  border-inline-start: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+/* Each column restarts the section rhythm, so the first section in the right
+   column must not carry the separator meant for a section below another. */
+.zmodal-col > .zmodal-section:first-child { padding-top: 0; border-top: 0; }
+
+@media (max-width: 900px) {
+  .zmodal-cols { grid-template-columns: 1fr; gap: 18px; }
+  .zmodal-col + .zmodal-col { padding-inline-start: 0; border-inline-start: 0; }
+}
+
+/* ── Wizard steps ───────────────────────────────────────────────────────── */
+.zmodal-steps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--type-office-micro);
+  font-weight: 700;
+}
+.zmodal-steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px 6px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface2);
+  color: var(--text-muted);
+}
+.zmodal-steps li > span {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--border);
+  color: var(--surface);
+  font: 700 0.6rem var(--font-mono);
+}
+.zmodal-steps li.is-current { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); color: var(--text); }
+.zmodal-steps li.is-current > span { background: var(--accent); color: var(--accent-t, #fff); }
+.zmodal-steps li.is-done { color: var(--text-dim); }
+.zmodal-steps li.is-done > span { background: var(--success); color: #fff; }

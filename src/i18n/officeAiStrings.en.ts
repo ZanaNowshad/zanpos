@@ -346,6 +346,24 @@ export const EN = {
   posRestoreZanAi: "Restore ZanAI", posCloseZanAi: "Close ZanAI", posContext: "POS context",
   posTillContext: "Till context", posRemoveTillContext: "Remove till context", posAttachTillContext: "Attach till context", posUnread: "unread",
   posCashierReadOnly: "Read-only assistant", posManagerConfirmation: "Manager actions require confirmation",
+  // Interactive forms ZanAI draws in the chat
+  showProcedures: "All procedures",
+  newChat: "New chat",
+  chatHistory: "History",
+  noConversationsYet: "No earlier chats yet.",
+  loadingConversations: "Loading…",
+  untitledConversation: "Untitled chat",
+  renameConversation: "Rename chat",
+  deleteConversation: "Delete chat",
+  messageCount: "{count} messages",
+  justNow: "just now",
+  minutesAgo: "{count}m ago",
+  hoursAgo: "{count}h ago",
+  daysAgo: "{count}d ago",
+  delete: "Delete",
+  formSend: "Send", formDismiss: "Not now", formRow: "line",
+  formAddRow: "Add {row}",
+  formMissingRequired: "{count} required box still empty",
 } as const;
 
 export type OfficeAiStringKey = keyof typeof EN;

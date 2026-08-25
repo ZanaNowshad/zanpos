@@ -1,0 +1,149 @@
+/* ── Chat threads: new, and previous ──────────────────────────────────────────
+   Sits at the top of the chat panel on every surface, so it has to survive the
+   ~260px docked copilot as well as the fullscreen assistant. Two buttons and a
+   list that drops beneath them — nothing that needs horizontal room it may not
+   have. */
+
+.oa-conv-bar {
+  border-bottom: 1px solid var(--border2);
+  background: var(--surface);
+}
+
+.oa-conv-controls {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+.oa-conv-new,
+.oa-conv-history {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 1 1 0;
+  min-width: 0;
+  /* A real target. What this replaces was a text link the size of body copy. */
+  min-height: 36px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  font: 650 var(--type-office-caption)/1 var(--font);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--t-fast), background var(--t-fast), color var(--t-fast);
+}
+
+/* New chat is the common one and reads as the primary action. */
+.oa-conv-new {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-t);
+}
+.oa-conv-new:hover { filter: brightness(1.06); }
+
+.oa-conv-history {
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text-dim);
+}
+.oa-conv-history:hover { border-color: var(--accent); color: var(--accent); }
+.oa-conv-history-open { border-color: var(--accent); color: var(--accent); }
+
+.oa-conv-count {
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface3);
+  color: var(--text-dim);
+  font: 700 var(--type-office-micro)/1.4 var(--font-mono);
+}
+
+/* ── The list ─────────────────────────────────────────────────────────────── */
+.oa-conv-list {
+  /* Capped and scrolled rather than pushing the transcript off a short widget.
+     Sixty threads at 52px would be three times the height of the till panel. */
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 2px 6px 8px;
+  border-top: 1px solid var(--border2);
+}
+.oa-conv-list ul { margin: 0; padding: 0; list-style: none; }
+
+.oa-conv-empty {
+  margin: 10px 6px;
+  color: var(--text-muted);
+  font-size: var(--type-office-caption);
+}
+
+.oa-conv-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--radius-sm);
+}
+.oa-conv-row:hover { background: var(--surface2); }
+.oa-conv-row-active { background: var(--accent2); }
+
+.oa-conv-open {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  padding: 8px;
+  border: none;
+  background: none;
+  text-align: start;
+  cursor: pointer;
+}
+.oa-conv-title {
+  overflow: hidden;
+  color: var(--text);
+  font: 600 var(--type-office-caption)/1.3 var(--font);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.oa-conv-meta {
+  color: var(--text-muted);
+  font-size: var(--type-office-micro);
+}
+
+.oa-conv-actions,
+.oa-conv-confirm { display: inline-flex; align-items: center; gap: 2px; padding-inline-end: 4px; }
+
+.oa-conv-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.oa-conv-icon:hover { background: var(--surface3); color: var(--text); }
+
+/* Delete sits one tap from open, so it asks first rather than acting. */
+.oa-conv-danger {
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--error) 55%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--color-danger-soft);
+  color: var(--error);
+  font: 650 var(--type-office-micro)/1 var(--font);
+  cursor: pointer;
+}
+
+.oa-conv-rename {
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  margin: 4px 0 4px 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: 500 var(--type-office-caption)/1.3 var(--font);
+}
+.oa-conv-rename:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent2); }

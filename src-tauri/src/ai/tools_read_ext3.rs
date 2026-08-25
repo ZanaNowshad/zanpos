@@ -198,8 +198,10 @@ async fn supplier_products(
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("supplier_id required".into()))?;
     let rows = sqlx::query(
-        "SELECT p.name, p.price_minor, COALESCE(p.cost_minor,0) AS cost, p.is_active
-         FROM products p WHERE p.default_supplier_id = ? ORDER BY p.name LIMIT 200",
+        "SELECT p.name, pp.price_minor, COALESCE(p.cost_minor,0) AS cost, p.is_active
+         FROM products p
+         JOIN product_prices pp ON pp.product_id = p.product_id AND pp.price_type = 'selling' AND pp.effective_to IS NULL
+         WHERE p.default_supplier_id = ? ORDER BY p.name LIMIT 200",
     )
     .bind(id)
     .fetch_all(pool)
@@ -299,6 +301,7 @@ async fn overstock_alert(pool: &SqlitePool, input: &serde_json::Value) -> AppRes
         "SELECT p.name,
                 COALESCE(SUM(si.quantity),0) / ? AS daily_rate
          FROM products p
+         JOIN product_prices pp ON pp.product_id = p.product_id AND pp.price_type = 'selling' AND pp.effective_to IS NULL
          LEFT JOIN sale_items si ON si.product_id = p.product_id
          LEFT JOIN sales s ON s.sale_id = si.sale_id
              AND s.sold_at >= date('now','-'||?||' days') AND s.status != 'voided'
@@ -741,7 +744,7 @@ async fn export_customers(
 ) -> AppResult<String> {
     let limit = lim(input, 100);
     let rows = sqlx::query(
-        "SELECT c.name, c.phone, c.email, c.points_balance, c.notes,
+        "SELECT c.name, c.phone, c.email, c.loyalty_points, c.notes,
                 COUNT(DISTINCT s.sale_id) AS visits,
                 MAX(s.sold_at) AS last_visit,
                 COALESCE(SUM(s.net_total_minor),0) AS ltv
@@ -765,7 +768,7 @@ async fn export_customers(
                 s_i64(r, "visits"),
                 fmt(s_i64(r, "ltv")),
                 s_str(r, "last_visit"),
-                s_i64(r, "points_balance"),
+                s_i64(r, "loyalty_points"),
                 {
                     let n = s_str(r, "notes");
                     if n.is_empty() {
@@ -878,16 +881,17 @@ async fn stockout_cost(
     let period = pd(input, 30);
     // Products that currently have 0 stock, estimate lost revenue
     let rows = sqlx::query(
-        "SELECT p.name, p.price_minor,
+        "SELECT p.name, pp.price_minor,
                 COALESCE(SUM(si.quantity),0) / ? AS daily_rate
          FROM products p
+         JOIN product_prices pp ON pp.product_id = p.product_id AND pp.price_type = 'selling' AND pp.effective_to IS NULL
          LEFT JOIN sale_items si ON si.product_id = p.product_id
          LEFT JOIN sales s ON s.sale_id = si.sale_id
              AND s.sold_at >= date('now','-'||?||' days') AND s.status != 'voided'
          WHERE p.is_active = 1 AND p.track_inventory = 1
          GROUP BY p.product_id
          HAVING daily_rate > 0
-         ORDER BY daily_rate * p.price_minor DESC LIMIT 30",
+         ORDER BY daily_rate * pp.price_minor DESC LIMIT 30",
     )
     .bind(period as f64)
     .bind(period)

@@ -105,10 +105,16 @@ describe("payment modal keeps every capability reachable", () => {
     expect(RECEIPT_CASH).toContain("pm-keyboard-btn");
   });
 
-  it("asks both contact journeys for a destination number", () => {
+  it("asks both contact journeys for a destination, by name or by number", () => {
+    /* The field took digits only, which meant a cashier told "it's for Fatima"
+       had to leave it, open a directory and come back. It now takes either, so
+       the assertion is on the field and its dual purpose rather than on the
+       word "phone". */
     for (const [name, html] of [["delivery", DELIVERY], ["digital", DIGITAL]] as const) {
-      expect(html, `${name}: customer phone`).toContain("Customer phone");
+      expect(html, `${name}: contact field`).toContain('id="payment-customer-phone"');
+      expect(html, `${name}: takes a name too`).toContain("Customer name or number");
+      expect(html, `${name}: directory reachable`).toContain("Browse the customer directory");
     }
-    expect(RECEIPT_CASH).not.toContain("Customer phone");
+    expect(RECEIPT_CASH).not.toContain("Customer name or number");
   });
 });

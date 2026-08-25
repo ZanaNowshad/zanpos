@@ -1,6 +1,6 @@
 import {
   Banknote, CircleHelp, Clock, DoorOpen, Eraser, HandCoins,
-  Printer, RotateCcw, Sparkles, SplitSquareHorizontal, Truck, X,
+  Printer, RotateCcw, Sparkles, SplitSquareHorizontal, Trash2, Truck, X,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -10,9 +10,11 @@ interface Props {
   canDiscount: boolean;
   canRefund: boolean;
   lastReceiptNumber: string | null;
+  /** Named so the drawer can say what Void would remove, not just that it can. */
+  selectedLineName: string | null;
   onClose: () => void;
   onClearCart: () => void;
-  onOpenHold: () => void;
+  onVoidLine: () => void;
   onOpenDiscount: () => void;
   onOpenRefund: () => void;
   onOpenCashEvent: () => void;
@@ -62,8 +64,8 @@ function Item({ icon, label, hint, shortcut, danger, disabled, onClick }: ItemPr
  * competing with the cart for attention.
  */
 export default function PosMoreDrawer({
-  open, lineCount, canDiscount, canRefund, lastReceiptNumber, onClose,
-  onClearCart, onOpenHold, onOpenDiscount, onOpenRefund, onOpenCashEvent,
+  open, lineCount, canDiscount, canRefund, lastReceiptNumber, selectedLineName, onClose,
+  onClearCart, onVoidLine, onOpenDiscount, onOpenRefund, onOpenCashEvent,
   onOpenDeliveries, onOpenRecent, onReprintLast, onCustomItem, onNoSale,
   onPaySplit, onHelp,
 }: Props) {
@@ -87,10 +89,16 @@ export default function PosMoreDrawer({
         </header>
 
         <div className="till-more-grid">
+          {/* Void moved in from the rail under the cart, trading places with
+              Hold. Removing a line is the expensive mistake at a till and is
+              reached far less often than parking a bill, so it is worth the
+              extra tap; the keyboard shortcut is unchanged for anyone who
+              knows it. */}
           <Item
-            icon={<RotateCcw size={20} aria-hidden="true" />}
-            label="Hold / Resume" hint="Park this sale or bring one back"
-            shortcut="F6" onClick={run(onOpenHold)}
+            icon={<Trash2 size={20} aria-hidden="true" />}
+            label="Void Line" hint={selectedLineName ?? "Nothing selected"}
+            shortcut="Del" danger
+            disabled={!selectedLineName} onClick={run(onVoidLine)}
           />
           <Item
             icon={<SplitSquareHorizontal size={20} aria-hidden="true" />}
@@ -105,7 +113,9 @@ export default function PosMoreDrawer({
           <Item
             icon={<HandCoins size={20} aria-hidden="true" />}
             label="Bill Discount" hint="Whole sale"
-            shortcut="F8"
+            /* No keycap: this said F8, which opens the Digital journey. F5 and
+               Ctrl+D discount the selected line, not the bill, so there is no
+               key for this one and printing a wrong one is worse than none. */
             disabled={lineCount === 0 || !canDiscount}
             onClick={run(onOpenDiscount)}
           />

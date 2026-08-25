@@ -1,10 +1,12 @@
-use crate::domain::ai_admin::AiChatMessage;
 use crate::errors::{AppError, AppResult};
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 
 pub async fn save_message(
     pool: &SqlitePool,
     session_id: &str,
+    // The thread this belongs to. `ai_sessions` is one request's accounting
+    // row, so it cannot group a chat — see `ai_conversation_repo`.
+    conversation_id: &str,
     branch_id: &str,
     user_id: &str,
     role: &str,
@@ -57,11 +59,12 @@ pub async fn save_message(
     let message_id = ulid::Ulid::new().to_string();
     sqlx::query(
         "INSERT INTO ai_chat_messages
-             (message_id, session_id, branch_id, user_id, role, content, message_type)
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+             (message_id, session_id, conversation_id, branch_id, user_id, role, content, message_type)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&message_id)
     .bind(session_id)
+    .bind(conversation_id)
     .bind(branch_id)
     .bind(user_id)
     .bind(role)
@@ -70,46 +73,6 @@ pub async fn save_message(
     .execute(pool)
     .await?;
     Ok(message_id)
-}
-
-/// Load the last `limit` messages for a user, returned oldest-first for display.
-pub async fn load_history(
-    pool: &SqlitePool,
-    branch_id: &str,
-    user_id: &str,
-    limit: i64,
-) -> AppResult<Vec<AiChatMessage>> {
-    // Inner subquery grabs the newest N; outer sorts oldest-first
-    let rows = sqlx::query(
-        "SELECT id, message_id, session_id, branch_id, user_id, role, content, message_type, created_at
-         FROM (
-             SELECT * FROM ai_chat_messages
-             WHERE branch_id = ? AND user_id = ?
-             ORDER BY datetime(created_at) DESC, id DESC
-             LIMIT ?
-         )
-         ORDER BY datetime(created_at) ASC, id ASC",
-    )
-    .bind(branch_id)
-    .bind(user_id)
-    .bind(limit)
-    .fetch_all(pool)
-    .await?;
-
-    Ok(rows
-        .iter()
-        .map(|r| AiChatMessage {
-            id: r.get("id"),
-            message_id: r.get("message_id"),
-            session_id: r.get("session_id"),
-            branch_id: r.get("branch_id"),
-            user_id: r.get("user_id"),
-            role: r.get("role"),
-            content: r.get("content"),
-            message_type: r.get("message_type"),
-            created_at: r.get("created_at"),
-        })
-        .collect())
 }
 
 pub async fn clear_history(pool: &SqlitePool, branch_id: &str, user_id: &str) -> AppResult<()> {
@@ -156,6 +119,20 @@ pub async fn submit_feedback(
 
 #[cfg(test)]
 mod tests {
+    /// Reading a thread replaced the flat per-user history. Same guarantees —
+    /// newest N, oldest first, scoped to its owner — so the assertions below
+    /// carry over unchanged.
+    async fn conv(
+        pool: &SqlitePool,
+        branch: &str,
+        user: &str,
+        limit: i64,
+    ) -> Vec<crate::domain::ai_admin::AiChatMessage> {
+        crate::db::repositories::ai_conversation_repo::messages(pool, "C1", branch, user, limit)
+            .await
+            .unwrap()
+    }
+
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
 
@@ -169,49 +146,44 @@ mod tests {
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         sqlx::query("INSERT INTO ai_sessions(session_id,branch_id,user_id,provider,model,status,started_at) VALUES('S1','B1','U1','test','test','ended',datetime('now'))").execute(&pool).await.unwrap();
         assert!(
-            save_message(&pool, "missing", "B1", "U1", "assistant", "hello", "text")
+            save_message(&pool, "missing", "C1", "B1", "U1", "assistant", "hello", "text")
                 .await
                 .is_err()
         );
         assert!(
-            save_message(&pool, "S1", "B2", "U1", "assistant", "hello", "text")
+            save_message(&pool, "S1", "C1", "B2", "U1", "assistant", "hello", "text")
                 .await
                 .is_err()
         );
         assert!(
-            save_message(&pool, "S1", "B1", "U2", "assistant", "hello", "text")
+            save_message(&pool, "S1", "C1", "B1", "U2", "assistant", "hello", "text")
                 .await
                 .is_err()
         );
         assert!(
-            save_message(&pool, "S1", "B1", "U1", "tool", "hello", "text")
+            save_message(&pool, "S1", "C1", "B1", "U1", "tool", "hello", "text")
                 .await
                 .is_err()
         );
         assert!(
-            save_message(&pool, "S1", "B1", "U1", "assistant", "hello", "html")
+            save_message(&pool, "S1", "C1", "B1", "U1", "assistant", "hello", "html")
                 .await
                 .is_err()
         );
         assert!(
-            save_message(&pool, "S1", "B1", "U1", "assistant", "   ", "text")
+            save_message(&pool, "S1", "C1", "B1", "U1", "assistant", "   ", "text")
                 .await
                 .is_err()
         );
-        let message_id = save_message(&pool, "S1", "B1", "U1", "assistant", "hello", "text")
+        let message_id = save_message(&pool, "S1", "C1", "B1", "U1", "assistant", "hello", "text")
             .await
             .unwrap();
         assert_eq!(message_id.len(), 26);
-        let own = load_history(&pool, "B1", "U1", 30).await.unwrap();
+        let own = conv(&pool, "B1", "U1", 30).await;
         assert_eq!(own[0].message_id, message_id);
-        assert!(load_history(&pool, "B2", "U1", 30)
-            .await
-            .unwrap()
-            .is_empty());
-        assert!(load_history(&pool, "B1", "U2", 30)
-            .await
-            .unwrap()
-            .is_empty());
+        // Isolation is enforced in the query, not by the caller.
+        assert!(conv(&pool, "B2", "U1", 30).await.is_empty());
+        assert!(conv(&pool, "B1", "U2", 30).await.is_empty());
         sqlx::query(
             "UPDATE ai_chat_messages SET created_at='2000-01-01 00:00:00' WHERE message_id=?",
         )
@@ -223,6 +195,7 @@ mod tests {
             let id = save_message(
                 &pool,
                 "S1",
+                "C1",
                 "B1",
                 "U1",
                 "user",
@@ -239,13 +212,13 @@ mod tests {
             .await
             .unwrap();
         }
-        let limited = load_history(&pool, "B1", "U1", 30).await.unwrap();
+        let limited = conv(&pool, "B1", "U1", 30).await;
         assert_eq!(limited.len(), 30);
         assert_eq!(limited.first().unwrap().content, "ordered-1");
         assert_eq!(limited.last().unwrap().content, "ordered-30");
 
         let oversized = "x".repeat(50_001);
-        let oversized_id = save_message(&pool, "S1", "B1", "U1", "assistant", &oversized, "text")
+        let oversized_id = save_message(&pool, "S1", "C1", "B1", "U1", "assistant", &oversized, "text")
             .await
             .unwrap();
         let stored: String =
@@ -268,10 +241,10 @@ mod tests {
             .unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         sqlx::query("INSERT INTO ai_sessions(session_id,branch_id,user_id,provider,model,status,started_at) VALUES('S1','B1','U1','test','test','ended',datetime('now'))").execute(&pool).await.unwrap();
-        let assistant = save_message(&pool, "S1", "B1", "U1", "assistant", "answer", "text")
+        let assistant = save_message(&pool, "S1", "C1", "B1", "U1", "assistant", "answer", "text")
             .await
             .unwrap();
-        let user = save_message(&pool, "S1", "B1", "U1", "user", "question", "text")
+        let user = save_message(&pool, "S1", "C1", "B1", "U1", "user", "question", "text")
             .await
             .unwrap();
         assert!(

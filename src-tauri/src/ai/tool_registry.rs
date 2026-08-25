@@ -96,6 +96,10 @@ impl RiskLevel {
 }
 
 const CASHIER_READ_TOOLS: &[&str] = &[
+    // Draws boxes and returns; it can no more change data than a question in
+    // prose can, and a cashier asking the till widget for something needs the
+    // same "which one did you mean?" affordance a manager gets.
+    "request_input",
     "lookup_barcode",
     "search_products",
     "get_product",

@@ -1,16 +1,33 @@
 import { useState } from "react";
-import { ArrowBigUp, Delete, Space } from "lucide-react";
+import { ArrowBigUp, CornerDownLeft, Delete } from "lucide-react";
 
 interface Props {
   onKey: (key: string) => void;
+  /** Moves the caret to the next field. Omitted where there is nowhere to go. */
+  onNext?: () => void;
+  nextLabel?: string;
 }
 
-const ROWS = [
+const LATIN = [
   ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
   ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
   ["a", "s", "d", "f", "g", "h", "j", "k", "l"],
   ["z", "x", "c", "v", "b", "n", "m"],
 ];
+
+/* Standard Arabic layout, digits kept Latin: a Bahraini phone number, a house
+   number and a road number are all written in Latin digits here, and swapping
+   them for Arabic-Indic ones would produce an address the rider cannot read
+   and a number WhatsApp cannot dial. */
+const ARABIC = [
+  ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
+  ["ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح"],
+  ["ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك"],
+  ["ئ", "ء", "ؤ", "ر", "ى", "ة", "و", "ز", "ظ", "ط"],
+];
+
+/** Characters a name or an address needs and the letter rows do not carry. */
+const PUNCTUATION = ["-", "/", ".", ","];
 
 /**
  * On-screen letters for the fields the dialpad cannot fill.
@@ -22,29 +39,40 @@ const ROWS = [
  *
  * Digits share the top row rather than living behind a mode switch: a flat
  * number is usually digits with one letter, and making that a two-step toggle
- * is how "3B" becomes a chore.
+ * is how "3B" becomes a chore. Arabic is a layout switch rather than a separate
+ * keyboard for the same reason — half the names in the shop's book are written
+ * in it, and a cashier should not have to decide which keyboard to open before
+ * they have heard the name.
  */
-export default function TouchKeyboard({ onKey }: Props) {
+export default function TouchKeyboard({ onKey, onNext, nextLabel = "Next" }: Props) {
   const [shift, setShift] = useState(false);
+  const [script, setScript] = useState<"latin" | "arabic">("latin");
+  const rows = script === "latin" ? LATIN : ARABIC;
 
   const press = (key: string) => {
-    onKey(shift ? key.toUpperCase() : key);
+    // Arabic is unicase; shifting it would produce the same character and leave
+    // the modifier stuck on.
+    const upper = script === "latin" && shift;
+    onKey(upper ? key.toUpperCase() : key);
     if (shift) setShift(false);
   };
 
+  /* Every key blocks the default on mousedown. Without it the button takes
+     focus on press, the caret leaves the field these keys are meant to fill,
+     and the keystroke has no target. */
+  const hold = (event: { preventDefault: () => void }) => event.preventDefault();
+
   return (
-    <div className="tkb" role="group" aria-label="Keyboard">
-      {ROWS.map((row, index) => (
+    <div className="tkb" role="group" aria-label="Keyboard" dir={script === "arabic" ? "rtl" : "ltr"}>
+      {rows.map((row, index) => (
         <div className="tkb-row" key={index}>
-          {index === 3 && (
+          {index === 3 && script === "latin" && (
             <button
               type="button"
               className={`tkb-key tkb-mod${shift ? " is-on" : ""}`}
               aria-pressed={shift}
               aria-label="Shift"
-              /* Same rule as the dialpad: taking focus would move the caret out
-                 of the field these keys are meant to fill. */
-              onMouseDown={event => event.preventDefault()}
+              onMouseDown={hold}
               onClick={() => setShift(current => !current)}
             >
               <ArrowBigUp size={16} aria-hidden="true" />
@@ -55,10 +83,10 @@ export default function TouchKeyboard({ onKey }: Props) {
               type="button"
               key={key}
               className="tkb-key"
-              onMouseDown={event => event.preventDefault()}
+              onMouseDown={hold}
               onClick={() => press(key)}
             >
-              {shift ? key.toUpperCase() : key}
+              {script === "latin" && shift ? key.toUpperCase() : key}
             </button>
           ))}
           {index === 3 && (
@@ -66,7 +94,7 @@ export default function TouchKeyboard({ onKey }: Props) {
               type="button"
               className="tkb-key tkb-mod"
               aria-label="Backspace"
-              onMouseDown={event => event.preventDefault()}
+              onMouseDown={hold}
               onClick={() => onKey("⌫")}
             >
               <Delete size={16} aria-hidden="true" />
@@ -77,13 +105,39 @@ export default function TouchKeyboard({ onKey }: Props) {
       <div className="tkb-row">
         <button
           type="button"
+          className={`tkb-key tkb-mod tkb-script${script === "arabic" ? " is-on" : ""}`}
+          aria-pressed={script === "arabic"}
+          aria-label={script === "arabic" ? "Switch to English letters" : "Switch to Arabic letters"}
+          onMouseDown={hold}
+          onClick={() => setScript(current => (current === "latin" ? "arabic" : "latin"))}
+        >
+          {script === "arabic" ? "EN" : "ع"}
+        </button>
+        {PUNCTUATION.map(key => (
+          <button type="button" key={key} className="tkb-key tkb-punct" onMouseDown={hold} onClick={() => onKey(key)}>
+            {key}
+          </button>
+        ))}
+        <button
+          type="button"
           className="tkb-key tkb-space"
           aria-label="Space"
-          onMouseDown={event => event.preventDefault()}
+          onMouseDown={hold}
           onClick={() => onKey(" ")}
         >
-          <Space size={16} aria-hidden="true" />
+          space
         </button>
+        {onNext && (
+          <button
+            type="button"
+            className="tkb-key tkb-mod tkb-next"
+            aria-label={nextLabel}
+            onMouseDown={hold}
+            onClick={onNext}
+          >
+            <CornerDownLeft size={15} aria-hidden="true" />
+          </button>
+        )}
       </div>
     </div>
   );

@@ -314,6 +314,56 @@ async fn search_covers_email_as_well_as_name_and_phone() {
     assert_eq!(hit.total, 1, "email is searchable");
 }
 
+/// A number typed at the till has no spaces in it; a number saved by a person
+/// usually does. Matching only the stored spelling made a customer of a year
+/// look like a stranger at the counter, and the receipt went out unattached.
+#[tokio::test]
+async fn search_finds_a_phone_however_it_was_written_down() {
+    let pool = make_pool().await;
+    for (id, name, phone) in [
+        ("cus_spaced", "Spaced Sayed", "+973 3600 1122"),
+        ("cus_dashed", "Dashed Dosari", "973-3600-4455"),
+        ("cus_plain", "Plain Ansari", "36007788"),
+    ] {
+        sqlx::query(
+            "INSERT INTO customers
+               (customer_id, branch_id, name, phone, email, loyalty_points, notes,
+                origin_device_id, created_at, updated_at, version, sync_status)
+             VALUES (?, ?, ?, ?, NULL, 0, NULL,
+                     'dev', datetime('now'), datetime('now'), 1, 'pending')",
+        )
+        .bind(id)
+        .bind(BRANCH_A)
+        .bind(name)
+        .bind(phone)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    for (typed, expected) in [
+        ("36001122", "Spaced Sayed"),
+        ("36004455", "Dashed Dosari"),
+        ("36007788", "Plain Ansari"),
+        // The local eight digits are what a cashier reads off a phone screen,
+        // but they sometimes type the country code too.
+        ("97336001122", "Spaced Sayed"),
+    ] {
+        let hit = customer_list_inner(&pool, USER_A, typed, None, None)
+            .await
+            .expect("search");
+        assert_eq!(hit.total, 1, "\"{typed}\" should find exactly {expected}");
+        assert_eq!(hit.items[0].name, expected);
+    }
+
+    // A query with no digits must not fall through to the digit branch and
+    // return the whole branch — the sentinel pattern exists for this.
+    let none = customer_list_inner(&pool, USER_A, "zzz-no-such-person", None, None)
+        .await
+        .expect("search");
+    assert_eq!(none.total, 0, "a non-matching name matches nothing");
+}
+
 // ── Aggregates ───────────────────────────────────────────────────────────
 
 #[tokio::test]

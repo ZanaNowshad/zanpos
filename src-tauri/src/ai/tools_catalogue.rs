@@ -29,6 +29,7 @@ fn build_tool_definitions() -> Vec<ToolDef> {
     tools.extend(defs_settings_sync());
     tools.extend(defs_shift_bulk_engine());
     tools.extend(defs_extensions());
+    tools.extend(defs_interactive_input());
     tools.extend(defs_bulk_system_analytics());
     finish_tool_definitions(tools)
 }
@@ -798,6 +799,44 @@ fn defs_settings_sync() -> Vec<ToolDef> {
                 "required": ["product_name"]
             }),
         },
+        // ── Parity: is every terminal actually holding the same data ─────────
+        ToolDef {
+            name: "check_terminal_parity".into(),
+            description: "Compare every synced table on this terminal against the hub and report which ones differ, with a 0-100 parity score and the row counts on each side. Answers 'is this till showing the same catalogue and prices as the others'. Read-only. Follow a mismatch with find_diverged_rows on the named table to get the actual row IDs rather than resyncing everything.".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
+        },
+        ToolDef {
+            name: "find_diverged_rows".into(),
+            description: "Name the exact rows that differ between this terminal and the hub for one table, and say which side is missing or stale for each. Use after check_terminal_parity reports a mismatch — this is what turns 'products differs' on a 28,000-row catalogue into a short list of product IDs. Each row is reported as missing_locally (a pull that never landed), missing_on_hub (a push still queued or lost), or different (both hold it and the contents disagree). Read-only.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "table": { "type": "string", "description": "A synced table, e.g. products, product_prices, categories, customers, stock_levels." }
+                },
+                "required": ["table"]
+            }),
+        },
+        ToolDef {
+            name: "preview_reconciliation".into(),
+            description: "Say what a reconciliation of one table would repair and what it would refuse, without changing anything. Use before any resync. Rows only one side holds can be delivered safely — nothing is overwritten. Rows both sides hold with different contents are reported separately and must not be repaired automatically, because whichever copy loses may be a real edit; for sales, payments, refunds, cash events and shifts that copy may be the only record of a transaction. Read-only.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "table": { "type": "string", "description": "A synced table, e.g. products, product_prices, customers, sales, payments." }
+                },
+                "required": ["table"]
+            }),
+        },
+        ToolDef {
+            name: "get_terminal_roster".into(),
+            description: "List every till registered to this branch with its device code, status, whether it is active, and when it was last seen. Use to answer 'which terminals are there' and to spot one that has not checked in — a till that stopped syncing days ago is the usual reason two screens disagree.".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
+        },
+        ToolDef {
+            name: "get_catalogue_parity_summary".into(),
+            description: "Product-focused parity: how many products, barcodes and prices this terminal holds versus the hub, and whether the catalogue checksums agree. Use for 'does this till have the same product list as the others' without dumping the catalogue.".into(),
+            input_schema: json!({ "type": "object", "properties": {}, "required": [] }),
+        },
         // ── Sync repair tools ─────────────────────────────────────────────────
         ToolDef {
             name: "sync_reset_stuck".into(),
@@ -966,6 +1005,100 @@ fn defs_shift_bulk_engine() -> Vec<ToolDef> {
             }),
         },
     ]
+}
+
+/// The interactive-form tool, in its own chunk.
+///
+/// Its schema is by far the deepest in the catalogue, and the file-level
+/// STACK-OVERFLOW GUARD above is about exactly this: `json!` temporaries all
+/// land in one stack frame under fat LTO. Keep it here rather than folding it
+/// into a neighbouring chunk.
+#[inline(never)]
+fn defs_interactive_input() -> Vec<ToolDef> {
+    let cell_types = json!(["text", "textarea", "number", "money", "integer", "barcode", "select", "date", "toggle"]);
+    let options = json!({
+        "type": "array",
+        "description": "Required when type is select.",
+        "items": { "type": "object", "properties": { "value": { "type": "string" }, "label": { "type": "string" } }, "required": ["value", "label"] }
+    });
+    vec![ToolDef {
+        name: "request_input".into(),
+        description: "Ask the operator for values using an on-screen form instead of asking in prose. \
+Use it when the request names an operation but omits what it needs (\"price update\", \"add a customer\"), when a choice between a few concrete options decides what happens next, or when a document has been read and every extracted row must be checked and corrected before anything is written. \
+Prefer a read tool over a form for anything the database already knows: forms are for values only the operator holds. \
+Fields collect one value each; choices offer one-tap answers; table draws an editable grid, one row per line item, which is how an extracted purchase bill is confirmed. \
+This performs no business action and changes nothing. Your turn ends the moment the form is shown, and the operator's answers arrive as their next message — read them and then carry out the operation with the normal tools.".into(),
+        input_schema: json!({
+            "type": "object",
+            "properties": {
+                "title": { "type": "string", "description": "Short heading, e.g. 'Update price'." },
+                "note": { "type": "string", "description": "One line of context above the inputs. Use it to flag what needs attention, e.g. 'Two lines have no barcode.'" },
+                "submit_label": { "type": "string", "description": "Verb for the submit button, e.g. 'Update price'. Defaults to 'Send'." },
+                "fields": {
+                    "type": "array",
+                    "description": "Up to 12 single-value inputs. Prefill 'value' with anything already known so the operator only corrects it.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string", "description": "Machine name, lowercase letters, digits and underscores. This is the key the answer comes back under." },
+                            "label": { "type": "string", "description": "What the operator reads." },
+                            "type": { "type": "string", "enum": cell_types, "description": "money opens the numeric keypad and expects BHD with three decimals; barcode opens the scanner-friendly numeric field." },
+                            "value": { "type": "string", "description": "Prefilled value." },
+                            "placeholder": { "type": "string" },
+                            "help": { "type": "string", "description": "Short hint under the input." },
+                            "required": { "type": "boolean" },
+                            "options": options
+                        },
+                        "required": ["name", "label", "type"]
+                    }
+                },
+                "choices": {
+                    "type": "array",
+                    "description": "Up to 8 one-tap answers. Use for a decision, not for data entry. style 'primary' marks the recommended answer and 'danger' the destructive one.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "value": { "type": "string", "description": "What comes back when tapped." },
+                            "label": { "type": "string" },
+                            "detail": { "type": "string", "description": "Second line under the label." },
+                            "style": { "type": "string", "enum": ["default", "primary", "danger"] }
+                        },
+                        "required": ["value", "label"]
+                    }
+                },
+                "table": {
+                    "type": "object",
+                    "description": "An editable grid, up to 8 columns and 60 rows. Every cell is editable; fill rows with what was extracted so the operator confirms rather than retypes. Leave a cell empty to make the operator supply it.",
+                    "properties": {
+                        "columns": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": { "type": "string", "description": "Machine name; every row must use these keys and no others." },
+                                    "label": { "type": "string" },
+                                    "type": { "type": "string", "enum": cell_types },
+                                    "required": { "type": "boolean", "description": "Empty cells in a required column block submission and are highlighted for the operator to fill." },
+                                    "options": options
+                                },
+                                "required": ["name", "label", "type"]
+                            }
+                        },
+                        "rows": {
+                            "type": "array",
+                            "description": "One object per line, keyed by column name. Values may be strings, numbers or booleans.",
+                            "items": { "type": "object" }
+                        },
+                        "row_label": { "type": "string", "description": "Singular noun for a row, e.g. 'line'. Used on the add-row button." },
+                        "allow_add": { "type": "boolean", "description": "Let the operator add a line the document was missing." },
+                        "allow_remove": { "type": "boolean", "description": "Let the operator drop a line that should not be entered." }
+                    },
+                    "required": ["columns", "rows"]
+                }
+            },
+            "required": ["title"]
+        }),
+    }]
 }
 
 #[inline(never)]

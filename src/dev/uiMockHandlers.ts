@@ -18,6 +18,8 @@ import {
   PRODUCT_PAGE,
   RANGE_SUMMARY,
   SYNC_STATUS,
+  WA_CONTACTS,
+  WA_MESSAGES,
   WHATSAPP_STATUS,
 } from "./uiMockData";
 
@@ -192,7 +194,8 @@ export const HANDLERS: Record<string, unknown> = {
   admin_get_ai_enabled: true,
   admin_get_ai_config: { enabled: true },
   payment_confirmations_list: [],
-  whatsapp_list_messages: [],
+  whatsapp_list_messages: WA_MESSAGES,
+  whatsapp_list_contacts: WA_CONTACTS,
   "plugin:window|is_maximized": false,
   "plugin:event|listen": 1,
   "plugin:event|unlisten": null,

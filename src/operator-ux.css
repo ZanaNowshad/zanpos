@@ -402,45 +402,89 @@
 .pm-mid-receipt { justify-content: flex-start; }
 .pm-shell-contact { width: min(1480px, calc(100vw - 32px)); }
 .pm-shell-contact .pm-left { flex: 1 1 0; min-width: 0; padding: 22px; }
-.pm-shell-contact .pm-mid { flex: 1.08 1 0; min-width: 0; padding: 20px; gap: 14px; }
-.pm-shell-contact .pm-right { flex: 1 1 0; min-width: 0; max-width: none; }
+.pm-shell-contact .pm-mid { flex: 1.08 1 0; min-width: 0; padding: 16px 18px; gap: 11px; }
+/* The column is a flex stack with its own gap, so the margins these blocks
+   carried from their standalone days are counted twice. Eighteen pixels of
+   double-spacing is what tipped the delivery journey over the bottom edge. */
+.pm-shell-contact .pm-mid > * { margin-top: 0; margin-bottom: 0; }
+.pm-shell-contact .pm-mid > .pm-print-option { margin-top: auto; }
+.pm-shell-contact .pm-right { flex: 1 1 0; min-width: 0; max-width: none; gap: 10px; }
+/* The keypad is the whole column on a receipt sale, where 58px keys are right.
+   On a delivery it shares the column with a field readout, a mode switch, a
+   Done button and three action rows — at 58px the stack ran 32px past the
+   bottom and Cancel went under the fold. 50px is still well over the 44px
+   touch minimum. */
+.pm-shell-contact .dialpad-key { min-height: 50px; }
+.pm-shell-contact .pm-entry-heading { min-height: 52px; }
+.pm-shell-contact .pm-entry-heading > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pm-shell-contact .pm-mid-title { color: var(--text); font: 750 1.1rem/1.2 "Bricolage Grotesque", var(--font); letter-spacing: 0; text-transform: none; }
 .pm-shell-contact .pm-step-label { margin-bottom: -5px; }
-.pm-shell-contact .pm-print-option { margin-top: 0; min-height: 58px; }
-.pm-contact-block { position: relative; display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
-.pm-shell-contact .pm-contact-block { gap: 10px; padding: 16px; border-radius: var(--radius-md); box-shadow: 0 5px 18px color-mix(in srgb, var(--text) 5%, transparent); }
-.pm-contact-heading { display: flex; justify-content: space-between; gap: 10px; }
-.pm-contact-heading label { display: block; margin-top: 4px; color: var(--text); font-size: 0.86rem; font-weight: 750; }
+.pm-shell-contact .pm-print-option { margin-top: auto; min-height: 50px; }
+/* -- Who the sale is for -------------------------------------------------
+   Sized against the till's 1024x768 panel. The delivery journey is the
+   tallest of the three and used to run 114px past the bottom of the column,
+   which put the rider picker off-screen entirely - a cashier could finish a
+   delivery without ever learning they could assign it to someone. Every block
+   below is measured so the whole journey lands in one screen. */
+.pm-contact-block { position: relative; display: flex; flex-direction: column; gap: 7px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); }
+.pm-shell-contact .pm-contact-block { gap: 8px; padding: 13px; box-shadow: 0 5px 18px color-mix(in srgb, var(--text) 5%, transparent); }
+.pm-contact-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.pm-contact-heading label { display: block; margin-top: 2px; color: var(--text); font-size: 0.84rem; font-weight: 750; }
 .pm-contact-kicker { color: var(--text-dim); font: 650 0.55rem var(--font-mono); letter-spacing: 0.05em; text-transform: uppercase; }
-.pm-contact-input-row { display: grid; grid-template-columns: auto 1fr 52px; align-items: center; min-height: 54px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface2); overflow: hidden; }
-.pm-contact-prefix { padding-left: 10px; color: var(--text-dim); font: 700 0.74rem var(--font-mono); }
-.pm-contact-input { min-width: 0; height: 52px; padding: 0 10px; border: 0; outline: 0; background: transparent; color: var(--text); font: 750 1.05rem var(--font-mono); }
-.pm-contact-input-error { color: var(--danger); }
-.pm-directory-btn { width: 52px; height: 52px; display: grid; place-items: center; border: 0; border-left: 1px solid var(--border); background: color-mix(in srgb, var(--accent) 9%, var(--surface)); color: var(--accent-h); cursor: pointer; }
-.pm-contact-help { color: var(--text-dim); font-size: var(--type-office-micro); line-height: 1.35; }
-.pm-contact-clear { width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface2); color: var(--text-dim); }
-.pm-contact-match, .pm-contact-new, .pm-contact-error { font-size: var(--type-office-micro); line-height: 1.35; }
-.pm-contact-match { display: flex; align-items: center; gap: 5px; color: var(--success); }
-.pm-contact-new { color: var(--text-dim); }
-.pm-contact-error { color: var(--danger); }
-.pm-contact-suggestions { position: absolute; z-index: 7; top: calc(100% - 8px); left: 12px; right: 12px; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); box-shadow: 0 14px 30px rgba(0,0,0,.18); overflow: hidden; }
-.pm-contact-suggestions button, .pm-directory-results button { display: flex; justify-content: space-between; gap: 10px; padding: 10px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--text); text-align: left; cursor: pointer; }
-.pm-contact-suggestions button:hover, .pm-directory-results button:hover { background: var(--surface2); }
-.pm-contact-suggestions small, .pm-directory-results small { color: var(--text-dim); font-family: var(--font-mono); }
-.pm-address-form { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: 0 5px 18px color-mix(in srgb, var(--text) 5%, transparent); }
+
+/* The directory moved out of the input row and into the heading. Inside the
+   row it was a 52px square with no label, which read as part of the field
+   rather than a way out of it. */
+.pm-directory-btn { min-height: 40px; display: inline-flex; align-items: center; gap: 7px; padding: 0 12px; border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border)); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent) 9%, var(--surface)); color: var(--accent-h); font-size: var(--type-office-micro); font-weight: 750; cursor: pointer; }
+.pm-directory-btn:hover { background: color-mix(in srgb, var(--accent) 16%, var(--surface)); }
+
+.pm-contact-input-row { display: grid; grid-template-columns: 1fr auto; align-items: center; min-height: 54px; padding-inline-end: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface2); }
+.pm-contact-input-row:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.pm-contact-input-row.is-error { border-color: color-mix(in srgb, var(--danger) 55%, var(--border)); }
+.pm-contact-input-row.is-ready { border-color: color-mix(in srgb, var(--success) 45%, var(--border)); }
+.pm-contact-input { min-width: 0; height: 52px; padding: 0 12px; border: 0; outline: 0; background: transparent; color: var(--text); font: 750 1.05rem var(--font-mono); }
+.pm-contact-clear { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-dim); cursor: pointer; }
+
+.pm-contact-help, .pm-contact-match, .pm-contact-error { min-height: 17px; font-size: var(--type-office-micro); line-height: 1.35; }
+.pm-contact-help { color: var(--text-dim); }
+.pm-contact-match { display: flex; align-items: center; gap: 6px; color: var(--success); }
+.pm-contact-match strong { color: var(--text); }
+.pm-contact-match span { color: var(--text-dim); font-family: var(--font-mono); }
+.pm-contact-error { color: var(--danger); font-weight: 650; }
+
+/* One row per person, whichever directory they came from. The source tag is
+   not decoration: "Saved" and "Chatted" answer why an unfamiliar name is being
+   offered, which is the question a cashier asks before tapping it. */
+.pm-contact-suggestions { position: absolute; z-index: 7; top: calc(100% - 4px); left: 8px; right: 8px; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); box-shadow: 0 14px 30px rgba(0,0,0,.22); overflow: hidden; }
+.pm-contact-suggestions button, .pm-directory-results button { width: 100%; min-height: 52px; display: flex; flex-direction: column; align-items: stretch; justify-content: center; gap: 3px; padding: 8px 11px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--text); text-align: start; cursor: pointer; }
+.pm-contact-suggestions button:last-child, .pm-directory-results button:last-child { border-bottom: 0; }
+.pm-contact-suggestions button:hover, .pm-contact-suggestions button.is-highlighted,
+.pm-directory-results button:hover, .pm-directory-results button.is-highlighted { background: color-mix(in srgb, var(--accent) 11%, var(--surface)); }
+.pm-sugg-line { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+/* The name gets a floor. Without one it is the flex child that collapses in a
+   300px column, and the row renders as a source badge printed on top of a
+   phone number with no name anywhere in it. */
+.pm-sugg-name { min-width: 6ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85rem; font-weight: 700; }
+.pm-sugg-meta em { flex: 0 0 auto; padding: 1px 7px; border-radius: var(--radius-pill); background: var(--surface2); color: var(--text-dim); font: 650 0.55rem var(--font-mono); font-style: normal; letter-spacing: .03em; }
+.pm-contact-suggestions small, .pm-directory-results small { flex: 0 0 auto; color: var(--text-dim); font-family: var(--font-mono); font-size: var(--type-office-micro); white-space: nowrap; }
+
+/* The required marker belongs on the label's last line, not below it. */
+.pm-contact-heading label { text-wrap: balance; }
+.pm-contact-heading label span { white-space: nowrap; }
+
+.pm-address-form { display: flex; flex-direction: column; gap: 9px; padding: 13px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); box-shadow: 0 5px 18px color-mix(in srgb, var(--text) 5%, transparent); }
 .pm-address-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .pm-address-heading span { font-size: 0.74rem; font-weight: 750; }
 .pm-address-heading small { color: var(--text-dim); font-size: var(--type-office-micro); }
 .pm-address-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .pm-road-field { grid-column: 1 / -1; }
-.pm-shell-contact .delivery-label { display: block; margin-bottom: 6px; font-size: var(--type-office-micro); font-weight: 750; }
-.pm-shell-contact .delivery-input { min-height: 54px; padding: 0 13px; border-radius: var(--radius-sm); font-size: .9rem; }
-.pm-shell-contact .delivery-method-note { min-height: 38px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); }
+.pm-shell-contact .delivery-label { display: block; margin-bottom: 4px; font-size: var(--type-office-micro); font-weight: 750; }
+.pm-shell-contact .delivery-input { min-height: 50px; padding: 0 13px; border-radius: var(--radius-sm); font-size: .9rem; }
 .pm-digital-guide { display: flex; align-items: flex-start; gap: 12px; padding: 16px; border: 1px solid color-mix(in srgb, var(--success) 30%, var(--border)); border-radius: var(--radius-md); background: color-mix(in srgb, var(--success) 7%, var(--surface)); color: var(--success); }
 .pm-digital-guide div { display: flex; flex-direction: column; gap: 4px; }
 .pm-digital-guide strong { color: var(--text); font-size: .78rem; }
 .pm-digital-guide span { color: var(--text-dim); font-size: var(--type-office-micro); line-height: 1.45; }
-.pm-print-option { display: flex; align-items: center; gap: 9px; margin-top: auto; padding: 11px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; }
+.pm-print-option { display: flex; align-items: center; gap: 9px; margin-top: auto; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; }
 .pm-print-option input { width: 17px; height: 17px; accent-color: var(--accent); }
 .pm-print-option svg { color: var(--accent-h); }
 .pm-print-option span { display: flex; flex-direction: column; gap: 2px; }
@@ -456,6 +500,15 @@
 .pm-directory-search input { flex: 1; min-width: 0; height: 44px; border: 0; outline: 0; background: transparent; color: var(--text); }
 .pm-directory-results { min-height: 180px; max-height: 430px; margin: 0 14px 14px; overflow: auto; }
 .pm-directory-empty { padding: 48px 16px; color: var(--text-dim); font-size: var(--type-office-micro); text-align: center; }
+.pm-directory-search input::placeholder { color: var(--text-muted); }
+.pm-directory-clear { flex: 0 0 auto; width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-dim); cursor: pointer; }
+/* The till has no keyboard plugged into it, so a search box with no way to
+   type into it is decoration. Keys are inside the dialog rather than borrowed
+   from the modal behind it, which the backdrop covers. */
+.pm-directory-keys-btn { flex: 0 0 auto; min-height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-dim); font-size: var(--type-office-micro); font-weight: 700; cursor: pointer; }
+.pm-directory-keys-btn.is-on { border-color: var(--accent); color: var(--accent); }
+.pm-directory-keys { padding: 10px 14px 14px; border-top: 1px solid var(--border); background: var(--surface2); }
+.pm-directory-keys .tkb-key { min-height: 38px; }
 
 /* One shift ledger: sales and drawer reconcile in the same report surface. */
 .pos-reports-modal { width: min(1040px, calc(100vw - 48px)); max-height: calc(100vh - 48px); padding: 0; overflow: hidden; }
@@ -482,10 +535,11 @@
   .pos-report-column + .pos-report-column { border-left: 0; border-top: 1px solid var(--border); }
   .practice-settings-card { align-items: flex-start; flex-direction: column; }
 }
-@media (max-width: 1180px) {
-  .pm-shell-contact { overflow: auto; }
-  .pm-shell-contact .pm-left, .pm-shell-contact .pm-mid, .pm-shell-contact .pm-right { min-width: 330px; }
-}
+/* No breakpoint here on purpose. This used to be `max-width: 1180px`, which
+   the till's own 1024px panel matches - so the three-column layout designed
+   for it was the one arrangement the shop never saw, and the columns were
+   pinned to a 330px minimum that forced the shell to scroll sideways. The
+   columns flex instead, and the heights above keep them fitting. */
 
 /* Deliveries — frame the register as an exception queue. */
 .dlv-command-header {

@@ -31,10 +31,22 @@ export function PaymentMethodPicker({
   const { language } = useLanguage();
   const t = detailTranslator(language);
   const activeRef = useRef<HTMLButtonElement>(null);
-  const focusedFor = useRef<PaymentInput["method"] | null>(null);
+  /*
+   * Seeded with the method the modal opened on, so the first run of the effect
+   * below is a no-op.
+   *
+   * Starting at null made mount look like a change, so opening the dialog put
+   * the caret on a payment-method button. Nothing was wrong on screen, but the
+   * cashier's first keystrokes went to a radio group: typing a customer name
+   * did nothing, and the arrow keys switched between cash and card instead of
+   * moving through the fields. The method is already chosen when the modal
+   * opens — focus belongs wherever the cashier still has to type, which the
+   * dialog decides, not this component.
+   */
+  const focusedFor = useRef<PaymentInput["method"] | null>(selected);
 
   /*
-   * Move focus to the selected method when the selection changes — F1/F2/F3
+   * Move focus to the selected method when the selection *changes* — F1/F2/F3
    * and the c/a/w shortcuts pick a method without touching the mouse, and the
    * radio group needs focus for the arrow keys to work from there.
    *
@@ -47,10 +59,12 @@ export function PaymentMethodPicker({
    */
   useEffect(() => {
     if (focusedFor.current === selected) return;
-    focusedFor.current = selected;
     const inField = document.activeElement instanceof HTMLInputElement
       || document.activeElement instanceof HTMLTextAreaElement;
+    // Recorded only once the move actually happens. Marking it handled on the
+    // way past meant a change made while typing was never honoured afterwards.
     if (inField) return;
+    focusedFor.current = selected;
     activeRef.current?.focus();
   }, [selected]);
 
@@ -107,6 +121,8 @@ interface CommandPanelProps {
    *  field but the cashier can switch — a flat number is "3B". */
   inputMode: "pad" | "keys";
   onToggleInputMode: () => void;
+  /** Moves to the next field. Absent on the last one, where Done is the exit. */
+  onNextField?: () => void;
   canConfirm: boolean;
   loading?: boolean;
   completionLabel: string;
@@ -216,7 +232,7 @@ export function PaymentCommandPanel(props: CommandPanelProps) {
         <div className="pm-keyboard-error" role="status">{props.keyboardError}</div>
       )}
       {props.inputMode === "keys"
-        ? <TouchKeyboard onKey={props.onKey} />
+        ? <TouchKeyboard onKey={props.onKey} onNext={props.onNextField} />
         : <Dialpad onKey={props.onKey} />}
       {/* Done is the way back to the summary. Without it the column has no
           resting state on a touch till, where there is nowhere neutral to

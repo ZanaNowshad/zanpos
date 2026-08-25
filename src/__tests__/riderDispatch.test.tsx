@@ -51,7 +51,7 @@ describe("delivery address requirements", () => {
     // Flat and road were both mandatory, which blocked the sale for a villa
     // with no flat and for an address given as a landmark.
     const html = renderToStaticMarkup(
-      <DeliveryForm value={{}} onChange={() => {}} expectedPaymentMethod="cash" />,
+      <DeliveryForm value={{}} onChange={() => {}} />,
     );
 
     const required = html.match(/delivery-required/g) ?? [];

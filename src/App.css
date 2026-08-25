@@ -1768,7 +1768,12 @@ kbd.kbd-primary {
   background: none;
   cursor: default;
 }
-.modal-overlay > .modal { position: relative; }
+/* The dismiss target is absolutely positioned, so anything meant to sit above
+   it has to be positioned too — a static sibling paints underneath and the
+   dialog becomes unclickable. Matched on the role as well as the class so a
+   dialog that does not happen to be called `.modal` is still reachable. */
+.modal-overlay > .modal,
+.modal-overlay > [role="dialog"] { position: relative; }
 
 @keyframes overlay-in {
   from { opacity: 0; }
@@ -5838,10 +5843,16 @@ textarea.field-input { resize: vertical; }
 @media print {
   body > *:not(.modal-overlay) { display: none !important; }
   .modal-overlay > *:not(.barcodes-modal) { display: none !important; }
+  /* The label sheet moved onto the shared dialog shell, so the chrome to hide
+     is now the shell's own header and footer rather than this dialog's. Printing
+     them would waste the first label on a title and a Cancel button. */
   .barcodes-modal-header,
   .barcodes-hint,
-  .barcodes-modal-actions { display: none !important; }
-  .barcodes-modal  { box-shadow: none; border: none; padding: 0; max-height: none; overflow: visible; }
+  .barcodes-modal-actions,
+  .barcodes-modal .zmodal-head,
+  .barcodes-modal .zmodal-foot { display: none !important; }
+  .barcodes-modal { box-shadow: none; border: none; padding: 0; max-height: none; overflow: visible; }
+  .barcodes-modal .zmodal-body { padding: 0; gap: 0; overflow: visible; }
   .barcode-labels-grid {
     display: grid;
     grid-template-columns: repeat(3, 50mm);
@@ -6519,6 +6530,55 @@ textarea.field-input { resize: vertical; }
 }
 .quick-chip:hover { border-color: var(--accent); background: var(--surface2); color: var(--accent); transform: translateY(-1px); }
 .quick-chip:active { transform: translateY(0) scale(0.97); }
+
+/* ── Persistent quick actions ─────────────────────────────────────────────────
+   The suggestions used to live only in the welcome panel and disappeared the
+   moment anything was sent, so the one-tap route to "today's sales" existed
+   only before you had asked anything. This row stays for the whole
+   conversation, on every chat surface.
+
+   One scrolling line, never wrapping: the floating till widget is about 360px
+   wide and the docked copilot about 260px, where a wrapping grid of seven
+   chips would take three rows out of the message area. */
+.chat-quick-bar {
+  display: flex;
+  gap: 6px;
+  padding: 6px 12px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.chat-quick-bar::-webkit-scrollbar { display: none; }
+
+.chat-quick-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  /* Tall enough for a thumb on the till without spending a second row. */
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  font: 600 var(--type-office-caption)/1 var(--font);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--t-fast), background var(--t-fast), color var(--t-fast);
+}
+.chat-quick-chip:hover {
+  border-color: var(--accent);
+  background: var(--surface2);
+  color: var(--accent);
+}
+/* Continue rides in the same row rather than claiming one of its own, and is
+   marked out because it is the contextual one — it only means anything
+   directly after an assistant reply. */
+.chat-quick-chip-continue {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  color: var(--accent-h);
+}
 
 /* ── Chat messages area ──────────────────────────────────────────────────────── */
 /* (overrides old .chat-messages to remove top padding clash) */
@@ -18661,7 +18721,13 @@ html:not([dir="rtl"]) .oa-dock-header { padding-top: 42px; }
 .tkb-key:active { background: var(--surface2); }
 .tkb-mod { flex: 0 0 46px; color: var(--text-dim); }
 .tkb-mod.is-on { border-color: var(--accent); color: var(--accent); }
-.tkb-space { flex: 1 1 auto; }
+.tkb-space { flex: 3 1 auto; font-size: 0.75rem; color: var(--text-dim); }
+.tkb-punct { flex: 0 0 38px; color: var(--text-dim); }
+/* The script switch carries a letter rather than a flag or a locale code:
+   half the names in the shop's book are written in Arabic, and the cashier
+   needs to recognise the key at a glance mid-queue. */
+.tkb-script { font-size: 1rem; font-weight: 700; }
+.tkb-next { color: var(--accent-h); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
 
 /* Duplicate-scan pager. Hundreds of groups in one scroll panel is not a list,
    it is a wall; paging makes it something a manager can work through. */
@@ -18734,9 +18800,26 @@ html:not([dir="rtl"]) .oa-dock-header { padding-top: 42px; }
   display: grid;
   /* Three across on a desktop, two on the till, one when the pane is narrow —
      without a media query, because this panel shares width with a chat. */
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  /* `min()` so the track can never exceed the pane itself. The bare 240px
+     floor overflowed the docked copilot, which is about 260px wide before
+     padding. */
+  grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
   gap: var(--ui-gap);
 }
+
+/* The launcher now renders inside the chat's own scroll region on every
+   surface, rather than as a full-height panel above it. It must not scroll
+   itself there — a pane that scrolls inside a pane that scrolls is a trap on a
+   touchscreen, where the inner one swallows the gesture. */
+.chat-messages .oa-wf-launcher {
+  flex: none;
+  min-height: auto;
+  overflow: visible;
+  padding: 2px 0 10px;
+}
+.chat-messages .oa-wf-intro { margin-bottom: 12px; }
+.chat-messages .oa-wf-intro h2 { font-size: var(--type-office-section); }
+.chat-messages .oa-wf-intro p { font-size: var(--type-office-caption); }
 .oa-wf-card {
   display: flex;
   flex-direction: column;

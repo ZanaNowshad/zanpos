@@ -4,6 +4,7 @@
 pub mod discovery;
 pub mod pairing;
 pub mod rest;
+mod rest_parity;
 
 use crate::errors::{AppError, AppResult};
 use serde::{Deserialize, Serialize};

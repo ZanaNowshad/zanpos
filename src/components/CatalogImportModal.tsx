@@ -4,6 +4,8 @@ import { DEVICE } from "../types";
 import { catalogImportApply } from "../tauri/commands";
 import { useLanguage } from "../hooks/useLanguage";
 import { countText, operationsTranslator } from "../i18n/operationsStrings";
+import ModalShell from "./modal/ModalShell";
+import { ModalActions, ModalError } from "./modal/ModalParts";
 
 interface Props {
   proposal: CatalogImportProposal;
@@ -99,13 +101,44 @@ export default function CatalogImportModal({ proposal, sessionToken, onClose, on
     }
   };
 
+  /* One footer for both states. The result screen used to put Done inside its
+     own block and the review screen put Apply inside another, so the button
+     moved down the dialog as the table grew. */
+  const footer = result ? (
+    <ModalActions note={t("inactiveDraftNote")}>
+      <button type="button" className="btn-primary" onClick={onClose}>{t("done")}</button>
+    </ModalActions>
+  ) : (
+    <ModalActions
+      note={proposal.supplier_name
+        ? `${t("supplier")}: ${proposal.supplier_name}${proposal.supplier_id ? "" : ` (${t("newSupplier")})`}`
+        : undefined}
+    >
+      <button type="button" className="btn-secondary" onClick={onClose} disabled={applying}>
+        {t("cancel")}
+      </button>
+      <button
+        type="button"
+        className="btn-primary"
+        onClick={apply}
+        disabled={applying || includedCount === 0}
+      >
+        {applying ? t("applying") : `${t("apply")} ${countText(language, "changes", includedCount)}`}
+      </button>
+    </ModalActions>
+  );
+
   return (
-    <button className="modal-overlay" type="button" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal catalog-import-modal" role="dialog" aria-modal="true" aria-label={t("catalogImportAria")}>
-        <div className="modal-header">
-          <span className="modal-title">📋 {t("catalogReviewTitle")}</span>
-          <button className="modal-close" onClick={onClose}>✕</button>
-        </div>
+    <ModalShell
+      kicker="Purchasing"
+      title={t("catalogReviewTitle")}
+      subtitle={result ? undefined : `${countText(language, "lines", rows.length)} ${t("found")}`}
+      size="xl"
+      className="catalog-import-modal"
+      onClose={onClose}
+      footer={footer}
+    >
+      <>
 
         {result ? (
           <div className="catalog-import-result">
@@ -117,20 +150,10 @@ export default function CatalogImportModal({ proposal, sessionToken, onClose, on
                 <ul>{result.errors.map((er, i) => <li key={i}>{er}</li>)}</ul>
               </div>
             )}
-            <p className="ci-result-note">{t("inactiveDraftNote")}</p>
-            <div className="modal-actions">
-              <button className="btn-primary" onClick={onClose}>{t("done")}</button>
-            </div>
           </div>
         ) : (
           <>
-            <div className="catalog-import-meta">
-              <span>{countText(language, "lines", rows.length)} {t("found")}</span>
-              {proposal.supplier_name && (
-                <span className="ci-supplier">{t("supplier")}: <strong>{proposal.supplier_name}</strong>{proposal.supplier_id ? "" : ` (${t("newSupplier")})`}</span>
-              )}
-            </div>
-            {error && <div className="ghost-error">{error}</div>}
+            <ModalError message={error} />
 
             <div className="catalog-import-body">
               <table className="ci-table">
@@ -186,15 +209,9 @@ export default function CatalogImportModal({ proposal, sessionToken, onClose, on
               </table>
             </div>
 
-            <div className="modal-actions">
-              <button className="btn-secondary" onClick={onClose} disabled={applying}>{t("cancel")}</button>
-              <button className="btn-primary" onClick={apply} disabled={applying || includedCount === 0}>
-                {applying ? t("applying") : `${t("apply")} ${countText(language, "changes", includedCount)}`}
-              </button>
-            </div>
           </>
         )}
-      </div>
-    </button>
+      </>
+    </ModalShell>
   );
 }

@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { productImageSrc } from "../productImage";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import ProductThumb from "./ProductThumb";
+import ModalShell from "./modal/ModalShell";
+import { ModalActions } from "./modal/ModalParts";
 import type { DuplicateGroup, DuplicateProduct } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney } from "../money";
@@ -8,7 +10,6 @@ import {
   adminMergeProducts,
   adminDeleteProduct,
 } from "../tauri/commands";
-import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useLanguage } from "../hooks/useLanguage";
 import { modalTranslator } from "../i18n/modalStrings";
 import { detailTranslator } from "../i18n/detailStrings";
@@ -38,8 +39,6 @@ export default function DuplicateProductsModal({ sessionUserId, onClose, onResol
   const { language } = useLanguage();
   const t = useMemo(() => modalTranslator(language), [language]);
   const dt = useMemo(() => detailTranslator(language), [language]);
-  const modalRef = useRef<HTMLDivElement>(null);
-  useFocusTrap(modalRef, onClose);
   const exp = DEVICE.currency_exponent;
   const cur = DEVICE.currency;
 
@@ -147,25 +146,23 @@ export default function DuplicateProductsModal({ sessionUserId, onClose, onResol
     g.products.find(p => p.product_id === keeperId)?.name ?? "kept product";
 
   return (
-    <button className="modal-overlay" type="button" onClick={onClose}>
-   <div tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }} 
-        ref={modalRef}
-        className="modal dup-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label={t("duplicates")}
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="ghost-modal-header">
-          <div className="ghost-modal-title">
-            <h2>{t("duplicates")}</h2>
-            <p className="ghost-modal-sub">
-              {dt("catalogScanDescription")}
-            </p>
-          </div>
-          <button className="bo-form-modal-close" onClick={onClose} aria-label={t("close")}>✕</button>
-        </div>
-
+    <ModalShell
+      kicker="Catalogue"
+      title={t("duplicates")}
+      subtitle={dt("catalogScanDescription")}
+      size="xl"
+      className="dup-modal"
+      onClose={onClose}
+      footer={
+        <ModalActions
+          note={groups.length > 0
+            ? `${groups.length} group${groups.length === 1 ? "" : "s"} to review. Merging keeps one product and folds the rest into it.`
+            : undefined}
+        >
+          <button type="button" className="btn-secondary" onClick={onClose}>{t("close")}</button>
+        </ModalActions>
+      }
+    >
         <div className="dup-toolbar">
           <label htmlFor="a11y-input-1" className="dup-check">
             <input id="a11y-input-1"
@@ -268,14 +265,12 @@ export default function DuplicateProductsModal({ sessionUserId, onClose, onResol
                           checked={isKeeper}
                           onChange={() => setKeepers(k => ({ ...k, [gid]: p.product_id }))}
                         />
-                        {p.image_path ? (
-                          <img
-                            className="dup-row-img"
-                            src={productImageSrc(p.image_path) ?? ""}
-                            alt=""
-                            onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
-                          />
-                        ) : <span className="dup-row-img dup-row-img-empty" />}
+                        {/* Merging duplicates is a visual comparison, so the
+                            row with no photo still has to look like something
+                            rather than a blank the eye skips over. */}
+                        <span className="dup-row-img">
+                          <ProductThumb imagePath={p.image_path} productName={p.name} />
+                        </span>
                         <div className="dup-row-info">
                           <div className="dup-row-name">
                             {p.name}
@@ -355,7 +350,6 @@ export default function DuplicateProductsModal({ sessionUserId, onClose, onResol
             </div>
           )}
         </div>
-      </div>
-    </button>
+    </ModalShell>
   );
 }

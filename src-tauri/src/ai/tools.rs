@@ -555,6 +555,14 @@ async fn execute_read_tool_inner(
             "The full mutation-tool catalogue will be available on the next step. Re-evaluate the operator's request before choosing a mutation; the runtime will enforce the configured confirmation policy."
                 .into(),
         ),
+        // Validation lives in `forms`, so an unusable spec comes back as a
+        // recoverable tool error the model can correct. The streaming loop
+        // re-parses the same input to build the event it sends the widget;
+        // parsing is pure, so a spec that succeeds here succeeds there.
+        "request_input" => {
+            let form = crate::ai::forms::parse_form_spec(input)?;
+            Ok(crate::ai::forms::acknowledgement(&form))
+        }
         "report_expiring_stock" => {
             let lead_days = input.get("lead_days").and_then(Value::as_i64).unwrap_or(7);
             let lots = crate::inventory::lots::expiring_lots(pool, branch_id, lead_days).await?;
@@ -2631,6 +2639,11 @@ async fn execute_read_tool_inner(
                     "{{\"ok\":false,\"tab\":\"{tab}\",\"error\":\"invalid tab\"}}"
                 ))
             }
+        }
+        // Parity tools reach the hub, so they take the pool and their own input
+        // rather than the branch/currency shape the reporting tools share.
+        name if crate::ai::tools_parity::handles(name) => {
+            crate::ai::tools_parity::execute(pool, name, input).await
         }
         name => {
             crate::ai::tools_read_ext::execute(pool, name, input, branch_id, currency_exp).await

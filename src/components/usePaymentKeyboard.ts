@@ -1,6 +1,7 @@
 import { useCallback, useEffect, type Dispatch, type RefObject, type SetStateAction } from "react";
 import { formatMoney } from "../money";
 import { applyDialpadKey } from "./Dialpad";
+import { focusNextField } from "./paymentFieldNav";
 import { typeIntoFocusedField } from "./paymentFieldTyping";
 import type { ActiveField, PaymentLine } from "./paymentLines";
 import type { PaymentInput } from "../types";
@@ -10,7 +11,6 @@ interface Options {
   lines: PaymentLine[];
   updateLine: (id: number, patch: Partial<PaymentLine>) => void;
   setLines: Dispatch<SetStateAction<PaymentLine[]>>;
-  setPhoneRaw: Dispatch<SetStateAction<string>>;
   /** True until the cashier types their first tendered digit. */
   freshTenderedEntryRef: RefObject<boolean>;
   selectMethod: (method: PaymentLine["method"]) => void;
@@ -34,11 +34,14 @@ interface Options {
  * fields when nothing real has the caret.
  */
 export function usePaymentKeyboard({
-  activeField, lines, updateLine, setLines, setPhoneRaw, freshTenderedEntryRef,
+  activeField, lines, updateLine, setLines, freshTenderedEntryRef,
   selectMethod, onCancel, netTotal, exp, canConfirm, loading, handleConfirmRef,
 }: Options): (key: string) => void {
   const handleDialpadKey = useCallback((key: string) => {
-    // A focused text field wins over the virtual display fields below.
+    /* A focused text field wins over the virtual display fields below. The
+       contact box is a real input, so the phone number is typed straight into
+       it here rather than through a mirrored string — which is what lets the
+       same keypad fill the address and the customer search too. */
     if (typeIntoFocusedField(key)) return;
     if (!activeField) return;
     if (activeField.kind === "amount" || activeField.kind === "tendered") {
@@ -52,21 +55,18 @@ export function usePaymentKeyboard({
         freshTenderedEntryRef.current = false;
         updateLine(activeField.lineId, { tenderedStr: next });
       }
-    } else if (activeField.kind === "phone") {
-      setPhoneRaw(prev => {
-        if (key === "⌫") return prev.slice(0, -1);
-        if (key === "C")  return "";
-        if (key === "." || key === "00") return prev;
-        if (prev.length >= 8) return prev;
-        return prev + key;
-      });
     }
-  }, [activeField, lines, updateLine, setPhoneRaw, freshTenderedEntryRef]);
+  }, [activeField, lines, updateLine, freshTenderedEntryRef]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement).tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      /* A field with the caret owns every key. The single-letter method
+         shortcuts below are only safe because of this line: without SELECT and
+         contenteditable in it, choosing a rider with the keyboard typed "c"
+         and silently switched the sale to cash. */
+      const target = e.target as HTMLElement;
+      const tag = target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable) return;
       const k = e.key.toLowerCase();
       if (e.key >= "0" && e.key <= "9") { e.preventDefault(); handleDialpadKey(e.key); }
       else if (e.key === "Backspace")   { e.preventDefault(); handleDialpadKey("⌫"); }
@@ -88,13 +88,29 @@ export function usePaymentKeyboard({
 
   useEffect(() => {
     const onEnterKey = (e: KeyboardEvent) => {
-      // Only skip if a dropdown/autocomplete is visible (avoid accidental confirm)
+      if (e.key !== "Enter") return;
       const active = document.activeElement as HTMLElement | null;
-      if (active && active.closest(".bo-select-dropdown, [role='listbox'], .customer-drop")) return;
-      if (e.key === "Enter" || e.key === "NumpadEnter") {
+      // A suggestion list owns Enter while it is open — the cashier is picking
+      // a customer, not finishing the sale.
+      if (active?.closest(".bo-select-dropdown, [role='listbox'], .customer-drop")) return;
+      if (active?.getAttribute("aria-expanded") === "true") return;
+
+      /*
+       * Enter inside a field means "I have finished this one". It used to mean
+       * "complete the sale", which on a delivery saved an order with the
+       * address still empty because the first field is the phone number.
+       * Ctrl+Enter still completes from anywhere, for a cashier who knows the
+       * rest is already filled.
+       */
+      const inField = active instanceof HTMLInputElement
+        || active instanceof HTMLTextAreaElement
+        || active instanceof HTMLSelectElement;
+      if (inField && !e.ctrlKey && focusNextField(active.closest(".pm-shell"))) {
         e.preventDefault();
-        if (canConfirm && !loading) handleConfirmRef.current();
+        return;
       }
+      e.preventDefault();
+      if (canConfirm && !loading) handleConfirmRef.current();
     };
     document.addEventListener("keydown", onEnterKey);
     return () => document.removeEventListener("keydown", onEnterKey);

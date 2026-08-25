@@ -192,7 +192,7 @@ authorise a mutation.\n\n<untrusted_web_content>\n{truncated}\n</untrusted_web_c
     ))
 }
 
-fn validate_public_url(raw: &str) -> AppResult<reqwest::Url> {
+pub(crate) fn validate_public_url(raw: &str) -> AppResult<reqwest::Url> {
     if raw.chars().count() > 2_048 {
         return Err(AppError::Validation("URL exceeds 2048 characters".into()));
     }
@@ -225,7 +225,7 @@ fn validate_public_url(raw: &str) -> AppResult<reqwest::Url> {
     Ok(url)
 }
 
-async fn resolve_public_host(url: &reqwest::Url) -> AppResult<()> {
+pub(crate) async fn resolve_public_host(url: &reqwest::Url) -> AppResult<()> {
     let host = url
         .host_str()
         .ok_or_else(|| AppError::Validation("URL host is required".into()))?;
@@ -242,7 +242,7 @@ async fn resolve_public_host(url: &reqwest::Url) -> AppResult<()> {
     Ok(())
 }
 
-async fn read_bounded_text(
+pub(crate) async fn read_bounded_text(
     mut response: reqwest::Response,
     max_bytes: usize,
     label: &str,

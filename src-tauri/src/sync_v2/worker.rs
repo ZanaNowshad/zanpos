@@ -2,7 +2,7 @@ use crate::db::repositories::ai_admin_repo;
 use crate::errors::{AppError, AppResult};
 use crate::secure_store;
 use crate::sync_v2::apply::{
-    self, has_origin_device_id, pk_for_table, should_skip_column, value_from_row_column,
+    self, has_origin_device_id, pk_for_table, skip_on_wire, value_from_row_column,
     ALLOWED_CONFIG_KEYS,
 };
 use crate::sync_v2::client::HttpSyncClient;
@@ -527,7 +527,7 @@ impl SyncWorker {
                         for col in row.columns() {
                             let col_name = col.name();
                             // Skip local-only columns that must never sync
-                            if should_skip_column(table, col_name) {
+                            if skip_on_wire(table, col_name) {
                                 continue;
                             }
                             let val = value_from_row_column(row, col_name);
@@ -727,6 +727,46 @@ impl SyncWorker {
         }
     }
 
+    /// Set a row aside if it has failed too many times, so its table can advance.
+    ///
+    /// Returns true when the row was quarantined and the caller should treat it
+    /// as dealt with. The attempt count lives in the inbox rather than in this
+    /// worker, so a terminal that restarts mid-retry does not forget that a row
+    /// has already failed four times and start again from zero.
+    ///
+    /// Deliberately *not* first-failure behaviour: a dependency arriving out of
+    /// order looks exactly like one that will never arrive, and most of them
+    /// arrive.
+    async fn quarantine_if_hopeless(&self, table: &str, row: &Value, reason: &str) -> bool {
+        let Some(obj) = row.as_object() else {
+            return false;
+        };
+        let entity_id = obj
+            .get(pk_for_table(table))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        if entity_id.is_empty() {
+            return false;
+        }
+
+        let attempts =
+            crate::sync_v2::inbox::record_failure(&self.pool, table, entity_id, obj, reason).await;
+        if attempts < crate::sync_v2::dead_letter::QUARANTINE_AFTER_ATTEMPTS {
+            return false;
+        }
+
+        crate::sync_v2::dead_letter::quarantine(
+            &self.pool,
+            table,
+            entity_id,
+            row,
+            reason,
+            attempts,
+        )
+        .await
+        .is_ok()
+    }
+
     async fn record_sync_conflict(
         &self,
         conflict_type: &str,
@@ -823,7 +863,7 @@ impl SyncWorker {
                     let mut map = serde_json::Map::new();
                     for col in row.columns() {
                         let col_name = col.name();
-                        if should_skip_column(table, col_name) {
+                        if skip_on_wire(table, col_name) {
                             continue;
                         }
                         map.insert(col_name.to_string(), value_from_row_column(row, col_name));
@@ -1040,6 +1080,28 @@ impl SyncWorker {
                                 }
                             } else {
                                 let internal_error = e.internal_database_detail();
+
+                                // A row that has failed this many cycles is not
+                                // waiting on something; it is never going to
+                                // apply. Halting the watermark for it means the
+                                // next cycle re-fetches it and fails again, so
+                                // the table never syncs again — the row is set
+                                // aside instead, in full, and the table moves on.
+                                if self
+                                    .quarantine_if_hopeless(table, row, &internal_error)
+                                    .await
+                                {
+                                    if let Some(ts) =
+                                        row.get("updated_at").and_then(|v| v.as_str())
+                                    {
+                                        if ts_after(ts, &max_applied_ts) {
+                                            max_applied_ts = ts.to_string();
+                                        }
+                                    }
+                                    applied += 1;
+                                    continue;
+                                }
+
                                 let (conflict_type, conflict_title) =
                                     if e.is_foreign_key_constraint() {
                                         ("missing_dependency", "Missing synced dependency")

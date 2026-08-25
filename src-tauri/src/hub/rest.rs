@@ -1,6 +1,6 @@
 use super::HubState;
 use crate::sync_v2::apply::{
-    self, pk_for_table, should_skip_column, value_from_row_column, ALLOWED_CONFIG_KEYS, SYNC_TABLES,
+    self, pk_for_table, skip_on_wire, value_from_row_column, ALLOWED_CONFIG_KEYS, SYNC_TABLES,
 };
 use axum::extract::{ConnectInfo, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -23,6 +23,11 @@ pub fn router(state: HubState) -> Router {
         .route("/zanpos/info", get(info))
         .route("/zanpos/health", get(health))
         .route("/zanpos/consistency", get(consistency))
+        .route("/zanpos/parity", get(super::rest_parity::parity))
+        .route(
+            "/zanpos/parity/rows",
+            axum::routing::post(super::rest_parity::parity_rows),
+        )
         .route("/zanpos/events", get(events))
         .layer(axum::extract::DefaultBodyLimit::max(32 * 1024 * 1024))
         .with_state(state)
@@ -77,7 +82,11 @@ fn digests_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
-fn check_auth(state: &HubState, headers: &HeaderMap, addr: &SocketAddr) -> Result<(), Response> {
+pub(super) fn check_auth(
+    state: &HubState,
+    headers: &HeaderMap,
+    addr: &SocketAddr,
+) -> Result<(), Response> {
     let presented = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
@@ -231,6 +240,20 @@ async fn consistency(
     }
 }
 
+/// A row as the sync protocol sees it: every column except the per-device
+/// bookkeeping that must not travel.
+pub(super) fn row_to_json(table: &str, row: &sqlx::sqlite::SqliteRow) -> Value {
+    let mut map = serde_json::Map::new();
+    for col in row.columns() {
+        let name = col.name();
+        if skip_on_wire(table, name) {
+            continue;
+        }
+        map.insert(name.to_string(), value_from_row_column(row, name));
+    }
+    Value::Object(map)
+}
+
 async fn pull_table(
     State(state): State<HubState>,
     Path(table): Path<String>,
@@ -310,20 +333,7 @@ async fn pull_table(
 
     match query.fetch_all(&state.pool).await {
         Ok(rows) => {
-            let body: Vec<Value> = rows
-                .iter()
-                .map(|row| {
-                    let mut map = serde_json::Map::new();
-                    for col in row.columns() {
-                        let name = col.name();
-                        if should_skip_column(&table, name) {
-                            continue;
-                        }
-                        map.insert(name.to_string(), value_from_row_column(row, name));
-                    }
-                    Value::Object(map)
-                })
-                .collect();
+            let body: Vec<Value> = rows.iter().map(|row| row_to_json(&table, row)).collect();
             Json(body).into_response()
         }
         Err(e) => {

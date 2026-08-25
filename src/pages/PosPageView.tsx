@@ -176,7 +176,7 @@ export default function PosPageView({
               productName: selectedLine.product_name,
               currentPriceMinor: selectedLine.unit_price_minor
             })}
-            onVoid={() => { if (selectedLine) { removeLine(selectedLine.cart_line_id); focusBarcode(); } }}
+            onHold={handleOpenHold}
             onDiscount={() => selectedLine && setActiveModal({
               kind: "discount", lineId: selectedLine.cart_line_id
             })}
@@ -205,9 +205,10 @@ export default function PosPageView({
         canDiscount={canOpenBackOffice || bizFlags.cashier_can_discount}
         canRefund={canRefund}
         lastReceiptNumber={lastReceiptNumber}
+        selectedLineName={selectedLine?.product_name ?? null}
         onClose={() => { setShowMore(false); focusBarcode(); }}
         onClearCart={handleClearCartRequest}
-        onOpenHold={handleOpenHold}
+        onVoidLine={() => { if (selectedLine) { removeLine(selectedLine.cart_line_id); focusBarcode(); } }}
         onOpenDiscount={() => setActiveModal({ kind: "discount" })}
         onOpenRefund={() => setActiveModal({ kind: "refund" })}
         onOpenCashEvent={() => setActiveModal({ kind: "cashEvent" })}

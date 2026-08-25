@@ -3,14 +3,13 @@ import { MessageCircle, ReceiptText, Truck, X } from "lucide-react";
 import type { CustomerRow, DeliveryInput, PaymentInput, RiderRow } from "../types";
 import { formatMoney, parseMoney } from "../money";
 import { DEVICE } from "../types";
-import DeliveryForm from "./DeliveryForm";
 import { buildPaymentInputs, canConfirmPayment, paymentBlockReason, paymentBlockers } from "./paymentValidation";
 import { mkLine, type ActiveField, type PaymentLine } from "./paymentLines";
-import { DigitalReceiptGuide, PaymentCommandPanel, PaymentMethodPicker, PrintReceiptOption, SplitToggle } from "./PaymentExperience";
+import { PaymentCommandPanel, PaymentMethodPicker } from "./PaymentExperience";
 import { useFocusTrap } from "../hooks/useFocusTrap";
-import { usePaymentCustomer } from "../hooks/usePaymentCustomer";
-import { PaymentContactBlock } from "./PaymentContactField";
-import RiderPicker from "./RiderPicker";
+import { usePaymentContact } from "../hooks/usePaymentContact";
+import PaymentContactPanel from "./PaymentContactPanel";
+import { focusFirstField, focusNextField } from "./paymentFieldNav";
 import { useLanguage } from "../hooks/useLanguage";
 import { detailTranslator } from "../i18n/detailStrings";
 import { systemKeyboardOpen } from "../tauri/commands";
@@ -82,14 +81,10 @@ export default function PaymentModal({
         : null
   );
 
-  const {
-    custResults, selectedCust, showCustDrop,
-    changeCustomerSearch, blurCustomerSearch, selectCustomer, removeCustomer,
-  } = usePaymentCustomer(sessionUserId);
+  const contact = usePaymentContact();
+  const selectedCust = contact.customer;
 
   const [deliveryData, setDeliveryData] = useState<Partial<DeliveryInput>>({});
-  const [phoneRaw, setPhoneRaw]       = useState("");
-  const [phoneError, setPhoneError]   = useState<string | null>(null);
   const [printReceipt, setPrintReceipt] = useState(defaultPrintReceipt);
   const requiresContact = journey !== "receipt";
   const isDelivery = journey === "delivery";
@@ -183,6 +178,24 @@ export default function PaymentModal({
     }
   }, [lines, selectMethod]);
 
+  /* The contact box owns the number; the delivery record needs it normalised.
+     Mirroring it here keeps one source of truth — the validation, the WhatsApp
+     send and the saved row all read the same field, whether the cashier typed
+     the digits or picked someone whose number the till already knew. */
+  useEffect(() => {
+    setDeliveryData(previous => previous.contact_number === (contact.e164 ?? "")
+      ? previous
+      : { ...previous, contact_number: contact.e164 ?? "" });
+  }, [contact.e164]);
+
+  /* Open with the caret where the cashier has to type — see focusFirstField.
+     Deferred a frame because the fields belong to children and the focus trap
+     installs on the same commit, so focusing synchronously races both. */
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => focusFirstField(containerRef.current));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
   const validationInput = {
     lines, netTotal, allocatedMinor, remainingMinor,
     currencyExponent: EXP, requiresContact, isDelivery, deliveryData, loading,
@@ -215,7 +228,7 @@ export default function PaymentModal({
      keystroke belongs to a focused text field first and only falls through to
      the virtual display fields when nothing real has the caret. */
   const handleDialpadKey = usePaymentKeyboard({
-    activeField, lines, updateLine, setLines, setPhoneRaw, freshTenderedEntryRef,
+    activeField, lines, updateLine, setLines, freshTenderedEntryRef,
     selectMethod, onCancel, netTotal, exp: EXP, canConfirm, loading, handleConfirmRef,
   });
 
@@ -298,7 +311,23 @@ export default function PaymentModal({
           : `Take ${money} · ${methodName.toLowerCase()}`;
 
   return (
-    <button className="modal-overlay" type="button" onClick={e => e.target === e.currentTarget && onCancel()}>
+    /*
+     * A div, not a button. The overlay used to be a `<button>` wrapping the
+     * whole dialog, so every control inside it was a nested interactive
+     * element: pressing Space anywhere the caret was not — on the method
+     * picker, on a suggestion, on the close button — fired the overlay's own
+     * activation behaviour with `target === currentTarget`, and the sale was
+     * cancelled mid-entry. The dismiss target is now a sibling behind the
+     * dialog, which is what the rest of the app's dialogs already use.
+     */
+    <div className="modal-overlay" role="presentation">
+      <button
+        type="button"
+        className="modal-overlay-dismiss"
+        onClick={onCancel}
+        tabIndex={-1}
+        aria-hidden="true"
+      />
       <div className={`pm-shell pm-shell-calm${requiresContact ? " pm-shell-contact" : ""}`} role="dialog" aria-modal="true" aria-labelledby="pm-dialog-title" ref={containerRef}>
 
         <div className="pm-left">
@@ -395,61 +424,27 @@ export default function PaymentModal({
           )}
         </div>
 
-        <div className={`pm-mid pm-mid-${journey}`}>
-          <div className="pm-step-label pm-step-muted"><span>3</span> {requiresContact ? "Order contact" : "Receipt options"}</div>
-          <div className="pm-mid-title">
-            {isDelivery ? "Where it goes, and who takes it"
-              : journey === "digital" ? "Where the receipt is sent"
-              : "Finish the receipt"}
-          </div>
-
-          {journey === "receipt" && !showSplit && (
-            <SplitToggle
-              label={dt("splitPayment")}
-              onSplit={() => {
-                setShowSplit(true);
-                const rem = formatMoney(remainingMinor, EXP);
-                const newLine = mkLine("card");
-                if (remainingMinor > 0) newLine.amountStr = rem;
-                setLines(previous => [...previous, newLine]);
-              }}
-            />
-          )}
-
-          {requiresContact && (
-            <PaymentContactBlock
-              phoneRaw={phoneRaw}
-              phoneError={phoneError}
-              selectedCustomer={selectedCust}
-              suggestions={custResults}
-              showSuggestions={showCustDrop}
-              sessionUserId={sessionUserId}
-              onFocus={() => setActiveField({ kind: "phone" })}
-              onPhoneBlur={blurCustomerSearch}
-              changeCustomerSearch={changeCustomerSearch}
-              selectCustomer={selectCustomer}
-              removeCustomer={removeCustomer}
-              setPhoneRaw={setPhoneRaw}
-              setPhoneError={setPhoneError}
-              setContactNumber={n => setDeliveryData(previous => ({ ...previous, contact_number: n }))}
-            />
-          )}
-
-          {journey === "digital" && <DigitalReceiptGuide />}
-
-          {isDelivery && (
-            <>
-              <DeliveryForm value={deliveryData} onChange={setDeliveryData} expectedPaymentMethod={lines[0]?.method ?? "cash"} />
-              <RiderPicker
-                sessionUserId={sessionUserId}
-                selectedId={rider?.rider_id ?? null}
-                onSelect={setRider}
-              />
-            </>
-          )}
-
-          <PrintReceiptOption checked={printReceipt} onChange={setPrintReceipt} />
-        </div>
+        <PaymentContactPanel
+          journey={journey}
+          contact={contact}
+          sessionUserId={sessionUserId}
+          deliveryData={deliveryData}
+          onDeliveryChange={setDeliveryData}
+          rider={rider}
+          onRiderChange={setRider}
+          printReceipt={printReceipt}
+          onPrintReceiptChange={setPrintReceipt}
+          onContactFocus={() => setActiveField({ kind: "phone" })}
+          showSplitToggle={journey === "receipt" && !showSplit}
+          splitLabel={dt("splitPayment")}
+          onSplit={() => {
+            setShowSplit(true);
+            const rem = formatMoney(remainingMinor, EXP);
+            const newLine = mkLine("card");
+            if (remainingMinor > 0) newLine.amountStr = rem;
+            setLines(previous => [...previous, newLine]);
+          }}
+        />
 
         {/* ── PANEL 3: Numpad + save ──────────────────────────────────── */}
         <PaymentCommandPanel
@@ -460,6 +455,7 @@ export default function PaymentModal({
           fieldValue={focusedField?.value ?? ""}
           inputMode={inputMode}
           onToggleInputMode={() => setInputModeOverride(inputMode === "keys" ? "pad" : "keys")}
+          onNextField={() => focusNextField(containerRef.current)}
           onDone={() => {
             (document.activeElement as HTMLElement | null)?.blur();
             setActiveField(null);
@@ -487,6 +483,6 @@ export default function PaymentModal({
         />
 
       </div>
-    </button>
+    </div>
   );
 }

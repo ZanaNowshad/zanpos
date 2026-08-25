@@ -12,7 +12,9 @@ const ctrl = {
   runState: null, bulkProgress: null, errorMessage: null, dismissError: () => {},
   fetchKpi: async () => {}, dismissAlert: async () => {}, handleSend: async () => {}, handleStop: async () => {},
   handleConfirm: async () => {}, handleCancel: async () => {}, handleUndo: async () => {}, handleFeedback: async () => {},
-  handleClearChat: () => {}, handleRunExecute: async () => {}, handleRunCancel: () => {}, handleRunUndo: async () => {},
+  dismissForm: () => {}, conversationId: null, conversations: [], conversationsLoading: false,
+  refreshConversations: async () => {}, startNewConversation: () => {},
+  openConversation: async () => {}, deleteConversation: async () => {}, renameConversation: async () => {}, launcherOpen: false, setLauncherOpen: () => {}, handleClearChat: () => {}, handleRunExecute: async () => {}, handleRunCancel: () => {}, handleRunUndo: async () => {},
 } satisfies ChatController;
 
 describe("POS ZanAI widget", () => {

@@ -1,0 +1,260 @@
+/* ── ZanAI interactive forms ───────────────────────────────────────────────
+   A form sits inside an assistant bubble, so it has to read as part of the
+   answer rather than as a dialog that landed on top of one. It also has to work
+   twice: full width in the Assistant tab, and inside the floating till widget
+   at roughly 360px, where the same four-column purchase bill has to become
+   something a thumb can fill in. That second case is what the stacked rules at
+   the bottom are for. */
+
+/* One card colour, named because the sticky footer has to repaint it. */
+.aiform { --aiform-bg: color-mix(in srgb, var(--accent) 4%, var(--surface2)); }
+
+.aiform {
+  margin: 10px 0 2px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+  border-radius: var(--radius-md);
+  background: var(--aiform-bg);
+  /* `clip`, not `hidden`. Both round off the header gradient, but `hidden`
+     makes this a scroll container, and the sticky footer below would then
+     stick to a box that never scrolls — which is to say, not at all. */
+  overflow: clip;
+}
+
+.aiform-head {
+  padding: 11px 14px 9px;
+  border-bottom: 1px solid var(--border2);
+  background: linear-gradient(160deg,
+    color-mix(in srgb, var(--accent) 9%, transparent), transparent);
+}
+.aiform-head h4 {
+  margin: 0;
+  font: 700 var(--type-office-section)/1.25 var(--font-display), var(--font);
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+.aiform-note {
+  margin: 4px 0 0;
+  font-size: var(--type-office-caption);
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+/* ── Single-value fields ───────────────────────────────────────────────── */
+.aiform-fields {
+  display: grid;
+  /* Two up while there is room, one up the moment there is not. Nothing has to
+     know which surface it is on. */
+  grid-template-columns: repeat(auto-fit, minmax(min(168px, 100%), 1fr));
+  gap: 10px 12px;
+  padding: 12px 14px;
+}
+/* Free text is the one that always wants the whole row. */
+.aiform-field-textarea { grid-column: 1 / -1; }
+
+.aiform-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+
+.aiform-label {
+  font: 600 var(--type-office-micro)/1.2 var(--font);
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+}
+.aiform-req { color: var(--accent); }
+.aiform-help {
+  font-size: var(--type-office-micro);
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+.aiform-input {
+  width: 100%;
+  /* 40px is the smallest target that survives a gloved thumb on the till. */
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: 500 var(--type-office-body)/1.3 var(--font);
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+.aiform-input::placeholder { color: var(--text-muted); }
+.aiform-input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent2);
+}
+textarea.aiform-input { min-height: 54px; resize: vertical; }
+
+.aiform-input-invalid {
+  border-color: var(--error);
+  box-shadow: 0 0 0 3px var(--color-danger-soft);
+}
+
+.aiform-toggle { display: inline-flex; align-items: center; min-height: 40px; }
+.aiform-toggle input { width: 18px; height: 18px; accent-color: var(--accent); }
+.aiform-toggle span { display: none; }
+
+/* ── Editable grid ─────────────────────────────────────────────────────── */
+.aiform-table { padding: 4px 10px 10px; }
+
+.aiform-grid { display: flex; flex-direction: column; gap: 8px; }
+
+.aiform-grid-row {
+  padding: 8px 10px 10px;
+  border: 1px solid var(--border2);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.aiform-grid-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.aiform-grid-n {
+  font: 600 var(--type-office-micro)/1 var(--font);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* Cells wrap rather than shrink. Wide enough and a four-column bill lays out
+   as the grid it wants to be; narrow enough — the ~260px docked copilot — and
+   it becomes one labelled box per line instead of a column headed "BA RC OD E".
+   `min()` keeps the track from exceeding the container itself, which is what
+   stops a horizontal scrollbar at the very smallest widths. */
+.aiform-grid-cells {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(132px, 100%), 1fr));
+  gap: 8px 10px;
+}
+.aiform-grid-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+
+.aiform-row-remove {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color var(--t-fast), background var(--t-fast);
+}
+.aiform-row-remove:hover {
+  background: var(--color-danger-soft);
+  color: var(--error);
+}
+
+.aiform-row-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 7px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-dim);
+  font: 600 var(--type-office-caption)/1 var(--font);
+  cursor: pointer;
+}
+.aiform-row-add:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── One-tap answers ───────────────────────────────────────────────────── */
+.aiform-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 14px 4px;
+}
+.aiform-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 132px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface3);
+  color: var(--text);
+  text-align: start;
+  cursor: pointer;
+  transition: border-color var(--t-fast), background var(--t-fast), transform var(--t-fast);
+}
+.aiform-choice:hover { border-color: var(--accent); transform: translateY(-1px); }
+.aiform-choice:disabled { opacity: 0.5; cursor: default; transform: none; }
+.aiform-choice-label { font: 650 var(--type-office-body)/1.2 var(--font); }
+.aiform-choice-detail { font-size: var(--type-office-micro); color: var(--text-dim); }
+
+.aiform-choice-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-t);
+}
+.aiform-choice-primary .aiform-choice-detail { color: color-mix(in srgb, var(--accent-t) 70%, transparent); }
+.aiform-choice-danger { border-color: color-mix(in srgb, var(--error) 55%, transparent); }
+.aiform-choice-danger .aiform-choice-label { color: var(--error); }
+
+/* ── Footer ────────────────────────────────────────────────────────────────
+   Pinned to the bottom of the card while any of it is on screen. A four-line
+   purchase bill is taller than the till widget's message list — measured at
+   294px of form against 263px of list, before the bubble's own chrome — so
+   without this the operator scrolls a form they cannot see the way out of. */
+.aiform-foot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--border2);
+  background: var(--aiform-bg);
+  /* A sticky bottom stops at the scroll container's padding edge, and the
+     message list keeps 20px there — so the row of the form underneath showed
+     through in the gap, and the buttons read as floating mid-card. A hard
+     shadow in the card's own colour paints that strip out. Clipped by the
+     card, so a short form that never scrolls shows nothing extra. */
+  box-shadow: 0 24px 0 var(--aiform-bg);
+}
+.aiform-error {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--type-office-caption);
+  line-height: 1.3;
+  color: var(--error);
+}
+.aiform-error:only-child { flex: 1; }
+.aiform-foot > .aiform-dismiss:first-child { margin-inline-start: auto; }
+
+.aiform-dismiss,
+.aiform-submit {
+  min-height: 38px;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font: 650 var(--type-office-body)/1 var(--font);
+  cursor: pointer;
+  transition: filter var(--t-fast), border-color var(--t-fast);
+}
+.aiform-dismiss {
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text-dim);
+}
+.aiform-dismiss:hover { border-color: var(--text-muted); color: var(--text); }
+.aiform-submit {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-t);
+}
+.aiform-submit:hover { filter: brightness(1.06); }
+.aiform-submit:disabled,
+.aiform-dismiss:disabled { opacity: 0.5; cursor: default; }
+
+@media (prefers-reduced-motion: reduce) {
+  .aiform-choice:hover { transform: none; }
+}

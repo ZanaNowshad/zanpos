@@ -3,7 +3,7 @@ import { Minus, Package, Plus } from "lucide-react";
 import type { Cart, CartLine } from "../../types";
 import { DEVICE } from "../../types";
 import { formatMoney } from "../../money";
-import { productImageSrc } from "../../productImage";
+import ProductThumb from "../ProductThumb";
 
 interface Props {
   cart: Cart;
@@ -71,7 +71,6 @@ export default function PosCartTable({
       <div className="till-cart-body" ref={bodyRef} role="list">
         {lines.map((line, index) => {
           const selected = line.cart_line_id === selectedLineId;
-          const image = line.image_path ? productImageSrc(line.image_path) : null;
           return (
             <div
               key={line.cart_line_id}
@@ -88,14 +87,7 @@ export default function PosCartTable({
                 >
                   <span className="till-c-num">{index + 1}</span>
                   <span className="till-c-thumb">
-                    <Package size={16} aria-hidden="true" />
-                    {image && (
-                      <img
-                        src={image}
-                        alt=""
-                        onError={event => { event.currentTarget.style.display = "none"; }}
-                      />
-                    )}
+                    <ProductThumb imagePath={line.image_path} productName={line.product_name} />
                   </span>
                   <span className="till-c-item">
                     <span className="till-item-name">{line.product_name}</span>

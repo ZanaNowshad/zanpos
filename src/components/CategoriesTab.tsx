@@ -46,6 +46,7 @@ export default function CategoriesTab({ sessionUserId }: Props) {
         mode={creating ? "create" : "edit"}
         category={selected}
         nextOrder={Math.max(0, ...categories.map(c => c.sort_order)) + 1}
+        categories={categories}
         sessionUserId={sessionUserId}
         onClose={cancelEdit}
         onSaved={() => { cancelEdit(); refreshCategories(); }}

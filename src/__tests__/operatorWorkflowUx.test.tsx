@@ -302,9 +302,8 @@ describe("operator-first workflow hierarchy", () => {
   it("shows direct contact and required address fields for delivery checkout", () => {
     const html = renderPaymentJourney("delivery");
     expect(html).toContain("pm-shell-contact");
-    expect(html).toContain("Customer phone");
-    expect(html).toContain('aria-label="Open customer directory"');
-    expect(html).toContain("Tap the phone field, then use the dialpad");
+    expect(html).toContain("Customer name or number");
+    expect(html).toContain('aria-label="Browse the customer directory"');
     expect(html).toContain("House number");
     expect(html).toContain("Flat");
     expect(html).toContain("Road");
@@ -318,9 +317,8 @@ describe("operator-first workflow hierarchy", () => {
   it("keeps digital checkout contactable without showing delivery address fields", () => {
     const html = renderPaymentJourney("digital");
     expect(html).toContain("pm-shell-contact");
-    expect(html).toContain("Customer phone");
-    expect(html).toContain('aria-label="Open customer directory"');
-    expect(html).toContain("Tap the phone field, then use the dialpad");
+    expect(html).toContain("Customer name or number");
+    expect(html).toContain('aria-label="Browse the customer directory"');
     expect(html).toContain("Where the receipt is sent");
     expect(html).toContain("BenefitPay");
     expect(html).not.toContain("House number");

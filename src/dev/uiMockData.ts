@@ -233,6 +233,38 @@ export const CUSTOMERS = [
   notes: c.notes,
 }));
 
+/**
+ * WhatsApp's own directory, as the till sees it.
+ *
+ * Deliberately overlapping and deliberately messy, because the merge in
+ * paymentContacts.ts is only worth testing against a directory that behaves
+ * like a real one: Fatima is both a saved customer and a WhatsApp contact and
+ * must appear once; Mariam has chatted but was never saved; the shop's own
+ * group is a chat that is not a person and must never be offered as a receipt
+ * destination.
+ */
+export const WA_CONTACTS = [
+  { id: "97336001122@s.whatsapp.net", name: "Fatima" },
+  { id: "97336004455@s.whatsapp.net", name: "Hassan Al Mannai" },
+  { id: "97339887766@s.whatsapp.net", name: "Mariam Al Kooheji" },
+  { id: "97333221100@s.whatsapp.net", name: "Ali Ebrahim" },
+];
+
+export const WA_MESSAGES = [
+  { id: "wam_1", chat_jid: "97339887766@s.whatsapp.net", chat_name: "Mariam Al Kooheji",
+    is_group: false, sender_jid: "97339887766@s.whatsapp.net", sender_name: "Mariam Al Kooheji",
+    body: "Do you have Almarai laban 2L?", ts: Math.floor(Date.now() / 1000) - 40 * 60,
+    read: false, media_type: null },
+  { id: "wam_2", chat_jid: "97336001122@s.whatsapp.net", chat_name: "Fatima",
+    is_group: false, sender_jid: "97336001122@s.whatsapp.net", sender_name: "Fatima",
+    body: "Same delivery address please", ts: Math.floor(Date.now() / 1000) - 5 * 3600,
+    read: true, media_type: null },
+  { id: "wam_3", chat_jid: "120363001122334455@g.us", chat_name: "Amwaj Staff",
+    is_group: true, sender_jid: "97333221100@s.whatsapp.net", sender_name: "Ali Ebrahim",
+    body: "Stock arriving at 6", ts: Math.floor(Date.now() / 1000) - 2 * 3600,
+    read: true, media_type: null },
+];
+
 export const HEALTH_REPORT = {
   summary: {
     ok: true, db_integrity: "ok", migration_count: 42,

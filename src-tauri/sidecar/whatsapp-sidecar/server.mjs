@@ -167,6 +167,41 @@ function saveContacts() {
   try { fs.writeFileSync(contactsFile, JSON.stringify(contactsMap)); }
   catch (e) { console.warn("[wa-sidecar] Could not save contacts cache:", e.message); }
 }
+
+/**
+ * Keep every name a contact is known by, not just one.
+ *
+ * Baileys gives two different names and they are not interchangeable:
+ *   c.name   — the address-book name, what the shop saved this person as
+ *   c.notify — the pushName, what the person set on their own profile
+ *
+ * This used to collapse to `c.notify || c.name`, so the shop's own name for a
+ * customer was thrown away and only the customer's chosen name was searchable.
+ * A cashier who saved someone as "Ali Baqala" had to remember that WhatsApp
+ * knows them as "Ali ⚡" before the till would find them — which is exactly the
+ * thing nobody remembers with a queue waiting.
+ *
+ * So both are kept. `name` is the display name and now prefers the shop's own
+ * spelling, because that is what appears on the receipt and what the operator
+ * will type; the other names ride along so either one finds the person.
+ *
+ * Existing values are never overwritten with nothing: `contacts.update` sends
+ * partial records, and an update carrying only a pushName must not erase the
+ * saved name.
+ */
+function mergeContact(id, incoming, existing) {
+  const prev = existing || {};
+  const savedName = incoming.name || prev.savedName || null;
+  const pushName = incoming.notify || prev.pushName || null;
+  const verifiedName = incoming.verifiedName || prev.verifiedName || null;
+  return {
+    id,
+    name: savedName || pushName || verifiedName || id.split("@")[0] || id,
+    savedName,
+    pushName,
+    verifiedName,
+  };
+}
 try {
   if (fs.existsSync(groupsFile)) {
     groupsMap = JSON.parse(fs.readFileSync(groupsFile, "utf8"));
@@ -293,7 +328,7 @@ async function startBaileys() {
       for (const c of histContacts) {
         if (!c.id) continue;
         const id = jidNormalizedUser(c.id);
-        contactsMap[id] = { id, name: c.notify || c.name || id.split("@")[0] || id };
+        contactsMap[id] = mergeContact(id, c, contactsMap[id]);
       }
       saveContacts();
       console.log(`[wa-sidecar] messaging-history.set: ${histContacts.length} contacts, total=${Object.keys(contactsMap).length}`);
@@ -303,7 +338,7 @@ async function startBaileys() {
       for (const c of contacts) {
         if (!c.id) continue;
         const id = jidNormalizedUser(c.id);
-        contactsMap[id] = { id, name: c.notify || c.name || id.split("@")[0] || id };
+        contactsMap[id] = mergeContact(id, c, contactsMap[id]);
       }
       saveContacts();
     });
@@ -312,8 +347,7 @@ async function startBaileys() {
       for (const u of updates) {
         if (!u.id) continue;
         const id = jidNormalizedUser(u.id);
-        const existing = contactsMap[id];
-        contactsMap[id] = { id, name: u.notify || u.name || (existing && existing.name) || id.split("@")[0] || id };
+        contactsMap[id] = mergeContact(id, u, contactsMap[id]);
       }
       saveContacts();
     });

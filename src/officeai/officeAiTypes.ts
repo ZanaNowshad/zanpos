@@ -63,6 +63,9 @@ export interface DisplayMessage {
     assistant_text: string;
   };
   pendingBatchActions?: import("../types").BatchPendingAction[];
+  /** An interactive form to draw under this message. Cleared once answered or
+   *  dismissed so a scrolled-back conversation cannot be submitted twice. */
+  form?: import("./aiForm").AiForm;
   undoId?: string;
   feedbackReady?: boolean;
   aiSessionId?: string;

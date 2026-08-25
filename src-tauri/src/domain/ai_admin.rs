@@ -80,6 +80,10 @@ pub struct AiChatInput {
     pub user_id: String,
     pub branch_id: String,
     pub currency_exponent: u32,
+    /// Which thread this belongs to. Absent on an older client, in which case
+    /// the backend opens one — a message is never dropped for want of a thread.
+    #[serde(default)]
+    pub conversation_id: Option<String>,
     #[serde(default)]
     pub ui_context: Option<String>,
     #[serde(default)]
@@ -146,6 +150,30 @@ pub struct AiChatMessage {
     pub created_at: String,
 }
 
+/// A chat thread, as the operator thinks of one.
+///
+/// Distinct from `AiSession`, which is one request's worth of usage accounting.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiConversation {
+    pub conversation_id: String,
+    pub branch_id: String,
+    pub user_id: String,
+    pub title: String,
+    pub message_count: i64,
+    pub last_message_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// A thread and its messages, as the chat panel needs them together: the id so
+/// the next message joins the right thread, and the messages to render.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiConversationView {
+    pub conversation_id: String,
+    pub title: String,
+    pub messages: Vec<AiChatMessage>,
+}
+
 // ── Streaming events (sent over Tauri Channel) ─────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,6 +208,11 @@ pub enum StreamEvent {
     },
     Navigate {
         tab: String,
+    },
+    /// An interactive form to draw in the chat. The turn always ends here: see
+    /// `crate::ai::forms` for why a form can never execute anything itself.
+    FormRequest {
+        form: crate::ai::forms::AiForm,
     },
     RunPreview {
         run_id: String,

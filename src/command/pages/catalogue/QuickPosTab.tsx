@@ -6,7 +6,7 @@ import { adminListProducts } from "../../../tauri/commands";
 import type { AdminProduct } from "../../../types";
 import { DEVICE } from "../../../types";
 import { formatMoney } from "../../../money";
-import { productImageSrc } from "../../../productImage";
+import ProductThumb from "../../../components/ProductThumb";
 import "./quickpos.css";
 
 interface Props {
@@ -119,14 +119,7 @@ export default function QuickPosTab({ sessionUserId }: Props) {
             {slot.product_id ? (
               <>
                 <span className="qp-thumb">
-                  <Package size={20} aria-hidden="true" />
-                  {slot.image_path && (
-                    <img
-                      src={productImageSrc(slot.image_path) ?? ""}
-                      alt=""
-                      onError={e => { e.currentTarget.style.display = "none"; }}
-                    />
-                  )}
+                  <ProductThumb imagePath={slot.image_path} productName={slot.name} />
                 </span>
                 <span className="qp-name">{slot.name}</span>
                 <span className="qp-price">{money(slot.price_minor)}</span>
@@ -196,14 +189,7 @@ export default function QuickPosTab({ sessionUserId }: Props) {
                   onClick={() => assign(picking, product.product_id)}
                 >
                   <span className="qp-thumb">
-                    <Package size={18} aria-hidden="true" />
-                    {product.image_path && (
-                      <img
-                        src={productImageSrc(product.image_path) ?? ""}
-                        alt=""
-                        onError={e => { e.currentTarget.style.display = "none"; }}
-                      />
-                    )}
+                    <ProductThumb imagePath={product.image_path} productName={product.name} />
                   </span>
                   <span className="qp-result-text">
                     <strong>{product.name}</strong>

@@ -8,6 +8,8 @@ import {
   CATEGORY_TEMPLATE_CSV, PRODUCT_TEMPLATE_CSV,
   downloadCsv, parseCSV, rowsToCategories, rowsToProducts,
 } from "../csv/productsCsv";
+import ModalShell from "./modal/ModalShell";
+import { ModalActions, ModalError, ModalSteps } from "./modal/ModalParts";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -81,15 +83,54 @@ export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }
     }
   }
 
+  /* Actions live in the footer, one place, whichever step is showing. They
+     used to sit at the bottom of each step's own markup, so Back and Import
+     appeared in a different position from Done and moved as the preview table
+     grew. */
+  const stepIndex = step === "upload" ? 0 : step === "preview" ? 1 : 2;
+  const footer =
+    step === "upload" ? (
+      <ModalActions note="A template with the right columns is one click away.">
+        <button type="button" className="btn-secondary" onClick={onClose}>{t("cancel")}</button>
+      </ModalActions>
+    ) : step === "preview" ? (
+      <ModalActions note={previewRows.length === 0 ? t("noValidRows") : `${previewRows.length} ${t("rowsDetected")}`}>
+        <button type="button" className="btn-secondary" onClick={() => { setStep("upload"); setError(null); }}>
+          {t("back")}
+        </button>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={runImport}
+          disabled={importing || previewRows.length === 0}
+        >
+          {importing ? t("importing") : `${t("importAction")} ${previewRows.length}`}
+        </button>
+      </ModalActions>
+    ) : (
+      <ModalActions>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={() => { setStep("upload"); setParsed([]); setResult(null); }}
+        >
+          Import another file
+        </button>
+        <button type="button" className="btn-primary" onClick={onClose}>{t("done")}</button>
+      </ModalActions>
+    );
+
   return (
-    <div role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}  className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+    <ModalShell
+      kicker={isProducts ? "Catalogue" : "Categories"}
+      title={isProducts ? t("bulkImportProducts") : t("bulkImportCategories")}
+      subtitle="Bring a spreadsheet in. Nothing is written until you have seen the preview."
+      size="lg"
+      onClose={onClose}
+      footer={footer}
+    >
+      <ModalSteps steps={["Upload", "Review", "Done"]} current={stepIndex} />
       <div className="bulk-modal">
-        <div className="bulk-modal-header">
-          <h2 className="bulk-modal-title">
-            {isProducts ? t("bulkImportProducts") : t("bulkImportCategories")}
-          </h2>
-          <button className="bulk-modal-close" onClick={onClose}>✕</button>
-        </div>
 
         {/* ── Step 1: Upload ── */}
         {step === "upload" && (
@@ -152,11 +193,7 @@ export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }
         {/* ── Step 2: Preview ── */}
         {step === "preview" && (
           <div className="bulk-preview-area">
-            <p className="bulk-preview-count">
-              {previewRows.length} {t("rowsDetected")}
-              {previewRows.length === 0 && ` — ${t("noValidRows")}`}
-            </p>
-            {error && <div className="bo-form-error">{error}</div>}
+            <ModalError message={error} />
             {previewRows.length > 0 && (
               <div className="bulk-preview-scroll">
                 <table className="bulk-preview-table">
@@ -198,18 +235,6 @@ export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }
                 )}
               </div>
             )}
-            <div className="bulk-preview-actions">
-              <button className="btn-secondary" onClick={() => { setStep("upload"); setError(null); }}>
-                <span className="icon-directional" aria-hidden="true">←</span> {t("back")}
-              </button>
-              <button
-                className="btn-primary"
-                onClick={runImport}
-                disabled={importing || previewRows.length === 0}
-              >
-                {importing ? t("importing") : `${t("importAction")} ${previewRows.length}`}
-              </button>
-            </div>
           </div>
         )}
 
@@ -247,15 +272,9 @@ export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }
               </div>
             )}
 
-            <div className="bulk-result-actions">
-              <button className="btn-secondary" onClick={() => { setStep("upload"); setParsed([]); setResult(null); }}>
-                Import another file
-              </button>
-              <button className="btn-primary" onClick={onClose}>{t("done")}</button>
-            </div>
           </div>
         )}
       </div>
-    </div>
+    </ModalShell>
   );
 }

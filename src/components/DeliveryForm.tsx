@@ -3,7 +3,6 @@ import type { DeliveryInput } from "../types";
 interface Props {
   value: Partial<DeliveryInput>;
   onChange: (value: Partial<DeliveryInput>) => void;
-  expectedPaymentMethod: string;
 }
 
 /** Normalize a Bahrain phone number to E.164: +97333050666. */
@@ -15,11 +14,8 @@ export function normalizePhone(raw: string): string | null {
   return `+973${value}`;
 }
 
-export default function DeliveryForm({ value, onChange, expectedPaymentMethod }: Props) {
+export default function DeliveryForm({ value, onChange }: Props) {
   const set = (field: keyof DeliveryInput, next: string) => onChange({ ...value, [field]: next });
-  const methodLabel = expectedPaymentMethod === "wallet"
-    ? "BenefitPay"
-    : expectedPaymentMethod.charAt(0).toUpperCase() + expectedPaymentMethod.slice(1);
 
   return (
     <div className="delivery-form pm-address-form">
@@ -44,7 +40,11 @@ export default function DeliveryForm({ value, onChange, expectedPaymentMethod }:
           <input id="payment-road" className="delivery-input" inputMode="text" enterKeyHint="done" autoComplete="address-line3" placeholder="Road or block number (optional)" value={value.address_text ?? ""} onChange={event => set("address_text", event.target.value)} />
         </div>
       </div>
-      <div className="delivery-method-note">Expected payment: <strong>{methodLabel}</strong></div>
+      {/* "Expected payment: Cash" used to sit here. The left column already
+          heads its method picker "Rider collects with" and the summary already
+          says "Collect on delivery", so this was the third statement of the
+          same fact — and it was the 47px that pushed the rider picker off the
+          bottom of a 768px screen. */}
     </div>
   );
 }

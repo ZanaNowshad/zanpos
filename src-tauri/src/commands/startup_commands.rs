@@ -112,35 +112,17 @@ pub async fn startup_restart_sidecar(
 
     let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let wa_session_dir = app_data.join("wa-session");
+    let wa_log_path = app_data.join("logs").join("whatsapp-sidecar.log");
 
-    // Same resolver startup uses. Resolving separately here meant an installed
-    // build searched only next to the executable, never the resource directory
-    // the installer actually writes to — so this command killed a working
-    // sidecar and then could not respawn it.
+    // Startup's own launcher, not a copy of it. Every difference between the
+    // two used to be a defect: no log to read when a restart failed, no session
+    // directory, no retry when a scanner briefly held node.exe, and no job
+    // object — which left a restarted sidecar able to outlive the app.
     let node_exe = crate::sidecar_paths::node(&app);
     let script = crate::sidecar_paths::script(&app).ok_or("sidecar script not found")?;
-
-    let mut cmd = tokio::process::Command::new(&node_exe);
-    if let Some(dir) = script.parent() {
-        cmd.current_dir(dir);
-        cmd.arg(script.file_name().unwrap_or(script.as_os_str()));
-    } else {
-        cmd.arg(&script);
-    }
-    cmd.arg(format!(
-        "--session-dir={}",
-        wa_session_dir.to_string_lossy()
-    ));
-    cmd.stdout(std::process::Stdio::null());
-    cmd.stderr(std::process::Stdio::null());
-
-    #[cfg(target_os = "windows")]
-    {
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-
-    let child = cmd.spawn().map_err(|e| format!("spawn failed: {}", e))?;
+    let child = crate::sidecar_paths::spawn(&node_exe, &script, &wa_session_dir, &wa_log_path, 3)
+        .await
+        .ok_or("sidecar failed to start")?;
 
     state
         .sidecar
@@ -149,17 +131,23 @@ pub async fn startup_restart_sidecar(
         .map_err(|e| e.to_string())?
         .replace(child);
 
-    let wa_token = std::fs::read_to_string(&state.wa_token_file)
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-    if wa_token.is_empty() {
-        return Ok(false);
-    }
-
+    // Re-read the token on every attempt, never once up front.
+    //
+    // The sidecar mints a fresh random token at each start (server.mjs) and
+    // writes it to this file. Reading it immediately after spawning therefore
+    // picks up the *previous* process's token, every probe with it comes back
+    // 401, and after twenty-four seconds the command reports failure for a
+    // sidecar that came up perfectly — which is what made Restart look broken.
     for _ in 0..12 {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        if probe_sidecar_health(&wa_token).await {
+        let token = std::fs::read_to_string(&state.wa_token_file)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if token.is_empty() {
+            continue; // not written yet — it is still starting
+        }
+        if probe_sidecar_health(&token).await {
             return Ok(true);
         }
     }

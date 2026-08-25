@@ -3,36 +3,43 @@ use serde_json::{Map, Value};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqlitePool};
 
-/// Every table the sync protocol may read or write. Hub rejects any other name.
+/// Every table the sync protocol may read or write. The hub rejects any other
+/// name.
+///
+/// Must equal the names in [`crate::sync_v2::registry`], which is asserted by
+/// `registry::tests`. It is spelled out here rather than derived only because
+/// it is consumed as a slice in twenty places; the test is what makes the two
+/// incapable of drifting apart, which is the failure that let ten tables —
+/// `sales` and `payments` among them — sync without ever being parity-checked.
 pub const SYNC_TABLES: &[&str] = &[
     "branches",
+    "roles",
+    "users",
+    "devices",
     "categories",
     "tax_rules",
+    "app_config",
     "products",
     "product_barcodes",
+    "product_prices",
+    "product_cost_history",
+    "stock_levels",
+    "stock_movements",
+    "customers",
     "suppliers",
+    "riders",
     "purchase_orders",
     "purchase_order_lines",
     "po_receipts",
-    "devices",
-    "roles",
-    "users",
-    "customers",
-    "riders",
-    "shifts",
     "sales",
     "sale_items",
     "payments",
     "refunds",
     "refund_items",
-    "stock_movements",
-    "stock_levels",
-    "audit_logs",
-    "delivery_orders",
-    "product_prices",
-    "product_cost_history",
     "cash_events",
-    "app_config",
+    "shifts",
+    "delivery_orders",
+    "audit_logs",
 ];
 
 /// app_config keys that are allowed to sync across devices.
@@ -103,12 +110,54 @@ pub fn is_allowed_config_key(key: &str) -> bool {
 
 pub(crate) const STOCK_DRIFT_TOLERANCE: f64 = 0.001;
 
-/// Apply a single row to the local database.
+/// Apply a single row to the local database, once.
+///
+/// Every path that receives a row goes through here — the worker's pull, the
+/// hub's push handler, and reconciliation's targeted repair — so this is the one
+/// place idempotency can be established for all of them. The inbox records the
+/// arrival before anything is written and reports a byte-identical redelivery as
+/// already handled.
+///
+/// Applying twice was already safe (last-writer-wins ignores a repeat, and the
+/// append-only path reads the unique-constraint violation back). What was
+/// missing was any *record* that it happened, so "did this sale ever reach this
+/// terminal" had no answer.
 pub async fn apply_row(pool: &SqlitePool, table: &str, row: &Value) -> AppResult<()> {
     let obj = row
         .as_object()
         .ok_or_else(|| AppError::Internal("apply_row: row is not a JSON object".into()))?;
 
+    let entity_id = obj
+        .get(pk_for_table(table))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+
+    // A row without its own primary key cannot be deduplicated or looked up
+    // later, so it is applied without a record rather than not applied at all —
+    // the existing constraint-based protection still covers it.
+    if entity_id.is_empty() {
+        return apply_row_inner(pool, table, obj).await;
+    }
+
+    if crate::sync_v2::inbox::claim(pool, table, &entity_id, obj).await?
+        == crate::sync_v2::inbox::Decision::AlreadySeen
+    {
+        return Ok(());
+    }
+
+    let result = apply_row_inner(pool, table, obj).await;
+    if result.is_ok() {
+        crate::sync_v2::inbox::confirm(pool, table, &entity_id, obj).await;
+    }
+    result
+}
+
+async fn apply_row_inner(
+    pool: &SqlitePool,
+    table: &str,
+    obj: &Map<String, Value>,
+) -> AppResult<()> {
     match table {
         "categories" => apply_lww(pool, "categories", "category_id", obj, &[]).await,
         "tax_rules" => apply_lww(pool, "tax_rules", "tax_rule_id", obj, &[]).await,
@@ -203,7 +252,7 @@ pub async fn apply_row(pool: &SqlitePool, table: &str, row: &Value) -> AppResult
             apply_lww(pool, "shifts", "shift_id", &obj_norm, &[]).await
         }
         "delivery_orders" => apply_lww(pool, "delivery_orders", "delivery_id", obj, &[]).await,
-        "stock_levels" => apply_lww(pool, "stock_levels", "stock_level_id", obj, &[]).await,
+        "stock_levels" => apply_stock_level_seed(pool, obj).await,
         "users" => {
             let user_id = obj.get("user_id").and_then(|v| v.as_str()).unwrap_or("");
             if let Some(username) = obj.get("username").and_then(|v| v.as_str()) {
@@ -386,6 +435,26 @@ pub(crate) fn is_safe_col(name: &str) -> bool {
     chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// The columns of an incoming row that may be written locally.
+///
+/// One definition, called from all three apply paths. It was copied into each
+/// of them, and the copies drifted: a fix to the tombstone rule in `apply_lww`
+/// left customers — the table that most needed it — still discarding restores.
+///
+/// Nulls are skipped so a partial row cannot blank a column the sender never
+/// knew about. `deleted_at` is the single exception, because there a null is
+/// not an absence but the message itself: it is how a restore is expressed.
+pub(crate) fn syncable_columns(obj: &Map<String, Value>) -> Vec<&String> {
+    obj.keys()
+        .filter(|k| {
+            is_safe_col(k)
+                && *k != "sync_status"
+                && *k != "sync_attempts"
+                && (*k == "deleted_at" || !matches!(obj.get(*k), Some(Value::Null)))
+        })
+        .collect()
+}
+
 pub(crate) async fn apply_lww(
     pool: &SqlitePool,
     table: &str,
@@ -393,15 +462,7 @@ pub(crate) async fn apply_lww(
     obj: &Map<String, Value>,
     exclude_cols: &[&str],
 ) -> AppResult<()> {
-    let cols: Vec<&String> = obj
-        .keys()
-        .filter(|k| {
-            is_safe_col(k)
-                && *k != "sync_status"
-                && *k != "sync_attempts"
-                && !matches!(obj.get(*k), Some(Value::Null))
-        })
-        .collect();
+    let cols = syncable_columns(obj);
 
     if cols.is_empty() {
         return Ok(());
@@ -436,6 +497,16 @@ pub(crate) async fn apply_lww(
     } else {
         format!("{}, sync_status = 'synced'", set_clause)
     };
+    // The edit counter must never go backwards. Taking the incoming value
+    // wholesale would let a terminal that has seen fewer edits reset the count,
+    // and the next comparison would then read as agreement rather than as the
+    // conflict it is.
+    let set_with_sync = set_with_sync.replace(
+        "version = excluded.version",
+        &format!("version = MAX(excluded.version, {table}.version)"),
+    );
+
+    record_concurrent_edit(pool, table, pk, obj).await;
 
     let sql = if has_updated_at && !set_with_sync.is_empty() {
         format!(
@@ -505,15 +576,7 @@ async fn apply_customer_by_primary_key(
     pool: &SqlitePool,
     obj: &Map<String, Value>,
 ) -> AppResult<()> {
-    let cols: Vec<&String> = obj
-        .keys()
-        .filter(|k| {
-            is_safe_col(k)
-                && *k != "sync_status"
-                && *k != "sync_attempts"
-                && !matches!(obj.get(*k), Some(Value::Null))
-        })
-        .collect();
+    let cols = syncable_columns(obj);
 
     if cols.is_empty() {
         return Ok(());
@@ -598,6 +661,81 @@ async fn row_exists(pool: &SqlitePool, table: &str, pk: &str, pk_value: &str) ->
 /// Severity is critical because the alternative to noticing is losing a
 /// financial record: the originating terminal has already marked the row synced,
 /// so nothing will re-offer it.
+/// Notice when two terminals edited the same row independently.
+///
+/// Last-writer-wins compares clocks, and a clock says nothing about whether the
+/// winner ever saw what it is overwriting. `version` does: every local edit
+/// increments it, so a row arriving with a *later* `updated_at` but no more
+/// edits than the local copy was not built on top of the local copy — the two
+/// were written in parallel and one is about to be discarded silently.
+///
+/// This only reports. The LWW outcome is unchanged, because changing what wins
+/// is a separate decision from being able to see that a decision was made — and
+/// [`crate::sync_v2::reconcile`] already refuses to auto-repair anything
+/// genuinely contested. A shop needs the record before it needs the policy.
+///
+/// Costs one indexed lookup per LWW row, and only for rows that carry a version.
+/// The append-only tables — every financial one — do not come through here.
+async fn record_concurrent_edit(
+    pool: &SqlitePool,
+    table: &str,
+    pk: &str,
+    obj: &Map<String, Value>,
+) {
+    let (Some(incoming_version), Some(incoming_at), Some(entity_id)) = (
+        obj.get("version").and_then(Value::as_i64),
+        obj.get("updated_at").and_then(Value::as_str),
+        obj.get(pk).and_then(Value::as_str),
+    ) else {
+        return;
+    };
+
+    let local: Option<(i64, String)> = sqlx::query_as(&format!(
+        "SELECT COALESCE(version, 0), COALESCE(updated_at, '') FROM {table} WHERE {pk} = ?"
+    ))
+    .bind(entity_id)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+
+    let Some((local_version, local_at)) = local else {
+        return; // A row we do not hold cannot have been edited here.
+    };
+
+    // Only rows that are about to win are interesting; a stale arrival is
+    // discarded by the freshness guard and overwrites nothing.
+    if incoming_at <= local_at.as_str() || incoming_version > local_version {
+        return;
+    }
+
+    tracing::warn!(
+        table,
+        entity_id,
+        local_version,
+        incoming_version,
+        "Sync: concurrent edit — a newer row with no more edits is overwriting local changes"
+    );
+    let _ = sqlx::query(
+        "INSERT INTO sync_conflicts
+           (conflict_id, conflict_type, table_name, entity_id, severity, title, detail,
+            status, created_at)
+         VALUES (?, 'concurrent_edit', ?, ?, 'warning', ?, ?, 'open', ?)",
+    )
+    .bind(ulid::Ulid::new().to_string())
+    .bind(table)
+    .bind(entity_id)
+    .bind(format!("Concurrent edit to {table}"))
+    .bind(format!(
+        "Another terminal's copy (version {incoming_version}, {incoming_at}) replaced this \
+         one (version {local_version}, {local_at}). It carries no more edits than the copy \
+         it replaced, so both were probably edited at the same time and one set of changes \
+         has been discarded."
+    ))
+    .bind(chrono::Utc::now().to_rfc3339())
+    .execute(pool)
+    .await;
+}
+
 async fn record_append_conflict(
     pool: &SqlitePool,
     table: &str,
@@ -631,15 +769,7 @@ pub(crate) async fn apply_append_only(
     table: &str,
     obj: &Map<String, Value>,
 ) -> AppResult<()> {
-    let cols: Vec<&String> = obj
-        .keys()
-        .filter(|k| {
-            is_safe_col(k)
-                && *k != "sync_status"
-                && *k != "sync_attempts"
-                && !matches!(obj.get(*k), Some(Value::Null))
-        })
-        .collect();
+    let cols = syncable_columns(obj);
 
     if cols.is_empty() {
         return Ok(());
@@ -748,14 +878,54 @@ pub fn pk_for_table(table: &str) -> &str {
     }
 }
 
-/// Returns true if a column is local-only and must not be included
-/// in JSON payloads sent to the hub or pulled from the hub.
-pub fn should_skip_column(table: &str, col_name: &str) -> bool {
-    if col_name == "sync_status"
-        || col_name == "sync_attempts"
-        || col_name == "deleted_at"
-        || col_name == "version"
-    {
+/// Columns omitted from JSON sent to or pulled from the hub.
+///
+/// Split from [`skip_in_fingerprint`] deliberately. One function used to serve
+/// both purposes, and that coupling is what made the `deleted_at` bug
+/// undetectable: the column was stripped from every payload *and* from the
+/// parity checksum, so the terminals disagreed and no check could see it.
+///
+/// Keeping them separate means a column can travel without moving every row's
+/// fingerprint — which matters, because changing a fingerprint makes the whole
+/// fleet report divergence until the last terminal upgrades.
+pub fn skip_on_wire(table: &str, col_name: &str) -> bool {
+    // `version` travels, even though it is per-device bookkeeping in every other
+    // respect. Every local edit does `version = version + 1` and nothing ever
+    // reads it back to reject a write, so it is a pure count of how many edits a
+    // row has accumulated — and that is exactly the signal missing from
+    // last-writer-wins. Two terminals that edited independently produce a row
+    // that is newer by the clock but has seen no more edits, which is
+    // distinguishable from an ordinary stale write only if the count crosses.
+    //
+    // It stays out of `skip_in_fingerprint`, so no checksum moves and no
+    // terminal reports false divergence while the fleet upgrades.
+    if col_name == "version" {
+        return false;
+    }
+    per_device_bookkeeping(table, col_name)
+}
+
+/// Columns excluded from the parity fingerprint.
+///
+/// Deliberately *not* the same question as [`skip_on_wire`]. This one decides
+/// what two terminals must agree about; that one decides what crosses the
+/// network. Per-device bookkeeping answers both today, and any future
+/// divergence between them belongs here rather than at a call site.
+pub fn skip_in_fingerprint(table: &str, col_name: &str) -> bool {
+    per_device_bookkeeping(table, col_name)
+}
+
+/// State that belongs to one terminal and means nothing on another.
+fn per_device_bookkeeping(table: &str, col_name: &str) -> bool {
+    // `deleted_at` is deliberately NOT here. It used to be, alongside the
+    // per-device bookkeeping columns, and the consequence was that a deletion
+    // never crossed the wire at all: stripped from every push and from every
+    // pull. Products survived that because `soft_delete_product` also clears
+    // `is_active`, which does sync and which every catalogue read filters on.
+    // `customers` and `shifts` have no such flag, so a row deleted on one
+    // terminal stayed live on the others forever — and, because the parity
+    // checksum used this same function, invisibly so.
+    if col_name == "sync_status" || col_name == "sync_attempts" || col_name == "version" {
         return true;
     }
     matches!(
@@ -853,6 +1023,46 @@ pub(crate) fn json_to_sql_literal(v: &Value) -> String {
 /// delta would silently discard all pruned history.
 ///
 /// Returns `None` when no movements survive for this product.
+/// Accept a `stock_levels` row only as an opening balance, never as an overwrite.
+///
+/// Stock has one source of truth — the `stock_movements` ledger — and
+/// [`recompute_stock_level`] derives the cached figure from it. But that derived
+/// row is itself synced, and it used to arrive here through `apply_lww`. So a
+/// cached value computed on another till, from *that* till's subset of
+/// movements, could overwrite a correct local figure purely by carrying a later
+/// `updated_at`. It corrected itself only when the next movement for that
+/// product arrived and triggered a recompute; for a slow-moving line that is
+/// weeks of a wrong number on screen.
+///
+/// The row still has to cross the wire, because a freshly onboarded terminal has
+/// no movements yet and would otherwise show zero stock for everything. That is
+/// why `stock_levels` sits before `stock_movements` in the worker's pull order.
+/// So the rule is not "never accept" but "never overwrite":
+///
+/// * no movements held for this product and branch → nothing to contradict the
+///   incoming figure, take it as the opening balance
+/// * any movements held → the ledger is authoritative, discard the incoming row
+///
+/// [`ledger_balance`] already returns `None` for the first case, so the seed
+/// condition needs no query of its own.
+async fn apply_stock_level_seed(pool: &SqlitePool, obj: &Map<String, Value>) -> AppResult<()> {
+    let (Some(product_id), Some(branch_id)) = (
+        obj.get("product_id").and_then(|v| v.as_str()),
+        obj.get("branch_id").and_then(|v| v.as_str()),
+    ) else {
+        // Without both identifiers the ledger cannot be consulted, so authority
+        // cannot be established. Declining to write is the safe direction: the
+        // cost is a missing opening balance, not a corrupted stock figure.
+        tracing::warn!("stock_levels row without product_id/branch_id ignored");
+        return Ok(());
+    };
+
+    if ledger_balance(pool, product_id, branch_id).await?.is_some() {
+        return Ok(());
+    }
+    apply_lww(pool, "stock_levels", "stock_level_id", obj, &[]).await
+}
+
 async fn ledger_balance(
     pool: &SqlitePool,
     product_id: &str,
@@ -963,6 +1173,284 @@ mod tests {
             .unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         pool
+    }
+
+    // ── stock_levels is a seed, never an overwrite ───────────────────────────
+    //
+    // The defect these cover: `stock_levels` is derived from the movement ledger
+    // *and* synced, so a cached figure computed on another till could overwrite
+    // a correct local one just by carrying a later timestamp — and stay wrong
+    // until that product next moved.
+
+    async fn stocked_pool() -> SqlitePool {
+        let pool = test_pool().await;
+        sqlx::query(
+            "INSERT INTO categories (category_id, name, created_at, updated_at)
+             VALUES ('cat_1','Grocery','2026-08-01T00:00:00Z','2026-08-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO products (product_id, category_id, name, is_active, created_at, updated_at)
+             VALUES ('prd_1','cat_1','Rice 5kg',1,'2026-08-01T00:00:00Z','2026-08-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool
+    }
+
+    /// A movement this terminal actually holds, so the ledger is non-empty.
+    async fn add_movement(pool: &SqlitePool, id: &str, delta: &str, after: &str, at: &str) {
+        sqlx::query(
+            "INSERT INTO stock_movements (movement_id, product_id, branch_id, device_id,
+                 movement_type, quantity_delta, quantity_after, created_at)
+             VALUES (?, 'prd_1', 'br_1', 'dev_local', 'adjustment', ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(delta)
+        .bind(after)
+        .bind(at)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    fn remote_level(qty: &str, updated_at: &str) -> Value {
+        json!({
+            "stock_level_id": "SL-prd_1-br_1",
+            "product_id": "prd_1",
+            "branch_id": "br_1",
+            "quantity_on_hand": qty,
+            "last_movement_at": updated_at,
+            "created_at": "2026-08-01T00:00:00Z",
+            "updated_at": updated_at,
+        })
+    }
+
+    async fn level_of(pool: &SqlitePool) -> Option<String> {
+        sqlx::query_scalar("SELECT quantity_on_hand FROM stock_levels WHERE product_id='prd_1'")
+            .fetch_optional(pool)
+            .await
+            .unwrap()
+    }
+
+    /// The reported defect. A newer remote cache must not win over a local
+    /// ledger — "newer" says nothing about which subset of movements it saw.
+    #[tokio::test]
+    async fn a_terminal_holding_movements_ignores_a_newer_remote_stock_level() {
+        let pool = stocked_pool().await;
+        add_movement(&pool, "mv_1", "40", "40", "2026-08-02T09:00:00Z").await;
+        recompute_stock_level(&pool, "prd_1", "br_1", "2026-08-02T09:00:00Z")
+            .await
+            .unwrap();
+        assert_eq!(level_of(&pool).await.as_deref(), Some("40"));
+
+        // Far in the future, so nothing but authority can decide this.
+        apply_row(&pool, "stock_levels", &remote_level("999", "2030-01-01T00:00:00Z"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            level_of(&pool).await.as_deref(),
+            Some("40"),
+            "a remote cache overwrote a ledger-derived figure"
+        );
+    }
+
+    /// The other half: without this, a freshly onboarded till shows zero stock
+    /// for every product that has not moved since it joined.
+    #[tokio::test]
+    async fn a_terminal_with_no_movements_accepts_the_row_as_an_opening_balance() {
+        let pool = stocked_pool().await;
+
+        apply_row(&pool, "stock_levels", &remote_level("25", "2026-08-02T09:00:00Z"))
+            .await
+            .unwrap();
+
+        assert_eq!(level_of(&pool).await.as_deref(), Some("25"));
+    }
+
+    /// Seeding must not queue the foreign figure straight back out; the row it
+    /// wrote came from the hub and is already agreed.
+    #[tokio::test]
+    async fn an_accepted_seed_is_not_queued_for_push() {
+        let pool = stocked_pool().await;
+        apply_row(&pool, "stock_levels", &remote_level("25", "2026-08-02T09:00:00Z"))
+            .await
+            .unwrap();
+
+        let status: String =
+            sqlx::query_scalar("SELECT sync_status FROM stock_levels WHERE product_id='prd_1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "synced");
+    }
+
+    /// Once seeded, the ledger takes over: a movement recomputes from local
+    /// evidence and the seed stops being authoritative.
+    #[tokio::test]
+    async fn a_movement_arriving_after_a_seed_recomputes_from_the_ledger() {
+        let pool = stocked_pool().await;
+        apply_row(&pool, "stock_levels", &remote_level("25", "2026-08-02T09:00:00Z"))
+            .await
+            .unwrap();
+
+        // A movement whose own snapshot says 30 — the ledger anchor.
+        add_movement(&pool, "mv_1", "5", "30", "2026-08-03T09:00:00Z").await;
+        recompute_stock_level(&pool, "prd_1", "br_1", "2026-08-03T09:00:00Z")
+            .await
+            .unwrap();
+        assert_eq!(level_of(&pool).await.as_deref(), Some("30"));
+
+        // And from here the seed can no longer come back and undo it.
+        apply_row(&pool, "stock_levels", &remote_level("25", "2031-01-01T00:00:00Z"))
+            .await
+            .unwrap();
+        assert_eq!(level_of(&pool).await.as_deref(), Some("30"));
+    }
+
+    /// Authority cannot be established without both identifiers, so the safe
+    /// direction is to write nothing rather than guess.
+    #[tokio::test]
+    async fn a_stock_level_row_missing_its_identifiers_is_not_written() {
+        let pool = stocked_pool().await;
+        let malformed = json!({
+            "stock_level_id": "SL-prd_1-br_1",
+            "quantity_on_hand": "999",
+            "created_at": "2026-08-01T00:00:00Z",
+            "updated_at": "2030-01-01T00:00:00Z",
+        });
+
+        apply_row(&pool, "stock_levels", &malformed).await.unwrap();
+        assert_eq!(level_of(&pool).await, None);
+    }
+
+    // ── concurrent edits are visible, not silent ─────────────────────────────
+
+    async fn conflicts(pool: &SqlitePool) -> Vec<(String, String)> {
+        sqlx::query_as("SELECT conflict_type, entity_id FROM sync_conflicts ORDER BY created_at")
+            .fetch_all(pool)
+            .await
+            .unwrap()
+    }
+
+    fn category(name: &str, version: i64, updated_at: &str) -> Value {
+        json!({
+            "category_id": "cat_1",
+            "name": name,
+            "created_at": "2026-08-01T00:00:00Z",
+            "updated_at": updated_at,
+            "version": version,
+        })
+    }
+
+    /// `version` has to cross the wire for any of this to work, but it must stay
+    /// out of the fingerprint — carrying it there would change every row's
+    /// checksum at once and make the whole fleet report divergence.
+    #[test]
+    fn version_travels_but_is_never_fingerprinted() {
+        for table in ["products", "customers", "devices", "shifts"] {
+            assert!(!skip_on_wire(table, "version"), "{table}");
+            assert!(
+                skip_in_fingerprint(table, "version"),
+                "{table} would move every checksum"
+            );
+        }
+    }
+
+    /// A newer row that has seen no more edits than the one it replaces was
+    /// written in parallel, not on top. That is the case worth reporting.
+    #[tokio::test]
+    async fn a_newer_row_with_no_more_edits_is_recorded_as_a_concurrent_edit() {
+        let pool = test_pool().await;
+        apply_row(&pool, "categories", &category("Grocery", 5, "2026-08-01T10:00:00Z"))
+            .await
+            .unwrap();
+
+        // Later by the clock, but only 3 edits deep against our 5.
+        apply_row(&pool, "categories", &category("Produce", 3, "2026-08-01T11:00:00Z"))
+            .await
+            .unwrap();
+
+        let found = conflicts(&pool).await;
+        assert_eq!(found, vec![("concurrent_edit".into(), "cat_1".into())]);
+
+        // Detection only: the LWW outcome is deliberately unchanged.
+        let name: String =
+            sqlx::query_scalar("SELECT name FROM categories WHERE category_id='cat_1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(name, "Produce");
+    }
+
+    /// An ordinary edit built on top of ours carries a higher count. Reporting
+    /// that would bury the real conflicts in noise.
+    #[tokio::test]
+    async fn an_edit_built_on_top_of_ours_is_not_a_conflict() {
+        let pool = test_pool().await;
+        apply_row(&pool, "categories", &category("Grocery", 5, "2026-08-01T10:00:00Z"))
+            .await
+            .unwrap();
+        apply_row(&pool, "categories", &category("Produce", 6, "2026-08-01T11:00:00Z"))
+            .await
+            .unwrap();
+
+        assert!(conflicts(&pool).await.is_empty());
+    }
+
+    /// A stale arrival overwrites nothing, so it is not a conflict either.
+    #[tokio::test]
+    async fn a_stale_row_that_loses_is_not_reported() {
+        let pool = test_pool().await;
+        apply_row(&pool, "categories", &category("Grocery", 5, "2026-08-01T10:00:00Z"))
+            .await
+            .unwrap();
+        apply_row(&pool, "categories", &category("Old", 2, "2026-07-01T09:00:00Z"))
+            .await
+            .unwrap();
+
+        assert!(conflicts(&pool).await.is_empty());
+        let name: String =
+            sqlx::query_scalar("SELECT name FROM categories WHERE category_id='cat_1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(name, "Grocery", "the freshness guard stopped working");
+    }
+
+    /// The counter must not go backwards, or the next comparison reads a
+    /// conflict as agreement.
+    #[tokio::test]
+    async fn the_edit_counter_never_moves_backwards() {
+        let pool = test_pool().await;
+        apply_row(&pool, "categories", &category("Grocery", 9, "2026-08-01T10:00:00Z"))
+            .await
+            .unwrap();
+        apply_row(&pool, "categories", &category("Produce", 3, "2026-08-01T11:00:00Z"))
+            .await
+            .unwrap();
+
+        let version: i64 =
+            sqlx::query_scalar("SELECT version FROM categories WHERE category_id='cat_1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(version, 9, "a lower incoming version reset the edit count");
+    }
+
+    /// A row this terminal has never held cannot have been edited here.
+    #[tokio::test]
+    async fn a_first_delivery_is_not_a_concurrent_edit() {
+        let pool = test_pool().await;
+        apply_row(&pool, "categories", &category("Grocery", 1, "2026-08-01T10:00:00Z"))
+            .await
+            .unwrap();
+
+        assert!(conflicts(&pool).await.is_empty());
     }
 
     #[tokio::test]

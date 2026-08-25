@@ -299,9 +299,15 @@ mod tests {
     /// Narrowing reads is only safe because the model can ask for the rest. If
     /// this tool were ever classified into a domain it would vanish from exactly
     /// the requests that need it, and the catalogue could never be widened again.
+    ///
+    /// `request_input` is here for the same reason from the other direction: an
+    /// under-specified request ("price update") is precisely the one that both
+    /// names a domain and needs a form, so a domain classification would strip
+    /// the form tool from every message that could use it.
     #[test]
     fn the_widening_escape_hatch_survives_every_domain() {
         assert_eq!(tool_domain("request_full_tool_access"), None);
+        assert_eq!(tool_domain("request_input"), None);
 
         for message in [
             "Refund yesterday's sale",
@@ -310,14 +316,15 @@ mod tests {
             "change the cashier role",
             "update the printer settings",
             "raise the price of milk",
+            "price update",
         ] {
             let domains = detect_domains(message);
             assert!(!domains.is_empty(), "no domain detected for {message:?}");
-            let definitions = definitions(&["request_full_tool_access"]);
+            let definitions = definitions(&["request_full_tool_access", "request_input"]);
             let subset = subset_for_message(&definitions, message, true, false).unwrap();
             assert_eq!(
                 subset.definitions.len(),
-                1,
+                2,
                 "escape hatch dropped for {message:?}"
             );
         }

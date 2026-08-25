@@ -20,7 +20,22 @@ use tauri::State;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WaContact {
     pub id: String,
+    /// What to show. Prefers the shop's own name for this person.
     pub name: String,
+    /// The address-book name — what this shop saved them as.
+    ///
+    /// Carried separately from `name` so a customer can be found by either the
+    /// name the shop gave them or the one they gave themselves. Collapsing the
+    /// two meant a cashier had to know the customer's WhatsApp profile name to
+    /// find them, which is not the name they think of at the counter.
+    #[serde(default, rename = "savedName")]
+    pub saved_name: Option<String>,
+    /// The pushName — what the person set on their own WhatsApp profile.
+    #[serde(default, rename = "pushName")]
+    pub push_name: Option<String>,
+    /// A WhatsApp Business verified name, when there is one.
+    #[serde(default, rename = "verifiedName")]
+    pub verified_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

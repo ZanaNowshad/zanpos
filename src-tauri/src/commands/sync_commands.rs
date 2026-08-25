@@ -999,6 +999,119 @@ pub async fn hub_truth_compare(
     Ok(compare_consistency_snapshots(local, hub))
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ParityRow {
+    pub pk: String,
+    pub divergence: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ParityTableReport {
+    pub table: String,
+    pub local_count: i64,
+    pub hub_count: i64,
+    /// Buckets whose contents differ. Small even when the table is large.
+    pub buckets_checked: usize,
+    pub buckets_mismatched: usize,
+    pub rows: Vec<ParityRow>,
+    /// True when the divergence is wider than `MAX_REPORTED_ROWS` and the
+    /// honest answer is a resync rather than a list.
+    pub truncated: bool,
+    pub status: String,
+}
+
+/// Name the rows that differ between this terminal and the hub.
+///
+/// `hub_truth_compare` says a table diverged; this says which rows. It is the
+/// difference between "products differs" on a 28,010-row catalogue and "three
+/// products differ, here they are" — and therefore between a full resync and a
+/// targeted fix.
+///
+/// Two round trips per table: bucket digests, then the rows inside whichever
+/// buckets disagreed.
+#[tauri::command]
+pub async fn sync_parity_report(
+    actor_user_id: String,
+    table: String,
+    state: State<'_, AppState>,
+) -> Result<ParityTableReport, AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    if !crate::sync_v2::consistency::CONSISTENCY_TABLES.contains(&table.as_str()) {
+        return Err(AppError::Validation(format!("{table} is not a synced table")));
+    }
+    let buckets = crate::sync_v2::parity::DEFAULT_BUCKETS;
+
+    let Some(client) = state.sync_worker.load_client().await else {
+        return Ok(ParityTableReport {
+            table,
+            local_count: 0,
+            hub_count: 0,
+            buckets_checked: 0,
+            buckets_mismatched: 0,
+            rows: Vec::new(),
+            truncated: false,
+            status: "no_hub".into(),
+        });
+    };
+
+    let local = crate::sync_v2::parity::bucket_digests(&state.db, &table, buckets).await?;
+    let Some(hub_body) = client.hub_parity(&table, buckets, None).await? else {
+        // A shop upgrades terminals one at a time, so this is expected rather
+        // than broken — and saying so beats an error that reads like sync died.
+        return Ok(ParityTableReport {
+            table,
+            local_count: local.iter().map(|b| b.count).sum(),
+            hub_count: 0,
+            buckets_checked: 0,
+            buckets_mismatched: 0,
+            rows: Vec::new(),
+            truncated: false,
+            status: "hub_too_old".into(),
+        });
+    };
+    let hub: Vec<crate::sync_v2::parity::BucketDigest> =
+        serde_json::from_value(hub_body.get("digests").cloned().unwrap_or_default())
+            .map_err(|e| AppError::Internal(format!("Hub parity shape: {e}")))?;
+
+    let mismatched = crate::sync_v2::parity::mismatched_buckets(&local, &hub);
+    let mut rows = Vec::new();
+    for bucket in &mismatched {
+        if rows.len() >= crate::sync_v2::parity::MAX_REPORTED_ROWS {
+            break;
+        }
+        let local_rows =
+            crate::sync_v2::parity::row_digests(&state.db, &table, *bucket, buckets).await?;
+        let hub_rows: Vec<crate::sync_v2::parity::RowDigest> = client
+            .hub_parity(&table, buckets, Some(*bucket))
+            .await?
+            .and_then(|body| serde_json::from_value(body.get("rows").cloned().unwrap_or_default()).ok())
+            .unwrap_or_default();
+        for row in crate::sync_v2::parity::diff_rows(&local_rows, &hub_rows) {
+            rows.push(ParityRow {
+                pk: row.pk,
+                divergence: serde_json::to_value(row.divergence)
+                    .ok()
+                    .and_then(|v| v.as_str().map(str::to_string))
+                    .unwrap_or_default(),
+            });
+        }
+    }
+
+    let truncated = rows.len() > crate::sync_v2::parity::MAX_REPORTED_ROWS;
+    rows.truncate(crate::sync_v2::parity::MAX_REPORTED_ROWS);
+
+    Ok(ParityTableReport {
+        local_count: local.iter().map(|b| b.count).sum(),
+        hub_count: hub.iter().map(|b| b.count).sum(),
+        buckets_checked: local.len(),
+        buckets_mismatched: mismatched.len(),
+        status: if rows.is_empty() { "in_step".into() } else { "diverged".into() },
+        table,
+        rows,
+        truncated,
+    })
+}
+
 #[tauri::command]
 pub async fn hub_truth_pull(
     actor_user_id: String,

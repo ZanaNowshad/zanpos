@@ -24,6 +24,10 @@ import {
   cartLine,
 } from "./uiMockData";
 import { HANDLERS } from "./uiMockHandlers";
+import {
+  mockAiChatStream, mockActiveConversation, mockConversationView, mockDeleteConversation,
+  mockListConversations, mockRecordExchange, mockRenameConversation,
+} from "./uiMockAiChat";
 import type { MockCart } from "./uiMockData";
 
 /** Commands whose names imply a list, so an unknown one should yield []. */
@@ -133,6 +137,40 @@ export function installUiMock(): void {
           args?.activeOnly ? rows.filter(r => r.is_active) : rows,
         ));
       }
+      /* The chat answers over a Channel, so a canned return value cannot reach
+         it — an unstubbed ai_chat_stream leaves the widget on "Thinking…"
+         forever and every state behind it is unreachable in QA. */
+      /* Threads. Held in module state so New chat, History, reopen and delete
+         are all exercisable in the browser — the states this feature is made of
+         are unreachable without them, which is how ai_chat_stream nearly
+         shipped unlooked-at. */
+      if (cmd === "ai_load_history") {
+        return Promise.resolve(structuredClone(mockConversationView(mockActiveConversation())));
+      }
+      if (cmd === "ai_list_conversations") {
+        return Promise.resolve(structuredClone(mockListConversations()));
+      }
+      if (cmd === "ai_open_conversation") {
+        return Promise.resolve(structuredClone(mockConversationView(String(args?.conversationId ?? ""))));
+      }
+      if (cmd === "ai_delete_conversation") {
+        mockDeleteConversation(String(args?.conversationId ?? ""));
+        return Promise.resolve(null);
+      }
+      if (cmd === "ai_rename_conversation") {
+        mockRenameConversation(String(args?.conversationId ?? ""), String(args?.title ?? ""));
+        return Promise.resolve(null);
+      }
+      if (cmd === "ai_chat_stream") {
+        mockRecordExchange(
+          (args?.input as { conversation_id?: string | null } | undefined)?.conversation_id ?? null,
+          String((args?.input as { message?: string } | undefined)?.message ?? ""),
+        );
+        return mockAiChatStream(
+          args?.input as { message?: string } | undefined,
+          args?.onEvent as { onmessage?: (event: unknown) => void } | undefined,
+        );
+      }
       if (cmd === "ai_list_actions") {
         const statuses = (args?.statuses as string[] | undefined) ?? [];
         const all = HANDLERS.ai_list_actions as { status: string }[];
@@ -225,6 +263,23 @@ export function installUiMock(): void {
           low_stock_alerts: [],
         }));
       }
+      /* `pos_remove_line` drops the line; `pos_void_line` keeps it and marks it
+         voided. They are genuinely different commands and the till uses the
+         first one for the Void button, so stubbing only the second left Void
+         unexercisable under ?uimock=1 — the unstubbed command fell through to
+         the null fallback and the cart silently stopped updating. Mirrors
+         pos_remove_line in pos_commands.rs, which retains everything else and
+         recomputes nothing. */
+      if (cmd === "pos_remove_line") {
+        const input = (args?.input ?? {}) as { cart?: MockCart; cart_line_id?: string };
+        const cart = input.cart;
+        if (!cart) return Promise.reject("No cart");
+        return Promise.resolve(structuredClone({
+          ...cart,
+          lines: cart.lines.filter(line => line.cart_line_id !== input.cart_line_id),
+        }));
+      }
+
       if (cmd === "pos_update_quantity" || cmd === "pos_set_line_price" || cmd === "pos_void_line") {
         const input = (args?.input ?? {}) as { cart?: MockCart; cart_line_id?: string; quantity?: string; price_minor?: number };
         const cart = input.cart;
@@ -243,11 +298,20 @@ export function installUiMock(): void {
 
       if (cmd === "customer_list") {
         const q = String(args?.search ?? "").trim().toLowerCase();
+        /* Mirrors customer_list_inner: a stored phone is compared both as it
+           was written and with its punctuation stripped, because "+973 3600
+           1122" has to be findable by a cashier typing "36001122". The digit
+           branch is skipped entirely when the query has no digits — in Rust a
+           sentinel pattern there matched every customer with no phone at all
+           and leaked another branch's roster. */
+        const digits = q.replace(/\D/g, "");
+        const stripped = (phone: string | null) => (phone ?? "").replace(/[\s\-()+/]/g, "");
         const matched = q
           ? CUSTOMERS.filter(c =>
               c.name.toLowerCase().includes(q)
               || (c.phone ?? "").toLowerCase().includes(q)
-              || (c.email ?? "").toLowerCase().includes(q))
+              || (c.email ?? "").toLowerCase().includes(q)
+              || (digits.length > 0 && stripped(c.phone).includes(digits)))
           : CUSTOMERS;
         // Mirrors the real command's page shape, including a `total` that
         // describes the whole match rather than the slice returned.

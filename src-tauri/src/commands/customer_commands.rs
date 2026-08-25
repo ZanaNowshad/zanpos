@@ -1,4 +1,5 @@
 use crate::commands::customer_scope::{actor_branch_id, customer_in_branch};
+use crate::commands::customer_search::{customer_search_patterns, customer_search_where};
 use crate::commands::{rbac, sync_commands};
 use crate::db::repositories::audit_hash;
 use crate::errors::AppError;
@@ -130,23 +131,25 @@ async fn customer_list_inner(
     } else {
         // Search runs in SQL over the whole authorised branch, not over the
         // page already loaded, so a match on page 40 is still reachable.
-        let pattern = format!("%{}%", search.trim());
-        sqlx::query(
+        let (pattern, digit_pattern) = customer_search_patterns(search);
+        let sql = format!(
             "SELECT customer_id, branch_id, name, phone, email, loyalty_points, created_at, notes
              FROM customers
              WHERE branch_id = ?
-               AND (name LIKE ? OR phone LIKE ? OR email LIKE ?)
+               AND {}
              ORDER BY name, customer_id
              LIMIT ? OFFSET ?",
-        )
-        .bind(&branch_id)
-        .bind(&pattern)
-        .bind(&pattern)
-        .bind(&pattern)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?
+            customer_search_where(digit_pattern.is_some()),
+        );
+        let mut q = sqlx::query(&sql)
+            .bind(&branch_id)
+            .bind(&pattern)
+            .bind(&pattern)
+            .bind(&pattern);
+        if let Some(digits) = &digit_pattern {
+            q = q.bind(digits);
+        }
+        q.bind(limit).bind(offset).fetch_all(pool).await?
     };
 
     let total: i64 = if search.trim().is_empty() {
@@ -155,17 +158,20 @@ async fn customer_list_inner(
             .fetch_one(pool)
             .await?
     } else {
-        let pattern = format!("%{}%", search.trim());
-        sqlx::query_scalar(
-            "SELECT COUNT(*) FROM customers
-             WHERE branch_id = ? AND (name LIKE ? OR phone LIKE ? OR email LIKE ?)",
-        )
-        .bind(&branch_id)
-        .bind(&pattern)
-        .bind(&pattern)
-        .bind(&pattern)
-        .fetch_one(pool)
-        .await?
+        let (pattern, digit_pattern) = customer_search_patterns(search);
+        let sql = format!(
+            "SELECT COUNT(*) FROM customers WHERE branch_id = ? AND {}",
+            customer_search_where(digit_pattern.is_some()),
+        );
+        let mut q = sqlx::query_scalar(&sql)
+            .bind(&branch_id)
+            .bind(&pattern)
+            .bind(&pattern)
+            .bind(&pattern);
+        if let Some(digits) = &digit_pattern {
+            q = q.bind(digits);
+        }
+        q.fetch_one(pool).await?
     };
 
     Ok(CustomerPage {

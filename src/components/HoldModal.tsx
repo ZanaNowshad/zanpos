@@ -32,6 +32,21 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
     return () => { cancelled = true; };
   }, [actorUserId]);
 
+  /* Escape closes the dialog. Capture phase and propagation stopped, because
+     the till binds Escape to "put the caret back in the barcode field" — a
+     bubbling handler here would fire second and the cashier would be typing
+     barcodes into a dialog that never went away. */
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+
   const handleHold = async () => {
     if (lineCount === 0) return;
     setSaving(true);
@@ -72,8 +87,25 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
   };
 
   return (
-    <button className="modal-overlay" type="button" onClick={onClose}>
-      <div className="modal hold-modal" role="dialog" aria-modal="true" aria-labelledby="hold-dialog-title" onClick={e => e.stopPropagation()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); (e.target as HTMLElement).click(); } }}>
+    /*
+     * A div, not a button. The overlay used to be a `<button>` wrapping the
+     * whole dialog, which made every control inside it a nested interactive
+     * element: pressing Space anywhere the caret was not closed the dialog and
+     * lost the note. The inner `onKeyDown` that went with it turned Enter and
+     * Space into a synthetic click on whatever had focus, so a space could not
+     * be typed into the customer-name field at all — "Abu Ali" came out
+     * "AbuAli". Both are gone; the dismiss target is a sibling behind the
+     * dialog, as elsewhere in the app.
+     */
+    <div className="modal-overlay" role="presentation">
+      <button
+        type="button"
+        className="modal-overlay-dismiss"
+        onClick={onClose}
+        tabIndex={-1}
+        aria-hidden="true"
+      />
+      <div className="modal hold-modal" role="dialog" aria-modal="true" aria-labelledby="hold-dialog-title">
         <div className="modal-header">
           <h2 className="modal-title" id="hold-dialog-title">{t("holdOrder")}</h2>
           <button className="modal-close" onClick={onClose}>✕</button>
@@ -137,6 +169,6 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
           <p className="hold-empty">{t("noHeldOrders")}</p>
         )}
       </div>
-    </button>
+    </div>
   );
 }

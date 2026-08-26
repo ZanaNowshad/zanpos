@@ -133,22 +133,25 @@ pub async fn customer_add_loyalty(
         ));
     }
 
-    let now = chrono::Utc::now().to_rfc3339();
-    let affected = sqlx::query(
-        "UPDATE customers SET loyalty_points = loyalty_points + ?, updated_at = ?, sync_status = 'pending' WHERE customer_id = ?")
-        .bind(points)
-        .bind(&now)
-        .bind(&customer_id)
-        .execute(&state.db)
-        .await?
-        .rows_affected();
-
-    if affected == 0 {
-        return Err(AppError::NotFound(format!(
-            "Customer {} not found",
-            customer_id
-        )));
-    }
+    crate::db::repositories::loyalty_repo::record(
+        &state.db,
+        crate::db::repositories::loyalty_repo::AwardContext {
+            customer_id: &customer_id,
+            branch_id: Some(&existing_branch),
+            device_id: Some(&existing_device),
+            event: if points < 0 {
+                crate::db::repositories::loyalty_repo::LoyaltyEvent::Redeem
+            } else {
+                crate::db::repositories::loyalty_repo::LoyaltyEvent::Adjust
+            },
+            points_delta: points,
+            reference_type: Some("manual"),
+            reference_id: None,
+            reason: Some("Adjusted by staff"),
+            actor_user_id: Some(&actor_user_id),
+        },
+    )
+    .await?;
 
     let row = sqlx::query(
         "SELECT customer_id, branch_id, name, phone, email, loyalty_points, created_at, notes

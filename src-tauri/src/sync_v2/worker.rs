@@ -65,7 +65,7 @@ const DEFAULT_HUB_INTERVAL_SECS: u64 = 300;
 /// API round-trips from 280 → 56 (5×).
 const PULL_PAGE_LIMIT: usize = 500;
 
-const PUSH_ORDER: &[&str] = &[
+pub(crate) const PUSH_ORDER: &[&str] = &[
     "branches",
     "categories",
     "tax_rules",
@@ -79,6 +79,7 @@ const PUSH_ORDER: &[&str] = &[
     "roles",
     "users",
     "customers",
+    "loyalty_events",
     "riders",
     "shifts",
     "sales",
@@ -95,7 +96,7 @@ const PUSH_ORDER: &[&str] = &[
     "cash_events",
 ];
 
-const PULL_ORDER: &[&str] = &[
+pub(crate) const PULL_ORDER: &[&str] = &[
     "branches",
     "categories",
     "tax_rules",
@@ -109,6 +110,7 @@ const PULL_ORDER: &[&str] = &[
     "roles",
     "users",
     "customers",
+    "loyalty_events",
     "riders",
     "shifts",
     "sales",
@@ -135,6 +137,40 @@ fn finish_pull(total_pulled: u32, errors: Vec<String>) -> AppResult<u32> {
         Ok(total_pulled)
     } else {
         Err(AppError::Internal(errors.join("; ")))
+    }
+}
+
+/// What one join-wizard sync actually managed, in each direction.
+///
+/// Two directions reported separately because they fail for different reasons
+/// and the operator's next move differs: a push that failed leaves local sales
+/// still only on this till, while a pull that failed leaves the catalogue short.
+/// Collapsing both into "sync incomplete" is what made the stuck terminal
+/// unreadable.
+#[derive(Debug, Default, Clone)]
+pub struct JoinSyncOutcome {
+    pub pushed: Option<u32>,
+    pub pulled: Option<u32>,
+    pub push_error: Option<String>,
+    pub pull_error: Option<String>,
+}
+
+impl JoinSyncOutcome {
+    fn failed(error: AppError) -> Self {
+        let detail = error.internal_database_detail();
+        Self {
+            pushed: None,
+            pulled: None,
+            push_error: Some(detail.clone()),
+            pull_error: Some(detail),
+        }
+    }
+
+    /// The first thing that went wrong, preferring the push — local rows that
+    /// have not reached the hub are the half that cannot be recovered by
+    /// retrying later from somewhere else.
+    pub fn first_error(&self) -> Option<String> {
+        self.push_error.clone().or_else(|| self.pull_error.clone())
     }
 }
 
@@ -324,6 +360,60 @@ impl SyncWorker {
         }
         drop(state);
         result
+    }
+
+    /// The join wizard's sync: hand over local work first, then take the snapshot.
+    ///
+    /// The wizard used to call [`Self::pull_only_wait`], which is correct for a
+    /// terminal joining with an empty database and wrong for every other case.
+    /// A till that has been selling — because it was paired before, or because
+    /// the hub was unreachable and it kept working, which is the whole point of
+    /// this being local-first — arrives here holding sales, payments and stock
+    /// movements that exist nowhere else. Pulling alone can never move them, and
+    /// the wizard's own readiness check refused to open the POS until nothing was
+    /// pending. So the one button on screen could not produce the condition it
+    /// demanded, and pressing it again could not help.
+    ///
+    /// Push runs first and its failure does not stop the pull: getting
+    /// irreplaceable local rows to the hub is the more valuable half, but a till
+    /// that cannot reach the hub to push still needs the catalogue it already
+    /// has. Both outcomes are reported so the wizard can say which half failed
+    /// instead of "sync incomplete".
+    pub async fn join_sync_wait(&self) -> JoinSyncOutcome {
+        let _run_guard = self.running.lock().await;
+        let device_id = match self.active_device_id().await {
+            Ok(id) => id,
+            Err(e) => return JoinSyncOutcome::failed(e),
+        };
+        let Some(client) = self.load_client().await else {
+            return JoinSyncOutcome::failed(AppError::Validation(
+                "Hub connection is not configured".into(),
+            ));
+        };
+
+        let push_result = self.push_pending(&client).await;
+        let pull_result = self.pull_changes(&client, &device_id).await;
+
+        let mut state = self.state.lock().await;
+        state.online = true;
+        match (&push_result, &pull_result) {
+            (Ok(_), Ok(_)) => {
+                state.last_error = None;
+                state.consecutive_failures = 0;
+            }
+            (Err(e), _) | (_, Err(e)) => {
+                state.last_error = Some(e.to_string());
+                state.consecutive_failures = state.consecutive_failures.saturating_add(1);
+            }
+        }
+        drop(state);
+
+        JoinSyncOutcome {
+            pushed: push_result.as_ref().copied().ok(),
+            pulled: pull_result.as_ref().copied().ok(),
+            push_error: push_result.err().map(|e| e.internal_database_detail()),
+            pull_error: pull_result.err().map(|e| e.internal_database_detail()),
+        }
     }
 
     async fn run_once_locked(&self) {

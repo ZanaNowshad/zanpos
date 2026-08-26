@@ -459,7 +459,7 @@ pub async fn system_health_check(
     actor_user_id: String,
 ) -> AppResult<SystemHealthReport> {
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
-    let mut report = run_local_health_check(&state.db, sync_commands::SYNC_TABLES).await?;
+    let mut report = run_local_health_check(&state.db, &sync_commands::SYNC_TABLES).await?;
 
     let hub = state.hub.lock().await;
     if let Some(handle) = &hub.handle {
@@ -561,7 +561,7 @@ pub async fn system_health_apply_fix(
             message: "Triggered a sync cycle.".into(),
         });
     }
-    let result = apply_health_fix(&state.db, &input.fix_action, sync_commands::SYNC_TABLES).await?;
+    let result = apply_health_fix(&state.db, &input.fix_action, &sync_commands::SYNC_TABLES).await?;
     if result.rows_changed > 0 {
         sync_commands::schedule_immediate_sync(&state);
     }

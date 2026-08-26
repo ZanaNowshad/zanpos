@@ -34,36 +34,12 @@ pub(crate) async fn active_device_id(state: &AppState) -> AppResult<String> {
     crate::device_identity::current(&state.db).await
 }
 
-/// Tables that participate in sync (in FK-safe push order).
-pub const SYNC_TABLES: &[&str] = &[
-    "branches", // was missing — local branch edits were invisible to admin commands
-    "categories",
-    "tax_rules",
-    "products",
-    "product_barcodes",
-    "suppliers",
-    "purchase_orders",
-    "purchase_order_lines",
-    "po_receipts",
-    "devices",
-    "roles",
-    "users",
-    "riders",
-    "customers",
-    "shifts",
-    "sales",
-    "sale_items",
-    "payments",
-    "refunds",
-    "refund_items",
-    "stock_movements",
-    "stock_levels", // was missing — stock levels invisible to admin commands
-    "audit_logs",
-    "delivery_orders",
-    "product_prices",
-    "product_cost_history",
-    "cash_events", // was missing — cash events invisible to admin commands
-];
+/// Tables that record outbound work per row, in FK-safe order.
+///
+/// Derived from the sync registry rather than kept by hand. Two copies of this
+/// list existed and had already drifted apart — see `registry::row_queued`.
+pub static SYNC_TABLES: std::sync::LazyLock<Vec<&'static str>> =
+    std::sync::LazyLock::new(crate::sync_v2::registry::row_queued);
 
 /// Maps each sync table to its primary key column.
 pub fn table_pk(table: &str) -> &str {
@@ -102,7 +78,7 @@ pub fn table_pk(table: &str) -> &str {
 /// Count pending rows across all syncable tables.
 async fn count_pending(pool: &sqlx::SqlitePool) -> AppResult<i64> {
     let mut total: i64 = 0;
-    for table in SYNC_TABLES {
+    for table in SYNC_TABLES.iter() {
         let sql = format!(
             "SELECT COUNT(*) FROM {} WHERE sync_status = 'pending'",
             table
@@ -251,17 +227,124 @@ pub struct PullSummary {
     pub schema_match: bool,
     pub hub_truth_ok: bool,
     pub mismatched_tables: Vec<String>,
+    /// Whether this terminal holds the catalogue it needs to sell. This — not
+    /// whole-database parity — is what decides if the POS may open.
+    pub catalogue_ready: bool,
+    /// Tables that are in step, so the wizard can distinguish "synced and this
+    /// store genuinely has none" from "not downloaded yet". Zero suppliers used
+    /// to read as an unfinished download forever.
+    pub matched_tables: Vec<String>,
 }
 
 fn setup_pull_catalog_allowed(setup_done: bool, hub_url: Option<&str>) -> bool {
     !setup_done || hub_url.is_some_and(|url| !url.trim().is_empty())
 }
 
-fn join_snapshot_gate_ready(score: u8, schema_match: bool, pending_sync: u64) -> bool {
-    score == 100 && schema_match && pending_sync == 0
+/// The tables a till must hold before it can sell from this terminal.
+///
+/// Not "everything matches the hub" — see [`catalogue_ready`].
+const CATALOGUE_TABLES: &[&str] = &[
+    "products",
+    "product_prices",
+    "product_barcodes",
+    "categories",
+    "tax_rules",
+];
+
+/// Whether this terminal can open the POS.
+///
+/// The old rule was `score == 100 && schema_match && pending_sync == 0`, and it
+/// is what stranded a live till. A terminal that has been selling always has
+/// local sales the hub has not seen, so its `sales` count differs, so the score
+/// is never 100 — and `pending_sync == 0` demanded the very thing the wizard's
+/// pull-only sync could not produce. The gate asked for a state the screen
+/// could not reach.
+///
+/// What actually matters before opening a till is whether it can ring up a sale
+/// correctly: the schema agrees, and it is not *missing* catalogue rows the hub
+/// has. Local work waiting to go up is not a fault — it is what a local-first
+/// till looks like after an afternoon offline, and refusing to open makes it
+/// strictly worse by adding more of it.
+///
+/// Extra local rows are fine (a product added offline pushes later). Missing
+/// rows are not: that is a product that cannot be scanned.
+fn catalogue_ready(tables: &[HubTruthTableCompare], schema_match: bool) -> bool {
+    if !schema_match {
+        return false;
+    }
+    CATALOGUE_TABLES.iter().all(|name| {
+        tables
+            .iter()
+            .find(|table| table.table == *name)
+            .is_none_or(|table| table.local_count >= table.hub_count)
+    })
 }
 
+/// Wipe this terminal's replica so a fresh hub snapshot can land.
+///
+/// Every table here is deleted outright, and that is correct for a terminal
+/// joining with nothing of its own. It is catastrophic for one that has been
+/// selling: `sales`, `sale_items`, `payments`, `refunds`, `cash_events` and
+/// `audit_logs` are all in the list, and for rows that have not reached the hub
+/// this database is the only copy. There is no export and no undo.
+///
+/// The only thing that stood between an operator and that outcome was a single
+/// `app_config` flag — so a reinstall, a restored database, or an edited config
+/// row would let the next pull destroy an afternoon's takings silently. The
+/// count is now checked against the data itself, which cannot be reset by
+/// accident.
 async fn clear_join_replica(pool: &sqlx::SqlitePool) -> AppResult<()> {
+    let pending = count_pending_irreplaceable(pool).await.unwrap_or(0);
+    if pending > 0 {
+        return Err(AppError::Validation(format!(
+            "Refusing to replace this terminal's data: {pending} record(s) of things that \
+             happened here — sales, payments, stock movements or shifts — have not reached \
+             the hub yet, and this terminal holds the only copy. Let it finish syncing first."
+        )));
+    }
+    clear_join_replica_unchecked(pool).await
+}
+
+/// Tables whose unsent rows cannot be recovered from anywhere else.
+///
+/// Deliberately not "every synced table". A freshly migrated terminal starts
+/// with its seed branch, roles, users and device row all marked `pending`, and
+/// those are exactly what joining a store is meant to replace — guarding on
+/// them would refuse every legitimate first join, which the test below caught
+/// before it shipped.
+///
+/// What belongs here is the record of something that happened: money taken,
+/// stock moved, a shift opened, a customer added at the counter. The hub has no
+/// copy of those until they are pushed.
+const IRREPLACEABLE_TABLES: &[&str] = &[
+    "sales",
+    "sale_items",
+    "payments",
+    "refunds",
+    "refund_items",
+    "cash_events",
+    "shifts",
+    "stock_movements",
+    "product_cost_history",
+    "delivery_orders",
+    "customers",
+    "po_receipts",
+    "audit_logs",
+];
+
+async fn count_pending_irreplaceable(pool: &sqlx::SqlitePool) -> AppResult<i64> {
+    let mut total: i64 = 0;
+    for table in IRREPLACEABLE_TABLES {
+        let sql = format!("SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending'");
+        total += sqlx::query_scalar::<_, i64>(&sql)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
+    }
+    Ok(total)
+}
+
+async fn clear_join_replica_unchecked(pool: &sqlx::SqlitePool) -> AppResult<()> {
     let child_first = [
         "cash_events",
         "product_cost_history",
@@ -339,6 +422,12 @@ pub async fn setup_pull_catalog(state: State<'_, AppState>) -> Result<PullSummar
             .unwrap_or(None);
     if initialized.as_deref() != Some("1") {
         clear_join_replica(&state.db).await?;
+        // Watermarks are discarded with the replica they describe, and only
+        // then. Doing it on every call meant each Retry re-downloaded the whole
+        // catalogue from scratch — on a shop's WiFi that is minutes of work
+        // thrown away and repeated, which made a struggling terminal slower
+        // every time somebody tried to help it.
+        clear_setup_pull_watermarks(&state.db).await?;
         sqlx::query(
             "INSERT INTO app_config(key,value,updated_at) VALUES ('join_snapshot_initialized','1',?)
              ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at",
@@ -347,22 +436,19 @@ pub async fn setup_pull_catalog(state: State<'_, AppState>) -> Result<PullSummar
         .execute(&state.db)
         .await?;
     }
-    clear_setup_pull_watermarks(&state.db).await?;
     let mut rows_pulled = 0u32;
     let mut pull_error: Option<String> = None;
+    let mut push_error: Option<String> = None;
     for attempt in 0..3 {
-        match state.sync_worker.pull_only_wait().await {
-            Ok(rows) => {
-                rows_pulled = rows_pulled.saturating_add(rows);
-                pull_error = None;
-                break;
-            }
-            Err(error) => {
-                pull_error = Some(error.internal_database_detail());
-                if attempt < 2 {
-                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                }
-            }
+        let outcome = state.sync_worker.join_sync_wait().await;
+        rows_pulled = rows_pulled.saturating_add(outcome.pulled.unwrap_or(0));
+        pull_error = outcome.pull_error.clone();
+        push_error = outcome.push_error.clone();
+        if outcome.first_error().is_none() {
+            break;
+        }
+        if attempt < 2 {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         }
     }
 
@@ -412,10 +498,18 @@ pub async fn setup_pull_catalog(state: State<'_, AppState>) -> Result<PullSummar
     let local_snapshot = crate::sync_v2::consistency::snapshot(&state.db).await?;
     let hub_snapshot = client.hub_consistency().await?;
     let truth = compare_consistency_snapshots(local_snapshot, hub_snapshot);
-    let ok = pull_error.is_none()
-        && truth.ok
-        && join_snapshot_gate_ready(truth.score, truth.schema_match, pending_sync as u64);
-    let error = if ok {
+    let ready = catalogue_ready(&truth.tables, truth.schema_match);
+    // The catalogue decides whether the till may open. A failed *pull* is a
+    // reason to say so, but a failed push is not — local rows waiting to go up
+    // do not stop this terminal selling, and holding it shut only creates more
+    // of them.
+    let ok = pull_error.is_none() && ready;
+    let error = if let Some(error) = &push_error {
+        Some(format!(
+            "{} local change(s) could not be sent to the hub yet: {error}",
+            pending_sync
+        ))
+    } else if ok {
         None
     } else if let Some(error) = pull_error {
         Some(error)
@@ -426,6 +520,12 @@ pub async fn setup_pull_catalog(state: State<'_, AppState>) -> Result<PullSummar
         .tables
         .iter()
         .filter(|table| table.status != "match")
+        .map(|table| table.table.clone())
+        .collect();
+    let matched_tables: Vec<String> = truth
+        .tables
+        .iter()
+        .filter(|table| table.status == "match")
         .map(|table| table.table.clone())
         .collect();
 
@@ -447,6 +547,8 @@ pub async fn setup_pull_catalog(state: State<'_, AppState>) -> Result<PullSummar
         schema_match: truth.schema_match,
         hub_truth_ok: truth.ok,
         mismatched_tables,
+        catalogue_ready: ready,
+        matched_tables,
     })
 }
 
@@ -460,7 +562,7 @@ pub async fn sync_force_full_resync(
     crate::commands::rbac::manager_or_owner(&state.db, &actor_user_id).await?;
 
     // Reset all rows back to pending so they re-push on next cycle
-    for table in SYNC_TABLES {
+    for table in SYNC_TABLES.iter() {
         let sql = format!(
             "UPDATE {} SET sync_status = 'pending', sync_attempts = 0 WHERE sync_status = 'synced'",
             table
@@ -518,7 +620,7 @@ pub async fn sync_reset_stuck(
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
 
     let mut total = 0u32;
-    for table in SYNC_TABLES {
+    for table in SYNC_TABLES.iter() {
         let sql = format!(
             "UPDATE {table} SET sync_attempts = 0 WHERE sync_status = 'pending' AND sync_attempts >= 10",
         );
@@ -555,7 +657,7 @@ pub async fn sync_queue_list(
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let mut items = Vec::new();
 
-    for table in SYNC_TABLES {
+    for table in SYNC_TABLES.iter() {
         let pk = table_pk(table);
         let sql = format!(
             "SELECT {pk} AS _pk, sync_status, sync_attempts, '' AS _err, created_at
@@ -670,7 +772,7 @@ pub async fn sync_queue_stats(
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let mut stats = Vec::new();
 
-    for table in SYNC_TABLES {
+    for table in SYNC_TABLES.iter() {
         let pending: i64 = sqlx::query_scalar(&format!(
             "SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending'"
         ))
@@ -880,7 +982,7 @@ pub async fn sync_diagnostics(
     let mut total_pending: i64 = 0;
     let mut total_stuck: i64 = 0;
 
-    for table in SYNC_TABLES {
+    for table in SYNC_TABLES.iter() {
         let pending: i64 = sqlx::query_scalar(&format!(
             "SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending' AND sync_attempts < 10"
         ))
@@ -1261,12 +1363,158 @@ mod tests {
         assert!(!setup_pull_catalog_allowed(true, None));
     }
 
+    fn table(name: &str, local_count: i64, hub_count: i64) -> HubTruthTableCompare {
+        HubTruthTableCompare {
+            table: name.to_string(),
+            local_count,
+            hub_count,
+            local_checksum: String::new(),
+            hub_checksum: String::new(),
+            status: if local_count == hub_count { "match" } else { "count_mismatch" }.to_string(),
+        }
+    }
+
+    fn full_catalogue() -> Vec<HubTruthTableCompare> {
+        CATALOGUE_TABLES
+            .iter()
+            .map(|name| table(name, 20, 20))
+            .collect()
+    }
+
+    /// The reported incident. A till that has been selling holds sales the hub
+    /// has never seen, so whole-database parity can never reach 100 — and the
+    /// old gate demanded exactly that, then offered only a pull-shaped Retry to
+    /// achieve it. It could sell perfectly well; it was refused anyway.
     #[test]
-    fn join_snapshot_gate_requires_exact_hub_truth() {
-        assert!(join_snapshot_gate_ready(100, true, 0));
-        assert!(!join_snapshot_gate_ready(99, true, 0));
-        assert!(!join_snapshot_gate_ready(100, false, 0));
-        assert!(!join_snapshot_gate_ready(100, true, 1));
+    fn unsent_local_sales_do_not_keep_the_till_shut() {
+        let mut tables = full_catalogue();
+        tables.push(table("sales", 6_637, 0));
+        tables.push(table("payments", 6_637, 0));
+
+        assert!(catalogue_ready(&tables, true));
+    }
+
+    /// The thing the gate is actually for: without products or prices the till
+    /// cannot ring up a sale correctly, so it must not open.
+    #[test]
+    fn a_short_catalogue_keeps_the_till_shut() {
+        for missing in CATALOGUE_TABLES {
+            let tables: Vec<_> = CATALOGUE_TABLES
+                .iter()
+                .map(|name| table(name, if name == missing { 5 } else { 20 }, 20))
+                .collect();
+            assert!(
+                !catalogue_ready(&tables, true),
+                "{missing} was short and the till still opened"
+            );
+        }
+    }
+
+    /// Extra local rows are a product added offline, not a missing one.
+    #[test]
+    fn extra_local_catalogue_rows_are_not_a_fault() {
+        let tables: Vec<_> = CATALOGUE_TABLES
+            .iter()
+            .map(|name| table(name, 21, 20))
+            .collect();
+        assert!(catalogue_ready(&tables, true));
+    }
+
+    #[test]
+    fn a_schema_mismatch_always_keeps_the_till_shut() {
+        assert!(!catalogue_ready(&full_catalogue(), false));
+    }
+
+    /// A table the comparison did not mention cannot be judged short. This is
+    /// the fresh-terminal case, where the hub has not reported yet.
+    #[test]
+    fn an_unreported_catalogue_table_is_not_treated_as_missing() {
+        assert!(catalogue_ready(&[], true));
+    }
+
+    async fn joined_pool() -> sqlx::SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        pool
+    }
+
+    /// The guard that stands between an operator and a deleted day's takings.
+    ///
+    /// `clear_join_replica` is `DELETE FROM` across 27 tables, `sales`,
+    /// `payments` and `audit_logs` among them. For rows that have not reached
+    /// the hub this database is the only copy — there is no export and no undo.
+    /// It used to be gated solely on one `app_config` flag, so a reinstall or a
+    /// restored database was enough to let the next pull destroy them silently.
+    #[tokio::test]
+    async fn the_replica_wipe_refuses_while_local_work_is_unsent() {
+        let pool = joined_pool().await;
+        let branch: String = sqlx::query_scalar("SELECT branch_id FROM branches LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO shifts (shift_id, branch_id, device_id, cashier_user_id,
+                 status, opened_at, created_at, updated_at, sync_status)
+             VALUES ('sh_unsent', ?, 'dev_1', '01JUSER000000000000ADMIN1', 'open',
+                 '2026-08-01T08:00:00Z', '2026-08-01T08:00:00Z', '2026-08-01T08:00:00Z',
+                 'pending')",
+        )
+        .bind(&branch)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO cash_events (cash_event_id, shift_id, branch_id, device_id,
+                 event_type, amount_minor, created_by_user_id, created_at, updated_at,
+                 sync_status)
+             VALUES ('ce_unsent', 'sh_unsent', ?, 'dev_1', 'drop', 5000,
+                 '01JUSER000000000000ADMIN1',
+                 '2026-08-01T09:00:00Z', '2026-08-01T09:00:00Z', 'pending')",
+        )
+        .bind(&branch)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let error = clear_join_replica(&pool).await.unwrap_err();
+        assert!(
+            format!("{error}").contains("Refusing to replace"),
+            "{error}"
+        );
+
+        // And the row is still there. A guard that reports refusal after
+        // deleting is worse than none.
+        let survived: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM cash_events WHERE cash_event_id='ce_unsent'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(survived, 1);
+    }
+
+    /// The legitimate case, and the one a stricter guard would have broken: a
+    /// freshly migrated terminal starts with seed branch, roles, users and
+    /// device rows all marked `pending`. Those are precisely what joining a
+    /// store replaces, so they must not be mistaken for unsent work.
+    #[tokio::test]
+    async fn a_fresh_terminal_can_still_take_the_hub_snapshot() {
+        let pool = joined_pool().await;
+
+        let seed_pending = count_pending(&pool).await.unwrap();
+        assert!(seed_pending > 0, "fixture no longer covers the seed case");
+        assert_eq!(count_pending_irreplaceable(&pool).await.unwrap(), 0);
+
+        clear_join_replica(&pool).await.expect("fresh join refused");
+
+        let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(users, 0, "the wipe did not run");
     }
 
     #[test]

@@ -6,6 +6,7 @@ pub mod audit_hash;
 pub mod auth_repo;
 pub mod delivery_repo;
 pub mod held_cart_repo;
+pub mod loyalty_repo;
 pub mod proactive_repo;
 pub mod product_dedup_repo;
 pub mod product_repo;

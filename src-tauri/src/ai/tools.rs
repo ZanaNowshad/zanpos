@@ -1195,7 +1195,7 @@ async fn execute_read_tool_inner(
                     .to_string(),
             );
 
-            for table in crate::commands::sync_commands::SYNC_TABLES {
+            for table in crate::commands::sync_commands::SYNC_TABLES.iter() {
                 let pending: i64 = sqlx::query_scalar(
                     &format!("SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending' AND sync_attempts < 10"),
                 ).fetch_one(pool).await.unwrap_or(0);
@@ -1231,14 +1231,14 @@ async fn execute_read_tool_inner(
         "get_system_health_check" => {
             let report = crate::commands::system_health_commands::run_local_health_check(
                 pool,
-                crate::commands::sync_commands::SYNC_TABLES,
+                &crate::commands::sync_commands::SYNC_TABLES,
             )
             .await?;
             Ok(format_health_report(&report))
         }
         "sync_queue_list" => {
             let mut items = Vec::new();
-            for table in crate::commands::sync_commands::SYNC_TABLES {
+            for table in crate::commands::sync_commands::SYNC_TABLES.iter() {
                 let pk = crate::commands::sync_commands::table_pk(table);
                 let sql = format!(
                     "SELECT {pk} AS _pk, sync_status, sync_attempts, created_at
@@ -3482,7 +3482,7 @@ pub async fn dry_run_mutation(
         // ── Sync repair dry-runs ──────────────────────────────────────────────
         "sync_reset_stuck" => {
             let mut stuck = 0i64;
-            for table in crate::commands::sync_commands::SYNC_TABLES {
+            for table in crate::commands::sync_commands::SYNC_TABLES.iter() {
                 let n: i64 = sqlx::query_scalar(
                     &format!("SELECT COUNT(*) FROM {table} WHERE sync_status='pending' AND sync_attempts>=10"),
                 ).fetch_one(pool).await.unwrap_or(0);
@@ -5166,7 +5166,7 @@ async fn execute_mutation_raw_inner(
         // ── Sync repair executors ───────────────────────────────────────────
         "sync_reset_stuck" => {
             let mut total = 0u32;
-            for table in crate::commands::sync_commands::SYNC_TABLES {
+            for table in crate::commands::sync_commands::SYNC_TABLES.iter() {
                 let rows = sqlx::query(
                     &format!("UPDATE {table} SET sync_attempts = 0 WHERE sync_status = 'pending' AND sync_attempts >= 10"),
                 ).execute(pool).await?.rows_affected();
@@ -5262,7 +5262,7 @@ async fn execute_mutation_raw_inner(
             let result = crate::commands::system_health_commands::apply_health_fix(
                 pool,
                 fix_action,
-                crate::commands::sync_commands::SYNC_TABLES,
+                &crate::commands::sync_commands::SYNC_TABLES,
             )
             .await?;
             write_audit(
@@ -5525,14 +5525,25 @@ async fn execute_mutation_raw_inner(
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             let pts = input.get("points").and_then(|v| v.as_i64()).unwrap_or(0);
-            let now = chrono::Utc::now().to_rfc3339();
-            sqlx::query("UPDATE customers SET loyalty_points = loyalty_points + ?, updated_at = ?, sync_status = 'pending' WHERE customer_id = ?")
-                .bind(pts).bind(&now).bind(cid).execute(pool).await?;
-            let new_total: i64 =
-                sqlx::query_scalar("SELECT loyalty_points FROM customers WHERE customer_id=?")
-                    .bind(cid)
-                    .fetch_one(pool)
-                    .await?;
+            let new_total = crate::db::repositories::loyalty_repo::record(
+                pool,
+                crate::db::repositories::loyalty_repo::AwardContext {
+                    customer_id: cid,
+                    branch_id: None,
+                    device_id: None,
+                    event: if pts < 0 {
+                        crate::db::repositories::loyalty_repo::LoyaltyEvent::Redeem
+                    } else {
+                        crate::db::repositories::loyalty_repo::LoyaltyEvent::Adjust
+                    },
+                    points_delta: pts,
+                    reference_type: Some("zanai"),
+                    reference_id: None,
+                    reason: Some("Adjusted by ZanAI on an operator's instruction"),
+                    actor_user_id: None,
+                },
+            )
+            .await?;
             write_audit(
                 pool,
                 "AI_ADMIN",

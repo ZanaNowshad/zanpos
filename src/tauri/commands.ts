@@ -147,6 +147,13 @@ export interface PullSummary {
   schema_match: boolean;
   hub_truth_ok: boolean;
   mismatched_tables: string[];
+  /** Whether this terminal holds the catalogue it needs to sell. This decides
+   *  whether the POS may open — not whole-database parity, which a terminal
+   *  with unsent local sales can never reach. */
+  catalogue_ready: boolean;
+  /** Tables the hub and this terminal agree about, so "synced and genuinely
+   *  empty" can be told apart from "not downloaded yet". */
+  matched_tables: string[];
 }
 
 /** Blocking initial store-data pull called after joining a hub store. */
@@ -276,6 +283,26 @@ export const posUpdateQuantity = (cart: Cart, cart_line_id: string, quantity: st
 
 export const posSetLinePrice = (cart: Cart, cart_line_id: string, price_minor: number, authorized_by_user_id: string): Promise<Cart> =>
   invoke("pos_set_line_price", { input: { cart, cart_line_id, price_minor, authorized_by_user_id } });
+
+export interface RepricedLine {
+  cart_line_id: string;
+  product_name: string;
+  was_minor: number;
+  now_minor: number;
+}
+
+export interface RepriceCartResult {
+  cart: Cart;
+  changed: RepricedLine[];
+}
+
+/** Bring every line up to the catalogue price currently in force.
+ *
+ *  Needs no manager authorization because it can only ever move a price toward
+ *  what the shop has published — the opposite direction from the one worth
+ *  controlling. Lines carrying an approved manager override are left alone. */
+export const posRepriceCart = (cart: Cart): Promise<RepriceCartResult> =>
+  invoke("pos_reprice_cart", { input: { cart } });
 
 export const posRemoveLine = (cart: Cart, cart_line_id: string): Promise<Cart> =>
   invoke("pos_remove_line", { input: { cart, cart_line_id } });

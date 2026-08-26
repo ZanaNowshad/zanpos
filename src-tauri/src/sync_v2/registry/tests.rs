@@ -210,3 +210,77 @@ async fn tables_claiming_an_active_flag_really_have_one() {
         }
     }
 }
+
+/// Every table that carries per-row sync bookkeeping must actually have the
+/// column the bookkeeping is read from.
+///
+/// `count_pending` and friends run `SELECT COUNT(*) ... WHERE sync_status =
+/// 'pending'` and swallow the result with `unwrap_or(0)`. A table wrongly
+/// classified `PerRow` therefore reports zero pending forever instead of
+/// erroring — silently under-reporting exactly what an operator consults that
+/// number to find out.
+#[tokio::test]
+async fn every_row_queued_table_really_has_sync_status() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+    for table in row_queued() {
+        let has: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = 'sync_status'"
+        ))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(has, 1, "{table} is queued per row but has no sync_status");
+    }
+
+    // And the wholesale one genuinely lacks it, so the exception is real rather
+    // than someone's guess.
+    for table in TABLES.iter().filter(|t| t.queue == Queue::Wholesale) {
+        let has: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM pragma_table_info('{}') WHERE name = 'sync_status'",
+            table.name
+        ))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(has, 0, "{} is exempt from per-row queueing but has sync_status", table.name);
+    }
+}
+
+/// The lists that were kept by hand now derive from here, so this pins that
+/// they stayed derived. `sync_repo` was missing `product_barcodes`, which meant
+/// unsent barcode changes were absent from the sync status an operator reads.
+#[test]
+fn the_pending_count_lists_come_from_this_registry() {
+    let expected = row_queued();
+    assert_eq!(*crate::commands::sync_commands::SYNC_TABLES, expected);
+    assert!(expected.contains(&"product_barcodes"));
+    assert!(!expected.contains(&"app_config"));
+}
+
+/// Push and pull order are hand-sequenced because foreign keys care about
+/// order — but they must still cover everything, or a table silently never
+/// moves in that direction.
+#[test]
+fn push_and_pull_cover_every_registered_table() {
+    let all: Vec<&str> = TABLES.iter().map(|t| t.name).collect();
+    for table in &all {
+        // app_config is pushed wholesale by push_app_config, not in the row loop.
+        if *table == "app_config" {
+            continue;
+        }
+        assert!(
+            crate::sync_v2::worker::PUSH_ORDER.contains(table),
+            "{table} is never pushed"
+        );
+        assert!(
+            crate::sync_v2::worker::PULL_ORDER.contains(table),
+            "{table} is never pulled"
+        );
+    }
+}

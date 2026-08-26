@@ -731,6 +731,7 @@ pub fn run() {
             commands::pos_commands::pos_start_cart,
             commands::pos_commands::pos_add_item,
             commands::pos_commands::pos_add_item_by_barcode,
+            commands::pos_commands::pos_reprice_cart,
             commands::pos_commands::pos_update_quantity,
             commands::pos_commands::pos_set_line_price,
             commands::pos_commands::pos_remove_line,

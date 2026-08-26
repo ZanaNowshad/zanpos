@@ -164,6 +164,95 @@ pub async fn pos_add_item_by_barcode(
 }
 
 #[derive(serde::Deserialize)]
+pub struct RepriceCartInput {
+    pub cart: Cart,
+}
+
+#[derive(serde::Serialize)]
+pub struct RepricedLine {
+    pub cart_line_id: String,
+    pub product_name: String,
+    pub was_minor: i64,
+    pub now_minor: i64,
+}
+
+#[derive(serde::Serialize)]
+pub struct RepriceCartResult {
+    pub cart: Cart,
+    pub changed: Vec<RepricedLine>,
+}
+
+/// Bring every line up to the catalogue price currently in force.
+///
+/// When the back office repriced an item after it was scanned, checkout refused
+/// the payment and told the cashier to remove the line and scan it again. That
+/// is fine for one item and miserable for a full basket — and it is busywork,
+/// because the till already knows both the old price and the new one.
+///
+/// No manager authorization, deliberately. Every other price command needs it
+/// because it moves a price *away* from the catalogue, which is the thing worth
+/// controlling. This only ever moves toward it, so it cannot be used to
+/// discount anything — the worst it can do is charge the price the shop has
+/// published, which is what should have happened.
+///
+/// A line carrying an approved manager override is left alone: someone with
+/// authority already decided that price, and quietly undoing it here would be
+/// the same class of mistake in the other direction.
+#[tauri::command]
+pub async fn pos_reprice_cart(
+    input: RepriceCartInput,
+    state: State<'_, AppState>,
+) -> Result<RepriceCartResult, AppError> {
+    crate::commands::rbac::require_any_role(&state.db, &input.cart.cashier_user_id).await?;
+    let mut cart = input.cart;
+
+    let overridden: std::collections::HashSet<String> = sqlx::query_scalar::<_, String>(
+        "SELECT cart_line_id FROM pos_price_overrides WHERE cart_id = ?",
+    )
+    .bind(&cart.cart_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .collect();
+
+    let product_ids: Vec<&str> = cart
+        .lines
+        .iter()
+        .filter(|line| !line.voided && !overridden.contains(&line.cart_line_id))
+        .filter_map(|line| line.product_id.as_deref())
+        .collect();
+    let prices =
+        crate::db::repositories::sale_repo::current_selling_prices(&state.db, &product_ids).await?;
+
+    let mut changed = Vec::new();
+    for line in cart.lines.iter_mut() {
+        if line.voided || overridden.contains(&line.cart_line_id) {
+            continue;
+        }
+        let Some(product_id) = line.product_id.as_deref() else {
+            continue;
+        };
+        let Some(&current) = prices.get(product_id) else {
+            continue;
+        };
+        if current == line.unit_price_minor {
+            continue;
+        }
+        changed.push(RepricedLine {
+            cart_line_id: line.cart_line_id.clone(),
+            product_name: line.product_name.clone(),
+            was_minor: line.unit_price_minor,
+            now_minor: current,
+        });
+        line.unit_price_minor = current;
+        line.recalculate();
+    }
+
+    Ok(RepriceCartResult { cart, changed })
+}
+
+#[derive(serde::Deserialize)]
 pub struct UpdateQuantityInput {
     pub cart: Cart,
     pub cart_line_id: String,
@@ -1530,5 +1619,90 @@ mod tests {
         let key = require_idempotency_key(Some("sale-key-123".into()))
             .expect("non-empty key should pass");
         assert_eq!(key, "sale-key-123");
+    }
+}
+
+#[cfg(test)]
+mod reprice_tests {
+    use crate::db::repositories::sale_repo::current_selling_prices;
+    use sqlx::sqlite::SqlitePoolOptions;
+    use sqlx::SqlitePool;
+
+    async fn pool_with_price(price_minor: i64) -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO categories (category_id, name, created_at, updated_at)
+             VALUES ('cat_1','Grocery','2026-08-01T00:00:00Z','2026-08-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO products (product_id, category_id, name, is_active, created_at, updated_at)
+             VALUES ('prd_1','cat_1','Rainbow Evaporated Milk 160ml',1,
+                 '2026-08-01T00:00:00Z','2026-08-01T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO product_prices (price_id, product_id, price_type, price_minor,
+                 effective_from, created_by_user_id, created_at, updated_at)
+             VALUES ('prc_1','prd_1','selling', ?, '2026-08-01T00:00:00Z',
+                 '01JUSER000000000000ADMIN1','2026-08-01T00:00:00Z','2026-08-01T00:00:00Z')",
+        )
+        .bind(price_minor)
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool
+    }
+
+    /// The lookup checkout uses to reject a stale payment is now the same one
+    /// the reprice uses to fix it. They were separate copies of the predicate
+    /// with a comment warning they must not diverge; a divergence rejects a
+    /// correct payment, which is the failure this shares code to avoid.
+    #[tokio::test]
+    async fn reprice_reads_the_same_price_checkout_enforces() {
+        let pool = pool_with_price(250).await;
+
+        let prices = current_selling_prices(&pool, &["prd_1"]).await.unwrap();
+        assert_eq!(prices.get("prd_1"), Some(&250));
+    }
+
+    /// A superseded price row must not win. `effective_from` is stored in two
+    /// formats and a raw text compare ranks them wrongly, which is why every
+    /// timestamp goes through `datetime()`.
+    #[tokio::test]
+    async fn a_closed_price_row_is_not_in_force() {
+        let pool = pool_with_price(250).await;
+        // Close the original and add a newer one written in the other format.
+        sqlx::query("UPDATE product_prices SET effective_to = '2026-08-02T00:00:00Z'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO product_prices (price_id, product_id, price_type, price_minor,
+                 effective_from, created_by_user_id, created_at, updated_at)
+             VALUES ('prc_2','prd_1','selling', 300, '2026-08-02 00:00:00',
+                 '01JUSER000000000000ADMIN1','2026-08-02T00:00:00Z','2026-08-02T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let prices = current_selling_prices(&pool, &["prd_1"]).await.unwrap();
+        assert_eq!(prices.get("prd_1"), Some(&300), "the superseded price won");
+    }
+
+    #[tokio::test]
+    async fn asking_about_nothing_costs_no_query() {
+        let pool = pool_with_price(250).await;
+        assert!(current_selling_prices(&pool, &[]).await.unwrap().is_empty());
     }
 }

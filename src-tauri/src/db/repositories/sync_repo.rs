@@ -13,40 +13,19 @@ pub struct SyncStatus {
     pub device_id: String,
 }
 
-/// Tables that participate in sync.
-const SYNC_TABLES: &[&str] = &[
-    "branches", // was missing — branch edits not counted in sync status
-    "categories",
-    "tax_rules",
-    "products",
-    "devices",
-    "roles",
-    "users",
-    "suppliers",
-    "purchase_orders",
-    "purchase_order_lines",
-    "po_receipts",
-    "customers",
-    "riders",
-    "shifts",
-    "sales",
-    "sale_items",
-    "payments",
-    "refunds",
-    "refund_items",
-    "stock_movements",
-    "stock_levels",
-    "audit_logs",
-    "delivery_orders",
-    "product_prices",
-    "product_cost_history",
-    "cash_events", // was missing — cash events never counted in sync status
-];
+/// Tables that record outbound work per row.
+///
+/// Derived from the sync registry. This copy was missing `product_barcodes`,
+/// so unsent barcode changes were not counted in the sync status an operator
+/// reads — on the screen they consult precisely when they suspect the terminal
+/// is holding something.
+static SYNC_TABLES: std::sync::LazyLock<Vec<&'static str>> =
+    std::sync::LazyLock::new(crate::sync_v2::registry::row_queued);
 
 pub async fn get_sync_status(pool: &SqlitePool, device_id: &str) -> AppResult<SyncStatus> {
     // Count pending rows across all syncable tables
     let mut pending: i64 = 0;
-    for table in SYNC_TABLES {
+    for table in SYNC_TABLES.iter() {
         let sql = format!(
             "SELECT COUNT(*) FROM {} WHERE sync_status = 'pending'",
             table

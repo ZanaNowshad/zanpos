@@ -279,6 +279,8 @@ export function usePosPageState({
     lineCount,
     canOpenBackOffice,
     userId: sessionUser.user_id,
+    cart,
+    setCart: replaceCart,
     printSaleNow,
     setReceiptStatus,
     setError,

@@ -545,7 +545,7 @@ async fn rider_suggestions(pool: &SqlitePool) -> AppResult<String> {
 }
 
 async fn sync_queue_stats(pool: &SqlitePool) -> AppResult<String> {
-    let tables = crate::commands::sync_commands::SYNC_TABLES;
+    let tables = crate::commands::sync_commands::SYNC_TABLES.clone();
     let mut lines = Vec::new();
     for table in tables {
         let pending: i64 = sqlx::query_scalar(&format!(

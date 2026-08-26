@@ -46,12 +46,30 @@ pub enum Deletion {
     SoftDeleteOnly,
 }
 
+/// How a table's outbound work is tracked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Queue {
+    /// Per-row `sync_status`/`sync_attempts`: the row itself records that it is
+    /// waiting to go up. Everything a shop writes works this way.
+    PerRow,
+    /// No per-row bookkeeping. `app_config` is the only one — it is pushed
+    /// wholesale through an allowlist of keys, so there is nothing to count and
+    /// `SELECT ... WHERE sync_status='pending'` on it is an error, not a zero.
+    ///
+    /// That distinction is why the "pending" lists are not simply the table
+    /// list: a query against a table with no such column returns an error which
+    /// `unwrap_or(0)` then hides. Naming it here is what stops the next person
+    /// "fixing" the difference by adding the table back.
+    Wholesale,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct SyncTable {
     pub name: &'static str,
     pub primary_key: &'static str,
     pub parity: Parity,
     pub deletion: Deletion,
+    pub queue: Queue,
 }
 
 /// Every table the sync protocol may read or write. The hub rejects any other
@@ -89,6 +107,10 @@ pub const TABLES: &[SyncTable] = &[
     // ── People and partners ──────────────────────────────────────────────────
     // Soft-delete-only: a removed customer stays visible on other terminals.
     t("customers", "customer_id", Parity::Full, Deletion::SoftDeleteOnly),
+    // The loyalty ledger. Points are derived from this the way stock is derived
+    // from movements, so this is the table that has to agree between terminals —
+    // `customers.loyalty_points` is a cache and no longer travels.
+    t("loyalty_events", "loyalty_event_id", Parity::Full, Deletion::Never),
     t("suppliers", "supplier_id", Parity::Full, Deletion::DeactivateOnly),
     t("riders", "rider_id", Parity::Full, Deletion::SoftDeleteWithActiveFlag),
 
@@ -136,6 +158,13 @@ const fn t(
         primary_key,
         parity,
         deletion,
+        // Every shop-written table carries per-row bookkeeping. The one that
+        // does not is spelled out below rather than inferred.
+        queue: if matches!(name.as_bytes(), b"app_config") {
+            Queue::Wholesale
+        } else {
+            Queue::PerRow
+        },
     }
 }
 
@@ -148,6 +177,22 @@ pub fn parity_checked() -> Vec<&'static str> {
     TABLES
         .iter()
         .filter(|table| table.parity == Parity::Full)
+        .map(|table| table.name)
+        .collect()
+}
+
+/// Tables that record outbound work per row, so "how much is waiting to go up"
+/// can be counted from them.
+///
+/// This is the list the sync status an operator reads is built from. It used to
+/// be kept by hand in two more places and had already drifted: `sync_repo` was
+/// missing `product_barcodes`, so a terminal with unsent barcode changes
+/// under-reported what it was holding — on the very screen someone consults
+/// when they suspect it is holding something.
+pub fn row_queued() -> Vec<&'static str> {
+    TABLES
+        .iter()
+        .filter(|table| table.queue == Queue::PerRow)
         .map(|table| table.name)
         .collect()
 }

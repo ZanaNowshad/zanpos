@@ -464,7 +464,7 @@ pub async fn execute(
 
         "trigger_sync_now" => {
             // Reset retry counters so background worker picks them up immediately
-            for tbl in crate::commands::sync_commands::SYNC_TABLES {
+            for tbl in crate::commands::sync_commands::SYNC_TABLES.iter() {
                 let _ = sqlx::query(&format!(
                     "UPDATE {tbl} SET sync_attempts=0 WHERE sync_status='pending'"
                 ))
@@ -480,7 +480,7 @@ pub async fn execute(
 
         "force_full_resync" => {
             let now_epoch = "1970-01-01T00:00:00Z";
-            for tbl in crate::commands::sync_commands::SYNC_TABLES {
+            for tbl in crate::commands::sync_commands::SYNC_TABLES.iter() {
                 let _ = sqlx::query(&format!("UPDATE {tbl} SET sync_status='pending', sync_attempts=0 WHERE sync_status='synced'")).execute(pool).await;
             }
             let _ = sqlx::query("UPDATE sync_watermark SET last_pulled_at=?")

@@ -26,6 +26,7 @@ pub const SYNC_TABLES: &[&str] = &[
     "stock_levels",
     "stock_movements",
     "customers",
+    "loyalty_events",
     "suppliers",
     "riders",
     "purchase_orders",
@@ -331,6 +332,7 @@ async fn apply_row_inner(
         }
         "customers" => apply_customer(pool, obj).await,
         "sales"
+        | "loyalty_events"
         | "sale_items"
         | "payments"
         | "refunds"
@@ -822,6 +824,15 @@ pub(crate) async fn apply_append_only(
         }
     }
 
+    // A loyalty event arriving from another till changes what this one should
+    // show for that customer. Same shape as stock: the ledger moved, so the
+    // cached figure is recomputed from it rather than trusted from the wire.
+    if table == "loyalty_events" {
+        if let Some(customer_id) = obj.get("customer_id").and_then(|v| v.as_str()) {
+            let _ = crate::db::repositories::loyalty_repo::recompute(pool, customer_id).await;
+        }
+    }
+
     Ok(())
 }
 
@@ -840,6 +851,7 @@ pub fn has_origin_device_id(table: &str) -> bool {
             | "audit_logs"
             | "delivery_orders"
             | "cash_events"
+            | "loyalty_events"
     )
 }
 
@@ -860,6 +872,7 @@ pub fn pk_for_table(table: &str) -> &str {
         "devices" => "device_id",
         "roles" => "role_id",
         "customers" => "customer_id",
+        "loyalty_events" => "loyalty_event_id",
         "shifts" => "shift_id",
         "sales" => "sale_id",
         "sale_items" => "sale_item_id",
@@ -902,7 +915,20 @@ pub fn skip_on_wire(table: &str, col_name: &str) -> bool {
     if col_name == "version" {
         return false;
     }
+    // Derived figures never travel. Each terminal computes them from the ledger
+    // underneath, so accepting another terminal's copy can only overwrite a
+    // correct local total with one derived from a different subset of events —
+    // the same defect `stock_levels` had, and for the same reason.
+    if derived_locally(table, col_name) {
+        return true;
+    }
     per_device_bookkeeping(table, col_name)
+}
+
+/// Columns that are a consequence of another table rather than a fact of their
+/// own, and so are neither sent nor compared.
+fn derived_locally(table: &str, col_name: &str) -> bool {
+    matches!((table, col_name), ("customers", "loyalty_points"))
 }
 
 /// Columns excluded from the parity fingerprint.
@@ -912,7 +938,11 @@ pub fn skip_on_wire(table: &str, col_name: &str) -> bool {
 /// network. Per-device bookkeeping answers both today, and any future
 /// divergence between them belongs here rather than at a call site.
 pub fn skip_in_fingerprint(table: &str, col_name: &str) -> bool {
-    per_device_bookkeeping(table, col_name)
+    // A derived figure is in flux whenever events are mid-flight, so comparing
+    // it reports divergence that is timing rather than disagreement. The ledger
+    // it comes from is parity-checked instead, which is the thing that actually
+    // has to match.
+    derived_locally(table, col_name) || per_device_bookkeeping(table, col_name)
 }
 
 /// State that belongs to one terminal and means nothing on another.

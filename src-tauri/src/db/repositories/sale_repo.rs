@@ -7,6 +7,87 @@ use crate::inventory::movements;
 use sqlx::{Row, SqlitePool};
 use ulid::Ulid;
 
+/// An amount as a cashier reads it — "BHD 0.250", not "250".
+///
+/// Every money value inside this module is minor units, which is correct for
+/// arithmetic and wrong the moment it leaves for a screen. These strings end up
+/// in the till's banner, and printing fils raw told a cashier the price had
+/// "changed to 250" for an item that now costs a quarter of a dinar. A number
+/// that reads as a thousand times its value is worse than no number: it invites
+/// someone to believe the catalogue is broken and override it.
+///
+/// Called only on the error paths, so the successful checkout pays nothing for
+/// it. Falls back to the store's own currency being unreadable rather than
+/// failing a sale over a label — the caller is already returning an error and a
+/// bare number beats a panic.
+/// The selling price currently in force for each product, in fils.
+///
+/// One query, and one definition of "in force". Checkout used to carry this
+/// predicate inline with a comment warning that it must stay identical to the
+/// one that prices the cart in the first place — because any divergence between
+/// them rejects a correct payment. A warning is not a mechanism; a shared
+/// function is.
+///
+/// Every timestamp goes through `datetime()` before comparison. `effective_from`
+/// is stored in two formats — `datetime('now')` from the importer and RFC3339
+/// from the admin edit — and a raw text compare ranks 'T' above ' ', so an
+/// RFC3339 row reads as not-yet-effective while a closed row reads as still
+/// open. Both mistakes price a sale wrongly.
+pub(crate) async fn current_selling_prices(
+    pool: &SqlitePool,
+    product_ids: &[&str],
+) -> AppResult<std::collections::HashMap<String, i64>> {
+    if product_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let placeholders = product_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT pp.product_id, pp.price_minor
+         FROM product_prices pp
+         WHERE pp.product_id IN ({placeholders})
+           AND pp.price_id = (
+               SELECT candidate.price_id FROM product_prices candidate
+               WHERE candidate.product_id = pp.product_id
+                 AND candidate.branch_id IS NULL
+                 AND candidate.price_type = 'selling'
+                 AND datetime(candidate.effective_from) <= datetime('now')
+                 AND (candidate.effective_to IS NULL
+                      OR datetime(candidate.effective_to) > datetime('now'))
+               ORDER BY datetime(candidate.effective_from) DESC, candidate.price_id DESC
+               LIMIT 1
+           )"
+    );
+    let mut q = sqlx::query(&sql);
+    for pid in product_ids {
+        q = q.bind(*pid);
+    }
+    Ok(q
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .map(|row: sqlx::sqlite::SqliteRow| {
+            let pid: String = row.get("product_id");
+            let price: i64 = row.get("price_minor");
+            (pid, price)
+        })
+        .collect())
+}
+
+async fn money_for_operator(pool: &SqlitePool, minor: i64) -> String {
+    let currency: String =
+        sqlx::query_scalar("SELECT currency FROM branches WHERE is_active = 1 LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "BHD".to_string());
+    let exponent = crate::commands::setup_commands::currency_exponent(&currency).max(0) as u32;
+    format!(
+        "{currency} {}",
+        crate::domain::money::format_minor(minor, exponent)
+    )
+}
+
 async fn next_receipt_number<'e, E>(
     executor: E,
     branch_code: &str,
@@ -83,53 +164,7 @@ pub async fn finalize_sale(
         .filter_map(|l| l.product_id.as_deref())
         .collect();
 
-    let db_prices: std::collections::HashMap<String, i64> = if price_product_ids.is_empty() {
-        std::collections::HashMap::new()
-    } else {
-        let placeholders = price_product_ids
-            .iter()
-            .map(|_| "?")
-            .collect::<Vec<_>>()
-            .join(",");
-        // Subquery: for each product_id, pick the price row currently in force.
-        //
-        // Every timestamp goes through datetime() before it is compared.
-        // effective_from is stored in two formats — datetime('now') by the
-        // importer and RFC3339 by the admin edit — and raw text comparison
-        // ranks 'T' above ' ', so an RFC3339 row reads as not-yet-effective
-        // while a closed row reads as still open. This must stay identical to
-        // the predicate product_repo uses to price the cart in the first place;
-        // any divergence rejects a correct payment.
-        let sql = format!(
-            "SELECT pp.product_id, pp.price_minor
-             FROM product_prices pp
-             WHERE pp.product_id IN ({placeholders})
-               AND pp.price_id = (
-                   SELECT candidate.price_id FROM product_prices candidate
-                   WHERE candidate.product_id = pp.product_id
-                     AND candidate.branch_id IS NULL
-                     AND candidate.price_type = 'selling'
-                     AND datetime(candidate.effective_from) <= datetime('now')
-                     AND (candidate.effective_to IS NULL
-                          OR datetime(candidate.effective_to) > datetime('now'))
-                   ORDER BY datetime(candidate.effective_from) DESC, candidate.price_id DESC
-                   LIMIT 1
-               )"
-        );
-        let mut q = sqlx::query(&sql);
-        for pid in &price_product_ids {
-            q = q.bind(*pid);
-        }
-        q.fetch_all(pool)
-            .await?
-            .into_iter()
-            .map(|row: sqlx::sqlite::SqliteRow| {
-                let pid: String = row.get("product_id");
-                let price: i64 = row.get("price_minor");
-                (pid, price)
-            })
-            .collect()
-    };
+    let db_prices = current_selling_prices(pool, &price_product_ids).await?;
 
     // A changed cart price is accepted only when the manager-only price command
     // recorded an exact server-side match for this cart line. Cart payload fields
@@ -163,8 +198,9 @@ pub async fn finalize_sale(
     for (i, line) in active_lines.iter().enumerate() {
         if line.unit_price_minor <= 0 {
             return Err(AppError::Validation(format!(
-                "Item '{}' has an invalid price ({}). Please re-add it to the cart.",
-                line.product_name, line.unit_price_minor
+                "Invalid price {} — remove '{}' and scan it again.",
+                money_for_operator(pool, line.unit_price_minor).await,
+                line.product_name
             )));
         }
         if let Some(ref product_id) = line.product_id {
@@ -232,16 +268,24 @@ pub async fn finalize_sale(
         // "payment amounts must sum to net total" sends the cashier hunting
         // through the payment screen for a fault that is in the cart.
         if let Some((&i, &db_price)) = corrected_price.iter().next() {
+            let line = &active_lines[i];
+            // The numbers and the instruction come first, and the product name
+            // last, because this is shown in a single-line banner that drops
+            // whatever does not fit. The name was leading it, so on a product
+            // like "Rainbow Original Full Cream Evaporated Milk - Preservatives
+            // Free, No Added Sugar - 160 ml" the only part a cashier could act
+            // on — the new price — was the part that got cut.
             return Err(AppError::Validation(format!(
-                "The price of '{}' changed to {} after it was added to the cart. \
-                 Remove the item and scan it again, then take payment.",
-                active_lines[i].product_name, db_price
+                "Price changed: {} → {}. Tap Update prices, then take payment. Item: '{}'.",
+                money_for_operator(pool, line.unit_price_minor).await,
+                money_for_operator(pool, db_price).await,
+                line.product_name
             )));
         }
         return Err(AppError::Validation(format!(
-            "Payment amounts ({}) must sum exactly to net total ({}). \
-             Use tendered_minor for cash overpayment.",
-            total_paid, server_net
+            "Payment {} does not match the total {}. Use tendered_minor for cash overpayment.",
+            money_for_operator(pool, total_paid).await,
+            money_for_operator(pool, server_net).await
         )));
     }
 
@@ -638,17 +682,25 @@ pub async fn finalize_sale(
     if let Some(cid) = customer_id {
         let points = net / 1000;
         if points > 0 {
-            sqlx::query(
-                "UPDATE customers
-                 SET loyalty_points = loyalty_points + ?,
-                     updated_at = ?,
-                     sync_status = 'pending'
-                 WHERE customer_id = ?",
+            // Recorded as an event rather than added to a counter. Two tills
+            // serving the same customer in one shift used to each compute a
+            // total from what they could see, and the merge kept the larger —
+            // so the smaller award was simply lost. Events add up regardless of
+            // the order they arrive in.
+            crate::db::repositories::loyalty_repo::record_tx(
+                &mut tx,
+                crate::db::repositories::loyalty_repo::AwardContext {
+                    customer_id: cid,
+                    branch_id: Some(&cart.branch_id),
+                    device_id: Some(&cart.device_id),
+                    event: crate::db::repositories::loyalty_repo::LoyaltyEvent::Earn,
+                    points_delta: points,
+                    reference_type: Some("sale"),
+                    reference_id: Some(&sale_id),
+                    reason: None,
+                    actor_user_id: Some(&cart.cashier_user_id),
+                },
             )
-            .bind(points)
-            .bind(&now)
-            .bind(cid)
-            .execute(&mut *tx)
             .await?;
         }
     }
@@ -716,6 +768,55 @@ mod tests {
     const CASHIER: &str = "01JUSER000000000000CASH01";
     const TAX_VAT: &str = "01JTAX000000000000VAT001"; // 10% exclusive (1 000 bp)
     const TAX_ZER: &str = "01JTAX000000000000ZERO01"; // 0%
+
+    /// Money that leaves this module for a screen must be readable as money.
+    ///
+    /// The reported defect: the price-change banner printed `db_price` — fils —
+    /// straight into the sentence, so an item that had changed to BHD 0.250 was
+    /// announced as having "changed to 250". A cashier reads that as a thousand
+    /// times the real price, and the sentence was truncated by the banner
+    /// anyway, so what actually reached the screen was "changed to 2…".
+    #[tokio::test]
+    async fn operator_facing_money_is_formatted_not_raw_fils() {
+        let pool = make_pool().await;
+
+        assert_eq!(money_for_operator(&pool, 250).await, "BHD 0.250");
+        assert_eq!(money_for_operator(&pool, 2_500).await, "BHD 2.500");
+        assert_eq!(money_for_operator(&pool, 0).await, "BHD 0.000");
+        // Three decimals is the whole point in Bahrain: 250 fils is a quarter
+        // dinar, not two hundred and fifty of anything.
+        assert!(!money_for_operator(&pool, 250).await.contains("250 "));
+    }
+
+    /// The message has to survive a single-line banner that drops the overflow.
+    /// The product that exposed this has a 78-character name, and the price —
+    /// the only part a cashier can act on — used to sit after it.
+    #[tokio::test]
+    async fn the_price_change_message_leads_with_the_numbers() {
+        let pool = make_pool().await;
+        let long_name = "Rainbow Original Full Cream Evaporated Milk - \
+                         Preservatives Free, No Added Sugar - 160 ml";
+        let message = format!(
+            "Price changed: {} → {}. Tap Update prices, then take payment. Item: '{}'.",
+            money_for_operator(&pool, 200).await,
+            money_for_operator(&pool, 250).await,
+            long_name
+        );
+
+        // Both prices are readable within the first 60 characters, which is
+        // roughly what fits before the banner truncates.
+        let head = &message[..60.min(message.len())];
+        assert!(head.contains("BHD 0.200"), "{head}");
+        assert!(head.contains("BHD 0.250"), "{head}");
+        assert!(
+            message.find("Update prices").unwrap() < message.find("Rainbow").unwrap(),
+            "the instruction must come before the name"
+        );
+        // The remedy names the control the cashier can actually press. It used
+        // to say "remove it and scan it again", which is busywork the till can
+        // do itself — and on a full basket, a lot of it.
+        assert!(message.contains("Update prices"), "{message}");
+    }
 
     // Build an in-memory pool and run all migrations.
     async fn make_pool() -> SqlitePool {

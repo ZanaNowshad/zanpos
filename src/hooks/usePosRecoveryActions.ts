@@ -1,9 +1,16 @@
 import { useCallback, useMemo } from "react";
-import type { AiHandoff, SaleResult } from "../types";
+import type { AiHandoff, Cart, SaleResult } from "../types";
 import type { PosRecoveryAction } from "../components/PosRecoveryBanner";
 import type { ReceiptConfidenceStatus } from "../utils/posConfidence";
 import type { useSyncStatus } from "./useSyncStatus";
-import { syncTriggerNow } from "../tauri/commands";
+import { posRepriceCart, syncTriggerNow } from "../tauri/commands";
+
+/** The checkout refusal that a reprice can actually clear. Matched on the
+ *  message because that is what the till has — the backend returns a validation
+ *  error, not a typed code. Kept next to the string it must track. */
+export function isPriceChangeRefusal(error: string | null): boolean {
+  return (error ?? "").toLowerCase().includes("price changed");
+}
 
 interface Options {
   error: string | null;
@@ -13,6 +20,8 @@ interface Options {
   lineCount: number;
   canOpenBackOffice: boolean;
   userId: string;
+  cart: Cart | null;
+  setCart: (cart: Cart) => void;
   printSaleNow: (result: SaleResult, reprint: boolean) => Promise<unknown>;
   setReceiptStatus: (status: ReceiptConfidenceStatus) => void;
   setError: (error: string) => void;
@@ -27,13 +36,21 @@ interface Options {
 
 export function usePosRecoveryActions({
   error, bannerResult, receiptStatus, syncStatus, lineCount, canOpenBackOffice,
-  userId, printSaleNow, setReceiptStatus, setError, clearError, focusBarcode,
-  openHold, openSyncDetails, openWhatsAppQr, onAskOfficeAI, onOpenOfficeAI,
+  userId, cart, setCart, printSaleNow, setReceiptStatus, setError, clearError,
+  focusBarcode, openHold, openSyncDetails, openWhatsAppQr, onAskOfficeAI,
+  onOpenOfficeAI,
 }: Options) {
   const actions = useMemo<PosRecoveryAction[]>(() => {
     if (!error) return [];
     const message = error.toLowerCase();
     const next: PosRecoveryAction[] = [];
+    /* First, because it is the only one that resolves this refusal. The
+       alternative the message used to offer was to remove the line and scan it
+       again — fine for one item, miserable for a full basket, and busywork
+       either way since the till already knows both prices. */
+    if (isPriceChangeRefusal(error) && cart) {
+      next.push({ key: "reprice-cart", label: "Update prices" });
+    }
     if (bannerResult
       && (receiptStatus === "failed" || message.includes("print") || message.includes("printer"))) {
       next.push({ key: "retry-print", label: "Retry print" });
@@ -54,9 +71,27 @@ export function usePosRecoveryActions({
     }
     next.push({ key: "focus-scan", label: "Focus scan" });
     return next;
-  }, [bannerResult, canOpenBackOffice, error, lineCount, receiptStatus, syncStatus]);
+  }, [bannerResult, canOpenBackOffice, cart, error, lineCount, receiptStatus, syncStatus]);
 
   const handleAction = useCallback((key: string) => {
+    if (key === "reprice-cart" && cart) {
+      void posRepriceCart(cart)
+        .then(result => {
+          setCart(result.cart);
+          if (result.changed.length === 0) {
+            // Nothing moved, so the refusal was not a price change after all.
+            // Saying so beats clearing the banner and leaving the cashier to
+            // press Pay again into the same wall.
+            setError("Prices are already current. Try taking payment again.");
+            return;
+          }
+          clearError();
+        })
+        .catch((cause: unknown) => {
+          setError(typeof cause === "string" ? cause : "Could not update prices.");
+        });
+      return;
+    }
     if (key === "retry-print" && bannerResult) {
       void printSaleNow(bannerResult, false).catch((cause: unknown) => {
         setReceiptStatus("failed");
@@ -91,8 +126,8 @@ export function usePosRecoveryActions({
     clearError();
     focusBarcode();
   }, [
-    bannerResult, clearError, focusBarcode, onAskOfficeAI, onOpenOfficeAI,
-    openHold, openSyncDetails, openWhatsAppQr, printSaleNow, setError,
+    bannerResult, cart, clearError, focusBarcode, onAskOfficeAI, onOpenOfficeAI,
+    openHold, openSyncDetails, openWhatsAppQr, printSaleNow, setCart, setError,
     setReceiptStatus, userId,
   ]);
 

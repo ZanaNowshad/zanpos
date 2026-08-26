@@ -203,7 +203,7 @@ async fn health(
 
     let mut report = match crate::commands::system_health_commands::run_local_health_check(
         &state.pool,
-        crate::commands::sync_commands::SYNC_TABLES,
+        &crate::commands::sync_commands::SYNC_TABLES,
     )
     .await
     {

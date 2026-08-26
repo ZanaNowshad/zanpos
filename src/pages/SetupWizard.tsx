@@ -50,7 +50,7 @@ type NewStep = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 type JoinChecklistStatus = "ok" | "pending";
 
 export interface JoinSyncChecklistItem {
-  label: "Products" | "Prices" | "Barcodes" | "Users" | "Stock" | "Devices" | "Suppliers" | "Settings" | "Pending sync" | "Hub Truth";
+  label: "Products" | "Prices" | "Barcodes" | "Users" | "Stock" | "Devices" | "Suppliers" | "Settings" | "Pending upload" | "Hub Truth";
   count: number;
   status: JoinChecklistStatus;
 }
@@ -72,42 +72,65 @@ export function buildJoinSyncChecklist(summary: PullSummary | null): {
   const settings = summary?.settings ?? 0;
   const pendingSync = summary?.pending_sync ?? 0;
   const truthScore = summary?.consistency_score ?? 0;
-  const hubTruthOk = Boolean(
-    summary?.hub_truth_ok
-      && summary.schema_match
-      && truthScore === 100
-      && pendingSync === 0,
-  );
+  /* A row is done when the hub and this terminal agree about it, not when its
+     count happens to be above zero. A store with no suppliers has nothing to
+     download, and reading that as an unfinished download left a permanent "…"
+     next to Suppliers with no way to ever clear it. */
+  const matched = new Set(summary?.matched_tables ?? []);
+  const inStep = (...tables: string[]) =>
+    summary ? (tables.every(t => matched.has(t)) ? "ok" : "pending") : "pending";
+
+  /* Whether the till may open. Deliberately NOT whole-database parity: a
+     terminal that has been selling always holds sales the hub has not seen, so
+     its score is never 100 and the old gate could never be satisfied. What
+     matters is that it can ring up a sale correctly. */
+  const catalogueReady = Boolean(summary?.catalogue_ready);
+  const fullyInStep = Boolean(summary?.hub_truth_ok && summary.schema_match && truthScore === 100);
+
   const items: JoinSyncChecklistItem[] = [
-    { label: "Products", count: products, status: products > 0 ? "ok" : "pending" },
-    { label: "Prices", count: prices, status: prices > 0 ? "ok" : "pending" },
-    { label: "Barcodes", count: barcodes, status: barcodes > 0 ? "ok" : "pending" },
-    { label: "Users", count: users, status: users > 0 ? "ok" : "pending" },
-    { label: "Stock", count: stock, status: stock > 0 ? "ok" : "pending" },
-    { label: "Devices", count: devices, status: devices > 0 ? "ok" : "pending" },
-    { label: "Suppliers", count: suppliers, status: suppliers > 0 ? "ok" : "pending" },
+    { label: "Products", count: products, status: inStep("products", "categories") },
+    { label: "Prices", count: prices, status: inStep("product_prices") },
+    { label: "Barcodes", count: barcodes, status: inStep("product_barcodes") },
+    { label: "Users", count: users, status: inStep("users") },
+    { label: "Stock", count: stock, status: inStep("stock_levels") },
+    { label: "Devices", count: devices, status: inStep("devices") },
+    { label: "Suppliers", count: suppliers, status: inStep("suppliers") },
     { label: "Settings", count: settings, status: settings > 0 ? "ok" : "pending" },
-    { label: "Pending sync", count: pendingSync, status: pendingSync === 0 ? "ok" : "pending" },
-    { label: "Hub Truth", count: truthScore, status: hubTruthOk ? "ok" : "pending" },
+    /* Not a fault, and never a reason to hold the till shut — this is what a
+       local-first terminal looks like after time offline. It clears as the
+       sync worker drains it. */
+    { label: "Pending upload", count: pendingSync, status: pendingSync === 0 ? "ok" : "pending" },
+    { label: "Hub Truth", count: truthScore, status: fullyInStep ? "ok" : "pending" },
   ];
   const blockingTables = summary?.mismatched_tables ?? [];
   const blockers: string[] = [];
-  if (blockingTables.length > 0) blockers.push(`Mismatched: ${blockingTables.join(", ")}`);
-  if (summary && !summary.schema_match) blockers.push("Schema version differs from the hub");
-  if (pendingSync > 0) blockers.push(`${pendingSync} local change${pendingSync === 1 ? "" : "s"} still pending`);
+  if (summary && !summary.schema_match) blockers.push("Schema version differs from the hub — upgrade before syncing");
+  if (summary && !catalogueReady) blockers.push(`Catalogue incomplete: ${blockingTables.join(", ") || "still downloading"}`);
+
+  const notes: string[] = [];
+  if (pendingSync > 0) {
+    notes.push(
+      `${pendingSync} local change${pendingSync === 1 ? "" : "s"} still to upload — ` +
+      "they stay safe on this terminal and go up in the background",
+    );
+  }
 
   return {
     items,
-    showRetry: Boolean(summary && !hubTruthOk),
-    canEnterPos: hubTruthOk,
+    // Offered whenever anything is still out of step, so an operator can nudge
+    // it — but no longer the only way out of the screen.
+    showRetry: Boolean(summary && !fullyInStep),
+    canEnterPos: catalogueReady,
     blockingTables,
     summary: !summary
       ? "Waiting for the hub snapshot."
-      : hubTruthOk
-        ? "This terminal matches the hub truth snapshot."
-        : blockers.length > 0
-          ? blockers.join(" · ")
-          : summary.error || "This terminal has not matched the hub truth snapshot yet.",
+      : blockers.length > 0
+        ? blockers.join(" · ")
+        : fullyInStep
+          ? "This terminal matches the hub truth snapshot."
+          : notes.length > 0
+            ? `Ready to sell. ${notes.join(" · ")}`
+            : summary.error || "Ready to sell. Still finishing background sync.",
   };
 }
 
@@ -776,6 +799,11 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
         schema_match: false,
         hub_truth_ok: false,
         mismatched_tables: [],
+        // The call itself failed, so nothing is known about the catalogue.
+        // Unknown must read as not-ready: opening a till on an assumption is
+        // how it ends up selling at a price it does not have.
+        catalogue_ready: false,
+        matched_tables: [],
       });
       return null;
     } finally {
@@ -969,11 +997,26 @@ function JoinStoreWizard({ onComplete, onBack }: { onComplete: (cfg: AppConfig) 
           {error && <div className="modal-error">{error}</div>}
 
           {joinChecklist.showRetry ? (
+            /* Start POS sits alongside Retry whenever the till can actually
+               sell. It used to be an either/or: showing Retry replaced the
+               Start button entirely, so a terminal that was out of step for a
+               reason retrying could not fix — local sales the hub had not seen —
+               had no way off this screen at all. Retry stays for the cases it
+               does help; it is no longer the only door. */
             <div className="setup-actions" style={{ justifyContent: "center" }}>
               <button className="setup-btn-secondary" onClick={() => setStep("device")} disabled={loading}>Back</button>
               <button className="setup-btn-primary" onClick={handleRetryPull} disabled={loading}>
                 {loading ? "Retrying..." : "Retry Sync"}
               </button>
+              {joinChecklist.canEnterPos && joinedConfig && (
+                <button
+                  className="setup-btn-primary"
+                  onClick={() => onComplete(joinedConfig)}
+                  disabled={loading}
+                >
+                  Start POS
+                </button>
+              )}
             </div>
           ) : loading ? (
             <button className="setup-btn-skip" onClick={() => { setStep("device"); setLoading(false); setPullStatus(null); }}>

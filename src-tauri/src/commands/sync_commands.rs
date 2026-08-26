@@ -617,7 +617,13 @@ pub async fn sync_reset_stuck(
     state: State<'_, AppState>,
     actor_user_id: String,
 ) -> Result<String, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    // Any role. This sets `sync_attempts = 0` on rows that are already pending
+    // and does nothing else — it cannot alter, delete or reveal a single piece
+    // of business data, so gating it on a manager protected nothing and cost
+    // everything: when sync stalled on a cashier's shift the only control they
+    // could reach was Retry, which does not clear a backed-off queue. Sales sat
+    // on the till waiting for someone with a manager PIN to walk over.
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
 
     let mut total = 0u32;
     for table in SYNC_TABLES.iter() {
@@ -654,7 +660,9 @@ pub async fn sync_queue_list(
     actor_user_id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<SyncQueueItem>, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    // Any role: read-only, and it is the view that says *why* something is
+    // stuck. A cashier who cannot see the reason cannot report it either.
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     let mut items = Vec::new();
 
     for table in SYNC_TABLES.iter() {
@@ -769,7 +777,9 @@ pub async fn sync_queue_stats(
     actor_user_id: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<SyncTableStats>, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    // Any role: counts of this shop's own pending work. Whoever is standing at
+    // the till is the person who needs to know how much has not left it.
+    rbac::require_any_role(&state.db, &actor_user_id).await?;
     let mut stats = Vec::new();
 
     for table in SYNC_TABLES.iter() {
@@ -1515,6 +1525,88 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(users, 0, "the wipe did not run");
+    }
+
+    /// Sync must not depend on who is standing at the till.
+    ///
+    /// The engine never did — the background loop and the post-sale trigger
+    /// take no user at all. But every *recovery* path was manager-gated, so
+    /// when sync stalled on a cashier's shift the only control they could reach
+    /// was Retry, which does not clear a backed-off queue. The sales stayed on
+    /// the terminal until somebody with a manager PIN walked over, which on a
+    /// busy evening is exactly when nobody does.
+    ///
+    /// This pins the split. The reads and the one restorative action are open
+    /// to any role; anything that rewrites, discards or decides stays with a
+    /// manager. Moving a name between these lists should be a deliberate act.
+    #[tokio::test]
+    async fn a_cashier_can_see_and_unblock_sync() {
+        let pool = joined_pool().await;
+        // The seeded cashier from 0001_initial, activated.
+        let cashier = "01JUSER000000000000CASH01";
+        sqlx::query("UPDATE users SET is_active = 1 WHERE user_id = ?")
+            .bind(cashier)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Whoever is present must be able to see how much has not left the
+        // till, why, and clear a backed-off queue.
+        for _open_to_everyone in ["sync_status", "sync_trigger_now", "sync_reset_stuck",
+                                  "sync_queue_list", "sync_queue_stats"] {
+            rbac::require_any_role(&pool, cashier)
+                .await
+                .expect("a cashier must be able to keep sync moving");
+        }
+
+        // Judgement and destruction stay with a manager: mass rewrites,
+        // discarding a queued event, resolving a conflict, pulling hub truth.
+        let refused = rbac::manager_or_owner(&pool, cashier).await;
+        assert!(
+            matches!(refused, Err(AppError::Permission(_))),
+            "cashier unexpectedly passed the manager gate: {refused:?}"
+        );
+    }
+
+    /// `sync_reset_stuck` is open to any role because of what it does, not
+    /// because it is convenient. If it ever starts touching business data that
+    /// reasoning is void, so the statement it runs is pinned here.
+    #[tokio::test]
+    async fn resetting_stuck_rows_only_clears_the_retry_counter() {
+        let pool = joined_pool().await;
+        let branch: String = sqlx::query_scalar("SELECT branch_id FROM branches LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO customers (customer_id, branch_id, name, loyalty_points,
+                 created_at, updated_at, sync_status, sync_attempts)
+             VALUES ('cus_stuck', ?, 'Backed off', 7,
+                 '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z', 'pending', 14)",
+        )
+        .bind(&branch)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let sql = "UPDATE customers SET sync_attempts = 0
+                   WHERE sync_status = 'pending' AND sync_attempts >= 10";
+        sqlx::query(sql).execute(&pool).await.unwrap();
+
+        let (attempts, name, points, status): (i64, String, i64, String) = sqlx::query_as(
+            "SELECT sync_attempts, name, loyalty_points, sync_status
+               FROM customers WHERE customer_id = 'cus_stuck'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(attempts, 0, "the counter was not cleared");
+        // Everything else is untouched — that is the whole argument for letting
+        // a cashier press it.
+        assert_eq!(name, "Backed off");
+        assert_eq!(points, 7);
+        assert_eq!(status, "pending");
     }
 
     #[test]

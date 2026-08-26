@@ -141,7 +141,7 @@ IDENTIFY THE MESSAGE TYPE AND FOLLOW THE CORRESPONDING PATTERN:
 ▸ CUSTOMER MESSAGE (sender is a customer, not a staff member):
 1. If greeting/question: answer helpfully.
 2. If about an order: "This customer is asking about their order. Look them up?"
-3. If phone number present: call search_customers.
+3. If phone number present: call list_customers with it as the filter.
 4. Payment screenshot: the system auto-verifies. Only manually verify if admin asks.
 
 ▸ GENERAL ANNOUNCEMENT (text only, no image):
@@ -329,7 +329,7 @@ const WORKFLOW_CUSTOMER_MESSAGE: &str = r#"## Customer WhatsApp Message Handling
 When you recognize a message as being FROM a customer (not a staff member):
 
 1. Identify the customer:
-   • search_customers by phone number from the message header.
+   • list_customers, filtered by the phone number from the message header.
    • If no match: "This phone isn't in customer records. Add them?"
 
 2. If asking about an order:
@@ -472,5 +472,75 @@ mod tests {
 
         assert!(workflow.contains("Duplicate barcodes are skipped and reported"));
         assert!(!workflow.contains("Duplicate barcodes are NOT rejected"));
+    }
+}
+
+#[cfg(test)]
+mod tool_name_tests {
+    use super::*;
+
+    /// A workflow that names a tool which does not exist teaches the model to
+    /// call it.
+    ///
+    /// This is the same defect that produced "Unknown or unavailable AI tool:
+    /// find_products" from the system prompt, found here afterwards by looking
+    /// for other places the model is told what to call. Two workflows said
+    /// `search_customers`; the tool is `list_customers`. The instruction read
+    /// perfectly and pointed at nothing.
+    ///
+    /// Only verb-prefixed snake_case tokens are checked, and only against the
+    /// live catalogue plus the registered operations — workflow prose also
+    /// contains ordinary words and Rust method names.
+    #[test]
+    fn every_tool_a_workflow_tells_the_model_to_call_exists() {
+        let catalogue: std::collections::HashSet<String> =
+            crate::ai::tools_catalogue::all_tool_definitions()
+                .into_iter()
+                .map(|definition| definition.name)
+                .collect();
+
+        // Tokens that look like tools but are not: workflow identifiers, Rust
+        // iterator methods, and prose. Listed rather than pattern-matched so a
+        // real miss cannot hide behind a loose rule.
+        const NOT_TOOLS: &[&str] = &[
+            "get_workflow",
+            "find_map",
+            "bulk_operations",
+            "sync_recovery",
+            "sync_stuck",
+            "bulk_product_archive",
+            "bulk_promotion_apply",
+            "bulk_reorder_point_update",
+            "bulk_stock_variance_fix",
+        ];
+
+        let mut missing: Vec<(String, String)> = Vec::new();
+        for name in workflow_names() {
+            let Some(body) = get_workflow(name) else {
+                continue;
+            };
+            for word in body.split(|c: char| !(c.is_ascii_lowercase() || c == '_')) {
+                let looks_like_a_tool = [
+                    "get_", "list_", "find_", "search_", "create_", "update_",
+                    "set_", "adjust_", "bulk_", "export_", "check_", "preview_",
+                ]
+                .iter()
+                .any(|prefix| word.starts_with(prefix))
+                    && word.len() > 6;
+                if !looks_like_a_tool || NOT_TOOLS.contains(&word) {
+                    continue;
+                }
+                if !catalogue.contains(word)
+                    && !crate::ai::engine::ops::is_registered_operation(word)
+                {
+                    missing.push((name.to_string(), word.to_string()));
+                }
+            }
+        }
+
+        assert!(
+            missing.is_empty(),
+            "workflows tell the model to call tools that do not exist: {missing:?}"
+        );
     }
 }

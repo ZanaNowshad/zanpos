@@ -1339,17 +1339,22 @@ If a needed ZANPOS capability appears omitted by filtering, use request_full_too
 
 ### Where to look first
 
-Around 260 tools are registered. Scan the family, not the list. Names are stable prefixes: `get_*`/`list_*`/`find_*` read, `create_*`/`update_*`/`set_*`/`adjust_*`/`bulk_*` write, `export_*` extracts.
+Around 260 tools are registered. This table is a starting point, not the
+catalogue: every name below is real, but the tool definitions supplied this turn
+are the only authority on what exists. Never shorten or extend a name by
+pattern: "find_products" is not a tool merely because
+`find_products_without_barcode` is one.
 
 | Asked about | Reach for |
 |---|---|
-| A product, its price, barcode, cost, margin | `get_product*`, `find_products_*`, `update_product_price`, `bulk_price_adjust` |
-| How much is on hand, what is running out | `get_stock_levels`, `get_low_stock*`, `get_dead_stock*`, `adjust_stock`, `stock_take` |
-| A person who buys here | `get_customer*`, `get_loyalty_summary`, `create_customer`, `add_loyalty_points` |
+| Finding a product | `search_products`, `list_products`, `get_product`, `get_product_detail` |
+| Changing what it costs | `update_product_price`, `bulk_price_adjust` |
+| How much is on hand, what is running out | `get_stock_levels`, `get_low_stock`, `get_dead_stock`, `adjust_stock`, `stock_take` |
+| A person who buys here | `get_customer`, `get_customer_purchase_history`, `get_loyalty_summary`, `create_customer`, `add_loyalty_points` |
 | Takings, a day, a period, a cashier | `get_daily_report`, `get_date_range_report`, `get_hourly_sales`, `get_cashier_performance` |
 | Money in the drawer, opening or closing | `get_cash_status`, `get_eod_cashup`, `get_active_shift`, `open_shift` |
-| Buying stock in | `get_supplier*`, `create_purchase_order`, receiving tools |
-| Orders going out | `get_active_deliveries_map`, `get_delivery_*` |
+| Buying stock in | `get_supplier_products`, `create_purchase_order` |
+| Orders going out | `get_active_deliveries_map`, `get_delivery_detail` |
 | "Do the tills agree", "why do two screens differ" | `get_terminal_roster` → `check_terminal_parity` → `find_diverged_rows` → `preview_reconciliation` |
 | Sync is stuck or failing | `get_sync_status`, `sync_queue_list`, `sync_reset_stuck` |
 | Who changed something | `get_audit_log`, `get_audit_trail_full`, `get_audit_chain_status` |
@@ -1649,19 +1654,21 @@ mod prompt_prefix_tests {
         assert!(!prompt.contains("call after approval"));
     }
 
-    /// Every capability the prompt names must actually exist.
+    /// Every capability the prompt names must exist, exactly.
     ///
     /// The routing table is the useful half of "know all the tools" — 260
     /// schemas are already supplied each turn, so what the prompt adds is where
     /// to look first, not what exists. But naming tools in prose reintroduces
-    /// exactly the drift the surrounding test forbids: rename a tool and the
-    /// prompt keeps sending the model somewhere that is no longer there.
+    /// exactly the drift the surrounding test forbids.
     ///
-    /// So the names are checked against the live catalogue. A `*` suffix is a
-    /// family and must still match something. Anything backticked that is a
-    /// database column rather than a tool is listed explicitly, because those
-    /// are named deliberately — they are the fields whose real names are not
-    /// what a reader would guess.
+    /// Wildcards are banned outright, and that is not tidiness. The table used
+    /// to say `find_products_*`, a legitimate prefix for
+    /// `find_products_without_barcode` — and the model read it as a tool called
+    /// `find_products`, which does not exist. Checkout got
+    /// "Unknown or unavailable AI tool: find_products". An earlier version of
+    /// this test asserted only that the prefix matched *something*, so it
+    /// passed while the prompt taught a name that was never real. A pattern a
+    /// reader can complete is a pattern a reader will complete.
     #[test]
     fn every_tool_the_prompt_names_still_exists() {
         let prompt = build_system_prompt();
@@ -1677,25 +1684,22 @@ mod prompt_prefix_tests {
         ];
 
         let mut missing = Vec::new();
+        let mut wildcards = Vec::new();
         let mut checked = 0_usize;
         for token in prompt.split('`').skip(1).step_by(2) {
             if NOT_TOOLS.contains(&token) {
                 continue;
             }
-            let Some(prefix) = token.strip_suffix('*') else {
-                if !token.is_empty()
-                    && token.chars().all(|c| c.is_ascii_lowercase() || c == '_')
-                {
-                    checked += 1;
-                    if !catalogue.iter().any(|name| name == token) {
-                        missing.push(token.to_string());
-                    }
-                }
+            if token.contains('*') {
+                wildcards.push(token.to_string());
                 continue;
-            };
+            }
+            if token.is_empty() || !token.chars().all(|c| c.is_ascii_lowercase() || c == '_') {
+                continue;
+            }
             checked += 1;
-            if !catalogue.iter().any(|name| name.starts_with(prefix)) {
-                missing.push(format!("{prefix}*"));
+            if !catalogue.iter().any(|name| name == token) {
+                missing.push(token.to_string());
             }
         }
 
@@ -1703,9 +1707,14 @@ mod prompt_prefix_tests {
             missing.is_empty(),
             "the prompt sends the model to capabilities that do not exist: {missing:?}"
         );
+        assert!(
+            wildcards.is_empty(),
+            "the prompt names tool families by pattern, which the model completes \
+             into names that do not exist — write them out: {wildcards:?}"
+        );
         // A check that matched nothing would pass silently and guard nothing.
         assert!(
-            checked >= 20,
+            checked >= 30,
             "only {checked} names were checked — the extraction has stopped finding them"
         );
     }

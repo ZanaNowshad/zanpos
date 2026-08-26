@@ -514,6 +514,38 @@ struct SseUsage {
     output_tokens: u32,
 }
 
+/// What the prompt cache actually did, from the `message_start` usage block.
+///
+/// Caching is configured — [`LONG_CACHE`] on the tools and the system prompt —
+/// but nothing read back whether it ever *hit*, so "ZanAI feels slow" could
+/// only be answered with a guess. These four numbers turn it into a ratio.
+///
+/// The one that matters is `cache_read`: it is the part of the prefix that cost
+/// nothing this turn. When it is zero on every turn the cache is being
+/// invalidated, and the usual reason is that the tools array changed — tools sit
+/// at the front of the cached prefix, so anything that varies them throws away
+/// the system prompt and the conversation with them.
+#[derive(Deserialize, Debug, Default, Clone, Copy)]
+struct CacheUsage {
+    #[serde(default)]
+    input_tokens: u32,
+    #[serde(default, rename = "cache_read_input_tokens")]
+    cache_read: u32,
+    #[serde(default, rename = "cache_creation_input_tokens")]
+    cache_written: u32,
+}
+
+impl CacheUsage {
+    /// Percentage of the cacheable prefix served from cache this turn.
+    fn hit_pct(&self) -> u32 {
+        let considered = self.cache_read + self.cache_written + self.input_tokens;
+        if considered == 0 {
+            return 0;
+        }
+        self.cache_read * 100 / considered
+    }
+}
+
 // ── Main streaming function ───────────────────────────────────────────────────
 
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
@@ -800,6 +832,22 @@ pub async fn run_streaming_chat(
                                 if let Some(u) = delta.usage {
                                     turn_output_tokens = u.output_tokens;
                                 }
+                            }
+                            SseEvent::MessageStart { message } => {
+                                let usage: CacheUsage = message
+                                    .get("usage")
+                                    .cloned()
+                                    .and_then(|u| serde_json::from_value(u).ok())
+                                    .unwrap_or_default();
+                                tracing::info!(
+                                    turn = turn_num,
+                                    tools = turn_tool_defs.len(),
+                                    cache_read = usage.cache_read,
+                                    cache_written = usage.cache_written,
+                                    uncached_input = usage.input_tokens,
+                                    cache_hit_pct = usage.hit_pct(),
+                                    "ZanAI prompt cache"
+                                );
                             }
                             _ => {}
                         }
@@ -2899,4 +2947,62 @@ fn hash_str(s: &str) -> String {
     let mut h = Sha256::new();
     h.update(s.as_bytes());
     hex::encode(h.finalize())
+}
+
+#[cfg(test)]
+mod cache_usage_tests {
+    use super::CacheUsage;
+
+    /// The number an operator will act on, so it has to mean what it says.
+    ///
+    /// Caching was configured but never read back, so "ZanAI is slow" could only
+    /// be answered with a guess. `cache_read` is the part of the prefix that
+    /// cost nothing this turn; when it stays at zero the prefix is changing
+    /// between requests and the 1h TTL is buying nothing.
+    #[test]
+    fn a_fully_cached_turn_reports_a_hit() {
+        let usage: CacheUsage = serde_json::from_value(serde_json::json!({
+            "input_tokens": 12,
+            "cache_read_input_tokens": 24_000,
+            "cache_creation_input_tokens": 0,
+        }))
+        .unwrap();
+
+        assert_eq!(usage.cache_read, 24_000);
+        // Integer percent, so a turn that is 99.95% cached reports 99.
+        assert!(usage.hit_pct() >= 99, "{}", usage.hit_pct());
+    }
+
+    /// The first request of a session writes the cache and reads none of it.
+    /// That is the expected shape once, not every turn.
+    #[test]
+    fn the_cache_write_turn_reports_no_hit() {
+        let usage: CacheUsage = serde_json::from_value(serde_json::json!({
+            "input_tokens": 40,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 24_000,
+        }))
+        .unwrap();
+
+        assert_eq!(usage.hit_pct(), 0);
+        assert_eq!(usage.cache_written, 24_000);
+    }
+
+    /// A response without the cache fields must read as "no hit" rather than
+    /// panicking or inventing one — older models and other providers omit them.
+    #[test]
+    fn a_response_without_cache_fields_is_not_an_error() {
+        let usage: CacheUsage =
+            serde_json::from_value(serde_json::json!({ "input_tokens": 500 })).unwrap();
+
+        assert_eq!(usage.cache_read, 0);
+        assert_eq!(usage.hit_pct(), 0);
+    }
+
+    /// No usage at all must not divide by zero.
+    #[test]
+    fn an_empty_usage_block_is_survivable() {
+        let usage = CacheUsage::default();
+        assert_eq!(usage.hit_pct(), 0);
+    }
 }

@@ -42,7 +42,134 @@ fn mutation_intents_are_a_subset_of_routable_intents() {
     }
     // A mutation intent that nobody can call is a confirmation prompt that
     // never fires; one that is routable but unflagged writes without asking.
-    for name in ["create_product", "update_product", "receive_stock", "create_customer", "create_user", "backup_database"] {
-        assert!(is_mutation_intent(name), "{name} must require confirmation");
+    // Every intent that writes must be flagged, and the list is derived rather
+    // than typed out — it used to name `update_product`, `create_user` and
+    // `backup_database`, which were removed for having no dispatch arm, and a
+    // hardcoded list would have kept asserting a confirmation policy for
+    // capabilities that no longer exist.
+    for intent in all_intents() {
+        let writes = intent.name.starts_with("create_")
+            || intent.name.starts_with("update_")
+            || intent.name.starts_with("receive_");
+        if writes {
+            assert!(
+                is_mutation_intent(intent.name),
+                "{} writes but is not flagged as a mutation, so it would never ask",
+                intent.name
+            );
+        }
     }
+}
+
+// ── Executing every intent, not just listing them ────────────────────────────
+//
+// The test above compares two lists and they agree — which is why it never
+// caught that `backup_database`, `create_user` and `update_product` were
+// advertised with full schemas while `execute_intent` had no arm for any of
+// them. A name check cannot see a missing match arm, and it cannot see
+// `WHERE is_active=1` against a table that has no such column, which is what
+// made `list_customers` fail with an internal error for a year.
+//
+// So this runs them. An intent may legitimately refuse bad input; what it may
+// not do is fail to exist, query a column that is not there, or omit a NOT NULL
+// column on insert.
+
+async fn migrated_pool() -> SqlitePool {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    pool
+}
+
+/// A plausible value for each parameter an intent declares required.
+///
+/// The values need not match real rows — the point is to get past argument
+/// parsing and execute the statement, and "no such column" fires whether or not
+/// the id exists. A missing entry is a hard failure rather than a skip, so a new
+/// required parameter forces a decision here instead of quietly dropping
+/// coverage.
+fn sample_argument(field: &str) -> Option<Value> {
+    Some(match field {
+        f if f.ends_with("_id") => json!("smoke-test-id"),
+        "quantity_delta" => json!("1"),
+        "from_date" | "to_date" => json!("2026-08-01"),
+        "name" | "display_name" => json!("Smoke Test"),
+        "username" => json!("smoketest"),
+        "pin" => json!("0000"),
+        "query" | "search" => json!("milk"),
+        "tab" => json!("products"),
+        _ => return None,
+    })
+}
+
+/// Faults that mean the intent is broken, as opposed to merely refusing input.
+fn is_structural_failure(message: &str) -> Option<&'static str> {
+    let m = message.to_lowercase();
+    if m.contains("unknown intent") {
+        return Some("advertised to the model but execute_intent has no arm for it");
+    }
+    if m.contains("no such column") {
+        return Some("queries a column that does not exist");
+    }
+    if m.contains("no such table") {
+        return Some("queries a table that does not exist");
+    }
+    if m.contains("not null constraint") {
+        return Some("insert omits a NOT NULL column");
+    }
+    if m.contains("no such function") || m.contains("syntax error") {
+        return Some("malformed SQL");
+    }
+    None
+}
+
+#[tokio::test]
+async fn every_advertised_intent_actually_executes() {
+    let pool = migrated_pool().await;
+    let branch: String = sqlx::query_scalar("SELECT branch_id FROM branches LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    let mut broken: Vec<String> = Vec::new();
+    for intent in all_intents() {
+        let mut params = serde_json::Map::new();
+        if let Some(required) = intent.parameters.get("required").and_then(Value::as_array) {
+            for field in required.iter().filter_map(Value::as_str) {
+                match sample_argument(field) {
+                    Some(value) => {
+                        params.insert(field.to_string(), value);
+                    }
+                    None => panic!(
+                        "intent '{}' requires '{field}', which sample_argument does not know how \
+                         to supply — add it rather than letting this intent go unchecked",
+                        intent.name
+                    ),
+                }
+            }
+        }
+
+        let outcome = execute_intent(&pool, intent.name, &Value::Object(params), &branch).await;
+        if let Err(error) = outcome {
+            // `internal_database_detail`, not `to_string`: AppError::Database
+            // renders as the bare phrase "A database error occurred", so every
+            // SQLite message — the column that does not exist, the constraint
+            // that failed — is masked. Classifying on the masked string is how
+            // `list_customers` querying a non-existent `is_active` column looked
+            // like an ordinary refusal.
+            let message = error.internal_database_detail();
+            if let Some(reason) = is_structural_failure(&message) {
+                broken.push(format!("{}: {reason} — {message}", intent.name));
+            }
+        }
+    }
+
+    assert!(
+        broken.is_empty(),
+        "intents the model is offered but which cannot work:\n  {}",
+        broken.join("\n  ")
+    );
 }

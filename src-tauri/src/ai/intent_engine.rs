@@ -31,11 +31,8 @@ pub fn is_mutation_intent(name: &str) -> bool {
     matches!(
         name,
         "create_product"
-            | "update_product"
             | "receive_stock"
             | "create_customer"
-            | "create_user"
-            | "backup_database"
     )
 }
 
@@ -44,7 +41,6 @@ pub const INTENT_NAMES: &[&str] = &[
     "search_products",
     "get_product_detail",
     "create_product",
-    "update_product",
     "get_low_stock",
     "receive_stock",
     "get_sales_report",
@@ -52,20 +48,25 @@ pub const INTENT_NAMES: &[&str] = &[
     "list_customers",
     "create_customer",
     "list_users",
-    "create_user",
     "get_cash_status",
     "list_deliveries",
     "get_sync_status",
     "get_audit_log",
-    "backup_database",
     "open_tab",
 ];
 pub fn all_intents() -> Vec<IntentDef> {
+    // `update_product`, `create_user` and `backup_database` used to sit in this
+    // list with full schemas while `execute_intent` had no arm for any of them,
+    // so the model was offered three capabilities that answered
+    // "Unknown intent". All three exist as real tools — `update_product_full`,
+    // `create_user`, `backup_database` — so the tool path already covers them
+    // and the intent entries were duplicate advertising for code that was never
+    // written. Removed rather than implemented: two ways to do one thing is how
+    // they drifted apart in the first place.
     vec![
         IntentDef { name: "search_products", description: "Search products by name, SKU, barcode, or category. Returns paginated results.", parameters: json!({"type":"object","properties":{"query":{"type":"string"},"category":{"type":"string"}}}) },
         IntentDef { name: "get_product_detail", description: "Get full details of a single product including all prices, stock levels, and barcodes.", parameters: json!({"type":"object","properties":{"product_id":{"type":"string"}},"required":["product_id"]}) },
         IntentDef { name: "create_product", description: "Create a new product with all required fields. Validates category, tax rule, and barcode uniqueness.", parameters: json!({"type":"object","properties":{"name":{"type":"string"},"category_id":{"type":"string"},"sku":{"type":"string"},"barcode":{"type":"string"},"selling_price_minor":{"type":"integer"},"cost_minor":{"type":"integer"},"tax_rule_id":{"type":"string"},"track_inventory":{"type":"boolean"}},"required":["name","category_id"]}) },
-        IntentDef { name: "update_product", description: "Update any field of an existing product. Only sends changed fields.", parameters: json!({"type":"object","properties":{"product_id":{"type":"string"},"name":{"type":"string"},"category_id":{"type":"string"},"is_active":{"type":"boolean"},"selling_price_minor":{"type":"integer"}},"required":["product_id"]}) },
         // adjust_prices_batch and bulk_price_adjust used to be defined here. Both
         // are superseded by the bulk_price_adjust *engine* operation, which is the
         // only price path with preview, confirm and undo. They stayed in this list
@@ -80,12 +81,10 @@ pub fn all_intents() -> Vec<IntentDef> {
         IntentDef { name: "list_customers", description: "Search and list customers. Supports search by name, phone, or email.", parameters: json!({"type":"object","properties":{"search":{"type":"string"}}}) },
         IntentDef { name: "create_customer", description: "Create a new customer record.", parameters: json!({"type":"object","properties":{"name":{"type":"string"},"phone":{"type":"string"},"email":{"type":"string"},"notes":{"type":"string"}},"required":["name"]}) },
         IntentDef { name: "list_users", description: "List all system users with roles.", parameters: json!({"type":"object","properties":{}}) },
-        IntentDef { name: "create_user", description: "Create a new system user (cashier, manager, etc).", parameters: json!({"type":"object","properties":{"display_name":{"type":"string"},"username":{"type":"string"},"pin":{"type":"string"},"role_id":{"type":"string"}},"required":["display_name","username","pin","role_id"]}) },
         IntentDef { name: "get_cash_status", description: "Current cash drawer status: expected cash, counted, variance, paid in/out, safe drops.", parameters: json!({"type":"object","properties":{}}) },
         IntentDef { name: "list_deliveries", description: "List delivery orders, filterable by status. Returns customer, address, payment status.", parameters: json!({"type":"object","properties":{"status":{"type":"string","enum":["pending","dispatched","delivered","cancelled","all"]}}}) },
         IntentDef { name: "get_sync_status", description: "Current hub sync status: online/offline, pending count, last sync time.", parameters: json!({"type":"object","properties":{}}) },
         IntentDef { name: "get_audit_log", description: "View audit trail entries for a date range.", parameters: json!({"type":"object","properties":{"from_date":{"type":"string"},"to_date":{"type":"string"}}}) },
-        IntentDef { name: "backup_database", description: "Create a database backup to the specified path. Returns file path and size.", parameters: json!({"type":"object","properties":{}}) },
         IntentDef { name: "open_tab", description: "Navigate the admin workspace to a destination accepted by the tab schema.", parameters: json!({"type":"object","properties":{"tab":{"type":"string","enum":["products","categories","inventory","reports","cashier","eod","deliveries","customers","users","purchasing","settings","audit","devices"]}},"required":["tab"]}) },
     ]
 }
@@ -291,9 +290,9 @@ async fn get_sales_report_intent(
 async fn list_customers_intent(pool: &SqlitePool, params: &Value) -> AppResult<IntentResult> {
     let search = params.get("search").and_then(|v| v.as_str()).unwrap_or("");
     let rows = if search.is_empty() {
-        sqlx::query_as::<_, (String,String,Option<String>,Option<String>)>("SELECT customer_id,name,phone,email FROM customers WHERE is_active=1 ORDER BY name LIMIT 30").fetch_all(pool).await?
+        sqlx::query_as::<_, (String,String,Option<String>,Option<String>)>("SELECT customer_id,name,phone,email FROM customers WHERE deleted_at IS NULL ORDER BY name LIMIT 30").fetch_all(pool).await?
     } else {
-        sqlx::query_as::<_, (String,String,Option<String>,Option<String>)>("SELECT customer_id,name,phone,email FROM customers WHERE is_active=1 AND (name LIKE '%'||?||'%' OR phone LIKE '%'||?||'%') ORDER BY name LIMIT 30").bind(search).bind(search).fetch_all(pool).await?
+        sqlx::query_as::<_, (String,String,Option<String>,Option<String>)>("SELECT customer_id,name,phone,email FROM customers WHERE deleted_at IS NULL AND (name LIKE '%'||?||'%' OR phone LIKE '%'||?||'%') ORDER BY name LIMIT 30").bind(search).bind(search).fetch_all(pool).await?
     };
     Ok(IntentResult {
         ok: true,
@@ -306,7 +305,7 @@ async fn list_customers_intent(pool: &SqlitePool, params: &Value) -> AppResult<I
 async fn create_customer_intent(
     pool: &SqlitePool,
     params: &Value,
-    _branch_id: &str,
+    branch_id: &str,
 ) -> AppResult<IntentResult> {
     let name = params
         .get("name")
@@ -314,8 +313,8 @@ async fn create_customer_intent(
         .ok_or(AppError::Validation("name required".into()))?;
     let cid = ulid::Ulid::new().to_string();
     let now = chrono::Utc::now().to_rfc3339();
-    sqlx::query("INSERT INTO customers (customer_id,name,phone,email,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
-        .bind(&cid).bind(name)
+    sqlx::query("INSERT INTO customers (customer_id,branch_id,name,phone,email,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)")
+        .bind(&cid).bind(branch_id).bind(name)
         .bind(params.get("phone").and_then(|v| v.as_str()).unwrap_or(""))
         .bind(params.get("email").and_then(|v| v.as_str()).unwrap_or(""))
         .bind(params.get("notes").and_then(|v| v.as_str()).unwrap_or(""))
@@ -372,9 +371,9 @@ async fn list_deliveries_intent(
         .and_then(|v| v.as_str())
         .unwrap_or("all");
     let sql = if status == "all" {
-        "SELECT delivery_id,contact_number,status,expected_payment_minor,created_at FROM delivery_orders ORDER BY created_at DESC LIMIT 20".to_string()
+        "SELECT delivery_id,contact_number,delivery_status,amount_minor,created_at FROM delivery_orders ORDER BY created_at DESC LIMIT 20".to_string()
     } else {
-        "SELECT delivery_id,contact_number,status,expected_payment_minor,created_at FROM delivery_orders WHERE status=? ORDER BY created_at DESC LIMIT 20".to_string()
+        "SELECT delivery_id,contact_number,delivery_status,amount_minor,created_at FROM delivery_orders WHERE delivery_status=? ORDER BY created_at DESC LIMIT 20".to_string()
     };
     let mut q = sqlx::query(&sql);
     if status != "all" {

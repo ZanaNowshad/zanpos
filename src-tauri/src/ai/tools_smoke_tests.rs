@@ -262,3 +262,107 @@ async fn every_read_tool_including_those_taking_arguments_runs_against_the_schem
 
 
 mod mutations;
+
+// ── The customer lookup ZanAI actually uses ──────────────────────────────────
+//
+// "Message customer X on WhatsApp" is two steps: resolve the name to a
+// customer, then send. The resolve step is `list_customers`, and it carried its
+// own `WHERE name LIKE ? OR phone LIKE ?` rather than the predicate the till and
+// the customer directory share. So it could not match a WhatsApp name, could not
+// match an email, could not match a number typed without separators — and had
+// neither a branch filter nor a soft-delete filter, so it read across branches
+// and offered deleted people.
+
+async fn seed_customer_for_lookup(
+    pool: &SqlitePool,
+    id: &str,
+    branch: &str,
+    name: &str,
+    whatsapp_name: Option<&str>,
+    phone: &str,
+    deleted: bool,
+) {
+    sqlx::query(
+        "INSERT INTO customers
+           (customer_id, branch_id, name, whatsapp_name, phone, loyalty_points,
+            origin_device_id, created_at, updated_at, version, sync_status, deleted_at)
+         VALUES (?, ?, ?, ?, ?, 0, 'dev', datetime('now'), datetime('now'), 1, 'pending', ?)",
+    )
+    .bind(id)
+    .bind(branch)
+    .bind(name)
+    .bind(whatsapp_name)
+    .bind(phone)
+    .bind(if deleted { Some("2026-08-01T00:00:00Z") } else { None })
+    .execute(pool)
+    .await
+    .expect("seed customer");
+}
+
+async fn lookup(pool: &SqlitePool, branch: &str, search: &str) -> String {
+    crate::ai::tools::execute_read_tool(
+        pool,
+        "list_customers",
+        &serde_json::json!({ "search": search }),
+        branch,
+        3,
+    )
+    .await
+    .expect("list_customers failed")
+}
+
+#[tokio::test]
+async fn zanai_finds_a_customer_by_the_name_whatsapp_knows_them_by() {
+    let pool = migrated_pool().await;
+    let branch: String = sqlx::query_scalar("SELECT branch_id FROM branches LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    seed_customer_for_lookup(
+        &pool, "cus_z", &branch, "Zanabal Nowshad", Some("Zanabal"), "+97333050666", false,
+    )
+    .await;
+
+    // Either name resolves, which is what "message customer zanabal" needs.
+    for query in ["Zanabal", "Nowshad"] {
+        let out = lookup(&pool, &branch, query).await;
+        assert!(out.contains("Zanabal Nowshad"), "search '{query}' returned: {out}");
+    }
+}
+
+/// A number typed the way a cashier types it, against a number stored the way
+/// it was dictated.
+#[tokio::test]
+async fn zanai_finds_a_customer_by_a_number_typed_without_separators() {
+    let pool = migrated_pool().await;
+    let branch: String = sqlx::query_scalar("SELECT branch_id FROM branches LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    seed_customer_for_lookup(
+        &pool, "cus_p", &branch, "Fatima", None, "+973 3600 1122", false,
+    )
+    .await;
+
+    let out = lookup(&pool, &branch, "36001122").await;
+    assert!(out.contains("Fatima"), "{out}");
+}
+
+/// ZanAI must not read another branch's customers, and must not offer someone
+/// who was deleted. Both were missing from this tool's query entirely.
+#[tokio::test]
+async fn zanai_customer_lookup_respects_branch_and_deletion() {
+    let pool = migrated_pool().await;
+    let branch: String = sqlx::query_scalar("SELECT branch_id FROM branches LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    seed_customer_for_lookup(&pool, "cus_ours", &branch, "Ours Shared", None, "+97333050001", false).await;
+    seed_customer_for_lookup(&pool, "cus_theirs", "other-branch", "Theirs Shared", None, "+97333050002", false).await;
+    seed_customer_for_lookup(&pool, "cus_gone", &branch, "Gone Shared", None, "+97333050003", true).await;
+
+    let out = lookup(&pool, &branch, "Shared").await;
+    assert!(out.contains("Ours Shared"), "{out}");
+    assert!(!out.contains("Theirs Shared"), "another branch's customer leaked: {out}");
+    assert!(!out.contains("Gone Shared"), "a deleted customer was offered: {out}");
+}

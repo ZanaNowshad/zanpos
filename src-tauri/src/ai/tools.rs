@@ -1789,24 +1789,46 @@ async fn execute_read_tool_inner(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
+            // The same predicate the till and the customer directory use, rather
+            // than a second copy. This one searched only `name` and `phone`, so
+            // it missed the WhatsApp name entirely, missed email, and could not
+            // match a number typed without its separators. It also had no branch
+            // filter and no soft-delete filter, so ZanAI could read another
+            // branch's customers and offer deleted ones.
             let rows = if search.is_empty() {
                 sqlx::query(
-                    "SELECT customer_id, name, phone, email, loyalty_points
-                     FROM customers ORDER BY name LIMIT 50",
+                    "SELECT customer_id, name, whatsapp_name, phone, email, loyalty_points
+                     FROM customers
+                     WHERE branch_id = ? AND deleted_at IS NULL
+                     ORDER BY name LIMIT 50",
                 )
+                .bind(branch_id)
                 .fetch_all(pool)
                 .await?
             } else {
-                sqlx::query(
-                    "SELECT customer_id, name, phone, email, loyalty_points
+                let (pattern, digit_pattern) =
+                    crate::commands::customer_search::customer_search_patterns(&search);
+                let sql = format!(
+                    "SELECT customer_id, name, whatsapp_name, phone, email, loyalty_points
                      FROM customers
-                     WHERE name LIKE ? OR phone LIKE ?
+                     WHERE branch_id = ? AND deleted_at IS NULL AND {}
                      ORDER BY name LIMIT 50",
-                )
-                .bind(format!("%{search}%"))
-                .bind(format!("%{search}%"))
-                .fetch_all(pool)
-                .await?
+                    crate::commands::customer_search::customer_search_where(
+                        digit_pattern.is_some()
+                    ),
+                );
+                // One bind per text placeholder: name, whatsapp_name, phone,
+                // email — then the digit pattern when the query had digits.
+                let mut q = sqlx::query(&sql)
+                    .bind(branch_id)
+                    .bind(&pattern)
+                    .bind(&pattern)
+                    .bind(&pattern)
+                    .bind(&pattern);
+                if let Some(digits) = &digit_pattern {
+                    q = q.bind(digits);
+                }
+                q.fetch_all(pool).await?
             };
             if rows.is_empty() {
                 return Ok("No customers found.".into());
@@ -1816,6 +1838,7 @@ async fn execute_read_tool_inner(
                 .map(|r| {
                     let id: String = r.get("customer_id");
                     let name: String = r.get("name");
+                    let whatsapp_name: Option<String> = r.try_get("whatsapp_name").unwrap_or(None);
                     let phone: Option<String> = r.get("phone");
                     let pts: i64 = r.get("loyalty_points");
                     // PII-01: mask phone — only last 4 digits shown in AI context
@@ -1823,9 +1846,17 @@ async fn execute_read_tool_inner(
                         .as_deref()
                         .map(mask_phone)
                         .unwrap_or_else(|| "—".into());
+                    // Shown when it differs, so a search that matched the
+                    // WhatsApp name does not look like it found the wrong
+                    // person. The receipt name still leads.
+                    let also = whatsapp_name
+                        .filter(|w| !w.trim().is_empty() && !w.eq_ignore_ascii_case(&name))
+                        .map(|w| format!(" (WhatsApp: {w})"))
+                        .unwrap_or_default();
                     format!(
-                        "- {} (ID: {}) | Phone: {} | Loyalty: {} pts",
+                        "- {}{} (ID: {}) | Phone: {} | Loyalty: {} pts",
                         name,
+                        also,
                         &id[..8.min(id.len())],
                         masked,
                         pts

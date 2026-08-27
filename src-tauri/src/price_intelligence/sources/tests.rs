@@ -9,7 +9,6 @@ const BP_SEARCH: &str = include_str!("../../../tests/fixtures/price/bp_search.ht
 fn query(name: &str) -> SearchQuery {
     SearchQuery {
         name: name.into(),
-        barcodes: Vec::new(),
     }
 }
 

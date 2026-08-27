@@ -29,25 +29,20 @@
 //! operator asked about or put on the watchlist are ever fetched, one at a time,
 //! at a pace that backs off the moment a source objects. See [`http`].
 
-// The reading half of the feature is finished and tested; the service, the
-// commands and the panel that call it are not written yet, so under a non-test
-// build every symbol below is correctly reported as unreached. Silenced as a
-// unit rather than per item so that removing this one line is what proves the
-// wiring landed — and so a genuinely dead function cannot hide behind a
-// scattering of individual allows.
-#![allow(dead_code)]
-
 pub mod http;
 pub mod jsonld;
+pub mod matching;
+pub mod observe;
 pub mod money;
 pub mod pack;
 pub mod route;
+pub mod service;
 pub mod sources;
 
 use pack::PackSize;
 
 /// One retailer's price for one product, as read from a source.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SourceOffer {
     /// The shop charging this. On an aggregator that is a third party — "Al
     /// Helli" read from Akelny — which is why it is stored per offer rather

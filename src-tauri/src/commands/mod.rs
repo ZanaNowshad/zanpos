@@ -8,6 +8,7 @@ pub mod customer_commands;
 pub mod customer_loyalty_commands;
 pub mod customer_scope;
 pub mod customer_search;
+pub mod market_price_commands;
 pub mod delivery_commands;
 pub mod device_commands;
 pub mod device_state;

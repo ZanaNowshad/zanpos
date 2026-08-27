@@ -480,4 +480,6 @@ pub async fn customer_get(
 
 /// Add loyalty points to a customer. Returns the new total.
 #[cfg(test)]
+mod name_search_tests;
+#[cfg(test)]
 mod tests;

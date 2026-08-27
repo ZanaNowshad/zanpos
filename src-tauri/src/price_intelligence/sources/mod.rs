@@ -33,7 +33,6 @@ pub const MAX_CANDIDATES: usize = 3;
 #[derive(Debug, Clone)]
 pub struct SearchQuery {
     pub name: String,
-    pub barcodes: Vec<String>,
 }
 
 impl SearchQuery {

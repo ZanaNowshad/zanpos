@@ -68,6 +68,10 @@ impl PackSize {
         (a - b).abs() * denominator <= a.max(b)
     }
 
+    /// Used by the Market panel, which is not built yet — the service and
+    /// commands are. Narrow rather than module-wide so the rest of this file
+    /// still reports honestly.
+    #[allow(dead_code)]
     pub fn describe(&self) -> String {
         if self.loose {
             return match self.dimension {
@@ -90,6 +94,7 @@ impl PackSize {
     }
 }
 
+#[allow(dead_code)]
 fn format_milli(milli: i64) -> String {
     if milli % 1000 == 0 {
         return (milli / 1000).to_string();

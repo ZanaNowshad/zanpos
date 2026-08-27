@@ -2109,216 +2109,35 @@ async fn execute_read_tool_inner(
                 .min(10) as usize;
             duckduckgo_search(query, max_results).await
         }
-        "search_market_prices" => {
-            let product = input
+        // ── Competitor prices ──────────────────────────────────────────────────
+        //
+        // These three used to build DuckDuckGo queries and hand back the
+        // snippets; the tool result said outright that it had no real price
+        // access. They now read competitors' own structured product data
+        // through `price_intelligence`, which parses a price to fils, checks it
+        // describes the same product, and records the observation so a history
+        // builds up.
+        //
+        // All three take a product name because that is what a manager types.
+        // The name is resolved against our own catalogue first: a market price
+        // is only meaningful next to ours, and the confirmed pairing that makes
+        // the answer exact is stored against a product_id.
+        "search_market_prices" | "compare_store_prices" | "bahrain_market_price_check" => {
+            let wanted = input
                 .get("product_name")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| AppError::Validation("Missing product_name".into()))?;
-            let location = input
-                .get("location")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Bahrain");
-            let query = format!("{product} price {location} BHD supermarket shop store");
-            duckduckgo_search(&query, 6).await
-        }
-        // ── Smart barcode lookup (OFFF + web fallback) ─────────────────────────
-        "smart_barcode_lookup" => {
-            let barcode = input
-                .get("barcode")
+                .or_else(|| input.get("product"))
+                .or_else(|| input.get("query"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .trim();
-            if barcode.is_empty()
-                || barcode.len() < 8
-                || barcode.len() > 14
-                || !barcode.chars().all(|c| c.is_ascii_digit())
-            {
+            if wanted.is_empty() {
                 return Err(AppError::Validation(
-                    "barcode must be 8-14 digits (UPC/EAN)".into(),
+                    "Name the product to price-check.".into(),
                 ));
             }
-            // First try Open Food Facts
-            let off_result = match open_food_facts_lookup(barcode).await {
-                Ok(result)
-                    if !result.contains("not found")
-                        && !result.contains("product data unavailable") =>
-                {
-                    Some(result)
-                }
-                _ => None,
-            };
-            // If OFFF failed or got sparse data, search the web
-            let web_results = if off_result.is_some() {
-                None // Got good OFFF data, skip web search
-            } else {
-                match duckduckgo_search(&format!("barcode {barcode} product name"), 3).await {
-                    Ok(r) if !r.contains("No results found") => Some(r),
-                    _ => None,
-                }
-            };
-            // Capture name hint before consuming the results
-            let name_hint = off_result.as_ref().or(web_results.as_ref()).and_then(|r| {
-                let needle = "Product: ";
-                r.find(needle).map(|i| {
-                    let start = i + needle.len();
-                    let end = r[start..].find('\n').map(|e| start + e).unwrap_or(r.len());
-                    r[start..end].trim().to_string()
-                })
-            });
-            let has_off = off_result.is_some();
-            let has_web = web_results.is_some();
-            let mut lines = vec![
-                format!("[SCAN] **Smart Barcode Lookup: {barcode}**"),
-                String::new(),
-            ];
-            if let Some(off) = off_result {
-                lines.push("### Open Food Facts Data".into());
-                lines.push(off);
-            }
-            if let Some(web) = web_results {
-                lines.push(String::new());
-                lines.push("### Web Search Results (cross-reference)".into());
-                lines.push(web);
-            }
-            if !has_off && !has_web {
-                lines.push("This barcode was not found in Open Food Facts and web search returned no results.".into());
-                lines.push(
-                    "Try searching by product name instead, or manually enter the product details."
-                        .into(),
-                );
-            }
-            // Append product creation instructions if we found a name
-            if let Some(ref name) = name_hint {
-                if !name.is_empty() && name != "—" {
-                    lines.push(String::new());
-                    lines.push(format!(
-                        "### Suggested Category: {}",
-                        categorize_product(name)
-                    ));
-                    lines.push(String::new());
-                    lines.push("📋 **To create this product, I need:**".into());
-                    lines.push("- Product name (extracted from lookup above)".into());
-                    lines.push("- Selling price in BHD".into());
-                    lines.push("- Category ID (use `list_categories` to pick the best fit)".into());
-                    lines.push(String::new());
-                    lines.push("Reply with: \"Create it at BHD X.XXX\" and I'll create the product for you.".into());
-                }
-            }
-            Ok(lines.join("\n"))
+            market_price_answer(pool, wanted).await
         }
-        // ── Multi-store price comparison ────────────────────────────────────────
-        "compare_store_prices" => {
-            let product = input
-                .get("product_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let location = input
-                .get("location")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Bahrain");
-            // Search multiple stores in parallel
-            let stores = [
-                (
-                    "Lulu Hypermarket",
-                    format!("{product} price luluhypermarket.com bahrain BHD"),
-                ),
-                (
-                    "Carrefour Bahrain",
-                    format!("{product} price carrefourbahrain.com BHD"),
-                ),
-                (
-                    "Alosra Supermarket",
-                    format!("{product} price alosra bahrain BHD"),
-                ),
-                (
-                    "Talabat Mart",
-                    format!("{product} talabat bahrain price BHD"),
-                ),
-                (
-                    "General Search",
-                    format!("{product} price {location} BHD supermarket"),
-                ),
-            ];
-            let mut results: Vec<(String, String)> = Vec::new();
-            for (store, query) in &stores {
-                match duckduckgo_search(query, 3).await {
-                    Ok(r) if !r.contains("No results found") => {
-                        // Truncate each store's results
-                        let short: String = r.lines().take(8).collect::<Vec<_>>().join("\n");
-                        results.push((store.to_string(), short));
-                    }
-                    _ => {}
-                }
-            }
-            let mut out = vec![
-                format!(
-                    "[WEB] **Price Comparison: \"{}\" in {}**",
-                    product, location
-                ),
-                String::new(),
-            ];
-            if results.is_empty() {
-                out.push("No prices found across the checked stores. Try a more specific product name or search manually on the store websites.".into());
-            } else {
-                for (store, content) in &results {
-                    out.push(format!("#### {}", store));
-                    out.push(content.clone());
-                    out.push(String::new());
-                }
-                out.push("---".into());
-                out.push("**Tip:** The AI does not have real-time API access to these stores. Prices shown are from recent web search results. For live prices, visit the store websites directly.".into());
-                out.push("To set a price in your POS based on this research, use `create_product` or `update_product_price`.".into());
-            }
-            Ok(out.join("\n"))
-        }
-        // ── Bahrain grocery delivery price check ────────────────────────────────
-        "bahrain_market_price_check" => {
-            let product = input
-                .get("product_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let max = input
-                .get("max_results")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(3)
-                .min(5) as usize;
-            let sources = [
-                (
-                    "Talabat / Talabat Mart",
-                    format!("\"{product}\" site:talabat.com bahrain"),
-                ),
-                (
-                    "Lulu Online",
-                    format!("\"{product}\" price luluhypermarket bahrain BHD"),
-                ),
-            ];
-            let mut out = vec![
-                format!("[WEB] **Bahrain Market Check: \"{}\"**", product),
-                String::new(),
-            ];
-            let mut found_any = false;
-            for (label, query) in &sources {
-                match duckduckgo_search(query, max).await {
-                    Ok(r) if !r.contains("No results found") => {
-                        let short: String = r.lines().take(6).collect::<Vec<_>>().join("\n");
-                        out.push(format!("#### {}", label));
-                        out.push(short);
-                        out.push(String::new());
-                        found_any = true;
-                    }
-                    _ => {
-                        out.push(format!("#### {} — no results", label));
-                        out.push(String::new());
-                    }
-                }
-            }
-            if !found_any {
-                out.push("No current listings found on these platforms. The product may not be listed on delivery apps, or the name may need to be more specific.".into());
-            }
-            out.push("---".into());
-            out.push("These are delivery-platform prices which may include markup. Store shelf prices are typically 5-15% lower.".into());
-            Ok(out.join("\n"))
-        }
+
         // ── Free URL reader via Jina.ai Reader (no API key) ───────────────────
         "fetch_url" => {
             let url = input
@@ -5996,4 +5815,118 @@ mod tests {
             assert!(is_mutation_tool(name), "{name} must require confirmation");
         }
     }
+}
+
+/// Answer "what does everyone else charge for this" for ZanAI.
+///
+/// Trusted prices and unconfirmed candidates are printed under separate
+/// headings, never merged and never summed. The model is told plainly which is
+/// which, because a candidate presented as a price is a guess quoted as fact —
+/// and a manager who prices against it moves real money on the strength of a
+/// name that happened to look similar.
+///
+/// Nothing here can change a selling price. These tools are on
+/// `is_external_content_tool`, so the moment one runs, every mutation tool is
+/// stripped from the request; the model could not act on what it reads even if
+/// it wanted to.
+async fn market_price_answer(pool: &SqlitePool, wanted: &str) -> AppResult<String> {
+    // Our own catalogue first. A competitor's price means nothing without the
+    // product it is being compared against.
+    let row = sqlx::query(
+        "SELECT product_id, name FROM products
+          WHERE is_active = 1 AND deleted_at IS NULL AND name LIKE ?
+          ORDER BY LENGTH(name) LIMIT 1",
+    )
+    .bind(format!("%{wanted}%"))
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(row) = row else {
+        return Ok(format!(
+            "'{wanted}' is not in this shop's catalogue, so there is nothing to \
+             compare a market price against. Add the product first, or search \
+             for it by the name it is stored under."
+        ));
+    };
+    let product_id: String = row.get("product_id");
+    let our_name: String = row.get("name");
+
+    let report = crate::price_intelligence::service::search(pool, &product_id).await?;
+    // BHD, not our display currency: these are what Bahrain shops charge.
+    let money = crate::price_intelligence::money::format_bhd;
+
+    let mut out = vec![format!("Market prices for '{our_name}':")];
+
+    if report.trusted.is_empty() {
+        out.push(
+            "No confirmed competitor prices yet. Nothing below has been checked \
+             by a person, so none of it is a price you can rely on."
+                .into(),
+        );
+    } else {
+        for observation in &report.trusted {
+            out.push(format!(
+                "  {} — {}",
+                observation.retailer_name,
+                money(observation.price_minor)
+            ));
+        }
+        if let (Some(low), Some(median), Some(high)) = (
+            report.summary.low_minor,
+            report.summary.median_minor,
+            report.summary.high_minor,
+        ) {
+            out.push(format!(
+                "Across {} retailer(s): low {}, median {}, high {}.",
+                report.summary.retailer_count,
+                money(low),
+                money(median),
+                money(high)
+            ));
+        }
+    }
+
+    if !report.candidates.is_empty() {
+        out.push(String::new());
+        out.push(format!(
+            "{} listing(s) look like this product but nobody has confirmed them. \
+             They are NOT included in the figures above and must not be quoted as \
+             prices — open the product's Market panel to confirm or dismiss each:",
+            report.candidates.len()
+        ));
+        for candidate in report.candidates.iter().take(5) {
+            let cheapest = candidate
+                .offers
+                .iter()
+                .filter(|o| o.in_stock)
+                .map(|o| o.price_minor)
+                .min();
+            out.push(format!(
+                "  [unconfirmed, {}% match] {}{} — {}",
+                candidate.confidence,
+                candidate.name,
+                candidate
+                    .pack_text
+                    .as_deref()
+                    .map(|p| format!(" ({p})"))
+                    .unwrap_or_default(),
+                cheapest.map(money).unwrap_or_else(|| "no price listed".into())
+            ));
+        }
+    }
+
+    for source in &report.unavailable {
+        out.push(format!(
+            "{} could not be read ({}){}.",
+            source.name,
+            source.reason.as_deref().unwrap_or(&source.status),
+            source
+                .fallback_source_id
+                .as_deref()
+                .map(|f| format!(" — its prices may still appear via {f}"))
+                .unwrap_or_default()
+        ));
+    }
+
+    Ok(out.join("\n"))
 }

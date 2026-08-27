@@ -16,7 +16,11 @@ use ulid::Ulid;
 pub struct CustomerRow {
     pub customer_id: String,
     pub branch_id: String,
+    /// What this shop calls them — the name on the receipt.
     pub name: String,
+    /// The name they use on WhatsApp, when it differs. Carried so a cashier who
+    /// remembers only that one can still find them.
+    pub whatsapp_name: Option<String>,
     pub phone: Option<String>,
     pub email: Option<String>,
     pub loyalty_points: i64,
@@ -67,6 +71,7 @@ pub(crate) fn map_row(r: &sqlx::sqlite::SqliteRow) -> CustomerRow {
         customer_id: r.get("customer_id"),
         branch_id: r.get("branch_id"),
         name: r.get("name"),
+        whatsapp_name: r.try_get("whatsapp_name").unwrap_or(None),
         phone: r.get("phone"),
         email: r.get("email"),
         loyalty_points: r.get("loyalty_points"),
@@ -117,7 +122,7 @@ async fn customer_list_inner(
     // what makes paging free of duplicates and gaps.
     let rows = if search.trim().is_empty() {
         sqlx::query(
-            "SELECT customer_id, branch_id, name, phone, email, loyalty_points, created_at, notes
+            "SELECT customer_id, branch_id, name, whatsapp_name, phone, email, loyalty_points, created_at, notes
              FROM customers
              WHERE branch_id = ?
              ORDER BY name, customer_id
@@ -133,7 +138,7 @@ async fn customer_list_inner(
         // page already loaded, so a match on page 40 is still reachable.
         let (pattern, digit_pattern) = customer_search_patterns(search);
         let sql = format!(
-            "SELECT customer_id, branch_id, name, phone, email, loyalty_points, created_at, notes
+            "SELECT customer_id, branch_id, name, whatsapp_name, phone, email, loyalty_points, created_at, notes
              FROM customers
              WHERE branch_id = ?
                AND {}
@@ -143,6 +148,11 @@ async fn customer_list_inner(
         );
         let mut q = sqlx::query(&sql)
             .bind(&branch_id)
+            // One per text placeholder in customer_search_where: name,
+            // whatsapp_name, phone, email. Counted, not guessed — a bind short
+            // here shifts every later value left and the branch filter silently
+            // becomes a LIKE pattern.
+            .bind(&pattern)
             .bind(&pattern)
             .bind(&pattern)
             .bind(&pattern);
@@ -165,6 +175,11 @@ async fn customer_list_inner(
         );
         let mut q = sqlx::query_scalar(&sql)
             .bind(&branch_id)
+            // One per text placeholder in customer_search_where: name,
+            // whatsapp_name, phone, email. Counted, not guessed — a bind short
+            // here shifts every later value left and the branch filter silently
+            // becomes a LIKE pattern.
+            .bind(&pattern)
             .bind(&pattern)
             .bind(&pattern)
             .bind(&pattern);
@@ -270,7 +285,7 @@ pub async fn customer_create(
     })?;
 
     let row = sqlx::query(
-        "SELECT customer_id, branch_id, name, phone, email, loyalty_points, created_at, notes
+        "SELECT customer_id, branch_id, name, whatsapp_name, phone, email, loyalty_points, created_at, notes
          FROM customers WHERE customer_id = ?",
     )
     .bind(&customer_id)
@@ -397,7 +412,7 @@ pub async fn customer_update(
     })?;
 
     let row = sqlx::query(
-        "SELECT customer_id, branch_id, name, phone, email, loyalty_points, created_at, notes
+        "SELECT customer_id, branch_id, name, whatsapp_name, phone, email, loyalty_points, created_at, notes
          FROM customers WHERE customer_id = ?",
     )
     .bind(&input.customer_id)
@@ -451,7 +466,7 @@ pub async fn customer_get(
     // Scoped in the WHERE clause, not checked after fetching: a foreign
     // customer must never be loaded into memory in the first place.
     let row = sqlx::query(
-        "SELECT customer_id, branch_id, name, phone, email, loyalty_points, created_at, notes
+        "SELECT customer_id, branch_id, name, whatsapp_name, phone, email, loyalty_points, created_at, notes
          FROM customers WHERE customer_id = ? AND branch_id = ?",
     )
     .bind(&customer_id)

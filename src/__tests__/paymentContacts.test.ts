@@ -223,3 +223,34 @@ describe("typing a name the way people actually type it", () => {
     expect(find("zzzz")).toEqual([]);
   });
 });
+
+describe("the name a customer was imported under", () => {
+  /* Contact import used to keep only the customer's own WhatsApp name, so a
+     person this shop saved as "Ali Baqala" could be found at the till only by
+     typing "Ali ⚡". Both names now reach the customer record, and both are
+     matched — which matters most when the WhatsApp sidecar is disconnected and
+     the stored row is all the till has. */
+  const saved = (over: Partial<CustomerRow> = {}): CustomerRow => ({
+    customer_id: "c1", branch_id: "br_1", name: "Ali Baqala",
+    whatsapp_name: "Ali ⚡", phone: "33050666", email: null,
+    loyalty_points: 0, created_at: "2026-01-01T00:00:00Z", notes: null, ...over,
+  });
+
+  it("finds a saved customer by their WhatsApp name with no live feed", () => {
+    const rows = mergeContacts([saved()], [], []);
+    expect(rankContacts(rows, "Ali ⚡").map(r => r.name)).toEqual(["Ali Baqala"]);
+    expect(rankContacts(rows, "Baqala").map(r => r.name)).toEqual(["Ali Baqala"]);
+  });
+
+  it("still shows the shop's own spelling", () => {
+    const [row] = mergeContacts([saved()], [], []);
+    expect(row.name).toBe("Ali Baqala");
+    expect(row.altNames).toContain("Ali ⚡");
+  });
+
+  it("does not break a customer who has no WhatsApp name", () => {
+    const rows = mergeContacts([saved({ name: "Walk-in", whatsapp_name: null })], [], []);
+    expect(rankContacts(rows, "Walk-in")).toHaveLength(1);
+    expect(rows[0].altNames).toEqual([]);
+  });
+});

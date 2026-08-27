@@ -112,6 +112,11 @@ export function mergeContacts(
     const row = take(customer.name, localPhone(customer.phone));
     addName(row, row.name);
     row.name = customer.name;
+    /* The name they use on WhatsApp, saved on the customer record at import.
+       Without this a saved customer was findable only by the shop's spelling —
+       the live WhatsApp feed carried both names, but the stored row did not, so
+       whether a search worked depended on the sidecar being connected. */
+    addName(row, customer.whatsapp_name);
     row.customer = customer;
     row.loyaltyPoints = customer.loyalty_points;
     addSource(row, "customer");

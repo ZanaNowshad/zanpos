@@ -29,14 +29,24 @@ const PHONE_DIGITS_SQL: &str = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
 /// question is the only answer that cannot be matched by accident.
 ///
 /// Plain `?` placeholders bound in order, like the rest of this file's callers.
+/// `whatsapp_name` is searched alongside `name`, not instead of it.
+///
+/// A customer imported from WhatsApp has two names — the one this shop saved
+/// them under and the one they chose for themselves — and which of the two a
+/// cashier remembers is a coin toss. `IFNULL` because most customers are
+/// entered at the counter and have no WhatsApp name at all; without it, a NULL
+/// makes the whole comparison NULL and the row stops matching on its real name
+/// too.
 pub fn customer_search_where(has_digits: bool) -> String {
     if has_digits {
         format!(
-            "(name LIKE ? OR phone LIKE ? OR email LIKE ? OR {} LIKE ?)",
+            "(name LIKE ? OR IFNULL(whatsapp_name, '') LIKE ? OR phone LIKE ? \
+             OR email LIKE ? OR {} LIKE ?)",
             PHONE_DIGITS_SQL,
         )
     } else {
-        "(name LIKE ? OR phone LIKE ? OR email LIKE ?)".to_string()
+        "(name LIKE ? OR IFNULL(whatsapp_name, '') LIKE ? OR phone LIKE ? OR email LIKE ?)"
+            .to_string()
     }
 }
 
@@ -72,9 +82,29 @@ mod tests {
 
     #[test]
     fn the_digit_clause_binds_exactly_one_extra_pattern() {
-        // Four placeholders with digits, three without. A mismatch here binds
-        // the branch id into a LIKE and silently drops the branch filter.
-        assert_eq!(customer_search_where(true).matches('?').count(), 4);
-        assert_eq!(customer_search_where(false).matches('?').count(), 3);
+        // Five placeholders with digits, four without: name, whatsapp_name,
+        // phone, email, and the digit-normalised phone. A mismatch here binds
+        // the branch id into a LIKE and silently drops the branch filter, so
+        // the count is asserted rather than trusted.
+        assert_eq!(customer_search_where(true).matches('?').count(), 5);
+        assert_eq!(customer_search_where(false).matches('?').count(), 4);
+    }
+
+    /// A customer with no WhatsApp name must still match on the name they do
+    /// have. Comparing NULL yields NULL, so without IFNULL the whole predicate
+    /// goes NULL and the row stops matching on anything.
+    #[test]
+    fn a_missing_whatsapp_name_does_not_hide_the_customer() {
+        for clause in [customer_search_where(true), customer_search_where(false)] {
+            assert!(clause.contains("IFNULL(whatsapp_name, '')"), "{clause}");
+        }
+    }
+
+    /// Both names are searched, not one instead of the other.
+    #[test]
+    fn both_the_shop_name_and_the_whatsapp_name_are_searched() {
+        let clause = customer_search_where(false);
+        assert!(clause.contains("name LIKE ?"), "{clause}");
+        assert!(clause.contains("whatsapp_name"), "{clause}");
     }
 }

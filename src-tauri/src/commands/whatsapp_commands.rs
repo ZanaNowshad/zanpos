@@ -480,8 +480,41 @@ pub async fn whatsapp_payment_reminder(
 /// One contact entry returned by the sidecar GET /contacts endpoint.
 #[derive(Debug, Deserialize)]
 struct SidecarContact {
-    id: String,   // e.g. "97333050666@s.whatsapp.net"
-    name: String, // push name or address-book name
+    id: String,
+    /// What to show. The sidecar prefers the address-book name — what this shop
+    /// saved the person as — because that is the name a cashier thinks of.
+    name: String,
+    /// The address-book name on its own, when there is one.
+    #[serde(default, rename = "savedName")]
+    saved_name: Option<String>,
+    /// The pushName: what the customer chose for themselves. Kept separately
+    /// because it is frequently nothing like the saved name, and a cashier may
+    /// think of either.
+    #[serde(default, rename = "pushName")]
+    push_name: Option<String>,
+    #[serde(default, rename = "verifiedName")]
+    verified_name: Option<String>,
+}
+
+impl SidecarContact {
+    /// The name to store as the customer's own, preferring what the shop chose.
+    fn display_name(&self) -> &str {
+        self.saved_name
+            .as_deref()
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or(&self.name)
+    }
+
+    /// The other name, stored so either one finds the person. `None` when the
+    /// only name we have is already the display name — there is nothing to add.
+    fn alternate_name(&self) -> Option<&str> {
+        let display = self.display_name();
+        [self.push_name.as_deref(), self.verified_name.as_deref()]
+            .into_iter()
+            .flatten()
+            .map(str::trim)
+            .find(|candidate| !candidate.is_empty() && !candidate.eq_ignore_ascii_case(display))
+    }
 }
 
 /// Result returned to the frontend after a contact import run.
@@ -552,14 +585,33 @@ pub async fn whatsapp_import_contacts(
         let customer_id = Ulid::new().to_string();
         let now = chrono::Utc::now().to_rfc3339();
 
+        // On conflict this used to be a plain IGNORE, so a second import could
+        // never correct anything — every customer brought in before the shop's
+        // own name was being read kept the customer's self-chosen one forever,
+        // with no way to fix it short of editing each record by hand.
+        //
+        // The update is deliberately narrow. It fills `whatsapp_name` and
+        // improves `name` only where the existing value is the WhatsApp name we
+        // are about to file under `whatsapp_name` anyway — so a name somebody
+        // typed at the counter is never overwritten by an address book.
         let rows = sqlx::query(
-            "INSERT OR IGNORE INTO customers \
-             (customer_id, branch_id, name, phone, loyalty_points, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, 0, ?, ?)",
+            "INSERT INTO customers
+                 (customer_id, branch_id, name, whatsapp_name, phone,
+                  loyalty_points, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+             ON CONFLICT(phone) DO UPDATE SET
+                 whatsapp_name = COALESCE(excluded.whatsapp_name, customers.whatsapp_name),
+                 name = CASE
+                     WHEN customers.name = excluded.whatsapp_name THEN excluded.name
+                     ELSE customers.name
+                 END,
+                 updated_at   = excluded.updated_at,
+                 sync_status  = 'pending'",
         )
         .bind(&customer_id)
         .bind(&branch_id)
-        .bind(&contact.name)
+        .bind(contact.display_name())
+        .bind(contact.alternate_name())
         .bind(&phone)
         .bind(&now)
         .bind(&now)

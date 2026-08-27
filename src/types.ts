@@ -722,7 +722,11 @@ export interface ProductBarcodeRow {
 export interface CustomerRow {
   customer_id:    string;
   branch_id:      string;
+  /** What this shop calls them — the name that goes on the receipt. */
   name:           string;
+  /** The name they use on WhatsApp, when it differs from the shop's. Carried
+   *  so a cashier who only remembers that one can still find them. */
+  whatsapp_name?: string | null;
   phone:          string | null;
   email:          string | null;
   loyalty_points: number;

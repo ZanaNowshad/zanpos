@@ -72,6 +72,27 @@ fn sample_argument(field: &str) -> Option<serde_json::Value> {
         "receipt_number" => json!("R-1"),
         "limit" | "days" | "lead_days" | "period_days" | "top_n" | "max_results" => json!(5),
         "threshold_basis_points" | "comparison_years" => json!(1),
+        "event_type" => json!("cash_in"),
+        "amount_bhd" => json!("1.000"),
+        "fix_action" => json!("reset_stuck_sync"),
+        f if f.ends_with("_code") => json!("SMOKE01"),
+        f if f.ends_with("_type") => json!("cash_in"),
+        f if f.ends_with("_action") => json!("reset_stuck_sync"),
+        f if f.ends_with("_bhd") => json!("1.000"),
+        f if f.ends_with("_number") => json!("R-1"),
+        "message" | "text" | "body" | "subject" | "title" => json!("smoke test"),
+        // Allowlisted action verbs; "retry" is valid for the conflict resolver
+        // and harmless for anything else that names its action this way.
+        "action" => json!("retry"),
+        // Structured operands for the engine operations. Shapes taken from the
+        // schemas in tools_catalogue rather than invented, so the operation
+        // reaches its own validation instead of failing to parse.
+        "selector" => json!({ "text": "smoke", "active": true }),
+        "adjustment" => json!({ "mode": "Percent", "value": 10.0 }),
+        // A real, decodable one-row CSV: a placeholder string would fail at the
+        // base64 step and never reach the import's own SQL, which is the part
+        // this sweep exists to exercise.
+        "csv_base64" | "csv" => json!("bmFtZSxjYXRlZ29yeV9pZCxzZWxsaW5nX3ByaWNlX21pbm9yClNtb2tlIFRlc3Qsc21va2UtdGVzdC1pZCwxMDAK"),
         "tab" => json!("products"),
         "url" => json!("https://example.test/"),
         "reason" | "note" | "notes" => json!("smoke test"),
@@ -238,3 +259,6 @@ async fn every_read_tool_including_those_taking_arguments_runs_against_the_schem
         "argument-taking tools are not being reached: {exercised} exercised"
     );
 }
+
+
+mod mutations;

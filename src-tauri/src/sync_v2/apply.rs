@@ -88,6 +88,11 @@ pub const ALLOWED_CONFIG_KEYS: &[&str] = &[
     "storefront_whatsapp_number",
     "sync_interval_hub_secs",
     "sync_interval_terminal_secs",
+    // Where this shop's tills look for updates. Synced deliberately: the
+    // endpoint compiled into a build cannot be changed without reinstalling on
+    // every machine, which is exactly the position a dead `releases.zanpos.app`
+    // left the fleet in. Set once on the hub, every till follows.
+    "update_endpoint",
     "whatsapp_benefit_number",
     "whatsapp_commerce_enabled",
     "whatsapp_group_jid",
@@ -163,7 +168,7 @@ async fn apply_row_inner(
         "categories" => apply_lww(pool, "categories", "category_id", obj, &[]).await,
         "tax_rules" => apply_lww(pool, "tax_rules", "tax_rule_id", obj, &[]).await,
         "products" => apply_lww(pool, "products", "product_id", obj, &[]).await,
-        "product_barcodes" => apply_lww(pool, "product_barcodes", "barcode", obj, &[]).await,
+        "product_barcodes" => apply_product_barcode(pool, obj).await,
         "suppliers" => apply_lww(pool, "suppliers", "supplier_id", obj, &[]).await,
         "purchase_orders" => apply_lww(pool, "purchase_orders", "po_id", obj, &[]).await,
         "purchase_order_lines" => {
@@ -457,6 +462,72 @@ pub(crate) fn syncable_columns(obj: &Map<String, Value>) -> Vec<&String> {
         .collect()
 }
 
+/// What `ON CONFLICT` has to name for this table.
+///
+/// Normally the sync primary key, because the schema enforces its uniqueness
+/// with an ordinary index. `product_barcodes` is the exception: 0058 replaced
+/// `barcode TEXT NOT NULL UNIQUE` with a unique index over live rows only, so a
+/// retired barcode can be scanned onto the right product tomorrow. A partial
+/// index is not usable as an upsert target, and naming `barcode` on its own now
+/// matches no constraint at all — SQLite answers *"ON CONFLICT clause does not
+/// match any PRIMARY KEY or UNIQUE constraint"* and the row fails to apply.
+///
+/// The table's declared primary key, `(product_id, barcode)`, covers live and
+/// tombstoned rows alike. That matters for the case the tombstone exists for: a
+/// deletion arriving from the hub carries a non-null `deleted_at`, so it falls
+/// outside the partial index entirely and could never have conflicted with it.
+fn conflict_target(table: &str, pk: &str) -> String {
+    match table {
+        "product_barcodes" => "product_id, barcode".to_string(),
+        _ => pk.to_string(),
+    }
+}
+
+/// A barcode arriving from the hub, including the case where it has moved.
+///
+/// Before 0058 the column-level `UNIQUE` meant a barcode was one row, so moving
+/// it to another product arrived as an ordinary upsert that rewrote
+/// `product_id`. Under the live-rows-only index it arrives as two rows — a
+/// tombstone on the old product and a live row on the new one — and the hub
+/// serves them in no particular order relative to each other. If the live row
+/// lands first it collides with the local row still holding that barcode, and
+/// the insert is refused.
+///
+/// So the older claim is retired here rather than left to arrive later. Same
+/// outcome the old schema produced by overwriting, reached without depending on
+/// two rows turning up in a helpful order. The retired row is left `pending`
+/// deliberately: if the hub is the one still holding the stale claim, this
+/// terminal's tombstone is what repairs it.
+async fn apply_product_barcode(pool: &SqlitePool, obj: &Map<String, Value>) -> AppResult<()> {
+    let incoming_is_live = matches!(obj.get("deleted_at"), None | Some(Value::Null));
+    if let (true, Some(barcode), Some(product_id)) = (
+        incoming_is_live,
+        obj.get("barcode").and_then(|v| v.as_str()),
+        obj.get("product_id").and_then(|v| v.as_str()),
+    ) {
+        let updated_at = obj
+            .get("updated_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        sqlx::query(
+            "UPDATE product_barcodes
+                SET deleted_at  = COALESCE(NULLIF(TRIM(?), ''), datetime('now')),
+                    updated_at  = COALESCE(NULLIF(TRIM(?), ''), datetime('now')),
+                    sync_status = 'pending'
+              WHERE barcode = ? AND product_id <> ? AND deleted_at IS NULL
+                AND datetime(updated_at) < datetime(?)",
+        )
+        .bind(updated_at)
+        .bind(updated_at)
+        .bind(barcode)
+        .bind(product_id)
+        .bind(updated_at)
+        .execute(pool)
+        .await?;
+    }
+    apply_lww(pool, "product_barcodes", "barcode", obj, &[]).await
+}
+
 pub(crate) async fn apply_lww(
     pool: &SqlitePool,
     table: &str,
@@ -510,18 +581,20 @@ pub(crate) async fn apply_lww(
 
     record_concurrent_edit(pool, table, pk, obj).await;
 
+    let target = conflict_target(table, pk);
+
     let sql = if has_updated_at && !set_with_sync.is_empty() {
         format!(
             "INSERT INTO {} ({}) VALUES ({})
              ON CONFLICT({}) DO UPDATE SET {}
              WHERE datetime({0}.updated_at) < datetime(excluded.updated_at)",
-            table, col_list, val_list, pk, set_with_sync,
+            table, col_list, val_list, target, set_with_sync,
         )
     } else {
         format!(
             "INSERT INTO {} ({}) VALUES ({})
              ON CONFLICT({}) DO UPDATE SET {}",
-            table, col_list, val_list, pk, set_with_sync,
+            table, col_list, val_list, target, set_with_sync,
         )
     };
 
@@ -963,8 +1036,17 @@ fn per_device_bookkeeping(table: &str, col_name: &str) -> bool {
         (
             "users",
             "failed_pin_attempts" | "locked_until" | "last_login_at"
-        ) | ("devices", "next_receipt_seq" | "last_seen_at" | "version")
-            | ("customers", "origin_device_id" | "version")
+        ) | (
+            "devices",
+            "next_receipt_seq"
+                | "last_seen_at"
+                | "last_heartbeat_at"
+                | "observed_ip"
+                | "app_version"
+                | "heartbeat_seq"
+                | "heartbeat_hub_id"
+                | "version"
+        ) | ("customers", "origin_device_id" | "version")
             | (
                 "shifts",
                 "expected_cash_minor"

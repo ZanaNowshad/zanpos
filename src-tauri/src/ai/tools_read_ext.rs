@@ -341,7 +341,7 @@ async fn product_barcodes(pool: &SqlitePool, input: &serde_json::Value) -> AppRe
         .and_then(|v| v.as_str())
         .ok_or_else(|| AppError::Validation("product_id required".into()))?;
     let rows = sqlx::query(
-        "SELECT barcode_id, barcode, created_at FROM product_barcodes WHERE product_id = ? ORDER BY created_at"
+        "SELECT barcode_id, barcode, created_at FROM product_barcodes WHERE product_id = ? AND deleted_at IS NULL ORDER BY created_at"
     ).bind(pid).fetch_all(pool).await?;
     if rows.is_empty() {
         return Ok(format!(

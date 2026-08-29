@@ -2030,7 +2030,7 @@ async fn products_without_barcode(pool: &SqlitePool) -> AppResult<String> {
         "SELECT p.product_id, p.name, p.sku FROM products p
          WHERE p.is_active = 1
            AND (p.sku IS NULL OR p.sku = '')
-           AND NOT EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.product_id = p.product_id)
+           AND NOT EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.product_id = p.product_id AND pb.deleted_at IS NULL)
          ORDER BY p.name LIMIT 100",
     )
     .fetch_all(pool)

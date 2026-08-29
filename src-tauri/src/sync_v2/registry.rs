@@ -86,7 +86,10 @@ pub const TABLES: &[SyncTable] = &[
 
     // ── Catalogue: what the tills sell ───────────────────────────────────────
     t("products", "product_id", Parity::Full, Deletion::SoftDeleteWithActiveFlag),
-    t("product_barcodes", "barcode", Parity::Full, Deletion::Never),
+    // Soft-delete-only, and it was Deletion::Never while three code paths
+    // hard-deleted from it. With no is_active to fall back on, a removed
+    // barcode had no marker at all and the hub handed its copy back.
+    t("product_barcodes", "barcode", Parity::Full, Deletion::SoftDeleteOnly),
     t("product_prices", "price_id", Parity::Full, Deletion::Never),
     t("product_cost_history", "cost_history_id", Parity::Full, Deletion::Never),
 

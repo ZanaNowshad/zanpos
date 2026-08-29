@@ -227,7 +227,7 @@ fn product_view_predicate(view: &str) -> Option<&'static str> {
         // Not scannable at the till — the cashier has to search by name.
         "no_barcode" => Some(
             "(p.barcode IS NULL OR TRIM(p.barcode) = '')
-             AND NOT EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.product_id = p.product_id)",
+             AND NOT EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.product_id = p.product_id AND pb.deleted_at IS NULL)",
         ),
         "no_image" => Some("(p.image_path IS NULL OR TRIM(p.image_path) = '')"),
         _ => None,
@@ -262,7 +262,7 @@ pub async fn admin_list_products(
                 "(p.name LIKE '%' || ? || '%' \
                   OR p.sku LIKE '%' || ? || '%' \
                   OR p.barcode LIKE '%' || ? || '%' \
-                  OR EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.product_id = p.product_id AND pb.barcode LIKE '%' || ? || '%'))",
+                  OR EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.product_id = p.product_id AND pb.deleted_at IS NULL AND pb.barcode LIKE '%' || ? || '%'))",
             );
             bind_search = Some(trimmed.to_string());
         }
@@ -1656,7 +1656,7 @@ pub async fn admin_bulk_import_products(
         for bc in &all_barcodes {
             let already_exists: bool = sqlx::query_scalar::<_, i64>(
                 "SELECT EXISTS(
-                    SELECT 1 FROM product_barcodes WHERE barcode = ?
+                    SELECT 1 FROM product_barcodes WHERE barcode = ? AND deleted_at IS NULL
                     UNION ALL
                     SELECT 1 FROM products WHERE barcode = ? AND is_active = 1
                 )",
@@ -1733,12 +1733,13 @@ pub async fn admin_bulk_import_products(
             let bc_id = format!("BC-{}", Ulid::new());
             if let Err(e) = sqlx::query(
                 "INSERT INTO product_barcodes
-                   (barcode_id, product_id, barcode, created_at)
-                 VALUES (?,?,?,?)",
+                   (barcode_id, product_id, barcode, created_at, updated_at)
+                 VALUES (?,?,?,?,?)",
             )
             .bind(&bc_id)
             .bind(&product_id)
             .bind(bc)
+            .bind(&now)
             .bind(&now)
             .execute(&mut *tx)
             .await
@@ -2045,12 +2046,13 @@ pub async fn product_barcode_add(
     let now = chrono::Utc::now().to_rfc3339();
 
     sqlx::query(
-        "INSERT INTO product_barcodes (barcode_id, product_id, barcode, created_at)
-         VALUES (?, ?, ?, ?)",
+        "INSERT INTO product_barcodes (barcode_id, product_id, barcode, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?)",
     )
     .bind(&barcode_id)
     .bind(&product_id)
     .bind(&barcode)
+    .bind(&now)
     .bind(&now)
     .execute(&state.db)
     .await
@@ -2108,16 +2110,16 @@ pub async fn product_barcode_remove(
 
     // Fetch the barcode record before deleting so we can audit it
     let record =
-        sqlx::query("SELECT product_id, barcode FROM product_barcodes WHERE barcode_id = ?")
+        sqlx::query("SELECT product_id, barcode FROM product_barcodes WHERE barcode_id = ? AND deleted_at IS NULL")
             .bind(&barcode_id)
             .fetch_optional(&state.db)
             .await?;
 
-    let affected = sqlx::query("DELETE FROM product_barcodes WHERE barcode_id = ?")
-        .bind(&barcode_id)
-        .execute(&state.db)
-        .await?
-        .rows_affected();
+    // Soft delete. `product_barcodes` carries no is_active, so the tombstone is
+    // the only marker a deletion has, and it has to sync or the barcode keeps
+    // scanning on every other terminal.
+    let affected =
+        crate::db::repositories::product_repo::soft_delete_barcode(&state.db, &barcode_id).await?;
 
     if affected == 0 {
         return Err(AppError::NotFound(format!(
@@ -2166,7 +2168,7 @@ pub async fn product_barcodes_list(
     rbac::require_any_role(&state.db, &actor_user_id).await?;
     let rows = sqlx::query(
         "SELECT barcode_id, product_id, barcode, created_at
-         FROM product_barcodes WHERE product_id = ? ORDER BY created_at",
+         FROM product_barcodes WHERE product_id = ? AND deleted_at IS NULL ORDER BY created_at",
     )
     .bind(&product_id)
     .fetch_all(&state.db)

@@ -378,3 +378,99 @@ async fn a_full_sweep_covers_every_parity_checked_table() {
 
     handle.shutdown();
 }
+
+/// The reported symptom, end to end over the wire.
+///
+/// A terminal showed 28,054 products, 28,119 prices and **0 barcodes**, and
+/// Resync All never changed the number. `force_full_resync` clears every
+/// watermark, so the terminal was asking from epoch and still getting nothing —
+/// which rules out the terminal and points at what the hub is willing to serve.
+///
+/// `product_barcodes.updated_at` was added as `NOT NULL DEFAULT ''` and no
+/// insert path set it. The hub serves rows with
+/// `strftime(updated_at) > strftime(:watermark)`; `strftime('')` is NULL and
+/// `NULL > x` is not true, so those rows could never be served to anybody. This
+/// walks all three states against a real hub: a healthy barcode arrives, a
+/// blank-timestamp one does not, and the backfill in 0059 makes it arrive.
+#[tokio::test]
+async fn a_barcode_with_a_blank_timestamp_is_unreachable_until_it_is_backfilled() {
+    let (hub_pool, _term_pool, client, handle) = wire_up().await;
+
+    add_category(&hub_pool, "cat_bc", "Grocery").await;
+    sqlx::query(
+        "INSERT INTO products (product_id, category_id, name, is_active, created_at, updated_at)
+         VALUES ('prd_bc','cat_bc','Rice 5kg',1,'2026-08-01T00:00:00Z','2026-08-01T00:00:00Z')",
+    )
+    .execute(&hub_pool)
+    .await
+    .unwrap();
+
+    // One healthy, one exactly as the old insert paths left it.
+    sqlx::query(
+        "INSERT INTO product_barcodes (barcode_id, product_id, barcode, created_at, updated_at)
+         VALUES ('bc_ok','prd_bc','6291000000001',
+                 '2026-08-01T00:00:00Z','2026-08-01T00:00:00Z')",
+    )
+    .execute(&hub_pool)
+    .await
+    .unwrap();
+    // Written blank on purpose. Omitting the column no longer produces one —
+    // 0058 rebuilt the table with a default that is an actual timestamp, so the
+    // shape of this bug can no longer be created by forgetting. The rows already
+    // on every terminal predate that, which is what 0059 is for, and what this
+    // test still has to be able to reproduce.
+    sqlx::query(
+        "INSERT INTO product_barcodes (barcode_id, product_id, barcode, created_at, updated_at)
+         VALUES ('bc_blank','prd_bc','6291000000002','2026-08-01T00:00:00Z','')",
+    )
+    .execute(&hub_pool)
+    .await
+    .unwrap();
+
+    // What a terminal asks for after force_full_resync clears its watermarks.
+    let served = |c: HttpSyncClient| async move {
+        let rows = c
+            .pull_rows(
+                "product_barcodes",
+                "1970-01-01T00:00:00Z",
+                None,
+                500,
+                0,
+                Some("barcode"),
+            )
+            .await
+            .unwrap();
+        rows.iter()
+            .filter_map(|r| r.get("barcode").and_then(|v| v.as_str()).map(str::to_string))
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        served(client.clone()).await,
+        vec!["6291000000001".to_string()],
+        "the blank-timestamp barcode was expected to be unreachable"
+    );
+
+    // Migration 0059, applied to the side that holds the rows.
+    sqlx::query(
+        "UPDATE product_barcodes
+            SET updated_at = COALESCE(NULLIF(TRIM(updated_at), ''),
+                                      NULLIF(TRIM(created_at), ''),
+                                      datetime('now')),
+                sync_status = 'pending'
+          WHERE TRIM(COALESCE(updated_at, '')) = ''",
+    )
+    .execute(&hub_pool)
+    .await
+    .unwrap();
+
+    let mut after = served(client).await;
+    after.sort();
+    assert_eq!(
+        after,
+        vec!["6291000000001".to_string(), "6291000000002".to_string()],
+        "the backfilled barcode still did not reach the wire"
+    );
+
+    handle.shutdown();
+}

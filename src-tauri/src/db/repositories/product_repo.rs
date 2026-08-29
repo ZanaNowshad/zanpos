@@ -215,7 +215,7 @@ pub async fn get_product_by_barcode(
     barcode: &str,
 ) -> AppResult<Option<ProductWithPrice>> {
     let sql = format!(
-        "{} AND (p.barcode = ? OR p.product_id IN (SELECT product_id FROM product_barcodes WHERE barcode = ?)) LIMIT 1",
+        "{} AND (p.barcode = ? OR p.product_id IN (SELECT product_id FROM product_barcodes WHERE barcode = ? AND deleted_at IS NULL)) LIMIT 1",
         PRODUCT_QUERY
     );
     let row = sqlx::query(&sql)
@@ -378,4 +378,49 @@ mod fts_tests {
         let hits = search_products_indexed(&pool, "lmarai", 10).await.unwrap();
         assert_eq!(hits.len(), 1);
     }
+}
+
+/// Retire a barcode so the removal reaches every other terminal.
+///
+/// `product_barcodes` has no `is_active` to fall back on, so the tombstone is
+/// the only marker a deletion has — and three code paths used to hard-`DELETE`,
+/// which left nothing to push and let the hub hand its copy back on the next
+/// pull. The barcode came back, and the table reported divergent until it did.
+pub async fn soft_delete_barcode(pool: &SqlitePool, barcode_id: &str) -> AppResult<u64> {
+    let now = chrono::Utc::now().to_rfc3339();
+    Ok(sqlx::query(
+        "UPDATE product_barcodes
+            SET deleted_at = ?, updated_at = ?, sync_status = 'pending'
+          WHERE barcode_id = ? AND deleted_at IS NULL",
+    )
+    .bind(&now)
+    .bind(&now)
+    .bind(barcode_id)
+    .execute(pool)
+    .await?
+    .rows_affected())
+}
+
+/// Retire every barcode belonging to a product, for when the product itself goes.
+///
+/// Same tombstone, different handle. Deleting a product without this leaves its
+/// codes scanning on every other till until that terminal happens to pull the
+/// product row — and on a till that scans faster than it syncs, that is a
+/// customer standing at the counter with an item the screen says does not exist.
+pub async fn soft_delete_barcodes_for_product(
+    pool: &SqlitePool,
+    product_id: &str,
+) -> AppResult<u64> {
+    let now = chrono::Utc::now().to_rfc3339();
+    Ok(sqlx::query(
+        "UPDATE product_barcodes
+            SET deleted_at = ?, updated_at = ?, sync_status = 'pending'
+          WHERE product_id = ? AND deleted_at IS NULL",
+    )
+    .bind(&now)
+    .bind(&now)
+    .bind(product_id)
+    .execute(pool)
+    .await?
+    .rows_affected())
 }

@@ -123,13 +123,22 @@ fn every_primary_key_agrees_with_the_one_sync_uses() {
     }
 }
 
-/// These two have no `is_active` to fall back on, so their deletions live or
+/// These three have no `is_active` to fall back on, so their deletions live or
 /// die by the tombstone. That is why `deleted_at` must stay out of both skip
 /// lists: dropped from the wire the deletion never travels, and dropped from the
 /// fingerprint nothing can see that the terminals disagree.
+///
+/// `product_barcodes` joined the list when 0058 gave it a `deleted_at`. It had
+/// been `Deletion::Never` while three code paths hard-`DELETE`d from it, which
+/// is the combination that let a removed barcode come straight back from the
+/// hub — no marker to push, so nothing to distinguish "deleted here" from
+/// "never seen here".
 #[test]
 fn the_tables_that_depend_entirely_on_the_tombstone_are_known() {
-    assert_eq!(tombstone_only(), vec!["customers", "shifts"]);
+    assert_eq!(
+        tombstone_only(),
+        vec!["product_barcodes", "customers", "shifts"]
+    );
 
     for table in tombstone_only() {
         assert!(
@@ -281,6 +290,114 @@ fn push_and_pull_cover_every_registered_table() {
         assert!(
             crate::sync_v2::worker::PULL_ORDER.contains(table),
             "{table} is never pulled"
+        );
+    }
+}
+
+/// A timestamp the hub cannot compare is a row the hub cannot serve.
+///
+/// The hub selects rows to send with
+/// `strftime('%Y-%m-%dT%H:%M:%f', updated_at) > strftime(..., :watermark)`.
+/// `strftime` of an empty string is NULL, and `NULL > anything` is NULL, which
+/// is not true. So a row whose `updated_at` is `''` is not served late — it is
+/// never served, to any terminal, and no amount of resetting watermarks helps,
+/// because resetting a watermark does not change a predicate that cannot match.
+///
+/// Two migrations added the column as `NOT NULL DEFAULT ''`: 0004 for `roles`
+/// and 0028 for `product_barcodes`. Neither backfilled new writes, and no insert
+/// path set the column, so `product_barcodes` accumulated tens of thousands of
+/// rows that could not cross the wire while the table reported as diverging with
+/// no explanation of why. 0058 rebuilt the table with a real default and 0059
+/// backfilled both.
+///
+/// This checks the property rather than the two migrations: any synced table
+/// that ships a row with a blank timestamp fails here, at the point the seed is
+/// written, rather than after a shop spends a week wondering where its barcodes
+/// went.
+#[tokio::test]
+async fn no_synced_row_carries_a_timestamp_the_hub_cannot_compare() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+    let mut unservable = Vec::new();
+    let mut blank_defaults = Vec::new();
+
+    for table in TABLES {
+        let has_updated_at: bool = sqlx::query_scalar(&format!(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('{}') WHERE name = 'updated_at')",
+            table.name
+        ))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        if !has_updated_at {
+            continue;
+        }
+
+        let blank_rows: i64 = sqlx::query_scalar(&format!(
+            "SELECT COUNT(*) FROM {} WHERE TRIM(COALESCE(updated_at, '')) = ''",
+            table.name
+        ))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        if blank_rows > 0 {
+            unservable.push(format!("{} ({blank_rows} rows)", table.name));
+        }
+
+        let default: Option<String> = sqlx::query_scalar(&format!(
+            "SELECT dflt_value FROM pragma_table_info('{}') WHERE name = 'updated_at'",
+            table.name
+        ))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        if default.as_deref() == Some("''") {
+            blank_defaults.push(table.name);
+        }
+    }
+
+    assert!(
+        unservable.is_empty(),
+        "these rows ship with a timestamp the hub cannot compare, so they can never \
+         be pulled by any terminal: {unservable:?}"
+    );
+
+    // `roles` keeps the empty default from 0004 because changing it needs a table
+    // rebuild and `users.role_id` references it. That is safe only because the
+    // three rows are seeded once in 0001 and nothing inserts a role at runtime —
+    // 0059 gives those three deterministic timestamps, identical on every
+    // terminal. Add a runtime insert path and the assertion above starts failing,
+    // which is the intended order of events.
+    assert_eq!(
+        blank_defaults,
+        vec!["roles"],
+        "a table gained a blank updated_at default; a row written without setting \
+         the column explicitly will never reach another terminal"
+    );
+}
+
+#[test]
+fn hub_owned_heartbeat_evidence_never_enters_generic_device_replication() {
+    for column in [
+        "last_heartbeat_at",
+        "last_seen_at",
+        "observed_ip",
+        "app_version",
+        "heartbeat_seq",
+        "heartbeat_hub_id",
+    ] {
+        assert!(
+            crate::sync_v2::apply::skip_on_wire("devices", column),
+            "{column} could be forged or made stale by a generic device push"
+        );
+        assert!(
+            crate::sync_v2::apply::skip_in_fingerprint("devices", column),
+            "hub-local liveness evidence must not create permanent parity drift"
         );
     }
 }

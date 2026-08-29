@@ -433,8 +433,17 @@ pub async fn execute(
             let barcode = req(input, "barcode")?;
             let id = ulid::Ulid::new().to_string();
             let now = chrono::Utc::now().to_rfc3339();
-            sqlx::query("INSERT INTO product_barcodes (barcode_id, product_id, barcode, created_at) VALUES (?,?,?,?)")
-                .bind(&id).bind(&product_id).bind(&barcode).bind(&now).execute(pool).await?;
+            // updated_at, not just created_at: the hub's pull predicate runs
+            // strftime() on it, and strftime('') is NULL, so a row left with the
+            // column's empty default can never be served to any terminal.
+            sqlx::query(
+                "INSERT INTO product_barcodes
+                   (barcode_id, product_id, barcode, created_at, updated_at)
+                 VALUES (?,?,?,?,?)",
+            )
+                .bind(&id).bind(&product_id).bind(&barcode).bind(&now)
+            .bind(&now)
+            .execute(pool).await?;
             audit_ext(
                 pool,
                 "barcode_added",
@@ -451,10 +460,7 @@ pub async fn execute(
 
         "remove_product_barcode" => {
             let barcode_id = req(input, "barcode_id")?;
-            sqlx::query("DELETE FROM product_barcodes WHERE barcode_id=?")
-                .bind(&barcode_id)
-                .execute(pool)
-                .await?;
+            crate::db::repositories::product_repo::soft_delete_barcode(pool, &barcode_id).await?;
             ok_mut(
                 &format!("Barcode {barcode_id} removed."),
                 "product_barcode",

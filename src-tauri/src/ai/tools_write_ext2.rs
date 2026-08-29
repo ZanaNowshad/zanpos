@@ -463,9 +463,9 @@ pub async fn execute(
                 )));
             }
             let name = product_name(pool, &id).await;
-            sqlx::query("DELETE FROM product_barcodes WHERE product_id = ?")
-                .bind(&id)
-                .execute(pool)
+            // Tombstoned, not removed: the product's barcodes have to stop
+            // resolving on every other till too, and only a tombstone travels.
+            crate::db::repositories::product_repo::soft_delete_barcodes_for_product(pool, &id)
                 .await?;
             sqlx::query("DELETE FROM products WHERE product_id = ?")
                 .bind(&id)
@@ -1226,12 +1226,18 @@ pub async fn execute(
                     .bind(&id)
                     .fetch_one(pool)
                     .await?;
-            sqlx::query("INSERT INTO product_barcodes (barcode_id, product_id, barcode, created_at) VALUES (?, ?, ?, ?)")
+            // See tools_write_ext: an empty updated_at makes the row unservable.
+            sqlx::query(
+                "INSERT INTO product_barcodes
+                   (barcode_id, product_id, barcode, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?)",
+            )
                 .bind(ulid::Ulid::new().to_string())
                 .bind(&product_id)
                 .bind(&barcode)
                 .bind(&now)
-                .execute(pool).await?;
+            .bind(&now)
+            .execute(pool).await?;
             audit2(
                 pool,
                 "ghost_barcode_resolved",
@@ -1419,7 +1425,7 @@ pub async fn execute(
                         "SELECT COUNT(*) FROM (
                              SELECT product_id FROM products WHERE barcode = ?
                              UNION ALL
-                             SELECT product_id FROM product_barcodes WHERE barcode = ?
+                             SELECT product_id FROM product_barcodes WHERE barcode = ? AND deleted_at IS NULL
                          )",
                     )
                     .bind(&barcode)
@@ -1567,7 +1573,7 @@ pub async fn execute(
                         "SELECT COUNT(*) FROM (
                              SELECT product_id FROM products WHERE barcode = ?
                              UNION ALL
-                             SELECT product_id FROM product_barcodes WHERE barcode = ?
+                             SELECT product_id FROM product_barcodes WHERE barcode = ? AND deleted_at IS NULL
                          )",
                     )
                     .bind(&barcode)

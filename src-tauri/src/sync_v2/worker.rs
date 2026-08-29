@@ -59,6 +59,9 @@ fn ts_after(candidate: &str, current: &str) -> bool {
 
 /// Terminal→hub cycle default. LAN traffic is free; 10 s gives near-real-time stock.
 const DEFAULT_INTERVAL_SECS: u64 = 10;
+/// Heartbeats are independent of data-sync backoff. Even a table-level failure
+/// must not make a reachable terminal disappear from the hub roster.
+const HEARTBEAT_INTERVAL_SECS: u64 = 30;
 /// Hub housekeeping cadence default (mark-synced + daily-prune check).
 const DEFAULT_HUB_INTERVAL_SECS: u64 = 300;
 /// Rows per hub REST call during pull. At 28k products this reduces
@@ -185,8 +188,12 @@ pub(crate) fn pending_push_sql(table: &str) -> String {
 
 #[derive(Default)]
 pub struct SyncState {
+    /// Terminal mode: set only by the explicit heartbeat lifecycle. Data-sync
+    /// configuration or an empty queue is not connectivity evidence.
     pub online: bool,
     pub last_error: Option<String>,
+    pub last_heartbeat_at: Option<String>,
+    pub last_heartbeat_error: Option<String>,
     /// Consecutive sync cycles that ended in error. Resets on success.
     /// Used for adaptive backoff: 3+ → 2× interval, 6+ → 5× interval.
     pub consecutive_failures: u32,
@@ -214,9 +221,72 @@ impl SyncWorker {
         &self.pool
     }
 
+    /// Reserve the next durable sequence before sending. Gaps are harmless;
+    /// moving backwards after a restart or a lost response is not.
+    async fn next_heartbeat_sequence(&self) -> AppResult<u64> {
+        let mut tx = self.pool.begin().await?;
+        let stored: Option<String> =
+            sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'heartbeat_seq'")
+                .fetch_optional(&mut *tx)
+                .await?;
+        let current = stored.as_deref().unwrap_or("0").parse::<u64>().unwrap_or(0);
+        let next = current
+            .checked_add(1)
+            .ok_or_else(|| AppError::Internal("heartbeat sequence exhausted".into()))?;
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO app_config (key, value, updated_at)
+             VALUES ('heartbeat_seq', ?, ?)
+             ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value, updated_at = excluded.updated_at",
+        )
+        .bind(next.to_string())
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(next)
+    }
+
     /// Spawn background loop with supervisor restart on panic.
     /// Uses adaptive backoff: 3+ consecutive failures → 2× interval, 6+ → 5× interval.
     pub fn spawn(worker: Arc<Self>) {
+        let heartbeat_worker = worker.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                let device_id = heartbeat_worker.active_device_id().await.ok();
+                let client = heartbeat_worker.load_client().await;
+                let (Some(device_id), Some(client)) = (device_id, client) else {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    continue;
+                };
+
+                let result = match heartbeat_worker.next_heartbeat_sequence().await {
+                    Ok(sequence) => client.heartbeat(sequence, env!("CARGO_PKG_VERSION")).await,
+                    Err(error) => Err(error),
+                };
+                let mut state = heartbeat_worker.state.lock().await;
+                match result {
+                    Ok(()) => {
+                        state.online = true;
+                        state.last_heartbeat_at = Some(chrono::Utc::now().to_rfc3339());
+                        if state.last_error == state.last_heartbeat_error {
+                            state.last_error = None;
+                        }
+                        state.last_heartbeat_error = None;
+                    }
+                    Err(error) => {
+                        tracing::warn!("Terminal heartbeat failed for {device_id}: {error}");
+                        state.online = false;
+                        state.last_heartbeat_error = Some(error.to_string());
+                        state.last_error = Some(error.to_string());
+                    }
+                }
+                drop(state);
+                tokio::time::sleep(Duration::from_secs(HEARTBEAT_INTERVAL_SECS)).await;
+            }
+        });
+
         let live_worker = worker.clone();
         tauri::async_runtime::spawn(async move {
             loop {
@@ -353,7 +423,6 @@ impl SyncWorker {
             .ok_or_else(|| AppError::Validation("Hub connection is not configured".into()))?;
         let result = self.pull_changes(&client, &device_id).await;
         let mut state = self.state.lock().await;
-        state.online = result.is_ok();
         state.last_error = result.as_ref().err().map(ToString::to_string);
         if result.is_ok() {
             state.consecutive_failures = 0;
@@ -395,7 +464,6 @@ impl SyncWorker {
         let pull_result = self.pull_changes(&client, &device_id).await;
 
         let mut state = self.state.lock().await;
-        state.online = true;
         match (&push_result, &pull_result) {
             (Ok(_), Ok(_)) => {
                 state.last_error = None;
@@ -509,11 +577,11 @@ impl SyncWorker {
         let push_result = self.push_pending(&client).await;
         let pull_result = self.pull_changes(&client, &device_id).await;
 
-        // Update online status — individual table errors don't mean we're offline.
-        // Only mark offline if we have no hub client at all.
+        // Sync health and connection health are separate. `online` is owned by
+        // the heartbeat loop; an empty push queue or a configured URL is not
+        // evidence that this terminal can currently reach the hub.
         {
             let mut state = self.state.lock().await;
-            state.online = true;
             match (&push_result, &pull_result) {
                 (Ok(_), Ok(_)) => {
                     state.last_error = None;
@@ -1422,6 +1490,28 @@ mod tests {
         finish_pull, next_pull_offset, parse_ts, pending_push_sql, pull_since, ts_after,
         PULL_LOOKBACK_SECS, PULL_ORDER, PUSH_ORDER,
     };
+
+    #[tokio::test]
+    async fn heartbeat_sequence_is_monotonic_and_survives_worker_restart() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE app_config (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let first_worker = super::SyncWorker::new(pool.clone());
+        assert_eq!(first_worker.next_heartbeat_sequence().await.unwrap(), 1);
+        assert_eq!(first_worker.next_heartbeat_sequence().await.unwrap(), 2);
+
+        let restarted_worker = super::SyncWorker::new(pool);
+        assert_eq!(restarted_worker.next_heartbeat_sequence().await.unwrap(), 3);
+    }
 
     #[test]
     fn pending_push_query_keeps_retrying_high_attempt_rows() {

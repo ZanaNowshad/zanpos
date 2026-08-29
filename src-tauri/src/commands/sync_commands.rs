@@ -91,6 +91,10 @@ async fn count_pending(pool: &sqlx::SqlitePool) -> AppResult<i64> {
 
 // ── sync_status ───────────────────────────────────────────────────────────────
 
+fn reported_online(is_hub: bool, worker_online: bool, _configured: bool) -> bool {
+    is_hub || worker_online
+}
+
 #[tauri::command]
 pub async fn sync_status(
     actor_user_id: String,
@@ -100,6 +104,8 @@ pub async fn sync_status(
     let worker_state = state.sync_worker.state.lock().await;
     let worker_online = worker_state.online;
     let last_error = worker_state.last_error.clone();
+    let last_heartbeat_at = worker_state.last_heartbeat_at.clone();
+    let last_heartbeat_error = worker_state.last_heartbeat_error.clone();
     drop(worker_state);
 
     let device_id = active_device_id(&state).await?;
@@ -121,7 +127,7 @@ pub async fn sync_status(
     let configured = is_hub
         || (hub_url.is_some()
             && crate::secure_store::get_secret("hub_store_token").is_some_and(|k| !k.is_empty()));
-    let online = is_hub || worker_online || configured;
+    let online = reported_online(is_hub, worker_online, configured);
 
     // Read last successful sync from watermark table
     let last_sync: Option<String> = crate::db::repositories::sync_repo::watermark_or_never(
@@ -146,6 +152,8 @@ pub async fn sync_status(
         "last_successful_sync_at": last_sync,
         "days_since_last_sync": null,
         "last_error": last_error,
+        "last_heartbeat_at": last_heartbeat_at,
+        "last_heartbeat_error": last_heartbeat_error,
         "device_id": device_id,
         "consecutive_failure_count": consecutive_failure_count,
     }))
@@ -461,7 +469,7 @@ pub async fn setup_pull_catalog(state: State<'_, AppState>) -> Result<PullSummar
         .fetch_one(&state.db)
         .await
         .unwrap_or(0);
-    let product_barcodes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM product_barcodes")
+    let product_barcodes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM product_barcodes WHERE deleted_at IS NULL")
         .fetch_one(&state.db)
         .await
         .unwrap_or(0);
@@ -1359,6 +1367,13 @@ pub async fn sync_stock_drift_reconcile(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_terminal_is_not_online_without_connectivity_evidence() {
+        assert!(!reported_online(false, false, true));
+        assert!(reported_online(false, true, true));
+        assert!(reported_online(true, false, true));
+    }
 
     #[test]
     fn setup_pull_is_allowed_for_completed_joined_terminal() {

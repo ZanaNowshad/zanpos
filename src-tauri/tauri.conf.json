@@ -31,6 +31,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "resources": {
       "sidecar/whatsapp-sidecar/node.exe": "sidecar/whatsapp-sidecar/node.exe",
       "sidecar/whatsapp-sidecar/server.mjs": "sidecar/whatsapp-sidecar/server.mjs",
@@ -63,9 +64,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJCODBBQTMxRTZBNDhBQTUKUldTbGlxVG1NYXFBSytDckQrZ2RKNDRUem9WeFRRM2F1cDBxdlFZMG9HKzNwS2R0clRFSW5vNVEK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI4RDRDNTg0QjA5MEM0QTAKUldTZ3hKQ3doTVhVS0F2WURieWFyL2NzSEtNL1c0bFhRa0FaTjVPNnZrNVVZN2gyclNsRHdIa2gK",
       "endpoints": [
-        "https://releases.zanpos.app/{{target}}/{{arch}}/{{current_version}}"
+        "https://pub-bad474f3b672436f89e67af4f4455a88.r2.dev/latest.json"
       ]
     }
   }

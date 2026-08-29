@@ -1,17 +1,15 @@
 use super::HubState;
-use crate::sync_v2::apply::{
-    self, pk_for_table, skip_on_wire, value_from_row_column, ALLOWED_CONFIG_KEYS, SYNC_TABLES,
-};
-use axum::extract::{ConnectInfo, Path, Query, State};
+use crate::sync_v2::apply::{skip_on_wire, value_from_row_column};
+use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use futures::stream;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::{Column, Row};
-use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -19,8 +17,13 @@ use std::time::Duration;
 pub fn router(state: HubState) -> Router {
     Router::new()
         .route("/rest/v1/", get(probe_ok))
-        .route("/rest/v1/{table}", get(pull_table).post(push_table))
+        .route(
+            "/rest/v1/{table}",
+            get(super::rest_tables::pull_table).post(super::rest_tables::push_table),
+        )
         .route("/zanpos/info", get(info))
+        .route("/zanpos/heartbeat", axum::routing::post(heartbeat))
+        .route("/zanpos/terminals", get(terminals))
         .route("/zanpos/health", get(health))
         .route("/zanpos/consistency", get(consistency))
         .route("/zanpos/parity", get(super::rest_parity::parity))
@@ -85,7 +88,7 @@ fn digests_eq(a: &[u8], b: &[u8]) -> bool {
 pub(super) fn check_auth(
     state: &HubState,
     headers: &HeaderMap,
-    addr: &SocketAddr,
+    _addr: &SocketAddr,
 ) -> Result<(), Response> {
     let presented = headers
         .get("authorization")
@@ -143,15 +146,147 @@ pub(super) fn check_auth(
         });
         return Err((StatusCode::UNAUTHORIZED, "invalid store token").into_response());
     }
-    if let Some(dev) = headers.get("x-zanpos-device").and_then(|v| v.to_str().ok()) {
-        if !dev.is_empty() {
-            let now = chrono::Utc::now().to_rfc3339();
-            if let Ok(mut m) = state.seen.lock() {
-                m.insert(dev.to_string(), (addr.ip().to_string(), now));
-            }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct HeartbeatRequest {
+    sequence: u64,
+    app_version: String,
+}
+
+/// Persist one authenticated terminal heartbeat using hub time and the address
+/// observed by the hub. A sequence must move strictly forward, so a delayed or
+/// replayed request cannot make stale metadata look fresh.
+async fn heartbeat(
+    State(state): State<HubState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(body): Json<HeartbeatRequest>,
+) -> Response {
+    if let Err(response) = check_auth(&state, &headers, &addr) {
+        return response;
+    }
+    let Some(device_id) = headers
+        .get("x-zanpos-device")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return (StatusCode::BAD_REQUEST, "device identity is required").into_response();
+    };
+    let Ok(sequence) = i64::try_from(body.sequence) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "heartbeat sequence is out of range",
+        )
+            .into_response();
+    };
+    if sequence <= 0 {
+        return (
+            StatusCode::BAD_REQUEST,
+            "heartbeat sequence must be positive",
+        )
+            .into_response();
+    }
+    let app_version = body.app_version.trim();
+    if app_version.is_empty() || app_version.len() > 64 {
+        return (StatusCode::BAD_REQUEST, "invalid app version").into_response();
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let observed_ip = addr.ip().to_string();
+    let hub_id: String = sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'device_id'")
+        .fetch_optional(&state.pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(error) => {
+            tracing::warn!("Hub heartbeat transaction failed: {error}");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let updated = match sqlx::query(
+        "UPDATE devices
+            SET last_heartbeat_at = ?, last_seen_at = ?, observed_ip = ?, app_version = ?,
+                heartbeat_seq = ?, heartbeat_hub_id = ?
+          WHERE device_id = ? AND is_active = 1 AND deleted_at IS NULL
+            AND heartbeat_seq < ?",
+    )
+    .bind(&now)
+    .bind(&now)
+    .bind(&observed_ip)
+    .bind(app_version)
+    .bind(sequence)
+    .bind(&hub_id)
+    .bind(device_id)
+    .bind(sequence)
+    .execute(&mut *tx)
+    .await
+    {
+        Ok(result) => result.rows_affected() == 1,
+        Err(error) => {
+            tracing::warn!("Hub heartbeat persistence failed for {device_id}: {error}");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
+    if !updated {
+        let registered: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM devices
+              WHERE device_id = ? AND is_active = 1 AND deleted_at IS NULL)",
+        )
+        .bind(device_id)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap_or(false);
+        if !registered {
+            return (StatusCode::NOT_FOUND, "device is not registered").into_response();
+        }
+    } else if let Err(error) = sqlx::query(
+        "UPDATE hub_paired_devices SET last_seen_at = ?
+          WHERE device_id = ? AND revoked_at IS NULL",
+    )
+    .bind(&now)
+    .bind(device_id)
+    .execute(&mut *tx)
+    .await
+    {
+        tracing::warn!("Hub pairing heartbeat persistence failed for {device_id}: {error}");
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+
+    if let Err(error) = tx.commit().await {
+        tracing::warn!("Hub heartbeat commit failed for {device_id}: {error}");
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    if updated {
+        if let Ok(mut seen) = state.seen.lock() {
+            seen.insert(device_id.to_string(), (observed_ip, now));
         }
     }
-    Ok(())
+    StatusCode::NO_CONTENT.into_response()
+}
+
+async fn terminals(
+    State(state): State<HubState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(response) = check_auth(&state, &headers, &addr) {
+        return response;
+    }
+    match crate::commands::device_state::roster(&state.pool).await {
+        Ok(rows) => Json(rows).into_response(),
+        Err(error) => {
+            tracing::warn!("Hub terminal roster failed: {error}");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
 }
 
 async fn probe_ok(
@@ -254,137 +389,6 @@ pub(super) fn row_to_json(table: &str, row: &sqlx::sqlite::SqliteRow) -> Value {
     Value::Object(map)
 }
 
-async fn pull_table(
-    State(state): State<HubState>,
-    Path(table): Path<String>,
-    Query(q): Query<HashMap<String, String>>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-) -> Response {
-    if let Err(r) = check_auth(&state, &headers, &addr) {
-        return r;
-    }
-    if !SYNC_TABLES.contains(&table.as_str()) {
-        return (StatusCode::NOT_FOUND, "unknown table").into_response();
-    }
-    let pk = pk_for_table(&table);
-    let limit: i64 = q
-        .get("limit")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(500)
-        .clamp(1, 1000);
-    let offset: i64 = q
-        .get("offset")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0)
-        .max(0);
-    let since = q
-        .get("updated_at")
-        .and_then(|v| v.strip_prefix("gt."))
-        .map(str::to_string);
-    let neq_dev = q
-        .get("origin_device_id")
-        .and_then(|v| v.strip_prefix("neq."))
-        .map(str::to_string);
-    let active_only = q
-        .get("is_active")
-        .map(|v| v == "eq.true" || v == "eq.1")
-        .unwrap_or(false);
-
-    let mut sql = format!("SELECT * FROM {table} WHERE 1=1");
-    if since.is_some() {
-        // Millisecond precision on both sides. datetime() truncates to whole
-        // seconds, so every row written in the same second as the watermark
-        // compared equal and was skipped by `>` — permanently, since the
-        // watermark only moves forward. strftime also normalises the two
-        // timestamp formats in use ("2026-01-01 10:00:00" from the importer and
-        // RFC3339 from everything else), which a raw text compare does not.
-        sql.push_str(
-            " AND strftime('%Y-%m-%dT%H:%M:%f', updated_at) \
-              > strftime('%Y-%m-%dT%H:%M:%f', ?)",
-        );
-    }
-    if neq_dev.is_some() {
-        sql.push_str(" AND origin_device_id <> ?");
-    }
-    if active_only {
-        sql.push_str(" AND is_active = 1");
-    }
-    if table == "app_config" {
-        let list = ALLOWED_CONFIG_KEYS
-            .iter()
-            .map(|k| format!("'{k}'"))
-            .collect::<Vec<_>>()
-            .join(",");
-        sql.push_str(&format!(" AND key IN ({list})"));
-    }
-    sql.push_str(&format!(
-        " ORDER BY datetime(updated_at) ASC, {pk} ASC LIMIT ? OFFSET ?"
-    ));
-
-    let mut query = sqlx::query(&sql);
-    if let Some(s) = &since {
-        query = query.bind(s);
-    }
-    if let Some(d) = &neq_dev {
-        query = query.bind(d);
-    }
-    query = query.bind(limit).bind(offset);
-
-    match query.fetch_all(&state.pool).await {
-        Ok(rows) => {
-            let body: Vec<Value> = rows.iter().map(|row| row_to_json(&table, row)).collect();
-            Json(body).into_response()
-        }
-        Err(e) => {
-            tracing::warn!("Hub pull {table} failed: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response()
-        }
-    }
-}
-
-async fn push_table(
-    State(state): State<HubState>,
-    Path(table): Path<String>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    headers: HeaderMap,
-    Json(rows): Json<Vec<Value>>,
-) -> Response {
-    if let Err(r) = check_auth(&state, &headers, &addr) {
-        return r;
-    }
-    if !SYNC_TABLES.contains(&table.as_str()) {
-        return (StatusCode::NOT_FOUND, "unknown table").into_response();
-    }
-    let origin_device_id = headers
-        .get("x-zanpos-device")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("unknown")
-        .to_string();
-    for row in &rows {
-        if let Err(e) = apply::apply_row(&state.pool, &table, row).await {
-            tracing::warn!("Hub apply {table} failed: {e}");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("apply failed: {e}"),
-            )
-                .into_response();
-        }
-    }
-    if !rows.is_empty() {
-        state.events.publish(&table, &origin_device_id);
-    }
-    StatusCode::CREATED.into_response()
-}
-
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn param_prefix_parsing() {
-        assert_eq!(
-            "gt.2026-01-01T00:00:00Z".strip_prefix("gt."),
-            Some("2026-01-01T00:00:00Z")
-        );
-        assert_eq!("neq.DEV1".strip_prefix("neq."), Some("DEV1"));
-    }
-}
+#[path = "rest_tests.rs"]
+mod tests;

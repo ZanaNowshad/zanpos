@@ -1,5 +1,6 @@
 pub mod apply;
 pub mod client;
+mod client_parity;
 pub mod consistency;
 pub mod dead_letter;
 pub mod inbox;
@@ -7,6 +8,8 @@ pub mod parity;
 pub mod reconcile;
 pub mod registry;
 pub mod repair;
+#[cfg(test)]
+mod barcode_tests;
 #[cfg(test)]
 mod tombstone_tests;
 pub mod worker;

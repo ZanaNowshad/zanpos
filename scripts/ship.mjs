@@ -16,11 +16,32 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, sep } from "node:path";
+import { loadDotEnv } from "./dotenv.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+// Before anything spawns: the release build only signs if the signing key and
+// its password are in the environment it inherits, and an unsigned build is one
+// every till correctly refuses.
+loadDotEnv(ROOT);
+
+// The bundler documents TAURI_SIGNING_PRIVATE_KEY as "path or content". Rather
+// than depend on which, resolve a path to its content here — the value the
+// bundler receives is then unambiguous. This costs nothing and removes a
+// failure that only surfaces at the very end of an hour-long build, having
+// produced a perfectly good installer with no signature beside it.
+if (
+  process.env.TAURI_SIGNING_PRIVATE_KEY &&
+  existsSync(process.env.TAURI_SIGNING_PRIVATE_KEY)
+) {
+  process.env.TAURI_SIGNING_PRIVATE_KEY = readFileSync(
+    process.env.TAURI_SIGNING_PRIVATE_KEY,
+    "utf8",
+  ).trim();
+}
+
 const ALLOWLIST_PATH = join(ROOT, "scripts", "oversized-files-allowlist.json");
 const MAX_LINES = 500;
 
@@ -166,6 +187,33 @@ step(`File size rule (max ${MAX_LINES} lines)`);
   if (!fresh.length) pass("no new oversized files");
 }
 
+step("Test modules are cfg-gated");
+{
+  // `#[cfg(test)]` applies to the item immediately after it, so inserting a new
+  // `mod foo_tests;` above an existing one silently ungates the one below. That
+  // compiles — `#[test]` is always a valid attribute — so nothing complains,
+  // and the release binary quietly gains test code and its fixture strings.
+  // The JS side already guards the equivalent leak in devMockIsolation.test.ts;
+  // this is the Rust half.
+  const offenders = [];
+  for (const file of walk(join(ROOT, "src-tauri", "src"), [".rs"])) {
+    const lines = readFileSync(file, "utf8").split("\n");
+    lines.forEach((line, i) => {
+      if (!/^\s*mod\s+\w*tests?\s*;/.test(line)) return;
+      // Look back past attributes such as #[path = "…"] to the nearest
+      // non-attribute line: the gate does not have to be adjacent.
+      let j = i - 1;
+      while (j >= 0 && /^\s*#\[/.test(lines[j])) {
+        if (/cfg\(test\)/.test(lines[j])) return;
+        j--;
+      }
+      offenders.push(`${relative(ROOT, file).split(sep).join("/")}:${i + 1}`);
+    });
+  }
+  for (const o of offenders) fail(`${o} declares a test module without #[cfg(test)] — it would compile into the release binary`);
+  if (!offenders.length) pass("every test module is gated out of release builds");
+}
+
 step("Worker copies in sync");
 {
   // storefront/worker/index.ts is the readable source; worker_embedded.js is what
@@ -191,6 +239,35 @@ step("Worker copies in sync");
 }
 
 if (!SKIP_BUILD) {
+  step("Updater signing works");
+  {
+    // Proven by signing a throwaway file, not by checking that a variable is
+    // non-empty. The bundler signs at the very END of the release build, so a
+    // misconfigured key fails 56 minutes in — which is exactly how long it took
+    // to discover that the bundler reads TAURI_SIGNING_PRIVATE_KEY while the
+    // `signer` CLI reads TAURI_SIGNING_PRIVATE_KEY_PATH. Setting only the latter
+    // builds perfectly and silently produces no signature.
+    //
+    // Two seconds here, and the failure names itself.
+    const probe = join(ROOT, "src-tauri", "target", "_signing-probe.txt");
+    if (!process.env.TAURI_SIGNING_PRIVATE_KEY) {
+      fail("TAURI_SIGNING_PRIVATE_KEY is not set — the build would emit no .sig");
+      report();
+      process.exit(1);
+    }
+    writeFileSync(probe, "signing probe\n");
+    const signed = run(`npx tauri signer sign "${probe}" < ${sep === "\\" ? "NUL" : "/dev/null"}`, ROOT);
+    const sigPath = `${probe}.sig`;
+    const ok = signed && existsSync(sigPath) && readFileSync(sigPath, "utf8").trim().length > 0;
+    for (const f of [probe, sigPath]) if (existsSync(f)) rmSync(f);
+    if (!ok) {
+      fail("the signing key did not produce a signature — fix this before building");
+      report();
+      process.exit(1);
+    }
+    pass("key signs; the release build will emit a .sig");
+  }
+
   gate(
     "Release build (the one that catches release-only crashes)",
     "npm run tauri build",

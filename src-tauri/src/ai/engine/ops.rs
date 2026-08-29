@@ -439,7 +439,7 @@ impl Operation for ProductCreate {
                 .filter(|s| !s.is_empty())
             {
                 let dup: bool = sqlx::query_scalar(
-                    "SELECT EXISTS(SELECT 1 FROM products WHERE barcode=? UNION SELECT 1 FROM product_barcodes WHERE barcode=?)",
+                    "SELECT EXISTS(SELECT 1 FROM products WHERE barcode=? UNION SELECT 1 FROM product_barcodes WHERE barcode=? AND deleted_at IS NULL)",
                 )
                 .bind(bc)
                 .bind(bc)

@@ -27,8 +27,11 @@ src-tauri/sidecar/**/.npm-cache/
 qa/layout/
 qa/parity/
 qa-artifacts/
-zanpos.key
-zanpos.key.pub
+# Matched by shape, not by name — a key generated as `zanpos-updater-2026.key`
+# fell through the old exact-name rule and was staged for commit.
+*.key
+*.key.pub
+*.pem
 
 # Playwright run state — regenerated on every run.
 storefront/test-results/

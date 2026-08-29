@@ -16,7 +16,8 @@
     "coverage": "vitest run --coverage",
     "check": "npm run type-check && npm run lint && npm run test",
     "ship": "node scripts/ship.mjs",
-    "test:e2e:tauri": "wdio run tests/e2e-tauri/wdio.conf.ts"
+    "test:e2e:tauri": "wdio run tests/e2e-tauri/wdio.conf.ts",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.5.7",

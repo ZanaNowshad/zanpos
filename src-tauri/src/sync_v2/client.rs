@@ -14,7 +14,10 @@ pub const TRANSIENT_TAG: &str = "[TRANSIENT]";
 pub struct HttpSyncClient {
     pub base_url: String,
     pub key: String,
-    http: reqwest::Client,
+    /// `pub(super)` rather than private so the diagnostic methods in
+    /// `client_parity` share this exact client — one connection pool, one set of
+    /// auth headers. A second client would be a second thing to keep in step.
+    pub(super) http: reqwest::Client,
 }
 
 impl HttpSyncClient {
@@ -35,6 +38,77 @@ impl HttpSyncClient {
             base_url: url.trim_end_matches('/').to_string(),
             key: key.to_string(),
             http,
+        }
+    }
+
+    /// Tell the hub this authenticated terminal is alive. The hub supplies the
+    /// timestamp and observed address; the terminal supplies only a durable,
+    /// monotonic sequence and its bounded application version.
+    pub async fn heartbeat(&self, sequence: u64, app_version: &str) -> AppResult<()> {
+        let response = self
+            .http
+            .post(format!("{}/zanpos/heartbeat", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.key))
+            .json(&serde_json::json!({
+                "sequence": sequence,
+                "app_version": app_version,
+            }))
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::Internal(format!("{TRANSIENT_TAG} Hub heartbeat error: {error}"))
+            })?;
+
+        match response.status() {
+            status if status.is_success() => Ok(()),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(AppError::Validation(
+                "Hub rejected this terminal's credentials; pair it again".into(),
+            )),
+            StatusCode::NOT_FOUND => Err(AppError::Validation(
+                "This terminal is not registered on the hub; register or pair it again".into(),
+            )),
+            status if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS => {
+                let body = response.text().await.unwrap_or_default();
+                Err(AppError::Internal(format!(
+                    "{TRANSIENT_TAG} Hub heartbeat failed ({status}): {body}"
+                )))
+            }
+            status => {
+                let body = response.text().await.unwrap_or_default();
+                Err(AppError::Internal(format!(
+                    "Hub heartbeat failed ({status}): {body}"
+                )))
+            }
+        }
+    }
+
+    /// Read liveness from its authority instead of a replicated device row.
+    pub async fn terminal_roster(
+        &self,
+    ) -> AppResult<Vec<crate::commands::device_state::TerminalRow>> {
+        let response = self
+            .http
+            .get(format!("{}/zanpos/terminals", self.base_url))
+            .header("Authorization", format!("Bearer {}", self.key))
+            .send()
+            .await
+            .map_err(|error| {
+                AppError::Internal(format!("{TRANSIENT_TAG} Hub roster error: {error}"))
+            })?;
+        match response.status() {
+            status if status.is_success() => response
+                .json()
+                .await
+                .map_err(|error| AppError::Internal(format!("Hub roster parse error: {error}"))),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(AppError::Validation(
+                "Hub rejected this terminal's credentials; pair it again".into(),
+            )),
+            status => {
+                let body = response.text().await.unwrap_or_default();
+                Err(AppError::Internal(format!(
+                    "Hub roster failed ({status}): {body}"
+                )))
+            }
         }
     }
 
@@ -244,152 +318,6 @@ impl HttpSyncClient {
                 Err(AppError::Validation("Wrong store token".into()))
             }
             s => Err(AppError::Internal(format!("Hub returned {s}"))),
-        }
-    }
-
-    /// GET {base}/zanpos/health — authenticated hub-wide health report.
-    pub async fn hub_health(
-        &self,
-    ) -> AppResult<crate::commands::system_health_commands::SystemHealthReport> {
-        let resp = self
-            .http
-            .get(format!("{}/zanpos/health", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.key))
-            .send()
-            .await
-            .map_err(|e| AppError::Internal(format!("{TRANSIENT_TAG} Hub health error: {e}")))?;
-        match resp.status() {
-            s if s.is_success() => resp
-                .json::<crate::commands::system_health_commands::SystemHealthReport>()
-                .await
-                .map_err(|e| AppError::Internal(format!("Hub health parse error: {e}"))),
-            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN => {
-                Err(AppError::Validation("Wrong store token".into()))
-            }
-            s => {
-                let body = resp.text().await.unwrap_or_default();
-                Err(AppError::Internal(format!(
-                    "Hub health returned {s}: {body}"
-                )))
-            }
-        }
-    }
-
-    /// GET {base}/zanpos/parity — bucket digests, or the rows inside one bucket.
-    ///
-    /// `Ok(None)` when the hub does not know the route. A shop upgrades its
-    /// terminals one at a time, so a newer terminal meeting an older hub is the
-    /// normal case, and it should report "the hub cannot answer this yet"
-    /// rather than an error that reads like a sync failure.
-    pub async fn hub_parity(
-        &self,
-        table: &str,
-        buckets: u32,
-        bucket: Option<u32>,
-    ) -> AppResult<Option<serde_json::Value>> {
-        let mut url = format!(
-            "{}/zanpos/parity?table={table}&buckets={buckets}",
-            self.base_url
-        );
-        if let Some(bucket) = bucket {
-            url.push_str(&format!("&bucket={bucket}"));
-        }
-        let resp = self
-            .http
-            .get(url)
-            .header("Authorization", format!("Bearer {}", self.key))
-            .send()
-            .await
-            .map_err(|e| AppError::Internal(format!("{TRANSIENT_TAG} Hub parity error: {e}")))?;
-        match resp.status() {
-            s if s.is_success() => resp
-                .json::<serde_json::Value>()
-                .await
-                .map(Some)
-                .map_err(|e| AppError::Internal(format!("Hub parity parse error: {e}"))),
-            reqwest::StatusCode::NOT_FOUND => Ok(None),
-            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN => {
-                Err(AppError::Validation("Wrong store token".into()))
-            }
-            s => Err(AppError::Internal(format!("Hub parity failed: {s}"))),
-        }
-    }
-
-    /// POST {base}/zanpos/parity/rows — the rows behind specific primary keys.
-    ///
-    /// The repair fetch: given the keys parity found missing, ask for exactly
-    /// those and nothing else. `Ok(None)` means an older hub that has no such
-    /// route, which is a reason to stop rather than an error to report.
-    pub async fn hub_parity_rows(
-        &self,
-        table: &str,
-        pks: &[String],
-    ) -> AppResult<Option<Vec<Value>>> {
-        if pks.is_empty() {
-            return Ok(Some(Vec::new()));
-        }
-        let resp = self
-            .http
-            .post(format!("{}/zanpos/parity/rows", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.key))
-            .json(&serde_json::json!({ "table": table, "pks": pks }))
-            .send()
-            .await
-            .map_err(|e| {
-                AppError::Internal(format!("{TRANSIENT_TAG} Hub parity rows error: {e}"))
-            })?;
-        match resp.status() {
-            s if s.is_success() => {
-                let body: Value = resp.json().await.map_err(|e| {
-                    AppError::Internal(format!("Hub parity rows parse error: {e}"))
-                })?;
-                Ok(Some(
-                    body.get("rows")
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .unwrap_or_default(),
-                ))
-            }
-            reqwest::StatusCode::NOT_FOUND => Ok(None),
-            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN => {
-                Err(AppError::Validation("Wrong store token".into()))
-            }
-            s => {
-                let body = resp.text().await.unwrap_or_default();
-                Err(AppError::Internal(format!(
-                    "Hub parity rows failed ({s}): {body}"
-                )))
-            }
-        }
-    }
-
-    /// GET {base}/zanpos/consistency — authenticated hub table counts/checksums.
-    pub async fn hub_consistency(
-        &self,
-    ) -> AppResult<crate::sync_v2::consistency::ConsistencySnapshot> {
-        let resp = self
-            .http
-            .get(format!("{}/zanpos/consistency", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.key))
-            .send()
-            .await
-            .map_err(|e| {
-                AppError::Internal(format!("{TRANSIENT_TAG} Hub consistency error: {e}"))
-            })?;
-        match resp.status() {
-            s if s.is_success() => resp
-                .json::<crate::sync_v2::consistency::ConsistencySnapshot>()
-                .await
-                .map_err(|e| AppError::Internal(format!("Hub consistency parse error: {e}"))),
-            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN => {
-                Err(AppError::Validation("Wrong store token".into()))
-            }
-            s => {
-                let body = resp.text().await.unwrap_or_default();
-                Err(AppError::Internal(format!(
-                    "Hub consistency returned {s}: {body}"
-                )))
-            }
         }
     }
 

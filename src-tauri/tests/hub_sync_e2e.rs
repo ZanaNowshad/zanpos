@@ -126,3 +126,99 @@ async fn terminal_and_hub_converge_bidirectionally() {
 
     handle.shutdown();
 }
+
+async fn category_state(pool: &SqlitePool) -> Vec<(String, String, i64, Option<String>)> {
+    sqlx::query_as(
+        "SELECT category_id, name, is_active, deleted_at
+           FROM categories WHERE category_id LIKE 'MULTI-%' ORDER BY category_id",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn two_offline_terminals_converge_through_the_hub_after_create_update_delete_and_replay() {
+    let hub_pool = fresh_db("multi-hub").await;
+    let terminal_a = fresh_db("multi-a").await;
+    let terminal_b = fresh_db("multi-b").await;
+    let token = "test-token-multi-terminal-012345";
+    let handle = hub::start_hub(hub_pool.clone(), 0, token).await.unwrap();
+    let url = format!("http://127.0.0.1:{}", handle.port);
+    let client_a = HttpSyncClient::new(&url, token, Some("MULTI-DEVICE-A"));
+    let client_b = HttpSyncClient::new(&url, token, Some("MULTI-DEVICE-B"));
+    let worker_a = SyncWorker::new(terminal_a.clone());
+    let worker_b = SyncWorker::new(terminal_b.clone());
+
+    // Both tills keep operating while disconnected and create independent rows.
+    sqlx::query(
+        "INSERT INTO categories
+            (category_id, name, is_active, created_at, updated_at, sync_status)
+         VALUES ('MULTI-A', 'From A', 1, '2026-08-01T09:00:00Z',
+                 '2026-08-01T09:00:00Z', 'pending')",
+    )
+    .execute(&terminal_a)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO categories
+            (category_id, name, is_active, created_at, updated_at, sync_status)
+         VALUES ('MULTI-B', 'From B', 1, '2026-08-01T09:01:00Z',
+                 '2026-08-01T09:01:00Z', 'pending')",
+    )
+    .execute(&terminal_b)
+    .await
+    .unwrap();
+
+    worker_a.run_once_with(&client_a, "MULTI-DEVICE-A").await;
+    worker_b.run_once_with(&client_b, "MULTI-DEVICE-B").await;
+    worker_a.run_once_with(&client_a, "MULTI-DEVICE-A").await;
+    worker_b.run_once_with(&client_b, "MULTI-DEVICE-B").await;
+
+    let created = category_state(&hub_pool).await;
+    assert_eq!(category_state(&terminal_a).await, created);
+    assert_eq!(category_state(&terminal_b).await, created);
+    assert_eq!(created.len(), 2);
+
+    // B edits A's row; A later deletes B's row. Both mutations must cross in
+    // opposite directions and settle to the same business state.
+    sqlx::query(
+        "UPDATE categories SET name = 'A renamed by B',
+                updated_at = '2026-08-01T10:00:00Z', sync_status = 'pending'
+          WHERE category_id = 'MULTI-A'",
+    )
+    .execute(&terminal_b)
+    .await
+    .unwrap();
+    worker_b.run_once_with(&client_b, "MULTI-DEVICE-B").await;
+    worker_a.run_once_with(&client_a, "MULTI-DEVICE-A").await;
+
+    sqlx::query(
+        "UPDATE categories SET is_active = 0,
+                deleted_at = '2026-08-01T11:00:00Z',
+                updated_at = '2026-08-01T11:00:00Z', sync_status = 'pending'
+          WHERE category_id = 'MULTI-B'",
+    )
+    .execute(&terminal_a)
+    .await
+    .unwrap();
+    worker_a.run_once_with(&client_a, "MULTI-DEVICE-A").await;
+    worker_b.run_once_with(&client_b, "MULTI-DEVICE-B").await;
+
+    // Replay both cycles: idempotency means neither rows nor tombstones multiply.
+    worker_a.run_once_with(&client_a, "MULTI-DEVICE-A").await;
+    worker_b.run_once_with(&client_b, "MULTI-DEVICE-B").await;
+
+    let authoritative = category_state(&hub_pool).await;
+    assert_eq!(category_state(&terminal_a).await, authoritative);
+    assert_eq!(category_state(&terminal_b).await, authoritative);
+    assert_eq!(authoritative.len(), 2);
+    assert_eq!(authoritative[0].1, "A renamed by B");
+    assert_eq!(authoritative[1].2, 0);
+    assert_eq!(
+        authoritative[1].3.as_deref(),
+        Some("2026-08-01T11:00:00Z")
+    );
+
+    handle.shutdown();
+}

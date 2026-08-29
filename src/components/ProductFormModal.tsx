@@ -16,6 +16,7 @@ import {
   Field, ModalActions, ModalColumn, ModalColumns, ModalError, ModalSection, ModalToggle,
 } from "./modal/ModalParts";
 import { ProductBarcodesSection, ProductImageSection } from "./ProductFormSections";
+import MarketPricePanel from "./MarketPricePanel";
 
 interface Props {
   mode: "create" | "edit";
@@ -328,6 +329,24 @@ export default function ProductFormModal({
           )}
         </Field>
       </ModalSection>
+
+      {/* Only once the product exists: the panel is keyed on a product_id, and
+          there is nothing to compare a half-typed name against. Placed directly
+          under Pricing because that is the box it fills — it sets the field, not
+          the price. Saving still goes through the ordinary path with its RBAC,
+          confirmation and audit trail. */}
+      {mode === "edit" && product && (
+        <ModalSection
+          title="Market"
+          hint="What other shops charge. Nothing here changes your price until you save."
+        >
+          <MarketPricePanel
+            productId={product.product_id}
+            sessionUserId={sessionUserId}
+            onUsePrice={minor => setPrice(formatMoney(minor, exp))}
+          />
+        </ModalSection>
+      )}
 
       <ModalSection title="Stock" columns={2}>
         <ModalToggle

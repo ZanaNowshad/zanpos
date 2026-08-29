@@ -112,3 +112,89 @@ pub fn seconds_since(last_heartbeat_at: Option<&str>, now: chrono::DateTime<chro
 
 #[cfg(test)]
 mod tests;
+
+/// One terminal, as an operator needs to see it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalRow {
+    pub device_id: String,
+    pub branch_id: String,
+    pub device_code: String,
+    pub name: String,
+    /// Derived every time it is read. There is deliberately no stored status
+    /// column behind this — `devices.status` was one, nobody updated it, and
+    /// terminals that had never once contacted the hub displayed as "online".
+    pub state: String,
+    /// What to do about it. Carried with the row so the UI cannot invent its own
+    /// wording for a state whose meaning is defined here.
+    pub advice: String,
+    pub seconds_since_seen: Option<i64>,
+    pub last_heartbeat_at: Option<String>,
+    pub observed_ip: Option<String>,
+    pub app_version: Option<String>,
+    pub heartbeat_hub_id: Option<String>,
+    pub is_paired: bool,
+    pub is_active: bool,
+}
+
+/// Every registered terminal with its state worked out from evidence.
+///
+/// Shared by the Command Center and the ZanAI roster tool so the two cannot
+/// disagree about whether a till is online — which, given the reason this
+/// derivation exists, would be its own small version of the original bug.
+pub async fn roster(pool: &sqlx::SqlitePool) -> crate::errors::AppResult<Vec<TerminalRow>> {
+    use sqlx::Row;
+
+    // Which record this installation has claimed. Binding is a separate fact
+    // from heartbeats: a terminal can be correctly bound and never have reached
+    // the hub, and conflating the two sends somebody to re-register a device
+    // that is already registered.
+    let own_device: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_config WHERE key='device_id'")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+
+    let rows = sqlx::query(
+        "SELECT d.device_id, d.branch_id, d.device_code, d.name, d.is_active,
+                d.last_heartbeat_at, d.observed_ip, d.app_version, d.heartbeat_seq,
+                d.heartbeat_hub_id,
+                EXISTS(SELECT 1 FROM hub_paired_devices p
+                        WHERE p.device_id = d.device_id AND p.revoked_at IS NULL)
+                    AS has_live_pairing
+           FROM devices d WHERE d.deleted_at IS NULL
+          ORDER BY is_active DESC, datetime(COALESCE(last_heartbeat_at,'')) DESC",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let now = chrono::Utc::now();
+    Ok(rows
+        .iter()
+        .map(|row| {
+            let beat: Option<String> = row.get("last_heartbeat_at");
+            let age = seconds_since(beat.as_deref(), now);
+            let device_id: String = row.get("device_id");
+            let paired = own_device.as_deref() == Some(device_id.as_str())
+                || row.get::<i64, _>("has_live_pairing") == 1
+                || row.get::<i64, _>("heartbeat_seq") > 0
+                || beat.is_some();
+            let state = device_state(paired, age);
+            TerminalRow {
+                device_id,
+                branch_id: row.get("branch_id"),
+                device_code: row.get("device_code"),
+                name: row.get("name"),
+                state: state.as_str().to_string(),
+                advice: state.advice().to_string(),
+                seconds_since_seen: age,
+                last_heartbeat_at: beat,
+                observed_ip: row.get("observed_ip"),
+                app_version: row.get("app_version"),
+                heartbeat_hub_id: row.get("heartbeat_hub_id"),
+                is_paired: paired,
+                is_active: row.get::<i64, _>("is_active") == 1,
+            }
+        })
+        .collect())
+}

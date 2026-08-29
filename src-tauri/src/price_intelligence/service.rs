@@ -44,6 +44,23 @@ pub struct MarketPriceReport {
     /// Sources that could not be consulted and why, so a thin result reads as
     /// "we could not look" rather than "nobody else sells this".
     pub unavailable: Vec<SourceStatus>,
+    /// Whether this product is on the refresh watchlist. Carried in the report
+    /// so the panel's toggle shows the state that exists rather than the one it
+    /// last set — a checkbox that reads back false on every reopen would have
+    /// people re-adding a product that was already tracked.
+    pub tracked: bool,
+}
+
+/// Is this product on the refresh watchlist right now.
+pub async fn is_tracked(pool: &SqlitePool, product_id: &str) -> AppResult<bool> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT EXISTS(SELECT 1 FROM price_watchlist
+                        WHERE product_id = ? AND deleted_at IS NULL)",
+    )
+    .bind(product_id)
+    .fetch_one(pool)
+    .await?
+        == 1)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -112,7 +129,7 @@ async fn product_facts(pool: &SqlitePool, product_id: &str) -> AppResult<Product
     .ok_or_else(|| AppError::NotFound(format!("Product {product_id} not found")))?;
 
     let barcodes: Vec<String> =
-        sqlx::query_scalar("SELECT barcode FROM product_barcodes WHERE product_id = ?")
+        sqlx::query_scalar("SELECT barcode FROM product_barcodes WHERE product_id = ? AND deleted_at IS NULL")
             .bind(product_id)
             .fetch_all(pool)
             .await
@@ -236,6 +253,7 @@ pub async fn search(pool: &SqlitePool, product_id: &str) -> AppResult<MarketPric
         summary: observe::market_summary(pool, product_id).await?,
         candidates,
         unavailable,
+        tracked: is_tracked(pool, product_id).await?,
     })
 }
 
@@ -330,6 +348,7 @@ pub async fn confirm_match(
         summary: observe::market_summary(pool, product_id).await?,
         candidates: Vec::new(),
         unavailable: Vec::new(),
+        tracked: is_tracked(pool, product_id).await?,
     })
 }
 
@@ -345,6 +364,7 @@ pub async fn cached_report(pool: &SqlitePool, product_id: &str) -> AppResult<Mar
         summary: observe::market_summary(pool, product_id).await?,
         candidates: Vec::new(),
         unavailable: Vec::new(),
+        tracked: is_tracked(pool, product_id).await?,
     })
 }
 

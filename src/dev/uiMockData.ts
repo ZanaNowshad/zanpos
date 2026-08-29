@@ -282,3 +282,54 @@ export const HEALTH_REPORT = {
   ],
   tables: [],
 };
+
+/**
+ * The Market panel's fixture.
+ *
+ * Deliberately holds one confirmed match and one unconfirmed candidate at once.
+ * The whole point of the panel is that the second kind is visible and does not
+ * count toward the figures, and a fixture with only trusted rows makes that
+ * state unreachable in visual QA — which is where a badge-instead-of-separation
+ * regression would be caught.
+ *
+ * The unreachable source is here for the same reason: a thin result has to read
+ * as "we could not look", never as "nobody else sells this".
+ */
+export const MARKET_REPORT = {
+  product_id: "prd_mock_1",
+  product_name: "Almarai Fresh Milk 1L",
+  trusted: [
+    {
+      match_id: "mtc_1", retailer_name: "Lulu Hypermarket", price_minor: 620,
+      in_stock: true, source_url: "https://example.invalid/lulu/milk",
+      observed_at: new Date(Date.now() - 2 * 86_400_000).toISOString(),
+    },
+    {
+      match_id: "mtc_2", retailer_name: "Al Helli", price_minor: 675,
+      in_stock: true, source_url: "https://example.invalid/alhelli/milk",
+      observed_at: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+    },
+  ],
+  summary: {
+    low_minor: 620, median_minor: 620, high_minor: 675, retailer_count: 2,
+    observed_at: new Date(Date.now() - 2 * 86_400_000).toISOString(),
+  },
+  candidates: [
+    {
+      source_id: "src_akelny", source_product_key: "akelny-milk-1l",
+      name: "Almarai Milk Full Fat", pack_text: "1 L",
+      url: "https://example.invalid/akelny/milk", confidence: 78,
+      offers: [
+        { retailer: "Ramez", price_minor: 590, in_stock: true, url: null },
+      ],
+    },
+  ],
+  unavailable: [
+    {
+      source_id: "src_talabat", name: "Talabat Mart", status: "unsupported",
+      reason: "This source needs a login we do not have",
+      fallback_source_id: null,
+    },
+  ],
+  tracked: false,
+};

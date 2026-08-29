@@ -153,6 +153,10 @@ export interface SyncStatus {
   /** Days elapsed since last successful sync. null if never synced. */
   days_since_last_sync: number | null;
   last_error: string | null;
+  /** Last heartbeat accepted by the hub, independent of table-sync success. */
+  last_heartbeat_at?: string | null;
+  /** Most recent heartbeat failure; cleared only by an accepted heartbeat. */
+  last_heartbeat_error?: string | null;
   device_id: string;
   /** Count of consecutive sync cycles ending in error. Resets on success. */
   consecutive_failure_count?: number;

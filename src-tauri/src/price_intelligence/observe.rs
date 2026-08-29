@@ -22,6 +22,12 @@ use ulid::Ulid;
 /// One retailer's price as recorded at a point in time.
 #[derive(Debug, Clone, Serialize)]
 pub struct Observation {
+    /// The pairing this price came from, so a confirmation made in error can be
+    /// withdrawn from the same panel that shows its consequence. Without it
+    /// `market_price_reject_match` has no handle reachable from the UI, and a
+    /// listing confirmed onto the wrong product keeps feeding the median with no
+    /// way back.
+    pub match_id: String,
     pub retailer_name: String,
     pub price_minor: i64,
     pub in_stock: bool,
@@ -81,7 +87,7 @@ pub async fn latest_trusted_prices(
     product_id: &str,
 ) -> AppResult<Vec<Observation>> {
     let sql = format!(
-        "SELECT o.retailer_name, o.price_minor, o.in_stock, o.source_url, o.observed_at
+        "SELECT o.match_id, o.retailer_name, o.price_minor, o.in_stock, o.source_url, o.observed_at
            FROM price_observations o
            JOIN product_matches m ON m.match_id = o.match_id
           WHERE m.product_id = ?
@@ -103,6 +109,7 @@ pub async fn latest_trusted_prices(
     Ok(rows
         .iter()
         .map(|row| Observation {
+            match_id: row.get("match_id"),
             retailer_name: row.get("retailer_name"),
             price_minor: row.get("price_minor"),
             in_stock: row.get::<i64, _>("in_stock") == 1,
@@ -143,7 +150,7 @@ pub async fn history(
     limit: i64,
 ) -> AppResult<Vec<Observation>> {
     let sql = format!(
-        "SELECT o.retailer_name, o.price_minor, o.in_stock, o.source_url, o.observed_at
+        "SELECT o.match_id, o.retailer_name, o.price_minor, o.in_stock, o.source_url, o.observed_at
            FROM price_observations o
            JOIN product_matches m ON m.match_id = o.match_id
           WHERE m.product_id = ? AND m.deleted_at IS NULL AND {TRUSTED_MATCH_SQL}
@@ -158,6 +165,7 @@ pub async fn history(
     Ok(rows
         .iter()
         .map(|row| Observation {
+            match_id: row.get("match_id"),
             retailer_name: row.get("retailer_name"),
             price_minor: row.get("price_minor"),
             in_stock: row.get::<i64, _>("in_stock") == 1,

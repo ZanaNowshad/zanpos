@@ -1685,3 +1685,179 @@ export const quickPosSave = (
   productIds: (string | null)[],
 ): Promise<QuickPosSlot[]> =>
   invoke("quick_pos_save", { input: { actor_user_id: actorUserId, product_ids: productIds } });
+
+// ── Terminals and reconciliation ─────────────────────────────────────────────
+
+export interface TerminalRow {
+  device_id: string;
+  branch_id: string;
+  device_code: string;
+  name: string;
+  /** Derived from heartbeat evidence every time it is read. There is no stored
+   *  status behind this: `devices.status` was one, nobody updated it, and
+   *  terminals that had never contacted the hub displayed as "online". */
+  state: "unpaired" | "never_seen" | "online" | "stale" | "offline";
+  /** What to do about that state. Carried with the row so the screen cannot
+   *  invent its own wording for a meaning defined in the backend. */
+  advice: string;
+  seconds_since_seen: number | null;
+  last_heartbeat_at: string | null;
+  observed_ip: string | null;
+  app_version: string | null;
+  heartbeat_hub_id: string | null;
+  is_paired: boolean;
+  is_active: boolean;
+}
+
+export const terminalRoster = (actorUserId: string): Promise<TerminalRow[]> =>
+  invoke("terminal_roster", { actorUserId });
+
+export interface ReconciliationPreview {
+  table: string;
+  diverged: number;
+  /** Rows one side simply does not have. Delivering them overwrites nothing. */
+  deliverable: string[];
+  /** Rows both sides hold with different contents — a person decides. */
+  needs_review: string[];
+  audit: string[];
+  /** The hub cannot answer row-level parity. A reason to stop, not a clean bill. */
+  hub_too_old: boolean;
+}
+
+export const reconciliationPreview = (
+  actorUserId: string,
+  table: string,
+): Promise<ReconciliationPreview> =>
+  invoke("reconciliation_preview", { actorUserId, table });
+
+export interface ReconciliationOutcome {
+  table: string;
+  diverged_before: number;
+  delivered_from_hub: number;
+  delivered_to_hub: number;
+  left_for_review: string[];
+  /** Measured after the repair, not predicted before it. */
+  diverged_after: number;
+  audit: string[];
+}
+
+/** Repair what may be repaired. Financial rows both sides hold with different
+ *  contents are refused by the engine whatever the caller's role. */
+export const reconciliationRun = (
+  actorUserId: string,
+  table?: string,
+): Promise<ReconciliationOutcome[]> =>
+  invoke("reconciliation_run", { actorUserId, table: table ?? null });
+
+// ── Market prices ─────────────────────────────────────────────────────────────
+//
+// Every one of these reads except `marketPriceConfirmMatch`, which records a
+// human judgement about which listing is this product — never a price. There is
+// deliberately no binding that writes a selling price from a competitor's
+// number: the panel fills the price box and the operator saves through
+// `updateProductPrice`, which carries the RBAC, the confirmation and the audit
+// trail.
+
+export interface MarketObservation {
+  /** The pairing this price came from, so a confirmation made in error can be
+   *  withdrawn from the panel that shows its consequence. */
+  match_id: string;
+  retailer_name: string;
+  price_minor: number;
+  in_stock: boolean;
+  source_url: string | null;
+  observed_at: string;
+}
+
+export interface MarketSummary {
+  low_minor: number | null;
+  median_minor: number | null;
+  high_minor: number | null;
+  /** How many retailers the figures are drawn from. One retailer is not a market. */
+  retailer_count: number;
+  observed_at: string | null;
+}
+
+export interface MarketCandidate {
+  source_id: string;
+  source_product_key: string;
+  name: string;
+  pack_text: string | null;
+  url: string;
+  /** 0–100, shown so "almost certainly" and "possibly" do not look alike. */
+  confidence: number;
+  /** On an aggregator the retailer is a third party — "Al Helli" read from
+   *  Akelny — so it is carried per offer rather than taken from the source. */
+  offers: { retailer: string; price_minor: number; in_stock: boolean; url: string | null }[];
+}
+
+export interface MarketSourceStatus {
+  source_id: string;
+  name: string;
+  status: string;
+  reason: string | null;
+  fallback_source_id: string | null;
+}
+
+export interface MarketPriceReport {
+  product_id: string;
+  product_name: string;
+  /** Confirmed matches only. Safe to quote. */
+  trusted: MarketObservation[];
+  summary: MarketSummary;
+  /** Look right, nobody has approved them. Kept separate from `trusted` on
+   *  purpose — one list with a boolean is a careless `.map()` away from being
+   *  summed together. */
+  candidates: MarketCandidate[];
+  /** Sources that could not be consulted, so a thin result reads as "we could
+   *  not look" rather than "nobody else sells this". */
+  unavailable: MarketSourceStatus[];
+  /** On the refresh watchlist. Carried here so the toggle shows the state that
+   *  exists rather than the one it last set. */
+  tracked: boolean;
+}
+
+/** What is already known, without touching the network. */
+export const marketPriceCached = (
+  actorUserId: string,
+  productId: string,
+): Promise<MarketPriceReport> =>
+  invoke("market_price_cached", { actorUserId, productId });
+
+/** Go and look. Slow by nature — it is fetching from other retailers. */
+export const marketPriceSearch = (
+  actorUserId: string,
+  productId: string,
+): Promise<MarketPriceReport> =>
+  invoke("market_price_search", { actorUserId, productId });
+
+/** Record that a candidate really is this product. The candidate is passed back
+ *  verbatim so the pairing is stored against the listing that was looked at. */
+export const marketPriceConfirmMatch = (
+  actorUserId: string,
+  productId: string,
+  candidate: MarketCandidate,
+): Promise<MarketPriceReport> =>
+  invoke("market_price_confirm_match", { actorUserId, productId, candidate });
+
+export const marketPriceRejectMatch = (
+  actorUserId: string,
+  matchId: string,
+): Promise<void> => invoke("market_price_reject_match", { actorUserId, matchId });
+
+export const marketPriceHistory = (
+  actorUserId: string,
+  productId: string,
+  limit?: number,
+): Promise<MarketObservation[]> =>
+  invoke("market_price_history", { actorUserId, productId, limit: limit ?? null });
+
+export const marketSourceStatus = (
+  actorUserId: string,
+): Promise<MarketSourceStatus[]> => invoke("market_source_status", { actorUserId });
+
+export const marketWatchlistSet = (
+  actorUserId: string,
+  productId: string,
+  tracked: boolean,
+): Promise<boolean> => invoke("market_watchlist_set", { actorUserId, productId, tracked });

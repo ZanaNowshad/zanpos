@@ -21,6 +21,7 @@ import {
   WA_CONTACTS,
   WA_MESSAGES,
   WHATSAPP_STATUS,
+  MARKET_REPORT,
 } from "./uiMockData";
 
 /** command → response. Anything unlisted resolves to a safe empty value. */
@@ -350,6 +351,50 @@ export const HANDLERS: Record<string, unknown> = {
     { rider_id: "rdr_1", branch_id: BRANCH_ID, name: "Sami Al Hawaj", phone: "+97336112233", notes: "Bike 4471 · evenings", is_active: true, created_at: new Date(Date.now() - 40 * 86_400_000).toISOString() },
     { rider_id: "rdr_2", branch_id: BRANCH_ID, name: "Rashid Bu Hassan", phone: "+97336445566", notes: null, is_active: true, created_at: new Date(Date.now() - 12 * 86_400_000).toISOString() },
     { rider_id: "rdr_3", branch_id: BRANCH_ID, name: "Jassim Al Doseri", phone: "+97336778899", notes: "Left the roster", is_active: false, created_at: new Date(Date.now() - 200 * 86_400_000).toISOString() },
+  ],
+
+  // Market panel. Both halves are populated deliberately: a confirmed match and
+  // an unconfirmed candidate, plus a source that could not be reached. The
+  // separation between "counted in the figures" and "looks right, nobody said
+  // so" is the thing this panel exists to keep visible, and it is unreachable
+  // in QA if the mock only ever returns one of them.
+  market_price_cached: MARKET_REPORT,
+  market_price_search: MARKET_REPORT,
+  market_price_confirm_match: MARKET_REPORT,
+  market_price_reject_match: null,
+  market_price_history: MARKET_REPORT.trusted,
+  market_source_status: MARKET_REPORT.unavailable,
+  market_watchlist_set: true,
+
+  // Without this, `emptyFor` returned [] for a command whose shape is an object,
+  // `status.mode` read undefined, and the Hub tab fell through to standalone —
+  // so neither the hub nor the terminal branch, and nothing they contain, could
+  // be reached in visual QA at all.
+  hub_status: {
+    mode: "hub", running: true, port: 7420,
+    lan_ips: ["192.168.1.20"],
+    token: "mock-store-token-not-a-real-secret",
+    hub_url: null, last_error: null,
+    terminals: [],
+  },
+
+  // Terminal roster. Every state is present on purpose: the tile colours and
+  // the advice line are the whole feature, and a fixture where everything is
+  // healthy makes the states that need designing unreachable in QA.
+  terminal_roster: [
+    { device_id: "dev_1", device_code: "TILL-01", name: "Front counter", state: "online", advice: "Serving normally.", seconds_since_seen: 12, last_heartbeat_at: new Date().toISOString(), observed_ip: "192.168.1.21", app_version: "2.0.0", is_active: true },
+    { device_id: "dev_2", device_code: "TILL-02", name: "Second lane", state: "stale", advice: "Last heard from 20 minutes ago. Usually a sleeping screen or a dropped Wi-Fi link.", seconds_since_seen: 1_200, last_heartbeat_at: new Date(Date.now() - 1_200_000).toISOString(), observed_ip: "192.168.1.22", app_version: "2.0.0", is_active: true },
+    { device_id: "dev_3", device_code: "TILL-03", name: "Back office", state: "offline", advice: "Nothing since Tuesday. Anything sold on it since then is still only on that machine.", seconds_since_seen: 190_000, last_heartbeat_at: new Date(Date.now() - 190_000_000).toISOString(), observed_ip: "192.168.1.23", app_version: "1.9.4", is_active: true },
+    { device_id: "dev_4", device_code: "TILL-04", name: "Spare unit", state: "never_seen", advice: "Registered but has never contacted the hub. Check the store address and token on that terminal.", seconds_since_seen: null, last_heartbeat_at: null, observed_ip: null, app_version: null, is_active: false },
+  ],
+  reconciliation_preview: {
+    table: "products", diverged: 3,
+    deliverable: ["prd_a", "prd_b"],
+    needs_review: ["prd_c"],
+    hub_too_old: false,
+  },
+  reconciliation_run: [
+    { table: "products", diverged_before: 3, delivered_from_hub: 1, delivered_to_hub: 1, left_for_review: ["prd_c"], diverged_after: 1, audit: ["1 left for review"] },
   ],
 
   // Boot path — App gates the whole UI on these.

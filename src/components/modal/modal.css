@@ -332,3 +332,106 @@
 .zmodal-steps li.is-current > span { background: var(--accent); color: var(--accent-t, #fff); }
 .zmodal-steps li.is-done { color: var(--text-dim); }
 .zmodal-steps li.is-done > span { background: var(--success); color: #fff; }
+
+/* ── Market panel ──────────────────────────────────────────────────────────────
+   Sits under Pricing in the product form. Three prices, a list of retailers and
+   a separate list of unconfirmed matches — the separation is the point, so the
+   two lists are given visibly different weight rather than a badge. */
+
+.market-panel { display: grid; gap: 12px; grid-column: 1 / -1; }
+
+.market-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.market-watch {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--type-office-micro);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.market-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 0;
+}
+.market-summary > div {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+}
+.market-summary dt {
+  font-size: var(--type-office-micro);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.market-summary dd {
+  margin: 4px 0 0;
+  font: 600 1.05rem var(--font-mono);
+  color: var(--text);
+}
+
+.market-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.market-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border2);
+  border-radius: var(--radius-sm);
+  background: var(--surface2);
+}
+.market-retailer { flex: 1; min-width: 0; color: var(--text); overflow-wrap: anywhere; }
+.market-price { font: 600 0.95rem var(--font-mono); color: var(--text); }
+.market-confidence { font-size: var(--type-office-micro); color: var(--text-muted); }
+
+.market-use {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-dim);
+  font: 500 var(--type-office-micro) var(--font);
+  cursor: pointer;
+}
+.market-use:hover:not(:disabled) { background: var(--surface3); color: var(--text); }
+.market-use:disabled { opacity: 0.35; cursor: default; }
+
+.market-reject {
+  padding: 6px 4px;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font: 500 var(--type-office-micro) var(--font);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.market-reject:hover:not(:disabled) { color: var(--warning); }
+.market-reject:disabled { opacity: 0.35; cursor: default; }
+
+/* Deliberately quieter than the trusted list above. Nothing here counts toward
+   the figures until somebody confirms it, and the styling should say so before
+   the sentence does. */
+.market-candidates .market-list li { background: transparent; border-style: dashed; }
+.market-candidates h5,
+.market-unavailable h5 {
+  margin: 0 0 4px;
+  font-size: var(--type-office-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.market-unavailable ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: var(--type-office-micro);
+  color: var(--text-dim);
+}

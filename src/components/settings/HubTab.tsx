@@ -12,6 +12,7 @@ import {
   syncConflictsList,
 } from "../../tauri/commands";
 import AppConfirmModal from "../AppConfirmModal";
+import TerminalRosterPanel from "./TerminalRosterPanel";
 import { useLanguage } from "../../hooks/useLanguage";
 import { hubTruthStatusText, operationsTranslator } from "../../i18n/operationsStrings";
 
@@ -193,7 +194,7 @@ export default function HubTab({ sessionUserId }: Props) {
   if (loading) return <div className="bo-loading">{t("loading")}</div>;
   if (!status) return <div className="bo-error">{t("hubStatusLoadFailed")}</div>;
 
-  const { mode, running, lan_ips, token, hub_url, last_error: hubError, terminals } = status;
+  const { mode, running, lan_ips, token, hub_url, last_error: hubError } = status;
 
   // ─── Hub mode ────────────────────────────────────────────────────────────────
   if (mode === "hub") {
@@ -264,23 +265,12 @@ export default function HubTab({ sessionUserId }: Props) {
           {t("regenerateStoreToken")}
         </button>
 
-        {terminals.length > 0 && (
-          <>
-            <h4>{t("connectedTerminals")}</h4>
-            <table className="bo-table">
-              <thead><tr><th>{t("deviceId")}</th><th>{t("ip")}</th><th>{t("lastSeen")}</th></tr></thead>
-              <tbody>
-                {terminals.map(t => (
-                  <tr key={t.device_id}>
-                    <td><code>{t.device_id}</code></td>
-                    <td>{t.ip}</td>
-                    <td>{new Date(t.last_seen).toLocaleString(language === "ar" ? "ar-BH" : "en-BH")}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </>
-        )}
+        {/* The roster, not the socket list. What was here showed devices
+            currently connected to the hub, which answered "online" for a
+            terminal that had never once contacted it — every state below is
+            derived from heartbeat evidence instead. Two terminal lists giving
+            different answers is worse than one. */}
+        <TerminalRosterPanel actorUserId={sessionUserId} canRepair />
 
         {error && <div className="modal-error">{error}</div>}
       </div>
@@ -333,6 +323,10 @@ export default function HubTab({ sessionUserId }: Props) {
             {t("updateAddress")}
           </button>
         </div>
+
+        {/* A till needs to know about its siblings too — a terminal that
+            stopped syncing on Tuesday is the usual reason two screens disagree. */}
+        <TerminalRosterPanel actorUserId={sessionUserId} canRepair />
 
         {error && <div className="modal-error">{error}</div>}
       </div>

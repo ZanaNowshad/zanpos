@@ -16,6 +16,8 @@ pub struct DeviceRow {
     pub device_name: String,
     pub is_active: bool,
     pub created_at: String,
+    /// When the hub last accepted a heartbeat from this terminal, if ever.
+    pub last_seen_at: Option<String>,
 }
 
 // ─── Input types ──────────────────────────────────────────────────────────────
@@ -46,6 +48,7 @@ fn map_row(r: &sqlx::sqlite::SqliteRow) -> DeviceRow {
         device_name: r.get("name"),
         is_active: active != 0,
         created_at: r.try_get("created_at").unwrap_or_default(),
+        last_seen_at: r.try_get("last_seen_at").ok().flatten(),
     }
 }
 
@@ -61,8 +64,7 @@ pub async fn device_list(
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let branch_id = active_branch_id(&state).await?;
     let rows = sqlx::query(
-        "SELECT device_id, device_code, name, is_active,
-                COALESCE(last_seen_at, '') AS created_at
+        "SELECT device_id, device_code, name, is_active, created_at, last_seen_at
          FROM devices WHERE branch_id = ? AND deleted_at IS NULL
          ORDER BY device_code",
     )
@@ -116,15 +118,13 @@ pub async fn device_create(
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     let row = sqlx::query(
-        "SELECT device_id, device_code, name, is_active,
-                COALESCE(last_seen_at, '') AS created_at
+        "SELECT device_id, device_code, name, is_active, created_at, last_seen_at
          FROM devices WHERE device_id = ?",
     )
     .bind(&device_id)
     .fetch_one(&state.db)
     .await?;
 
-    let _ = now; // suppress unused warning
     Ok(map_row(&row))
 }
 
@@ -219,4 +219,51 @@ pub async fn device_toggle_active(
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeviceRekeyResult {
+    pub old_device_id: String,
+    pub device_id: String,
+}
+
+/// Re-issue this terminal's device identity with a fresh ULID.
+///
+/// The recovery path for a database cloned onto a second PC (backup restore):
+/// both machines then share one `device_id`, so heartbeats collide, receipt
+/// counters mint the same numbers, and each side's rows are invisible to the
+/// other. This is irreversible and audited — it rewrites this terminal's
+/// origin across its whole history.
+#[tauri::command]
+pub async fn device_rekey(
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> Result<DeviceRekeyResult, AppError> {
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+
+    let (old_device_id, device_id) = crate::device_identity::rekey_to_fresh(&state.db).await?;
+
+    let branch_id = active_branch_id(&state).await.unwrap_or_default();
+    if let Err(error) = crate::db::repositories::audit_hash::insert_audit_entry(
+        &state.db,
+        "DEVICE_REKEYED",
+        "device",
+        "devices",
+        &actor_user_id,
+        "user",
+        &device_id,
+        &branch_id,
+        None,
+        Some(&format!("old_device_id={old_device_id}")),
+        Some("Terminal identity re-issued after being shared with another install"),
+    )
+    .await
+    {
+        tracing::error!("AUDIT WRITE FAILED [DEVICE_REKEYED]: {error:?}");
+    }
+
+    Ok(DeviceRekeyResult {
+        old_device_id,
+        device_id,
+    })
 }

@@ -35,8 +35,16 @@ async fn status_of(pool: &SqlitePool, id: &str) -> Option<String> {
 /// one. Identical content must produce an identical id or nothing deduplicates.
 #[test]
 fn the_same_payload_always_produces_the_same_id() {
-    let (first, hash_a) = event_id("categories", "cat_1", &row("Grocery", "2026-08-01T10:00:00Z"));
-    let (second, hash_b) = event_id("categories", "cat_1", &row("Grocery", "2026-08-01T10:00:00Z"));
+    let (first, hash_a) = event_id(
+        "categories",
+        "cat_1",
+        &row("Grocery", "2026-08-01T10:00:00Z"),
+    );
+    let (second, hash_b) = event_id(
+        "categories",
+        "cat_1",
+        &row("Grocery", "2026-08-01T10:00:00Z"),
+    );
     assert_eq!(first, second);
     assert_eq!(hash_a, hash_b);
     assert!(first.starts_with("categories:cat_1:"));
@@ -46,8 +54,16 @@ fn the_same_payload_always_produces_the_same_id() {
 /// or the second edit would be silently discarded.
 #[test]
 fn an_edit_to_the_same_row_produces_a_different_id() {
-    let (unchanged, _) = event_id("categories", "cat_1", &row("Grocery", "2026-08-01T10:00:00Z"));
-    let (edited, _) = event_id("categories", "cat_1", &row("Produce", "2026-08-01T11:00:00Z"));
+    let (unchanged, _) = event_id(
+        "categories",
+        "cat_1",
+        &row("Grocery", "2026-08-01T10:00:00Z"),
+    );
+    let (edited, _) = event_id(
+        "categories",
+        "cat_1",
+        &row("Produce", "2026-08-01T11:00:00Z"),
+    );
     assert_ne!(unchanged, edited);
 }
 
@@ -136,11 +152,10 @@ async fn the_source_device_is_recorded_when_the_row_carries_one() {
     let payload = row("Grocery", "2026-08-01T10:00:00Z");
     claim(&pool, "categories", "cat_1", &payload).await.unwrap();
 
-    let device: Option<String> =
-        sqlx::query_scalar("SELECT source_device FROM sync_inbox LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let device: Option<String> = sqlx::query_scalar("SELECT source_device FROM sync_inbox LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(device.as_deref(), Some("dev_a"));
 }
 

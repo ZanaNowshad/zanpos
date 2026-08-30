@@ -82,7 +82,9 @@ async fn a_deleted_barcode_does_not_come_back_from_the_hub() {
         "created_at": "2026-08-01T00:00:00Z",
         "updated_at": "2026-08-01T00:00:00Z",
     });
-    apply_row(&pool, "product_barcodes", &from_hub).await.unwrap();
+    apply_row(&pool, "product_barcodes", &from_hub)
+        .await
+        .unwrap();
 
     let live: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM product_barcodes
@@ -144,7 +146,10 @@ async fn a_barcode_with_no_timestamp_can_never_be_served_by_the_hub() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(served, 0, "the empty timestamp was expected to be unservable");
+    assert_eq!(
+        served, 0,
+        "the empty timestamp was expected to be unservable"
+    );
 
     // What migration 0059 does to every such row.
     sqlx::query(
@@ -237,7 +242,11 @@ async fn a_barcode_that_moved_products_applies_before_its_tombstone_arrives() {
     .fetch_all(&pool)
     .await
     .unwrap();
-    assert_eq!(live, vec!["prd_right"], "the code resolves to one product only");
+    assert_eq!(
+        live,
+        vec!["prd_right"],
+        "the code resolves to one product only"
+    );
 
     // The retired claim is left pending on purpose: if the hub is the side still
     // holding it, this terminal's tombstone is what repairs it.
@@ -297,7 +306,11 @@ async fn a_stale_barcode_move_does_not_displace_the_current_owner() {
     .fetch_all(&pool)
     .await
     .unwrap();
-    assert_eq!(live, vec!["prd_current"], "a stale row took the barcode back");
+    assert_eq!(
+        live,
+        vec!["prd_current"],
+        "a stale row took the barcode back"
+    );
 }
 
 /// No path may go back to hard-deleting a barcode.

@@ -154,7 +154,20 @@ export const HANDLERS: Record<string, unknown> = {
       status: "open", created_at: new Date(Date.now() - 2 * 3_600_000).toISOString() },
   ],
   sync_stock_drift_report: [],
-  hub_truth_compare: { differences: [], checked_at: new Date().toISOString() },
+  /* The real HubTruthCompareResult shape: ok/score/schema_match/tables. The old
+     { differences } fixture made the truth panel read "undefined%" and crash on
+     tables.filter — the exact screen whose job is showing whether two tills
+     agree was the one that could not render. */
+  hub_truth_compare: {
+    ok: true,
+    compared_at: new Date().toISOString(),
+    score: 100,
+    schema_match: true,
+    local_schema_version: 60,
+    hub_schema_version: 60,
+    tables: [],
+    message: "This terminal matches the hub truth snapshot.",
+  },
   ai_load_history: [],
   /* The proactive detector's output, which returned [] here — so thirteen
      detection types that run every five minutes against the real database
@@ -371,37 +384,49 @@ export const HANDLERS: Record<string, unknown> = {
   // so neither the hub nor the terminal branch, and nothing they contain, could
   // be reached in visual QA at all.
   hub_status: {
-    mode: "hub", running: true, port: 7420,
+    mode: "hub", running: true, port: 8923,
     lan_ips: ["192.168.1.20"],
     token: "mock-store-token-not-a-real-secret",
     hub_url: null, last_error: null,
-    terminals: [],
+    // The same four terminals the roster below shows. An empty list here next
+    // to four heartbeating terminals there was the two-answers contradiction
+    // the real UI was rebuilt to remove — a mock that keeps it would keep
+    // teaching QA that the screens may disagree.
+    terminals: [
+      { device_id: "dev_1", ip: "192.168.1.21", last_seen: new Date(Date.now() - 12_000).toISOString() },
+      { device_id: "dev_2", ip: "192.168.1.22", last_seen: new Date(Date.now() - 1_200_000).toISOString() },
+      { device_id: "dev_3", ip: "192.168.1.23", last_seen: new Date(Date.now() - 190_000_000).toISOString() },
+    ],
   },
 
   // Terminal roster. Every state is present on purpose: the tile colours and
   // the advice line are the whole feature, and a fixture where everything is
-  // healthy makes the states that need designing unreachable in QA.
+  // healthy makes the states that need designing unreachable in QA. Advice
+  // strings are the backend's own (device_state), not inventions.
   terminal_roster: [
-    { device_id: "dev_1", device_code: "TILL-01", name: "Front counter", state: "online", advice: "Serving normally.", seconds_since_seen: 12, last_heartbeat_at: new Date().toISOString(), observed_ip: "192.168.1.21", app_version: "2.0.0", is_active: true },
-    { device_id: "dev_2", device_code: "TILL-02", name: "Second lane", state: "stale", advice: "Last heard from 20 minutes ago. Usually a sleeping screen or a dropped Wi-Fi link.", seconds_since_seen: 1_200, last_heartbeat_at: new Date(Date.now() - 1_200_000).toISOString(), observed_ip: "192.168.1.22", app_version: "2.0.0", is_active: true },
-    { device_id: "dev_3", device_code: "TILL-03", name: "Back office", state: "offline", advice: "Nothing since Tuesday. Anything sold on it since then is still only on that machine.", seconds_since_seen: 190_000, last_heartbeat_at: new Date(Date.now() - 190_000_000).toISOString(), observed_ip: "192.168.1.23", app_version: "1.9.4", is_active: true },
-    { device_id: "dev_4", device_code: "TILL-04", name: "Spare unit", state: "never_seen", advice: "Registered but has never contacted the hub. Check the store address and token on that terminal.", seconds_since_seen: null, last_heartbeat_at: null, observed_ip: null, app_version: null, is_active: false },
+    { device_id: "dev_1", branch_id: BRANCH_ID, device_code: "TILL-01", name: "Front counter", state: "online", advice: "Serving normally.", seconds_since_seen: 12, last_heartbeat_at: new Date().toISOString(), observed_ip: "192.168.1.21", app_version: "2.0.0", heartbeat_hub_id: DEVICE_ID, clock_skew_secs: null, is_paired: true, is_active: true },
+    { device_id: "dev_2", branch_id: BRANCH_ID, device_code: "TILL-02", name: "Second lane", state: "stale", advice: "Checked in recently but not just now. Usually a reboot or a weak link; look again in a few minutes before treating it as down. Its clock is 400 seconds behind the hub's — its rows can land behind the sync watermark and go missing. Fix the time on that terminal.", seconds_since_seen: 1_200, last_heartbeat_at: new Date(Date.now() - 1_200_000).toISOString(), observed_ip: "192.168.1.22", app_version: "2.0.0", heartbeat_hub_id: DEVICE_ID, clock_skew_secs: -400, is_paired: true, is_active: true },
+    { device_id: "dev_3", branch_id: BRANCH_ID, device_code: "TILL-03", name: "Back office", state: "offline", advice: "Has not checked in for some time. Confirm the terminal is powered on and can reach the hub.", seconds_since_seen: 190_000, last_heartbeat_at: new Date(Date.now() - 190_000_000).toISOString(), observed_ip: "192.168.1.23", app_version: "1.9.4", heartbeat_hub_id: DEVICE_ID, clock_skew_secs: null, is_paired: true, is_active: true },
+    { device_id: "dev_4", branch_id: BRANCH_ID, device_code: "TILL-04", name: "Spare unit", state: "unpaired", advice: "No installation is bound to this device record. Bind the terminal in Settings → Hub & Devices.", seconds_since_seen: null, last_heartbeat_at: null, observed_ip: null, app_version: null, heartbeat_hub_id: null, clock_skew_secs: null, is_paired: false, is_active: true },
   ],
   reconciliation_preview: {
     table: "products", diverged: 3,
     deliverable: ["prd_a", "prd_b"],
     needs_review: ["prd_c"],
     hub_too_old: false,
+    audit: [],
   },
   reconciliation_run: [
     { table: "products", diverged_before: 3, delivered_from_hub: 1, delivered_to_hub: 1, left_for_review: ["prd_c"], diverged_after: 1, audit: ["1 left for review"] },
   ],
 
-  // Boot path — App gates the whole UI on these.
+  // Boot path — App gates the whole UI on these. Component names are the
+  // backend's own: database, whatsapp_sidecar, and hub_server when this
+  // machine is the hub (which the fixtures above agree it is).
   startup_health_check: [
     { component: "database", status: "ok", message: "Database ready" },
-    { component: "sync",     status: "ok", message: "Standalone mode" },
-    { component: "sidecar",  status: "ok", message: "WhatsApp sidecar idle" },
+    { component: "whatsapp_sidecar", status: "ok", message: "WhatsApp sidecar idle" },
+    { component: "hub_server", status: "ok", message: "Hub serving 4 terminals" },
   ],
   check_for_updates: null,
   check_critical_update: null,

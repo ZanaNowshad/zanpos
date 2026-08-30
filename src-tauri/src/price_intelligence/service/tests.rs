@@ -54,10 +54,16 @@ async fn a_source_we_cannot_use_is_named_with_its_reason() {
     let statuses = source_statuses(&pool).await.expect("statuses");
 
     let lulu = statuses.iter().find(|s| s.source_id == "lulu_bh");
-    assert!(lulu.is_some(), "the unsupported source vanished from the list");
+    assert!(
+        lulu.is_some(),
+        "the unsupported source vanished from the list"
+    );
     let lulu = lulu.unwrap();
     assert_ne!(lulu.status, "ok");
-    assert!(lulu.reason.is_some(), "no reason given for an unusable source");
+    assert!(
+        lulu.reason.is_some(),
+        "no reason given for an unusable source"
+    );
     assert_eq!(
         lulu.fallback_source_id.as_deref(),
         Some("akelny"),

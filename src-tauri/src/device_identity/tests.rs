@@ -225,3 +225,111 @@ fn device_code_is_derived_from_the_identity() {
     assert_eq!(code.len(), 9);
     assert_ne!(code, SEED_DEVICE_CODE);
 }
+
+// The recovery path for a database cloned onto a second PC: the clone must
+// stop sharing its sibling's identity — rows, receipt namespace, heartbeat
+// counter and watermarks all move to the new id.
+#[tokio::test]
+async fn rekey_to_fresh_separates_a_cloned_identity() {
+    let pool = make_pool().await;
+    let old_id = ensure_in_db(&pool, None)
+        .await
+        .expect("ensure")
+        .id()
+        .to_string();
+
+    // This install has history under the old identity, and stale sync state
+    // that belongs to that identity alone.
+    let branch: String = sqlx::query_scalar("SELECT branch_id FROM branches LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .expect("branch");
+    let shift_id = ulid::Ulid::new().to_string();
+    sqlx::query(
+        "INSERT INTO shifts (shift_id, branch_id, device_id, origin_device_id, cashier_user_id,
+                             opened_at, status, created_at, updated_at, version)
+         VALUES (?, ?, ?, ?, '01JUSER000000000000ADMIN1',
+                 datetime('now'), 'open', datetime('now'), datetime('now'), 1)",
+    )
+    .bind(&shift_id)
+    .bind(&branch)
+    .bind(&old_id)
+    .bind(&old_id)
+    .execute(&pool)
+    .await
+    .expect("shift under old identity");
+    sqlx::query(
+        "INSERT INTO sales (sale_id, branch_id, device_id, origin_device_id, receipt_number,
+                            shift_id, cashier_user_id, status, gross_total_minor, discount_total_minor,
+                            tax_total_minor, net_total_minor, business_date, idempotency_key,
+                            sold_at, created_at, updated_at, sync_status)
+         VALUES ('SALE-REKEY', ?, ?, ?, 'CLONE-R1', ?, '01JUSER000000000000ADMIN1',
+                 'completed', 100, 0, 0, 100, '2026-01-01', 'SALE-REKEY-ik',
+                 datetime('now'), datetime('now'), datetime('now'), 'synced')",
+    )
+    .bind(&branch)
+    .bind(&old_id)
+    .bind(&old_id)
+    .bind(&shift_id)
+    .execute(&pool)
+    .await
+    .expect("sale under old identity");
+    sqlx::query("INSERT INTO app_config(key, value, updated_at) VALUES ('heartbeat_seq','9',datetime('now'))")
+        .execute(&pool)
+        .await
+        .expect("heartbeat seq");
+    sqlx::query("INSERT INTO app_config(key, value, updated_at) VALUES ('sync_v2_watermark_sales','2030-01-01T00:00:00Z',datetime('now'))")
+        .execute(&pool)
+        .await
+        .expect("watermark");
+
+    let (reported_old, new_id) = rekey_to_fresh(&pool).await.expect("rekey");
+    assert_eq!(reported_old, old_id);
+
+    // Identity moved everywhere it is recorded.
+    assert_eq!(
+        config_device_id(&pool).await.as_deref(),
+        Some(new_id.as_str())
+    );
+    let (sale_origin, sale_status): (String, String) = sqlx::query_as(
+        "SELECT origin_device_id, sync_status FROM sales WHERE sale_id = 'SALE-REKEY'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("read sale");
+    assert_eq!(sale_origin, new_id);
+    assert_eq!(
+        sale_status, "pending",
+        "rewritten rows must be re-offered to the hub"
+    );
+    let old_row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE device_id = ?")
+        .bind(&old_id)
+        .fetch_one(&pool)
+        .await
+        .expect("old device row");
+    assert_eq!(
+        old_row_count, 0,
+        "the retired identity must not stay locally"
+    );
+    let code: String = sqlx::query_scalar("SELECT device_code FROM devices WHERE device_id = ?")
+        .bind(&new_id)
+        .fetch_one(&pool)
+        .await
+        .expect("new device code");
+    assert_ne!(code, SEED_DEVICE_CODE);
+
+    // Heartbeat counter and watermarks reset — they are facts of the old
+    // identity and would make the new one look stale or skip history.
+    let heartbeat: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'heartbeat_seq'")
+            .fetch_optional(&pool)
+            .await
+            .expect("heartbeat key");
+    assert!(heartbeat.is_none());
+    let watermark: Option<String> =
+        sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'sync_v2_watermark_sales'")
+            .fetch_optional(&pool)
+            .await
+            .expect("watermark key");
+    assert!(watermark.is_none());
+}

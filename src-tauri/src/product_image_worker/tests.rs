@@ -29,7 +29,13 @@ async fn make_pool() -> SqlitePool {
 }
 
 /// `created_at` is explicit because selection order depends on it.
-async fn seed(pool: &SqlitePool, id: &str, barcode: Option<&str>, image: Option<&str>, created: &str) {
+async fn seed(
+    pool: &SqlitePool,
+    id: &str,
+    barcode: Option<&str>,
+    image: Option<&str>,
+    created: &str,
+) {
     sqlx::query(
         "INSERT INTO products
            (product_id, category_id, name, sku, barcode, image_path,
@@ -55,7 +61,14 @@ fn worker(pool: &SqlitePool) -> ProductImageWorker {
 #[tokio::test]
 async fn picks_a_product_that_has_no_image() {
     let pool = make_pool().await;
-    seed(&pool, "p1", Some("6280123456781"), None, "2026-01-01T00:00:00Z").await;
+    seed(
+        &pool,
+        "p1",
+        Some("6280123456781"),
+        None,
+        "2026-01-01T00:00:00Z",
+    )
+    .await;
 
     let found = worker(&pool).next_candidate().await.unwrap();
     let found = found.expect("a product with no image is work");
@@ -67,7 +80,14 @@ async fn picks_a_product_that_has_no_image() {
 #[tokio::test]
 async fn leaves_a_product_that_already_has_one() {
     let pool = make_pool().await;
-    seed(&pool, "p1", Some("6280123456781"), Some("https://img.test/p1.jpg"), "2026-01-01T00:00:00Z").await;
+    seed(
+        &pool,
+        "p1",
+        Some("6280123456781"),
+        Some("https://img.test/p1.jpg"),
+        "2026-01-01T00:00:00Z",
+    )
+    .await;
 
     assert!(worker(&pool).next_candidate().await.unwrap().is_none());
 }
@@ -77,7 +97,14 @@ async fn treats_a_blank_image_path_as_missing() {
     // An empty string is what a cleared field leaves behind, and it renders the
     // same grey box as NULL does.
     let pool = make_pool().await;
-    seed(&pool, "p1", Some("6280123456781"), Some("   "), "2026-01-01T00:00:00Z").await;
+    seed(
+        &pool,
+        "p1",
+        Some("6280123456781"),
+        Some("   "),
+        "2026-01-01T00:00:00Z",
+    )
+    .await;
 
     assert!(worker(&pool).next_candidate().await.unwrap().is_some());
 }
@@ -85,8 +112,8 @@ async fn treats_a_blank_image_path_as_missing() {
 #[tokio::test]
 async fn skips_a_product_with_nothing_to_search_on() {
     /* The lookup is grounded on the barcode — `validate_search_identity`
-       rejects a request without one. Selecting such a product would burn an
-       attempt on a request that cannot succeed. */
+    rejects a request without one. Selecting such a product would burn an
+    attempt on a request that cannot succeed. */
     let pool = make_pool().await;
     seed(&pool, "p1", None, None, "2026-01-01T00:00:00Z").await;
     seed(&pool, "p2", Some("  "), None, "2026-01-01T00:00:00Z").await;
@@ -97,12 +124,33 @@ async fn skips_a_product_with_nothing_to_search_on() {
 #[tokio::test]
 async fn takes_the_newest_product_first() {
     /* This is what makes "a new product gets its picture by itself" true
-       without a separate path for creation: the item added at the counter is
-       the newest row, so it jumps ahead of the historical backfill. */
+    without a separate path for creation: the item added at the counter is
+    the newest row, so it jumps ahead of the historical backfill. */
     let pool = make_pool().await;
-    seed(&pool, "old", Some("6280000000001"), None, "2020-01-01T00:00:00Z").await;
-    seed(&pool, "new", Some("6280000000002"), None, "2026-08-22T10:00:00Z").await;
-    seed(&pool, "mid", Some("6280000000003"), None, "2024-01-01T00:00:00Z").await;
+    seed(
+        &pool,
+        "old",
+        Some("6280000000001"),
+        None,
+        "2020-01-01T00:00:00Z",
+    )
+    .await;
+    seed(
+        &pool,
+        "new",
+        Some("6280000000002"),
+        None,
+        "2026-08-22T10:00:00Z",
+    )
+    .await;
+    seed(
+        &pool,
+        "mid",
+        Some("6280000000003"),
+        None,
+        "2024-01-01T00:00:00Z",
+    )
+    .await;
 
     let found = worker(&pool).next_candidate().await.unwrap().unwrap();
     assert_eq!(found.product_id, "new");
@@ -111,11 +159,20 @@ async fn takes_the_newest_product_first() {
 #[tokio::test]
 async fn waits_out_the_backoff_after_a_failure() {
     let pool = make_pool().await;
-    seed(&pool, "p1", Some("6280123456781"), None, "2026-01-01T00:00:00Z").await;
+    seed(
+        &pool,
+        "p1",
+        Some("6280123456781"),
+        None,
+        "2026-01-01T00:00:00Z",
+    )
+    .await;
     let w = worker(&pool);
 
     let candidate = w.next_candidate().await.unwrap().unwrap();
-    w.record_failure(&candidate, "no image found").await.unwrap();
+    w.record_failure(&candidate, "no image found")
+        .await
+        .unwrap();
 
     assert!(
         w.next_candidate().await.unwrap().is_none(),
@@ -133,7 +190,14 @@ async fn waits_out_the_backoff_after_a_failure() {
 #[tokio::test]
 async fn comes_back_round_once_the_backoff_expires() {
     let pool = make_pool().await;
-    seed(&pool, "p1", Some("6280123456781"), None, "2026-01-01T00:00:00Z").await;
+    seed(
+        &pool,
+        "p1",
+        Some("6280123456781"),
+        None,
+        "2026-01-01T00:00:00Z",
+    )
+    .await;
     let w = worker(&pool);
     let candidate = w.next_candidate().await.unwrap().unwrap();
     w.record_failure(&candidate, "timeout").await.unwrap();
@@ -149,10 +213,17 @@ async fn comes_back_round_once_the_backoff_expires() {
 #[tokio::test]
 async fn gives_up_after_the_attempt_ceiling() {
     /* Most failures are "this product is not in any public database", which is
-       true of unbranded and local goods and never stops being true. Retrying
-       forever would mean a permanent trickle of pointless requests. */
+    true of unbranded and local goods and never stops being true. Retrying
+    forever would mean a permanent trickle of pointless requests. */
     let pool = make_pool().await;
-    seed(&pool, "p1", Some("6280123456781"), None, "2026-01-01T00:00:00Z").await;
+    seed(
+        &pool,
+        "p1",
+        Some("6280123456781"),
+        None,
+        "2026-01-01T00:00:00Z",
+    )
+    .await;
     let w = worker(&pool);
 
     for _ in 0..MAX_ATTEMPTS {
@@ -161,7 +232,9 @@ async fn gives_up_after_the_attempt_ceiling() {
             .await
             .unwrap()
             .expect("still eligible below the ceiling");
-        w.record_failure(&candidate, "no image found").await.unwrap();
+        w.record_failure(&candidate, "no image found")
+            .await
+            .unwrap();
         sqlx::query("UPDATE product_image_attempts SET next_attempt_at = '2000-01-01T00:00:00Z'")
             .execute(&pool)
             .await
@@ -177,7 +250,14 @@ async fn gives_up_after_the_attempt_ceiling() {
 #[tokio::test]
 async fn a_resolved_product_records_its_outcome() {
     let pool = make_pool().await;
-    seed(&pool, "p1", Some("6280123456781"), None, "2026-01-01T00:00:00Z").await;
+    seed(
+        &pool,
+        "p1",
+        Some("6280123456781"),
+        None,
+        "2026-01-01T00:00:00Z",
+    )
+    .await;
     let w = worker(&pool);
     w.record_resolved("p1").await.unwrap();
 
@@ -193,10 +273,17 @@ async fn a_resolved_product_records_its_outcome() {
 #[tokio::test]
 async fn an_image_cleared_by_hand_becomes_work_again() {
     /* The catalogue is the work list, not a queue table. A manager who deletes
-       a wrong picture should get a new one without having to know that some
-       other table needed poking. */
+    a wrong picture should get a new one without having to know that some
+    other table needed poking. */
     let pool = make_pool().await;
-    seed(&pool, "p1", Some("6280123456781"), Some("https://img.test/wrong.jpg"), "2026-01-01T00:00:00Z").await;
+    seed(
+        &pool,
+        "p1",
+        Some("6280123456781"),
+        Some("https://img.test/wrong.jpg"),
+        "2026-01-01T00:00:00Z",
+    )
+    .await;
     let w = worker(&pool);
     w.record_resolved("p1").await.unwrap();
     assert!(w.next_candidate().await.unwrap().is_none());

@@ -40,7 +40,11 @@ pub(crate) async fn current_selling_prices(
     if product_ids.is_empty() {
         return Ok(std::collections::HashMap::new());
     }
-    let placeholders = product_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let placeholders = product_ids
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(",");
     let sql = format!(
         "SELECT pp.product_id, pp.price_minor
          FROM product_prices pp
@@ -61,8 +65,7 @@ pub(crate) async fn current_selling_prices(
     for pid in product_ids {
         q = q.bind(*pid);
     }
-    Ok(q
-        .fetch_all(pool)
+    Ok(q.fetch_all(pool)
         .await?
         .into_iter()
         .map(|row: sqlx::sqlite::SqliteRow| {

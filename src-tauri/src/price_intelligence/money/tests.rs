@@ -44,7 +44,16 @@ fn a_price_in_another_currency_is_refused_not_read_as_dinars() {
 
 #[test]
 fn junk_and_impossible_values_never_become_a_price() {
-    for raw in ["", "   ", "BHD", "-1.500", "0.000", "1.2.3", "1O.500", "999999.999"] {
+    for raw in [
+        "",
+        "   ",
+        "BHD",
+        "-1.500",
+        "0.000",
+        "1.2.3",
+        "1O.500",
+        "999999.999",
+    ] {
         assert!(parse_bhd(raw).is_err(), "accepted {raw:?}");
     }
 }

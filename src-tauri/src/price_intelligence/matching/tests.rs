@@ -47,8 +47,17 @@ fn the_trusted_filter_covers_method_and_status() {
 #[test]
 fn a_matching_name_scores_and_an_unrelated_one_does_not() {
     let ours = "Rainbow Evaporated Milk 160ml";
-    assert!(score(ours, None, &listing("Rainbow Evaporated Milk 160ml", None, None)) >= MIN_CONFIDENCE);
-    assert_eq!(score(ours, None, &listing("Dettol Handwash 500ml", None, None)), 0);
+    assert!(
+        score(
+            ours,
+            None,
+            &listing("Rainbow Evaporated Milk 160ml", None, None)
+        ) >= MIN_CONFIDENCE
+    );
+    assert_eq!(
+        score(ours, None, &listing("Dettol Handwash 500ml", None, None)),
+        0
+    );
 }
 
 /// Pack size is part of product identity. Four bars and two bars are different
@@ -56,8 +65,16 @@ fn a_matching_name_scores_and_an_unrelated_one_does_not() {
 #[test]
 fn a_disagreeing_pack_size_is_penalised_hard() {
     let ours = "Dove Beauty Bar";
-    let same = score(ours, parse_pack("4 x 90g").as_ref(), &listing("Dove Beauty Bar", Some("4 x 90g"), None));
-    let different = score(ours, parse_pack("4 x 90g").as_ref(), &listing("Dove Beauty Bar", Some("2 x 90g"), None));
+    let same = score(
+        ours,
+        parse_pack("4 x 90g").as_ref(),
+        &listing("Dove Beauty Bar", Some("4 x 90g"), None),
+    );
+    let different = score(
+        ours,
+        parse_pack("4 x 90g").as_ref(),
+        &listing("Dove Beauty Bar", Some("2 x 90g"), None),
+    );
 
     assert!(same > different, "same={same} different={different}");
     // Disqualified outright, not merely ranked lower: the names are identical,
@@ -70,7 +87,11 @@ fn a_disagreeing_pack_size_is_penalised_hard() {
 #[test]
 fn a_missing_pack_size_neither_helps_nor_hurts() {
     let ours = "Rainbow Evaporated Milk";
-    let with = score(ours, parse_pack("160ml").as_ref(), &listing("Rainbow Evaporated Milk", None, None));
+    let with = score(
+        ours,
+        parse_pack("160ml").as_ref(),
+        &listing("Rainbow Evaporated Milk", None, None),
+    );
     let without = score(ours, None, &listing("Rainbow Evaporated Milk", None, None));
     assert_eq!(with, without);
 }
@@ -96,7 +117,11 @@ fn ranking_drops_the_implausible_and_orders_the_rest() {
 /// immediately — but it is still only a candidate until somebody says so.
 #[test]
 fn a_candidate_carries_its_offers_without_being_trusted() {
-    let ranked = rank("Rainbow Evaporated Milk", None, vec![listing("Rainbow Evaporated Milk", None, None)]);
+    let ranked = rank(
+        "Rainbow Evaporated Milk",
+        None,
+        vec![listing("Rainbow Evaporated Milk", None, None)],
+    );
     assert_eq!(ranked[0].offers.len(), 1);
     assert_eq!(ranked[0].offers[0].price_minor, 250);
 }
@@ -135,7 +160,10 @@ fn a_different_barcode_is_not_a_match() {
 #[test]
 fn a_listing_without_a_barcode_never_matches_on_one() {
     let ours = vec!["6291001234567".to_string()];
-    assert!(!barcode_match(&ours, &listing("Anything At All", None, None)));
+    assert!(!barcode_match(
+        &ours,
+        &listing("Anything At All", None, None)
+    ));
     assert!(!barcode_match(&[], &with_gtin("6291001234567")));
 }
 

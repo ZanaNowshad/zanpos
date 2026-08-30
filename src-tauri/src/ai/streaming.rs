@@ -960,8 +960,12 @@ pub async fn run_streaming_chat(
         let mut prepared_reads = std::collections::HashMap::new();
         for (tool_index, (tool_id, tool_name, tool_input)) in parsed_tools.iter().enumerate() {
             if form_requested && writes_data(tool_name) {
-                let (tool_use, tool_result) =
-                    anthropic_recoverable_tool_error(tool_id, tool_name, tool_input, FORM_TURN_BLOCKED);
+                let (tool_use, tool_result) = anthropic_recoverable_tool_error(
+                    tool_id,
+                    tool_name,
+                    tool_input,
+                    FORM_TURN_BLOCKED,
+                );
                 assist_blocks.push(tool_use);
                 result_blocks.push(tool_result);
                 continue;
@@ -1714,8 +1718,12 @@ pub async fn run_streaming_chat_openai(
             let tool_input = &tc.input;
 
             if form_requested && writes_data(tool_name) {
-                let (tool_call, tool_result) =
-                    openai_recoverable_tool_error(tool_id, tool_name, tool_input, FORM_TURN_BLOCKED);
+                let (tool_call, tool_result) = openai_recoverable_tool_error(
+                    tool_id,
+                    tool_name,
+                    tool_input,
+                    FORM_TURN_BLOCKED,
+                );
                 acc_tool_calls.push(tool_call);
                 acc_results.push(tool_result);
                 continue;

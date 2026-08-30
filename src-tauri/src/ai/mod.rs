@@ -20,11 +20,11 @@ pub mod tool_validators;
 pub mod tools;
 pub mod tools_catalogue;
 pub mod tools_parity;
-#[cfg(test)]
-mod tools_smoke_tests;
 pub mod tools_read_ext;
 pub mod tools_read_ext2;
 pub mod tools_read_ext3;
+#[cfg(test)]
+mod tools_smoke_tests;
 pub mod tools_web;
 pub mod tools_write_ext;
 pub mod tools_write_ext2;

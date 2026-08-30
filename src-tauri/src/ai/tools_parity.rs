@@ -75,7 +75,9 @@ pub async fn execute(pool: &SqlitePool, tool_name: &str, input: &Value) -> AppRe
         "get_catalogue_parity_summary" => catalogue_parity(pool).await,
         "find_diverged_rows" => diverged_rows(pool, input).await,
         "preview_reconciliation" => preview_reconciliation(pool, input).await,
-        other => Err(AppError::Validation(format!("Unknown parity tool: {other}"))),
+        other => Err(AppError::Validation(format!(
+            "Unknown parity tool: {other}"
+        ))),
     }
 }
 
@@ -138,8 +140,10 @@ async fn terminal_roster(pool: &SqlitePool) -> AppResult<String> {
             row.get::<String, _>("name"),
             state.as_str(),
             seen,
-            row.get::<Option<String>, _>("observed_ip").unwrap_or_else(|| "—".into()),
-            row.get::<Option<String>, _>("app_version").unwrap_or_else(|| "—".into()),
+            row.get::<Option<String>, _>("observed_ip")
+                .unwrap_or_else(|| "—".into()),
+            row.get::<Option<String>, _>("app_version")
+                .unwrap_or_else(|| "—".into()),
         ));
         if row.get::<i64, _>("is_active") == 0 {
             lines.push("  (deactivated in the device roster)".into());
@@ -210,7 +214,8 @@ async fn check_parity(pool: &SqlitePool) -> AppResult<String> {
         ));
     }
 
-    let score = crate::sync_v2::consistency::consistency_score(local.tables.len(), mismatched.len());
+    let score =
+        crate::sync_v2::consistency::consistency_score(local.tables.len(), mismatched.len());
     if mismatched.is_empty() {
         // Every table can match and the terminal still be missing rows it set
         // aside, so the quarantine line comes first and 100% is not claimed.
@@ -254,7 +259,12 @@ async fn catalogue_parity(pool: &SqlitePool) -> AppResult<String> {
     let mut lines = vec!["Catalogue parity (this terminal vs hub):".to_string()];
     let hub = hub_client(pool).await;
 
-    for table in ["products", "product_barcodes", "product_prices", "categories"] {
+    for table in [
+        "products",
+        "product_barcodes",
+        "product_prices",
+        "categories",
+    ] {
         let local = crate::sync_v2::consistency::table_snapshot(pool, table).await?;
         match &hub {
             None => lines.push(format!("{table}: {} rows (no hub configured)", local.count)),
@@ -275,8 +285,7 @@ async fn catalogue_parity(pool: &SqlitePool) -> AppResult<String> {
     }
     if hub.is_some() {
         lines.push(
-            "Where a line reads DIFFERENT, find_diverged_rows names the individual records."
-                .into(),
+            "Where a line reads DIFFERENT, find_diverged_rows names the individual records.".into(),
         );
     }
     Ok(lines.join("\n"))
@@ -307,7 +316,7 @@ async fn rows_for_named_table(
     }
     let Some(client) = hub_client(pool).await else {
         return Ok(Err(
-            "No hub is configured, so there is nothing to diverge from.".into()
+            "No hub is configured, so there is nothing to diverge from.".into(),
         ));
     };
     match crate::sync_v2::repair::diverged(pool, &client, &table).await? {
@@ -326,7 +335,9 @@ async fn diverged_rows(pool: &SqlitePool, input: &Value) -> AppResult<String> {
         Err(message) => return Ok(message),
     };
     if rows.is_empty() {
-        return Ok(format!("{table} is identical on this terminal and the hub."));
+        return Ok(format!(
+            "{table} is identical on this terminal and the hub."
+        ));
     }
 
     let mut lines = vec![format!(

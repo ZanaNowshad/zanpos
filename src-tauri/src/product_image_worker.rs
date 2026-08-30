@@ -138,12 +138,13 @@ impl ProductImageWorker {
     /// not want it: a metered link, a network that objects to the traffic, or
     /// simply a manager who would rather choose the pictures themselves.
     async fn enabled(&self) -> bool {
-        let value: Option<String> =
-            sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'product_image_autofetch'")
-                .fetch_optional(&self.db)
-                .await
-                .ok()
-                .flatten();
+        let value: Option<String> = sqlx::query_scalar(
+            "SELECT value FROM app_config WHERE key = 'product_image_autofetch'",
+        )
+        .fetch_optional(&self.db)
+        .await
+        .ok()
+        .flatten();
         !matches!(value.as_deref(), Some("0") | Some("false") | Some("off"))
     }
 
@@ -168,9 +169,10 @@ impl ProductImageWorker {
         match search_product_image(request).await {
             Ok(result) => {
                 /* persist_product_image is the same function the manual button
-                   goes through, so an image found here is validated, audited
-                   and queued for sync exactly like one a manager chose. */
-                match persist_product_image(&self.db, &candidate.product_id, &result.image_url).await
+                goes through, so an image found here is validated, audited
+                and queued for sync exactly like one a manager chose. */
+                match persist_product_image(&self.db, &candidate.product_id, &result.image_url)
+                    .await
                 {
                     Ok(_) => {
                         tracing::debug!(

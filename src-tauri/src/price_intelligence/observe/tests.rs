@@ -75,7 +75,10 @@ async fn an_unconfirmed_match_feeds_no_figure() {
     assert_eq!(summary.low_minor, None);
     assert_eq!(summary.median_minor, None);
     assert_eq!(summary.high_minor, None);
-    assert!(latest_trusted_prices(&pool, "prd_1").await.unwrap().is_empty());
+    assert!(latest_trusted_prices(&pool, "prd_1")
+        .await
+        .unwrap()
+        .is_empty());
     assert!(history(&pool, "prd_1", 50).await.unwrap().is_empty());
 }
 
@@ -94,17 +97,37 @@ async fn a_confirmed_match_does_feed_the_figures() {
 #[tokio::test]
 async fn a_match_suspended_for_a_pack_change_stops_counting() {
     let pool = pool_with_product().await;
-    seed_match(&pool, "m_pack", MatchMethod::OperatorConfirmed, "pack_changed", 250).await;
+    seed_match(
+        &pool,
+        "m_pack",
+        MatchMethod::OperatorConfirmed,
+        "pack_changed",
+        250,
+    )
+    .await;
 
-    assert_eq!(market_summary(&pool, "prd_1").await.unwrap().retailer_count, 0);
+    assert_eq!(
+        market_summary(&pool, "prd_1").await.unwrap().retailer_count,
+        0
+    );
 }
 
 #[tokio::test]
 async fn a_rejected_match_stops_counting() {
     let pool = pool_with_product().await;
-    seed_match(&pool, "m_no", MatchMethod::OperatorConfirmed, "rejected", 250).await;
+    seed_match(
+        &pool,
+        "m_no",
+        MatchMethod::OperatorConfirmed,
+        "rejected",
+        250,
+    )
+    .await;
 
-    assert_eq!(market_summary(&pool, "prd_1").await.unwrap().retailer_count, 0);
+    assert_eq!(
+        market_summary(&pool, "prd_1").await.unwrap().retailer_count,
+        0
+    );
 }
 
 /// Mixed evidence is the realistic case: the guess must not move the median.
@@ -114,7 +137,14 @@ async fn a_guess_alongside_real_prices_does_not_shift_the_median() {
     seed_match(&pool, "m_a", MatchMethod::OperatorConfirmed, "active", 200).await;
     seed_match(&pool, "m_b", MatchMethod::BarcodeExact, "active", 300).await;
     // A wildly wrong guess that would drag the median if it counted.
-    seed_match(&pool, "m_junk", MatchMethod::FuzzyCandidate, "active", 9_000).await;
+    seed_match(
+        &pool,
+        "m_junk",
+        MatchMethod::FuzzyCandidate,
+        "active",
+        9_000,
+    )
+    .await;
 
     let summary = market_summary(&pool, "prd_1").await.unwrap();
     assert_eq!(summary.retailer_count, 2);
@@ -163,7 +193,10 @@ async fn an_out_of_stock_price_is_not_quoted() {
         .await
         .unwrap();
 
-    assert_eq!(market_summary(&pool, "prd_1").await.unwrap().retailer_count, 0);
+    assert_eq!(
+        market_summary(&pool, "prd_1").await.unwrap().retailer_count,
+        0
+    );
 }
 
 #[tokio::test]

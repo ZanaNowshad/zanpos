@@ -34,7 +34,11 @@ async fn the_payload_is_kept_verbatim_so_the_row_can_be_replayed() {
             .await
             .unwrap();
     let parsed: Value = serde_json::from_str(&stored).unwrap();
-    assert_eq!(parsed, sale(), "the quarantined row cannot be reconstructed");
+    assert_eq!(
+        parsed,
+        sale(),
+        "the quarantined row cannot be reconstructed"
+    );
 }
 
 /// Setting a row aside weakens a guarantee that used to be absolute, so it has

@@ -1086,6 +1086,17 @@ export const deviceToggleActive = (actorUserId: string, deviceId: string, isActi
 export const deviceDelete = (actorUserId: string, deviceId: string): Promise<void> =>
   invoke("device_delete", { deviceId, actorUserId });
 
+export interface DeviceRekeyResult {
+  old_device_id: string;
+  device_id: string;
+}
+
+/** Re-issue this terminal's device identity with a fresh ULID — the recovery
+ *  path for a database cloned onto a second PC, which otherwise shares one
+ *  device_id with its sibling forever. Irreversible and audited. */
+export const deviceRekey = (actorUserId: string): Promise<DeviceRekeyResult> =>
+  invoke("device_rekey", { actorUserId });
+
 // ─── Phase 10b — Product image picker ────────────────────────────────────────
 
 export const productPickImage = (): Promise<string | null> =>
@@ -1705,6 +1716,10 @@ export interface TerminalRow {
   observed_ip: string | null;
   app_version: string | null;
   heartbeat_hub_id: string | null;
+  /** Seconds this terminal's clock is ahead of the hub's, when the beat
+   *  carried a client timestamp. A slow clock hides rows behind the sync
+   *  watermark — the advice field carries the warning. */
+  clock_skew_secs: number | null;
   is_paired: boolean;
   is_active: boolean;
 }

@@ -56,7 +56,9 @@ pub fn script_blocks(html: &str) -> Vec<&str> {
     let mut rest = html;
     while let Some(start) = rest.find("<script") {
         let after = &rest[start..];
-        let Some(open_end) = after.find('>') else { break };
+        let Some(open_end) = after.find('>') else {
+            break;
+        };
         let attributes = &after[..open_end];
         let Some(close) = after[open_end..].find("</script") else {
             break;
@@ -126,7 +128,9 @@ fn first_gtin(object: &serde_json::Map<String, Value>) -> Option<String> {
     ["gtin", "gtin13", "gtin14", "gtin12", "gtin8"]
         .iter()
         .find_map(|key| text(object.get(*key)))
-        .filter(|value| value.chars().all(|c| c.is_ascii_digit()) && (8..=14).contains(&value.len()))
+        .filter(|value| {
+            value.chars().all(|c| c.is_ascii_digit()) && (8..=14).contains(&value.len())
+        })
 }
 
 fn brand_name(value: Option<&Value>) -> Option<String> {

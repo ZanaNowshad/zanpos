@@ -79,10 +79,17 @@ async fn two_listings_from_one_source_are_two_matches() {
     let mut other = candidate();
     other.source_product_key = "listing-2".into();
 
-    matching::confirm(&pool, "prd_1", "br_1", "user_1", &candidate()).await.unwrap();
-    matching::confirm(&pool, "prd_1", "br_1", "user_1", &other).await.unwrap();
+    matching::confirm(&pool, "prd_1", "br_1", "user_1", &candidate())
+        .await
+        .unwrap();
+    matching::confirm(&pool, "prd_1", "br_1", "user_1", &other)
+        .await
+        .unwrap();
 
-    assert_eq!(matching::for_product(&pool, "prd_1").await.unwrap().len(), 2);
+    assert_eq!(
+        matching::for_product(&pool, "prd_1").await.unwrap().len(),
+        2
+    );
 }
 
 /// A rejected pairing keeps its row, so the same wrong candidate is not offered
@@ -114,22 +121,28 @@ async fn rejecting_something_that_is_not_there_says_so() {
 async fn watchlisting_twice_is_an_update_and_untracking_removes_it() {
     let pool = pool_with_product().await;
 
-    set_watchlist(&pool, "prd_1", "br_1", "user_1", true).await.expect("track");
+    set_watchlist(&pool, "prd_1", "br_1", "user_1", true)
+        .await
+        .expect("track");
     set_watchlist(&pool, "prd_1", "br_1", "user_1", true)
         .await
         .expect("re-track hit the wrong conflict target");
 
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM price_watchlist WHERE product_id='prd_1'")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM price_watchlist WHERE product_id='prd_1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(count, 1);
 
-    set_watchlist(&pool, "prd_1", "br_1", "user_1", false).await.expect("untrack");
-    let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM price_watchlist WHERE product_id='prd_1'")
-        .fetch_one(&pool)
+    set_watchlist(&pool, "prd_1", "br_1", "user_1", false)
         .await
-        .unwrap();
+        .expect("untrack");
+    let after: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM price_watchlist WHERE product_id='prd_1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(after, 0);
 }
 
@@ -141,7 +154,11 @@ async fn confirming_makes_the_price_quotable_at_once() {
     let pool = pool_with_product().await;
 
     let report = crate::price_intelligence::service::confirm_match(
-        &pool, "prd_1", "br_1", "user_1", &candidate(),
+        &pool,
+        "prd_1",
+        "br_1",
+        "user_1",
+        &candidate(),
     )
     .await
     .expect("confirm");

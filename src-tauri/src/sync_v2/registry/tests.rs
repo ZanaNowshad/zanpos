@@ -56,7 +56,11 @@ fn every_synced_table_is_parity_checked_or_carries_a_written_exemption() {
     // The ledger behind the derived cache must never itself become exempt.
     assert!(
         matches!(
-            TABLES.iter().find(|t| t.name == "stock_movements").unwrap().parity,
+            TABLES
+                .iter()
+                .find(|t| t.name == "stock_movements")
+                .unwrap()
+                .parity,
             Parity::Full
         ),
         "stock_movements is the source of truth for stock and must stay checked"
@@ -69,7 +73,10 @@ fn every_synced_table_is_parity_checked_or_carries_a_written_exemption() {
 fn the_derived_lists_match_the_registry_exactly() {
     let registry: std::collections::BTreeSet<&str> = TABLES.iter().map(|t| t.name).collect();
     let synced: std::collections::BTreeSet<&str> = SYNC_TABLES.iter().copied().collect();
-    assert_eq!(registry, synced, "SYNC_TABLES has drifted from the registry");
+    assert_eq!(
+        registry, synced,
+        "SYNC_TABLES has drifted from the registry"
+    );
 
     let parity: std::collections::BTreeSet<&str> = parity_checked().into_iter().collect();
     let consistency: std::collections::BTreeSet<&str> =
@@ -257,7 +264,11 @@ async fn every_row_queued_table_really_has_sync_status() {
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(has, 0, "{} is exempt from per-row queueing but has sync_status", table.name);
+        assert_eq!(
+            has, 0,
+            "{} is exempt from per-row queueing but has sync_status",
+            table.name
+        );
     }
 }
 
@@ -270,6 +281,85 @@ fn the_pending_count_lists_come_from_this_registry() {
     assert_eq!(*crate::commands::sync_commands::SYNC_TABLES, expected);
     assert!(expected.contains(&"product_barcodes"));
     assert!(!expected.contains(&"app_config"));
+}
+
+/// `sync_commands::table_pk` is a hand-kept copy of `pk_for_table`. It once
+/// lacked a `loyalty_events` arm, which sent that table's queue listing,
+/// retry, dismiss and conflict-retry down a nonexistent `id` column — and the
+/// SQL error was swallowed, so pending loyalty rows were silently invisible.
+#[test]
+fn the_sync_command_keys_cover_every_queued_table() {
+    for table in row_queued() {
+        let key = crate::commands::sync_commands::table_pk(table);
+        assert_ne!(
+            key, "id",
+            "{table} fell through table_pk's default — its queue tools would address a column that does not exist"
+        );
+        assert_eq!(
+            key,
+            pk_for_table(table),
+            "{table} has two different primary keys"
+        );
+    }
+}
+
+/// "Replace this terminal's data with the hub's" deletes children before
+/// parents, but it must delete everything — a table left out survives the wipe
+/// with rows that are marked synced, so they are neither re-pushed nor
+/// re-pulled and can never converge.
+#[test]
+fn the_join_wipe_covers_every_queued_table() {
+    let wipe: std::collections::BTreeSet<&str> =
+        crate::commands::sync_commands::JOIN_WIPE_CHILD_FIRST
+            .iter()
+            .copied()
+            .collect();
+    let queued: std::collections::BTreeSet<&str> = row_queued().into_iter().collect();
+    assert_eq!(
+        wipe, queued,
+        "the join wipe and the per-row queue list describe different sets of tables"
+    );
+}
+
+/// Two schema facts applied by hand in `apply.rs`. The pull filter uses
+/// `has_origin_device_id` to skip a device's own rows echoing back at it, and
+/// the LWW tie-break uses `has_version_column` to pick the more-edited copy of
+/// a same-millisecond tie — so a table gaining or losing either column must
+/// fail here, at the schema, rather than silently change sync behaviour.
+#[tokio::test]
+async fn the_origin_and_version_column_lists_match_the_live_schema() {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+    for table in TABLES {
+        let columns: Vec<String> = sqlx::query_scalar(&format!(
+            "SELECT name FROM pragma_table_info('{}')",
+            table.name
+        ))
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        let has_origin = columns.iter().any(|c| c == "origin_device_id");
+        assert_eq!(
+            crate::sync_v2::apply::has_origin_device_id(table.name),
+            has_origin,
+            "{} disagrees with the hand-kept origin_device_id list",
+            table.name
+        );
+
+        let has_version = columns.iter().any(|c| c == "version");
+        assert_eq!(
+            crate::sync_v2::apply::has_version_column(table.name),
+            has_version,
+            "{} disagrees with the hand-kept version list — the LWW tie-break would miscompile SQL",
+            table.name
+        );
+    }
 }
 
 /// Push and pull order are hand-sequenced because foreign keys care about

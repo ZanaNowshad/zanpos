@@ -342,10 +342,7 @@ fn array_of<'a>(what: &str, raw: Option<&'a Value>, max: usize) -> AppResult<&'a
 /// punctuation that could be read as structure.
 fn parse_name(raw: Option<&Value>, seen: &mut Vec<String>, what: &str) -> AppResult<String> {
     let name = required_text(raw, &format!("{what} name"), MAX_NAME)?.to_lowercase();
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_')
-    {
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return Err(AppError::Validation(format!(
             "request_input: {what} name '{name}' may only contain letters, digits and underscores"
         )));
@@ -418,7 +415,11 @@ fn cell_text(value: &Value, key: &str) -> AppResult<String> {
 /// act on values it has not been given. The wording exists so the model does not
 /// *also* repeat the question in prose above the boxes.
 pub fn acknowledgement(form: &AiForm) -> String {
-    let mut names: Vec<&str> = form.fields.iter().map(|field| field.name.as_str()).collect();
+    let mut names: Vec<&str> = form
+        .fields
+        .iter()
+        .map(|field| field.name.as_str())
+        .collect();
     if let Some(table) = &form.table {
         names.extend(table.columns.iter().map(|column| column.name.as_str()));
     }

@@ -274,19 +274,13 @@ pub async fn hub_connect_existing(
         .execute(&mut *tx)
         .await?;
     if !device_id.is_empty() {
-        for t in [
-            "shifts",
-            "sales",
-            "sale_items",
-            "payments",
-            "refunds",
-            "refund_items",
-            "stock_movements",
-            "audit_logs",
-            "delivery_orders",
-            "cash_events",
-            "customers",
-        ] {
+        // Every table whose rows carry this terminal's origin is offered to the
+        // hub again. Derived from the schema-pinned has_origin_device_id list
+        // rather than kept by hand — the copy here once omitted loyalty_events.
+        for t in crate::sync_v2::apply::SYNC_TABLES
+            .iter()
+            .filter(|t| crate::sync_v2::apply::has_origin_device_id(t))
+        {
             let sql = format!(
                 "UPDATE {t} SET sync_status='pending', sync_attempts=0 WHERE origin_device_id = ?"
             );

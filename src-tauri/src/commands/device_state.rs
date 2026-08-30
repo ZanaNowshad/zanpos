@@ -27,6 +27,11 @@ pub const ONLINE_WITHIN_SECS: i64 = 120;
 /// one that just died, and calling both "offline" hides which.
 pub const STALE_WITHIN_SECS: i64 = 15 * 60;
 
+/// Clock skew worth warning about. Matches the join-time warning threshold: a
+/// slow device's rows land behind the sync watermark and are never offered
+/// again, so skew is a data-loss vector, not a cosmetic figure.
+pub const CLOCK_SKEW_WARN_SECS: i64 = 120;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeviceState {
@@ -96,7 +101,10 @@ pub fn device_state(paired: bool, seconds_since_seen: Option<i64>) -> DeviceStat
 }
 
 /// Age of a heartbeat in seconds, or None if there has never been one.
-pub fn seconds_since(last_heartbeat_at: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> Option<i64> {
+pub fn seconds_since(
+    last_heartbeat_at: Option<&str>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<i64> {
     let raw = last_heartbeat_at?.trim();
     if raw.is_empty() {
         return None;
@@ -108,6 +116,21 @@ pub fn seconds_since(last_heartbeat_at: Option<&str>, now: chrono::DateTime<chro
     // a negative age and fall through every threshold to Offline, which is the
     // opposite of what its beat proves.
     Some((now - then).num_seconds().max(0))
+}
+
+/// How far the terminal's clock is ahead of the hub's, in seconds.
+///
+/// Both timestamps were captured when the beat was received — the hub's `now`
+/// against the terminal's own `sent_at` — so their difference is the skew plus
+/// LAN latency, which is milliseconds and irrelevant at warning scale. None
+/// when the terminal predates the `sent_at` field.
+pub fn clock_skew_secs(
+    last_heartbeat_at: Option<&str>,
+    heartbeat_sent_at: Option<&str>,
+) -> Option<i64> {
+    let hub_at = chrono::DateTime::parse_from_rfc3339(last_heartbeat_at?.trim()).ok()?;
+    let sent_at = chrono::DateTime::parse_from_rfc3339(heartbeat_sent_at?.trim()).ok()?;
+    Some((hub_at - sent_at).num_seconds())
 }
 
 #[cfg(test)]
@@ -132,6 +155,9 @@ pub struct TerminalRow {
     pub observed_ip: Option<String>,
     pub app_version: Option<String>,
     pub heartbeat_hub_id: Option<String>,
+    /// Seconds the terminal's clock is ahead of the hub's, or None when the
+    /// terminal predates the `sent_at` heartbeat field.
+    pub clock_skew_secs: Option<i64>,
     pub is_paired: bool,
     pub is_active: bool,
 }
@@ -157,8 +183,8 @@ pub async fn roster(pool: &sqlx::SqlitePool) -> crate::errors::AppResult<Vec<Ter
 
     let rows = sqlx::query(
         "SELECT d.device_id, d.branch_id, d.device_code, d.name, d.is_active,
-                d.last_heartbeat_at, d.observed_ip, d.app_version, d.heartbeat_seq,
-                d.heartbeat_hub_id,
+                d.last_heartbeat_at, d.heartbeat_sent_at, d.observed_ip, d.app_version,
+                d.heartbeat_seq, d.heartbeat_hub_id,
                 EXISTS(SELECT 1 FROM hub_paired_devices p
                         WHERE p.device_id = d.device_id AND p.revoked_at IS NULL)
                     AS has_live_pairing
@@ -180,18 +206,32 @@ pub async fn roster(pool: &sqlx::SqlitePool) -> crate::errors::AppResult<Vec<Ter
                 || row.get::<i64, _>("heartbeat_seq") > 0
                 || beat.is_some();
             let state = device_state(paired, age);
+            let sent_at: Option<String> = row.get("heartbeat_sent_at");
+            let skew = clock_skew_secs(beat.as_deref(), sent_at.as_deref());
+            let advice = if let Some(skew) = skew.filter(|s| s.abs() > CLOCK_SKEW_WARN_SECS) {
+                format!(
+                    "{} Its clock is {} seconds {} the hub's — its rows can land behind the \
+                     sync watermark and go missing. Fix the time on that terminal.",
+                    state.advice(),
+                    skew.abs(),
+                    if skew > 0 { "ahead of" } else { "behind" }
+                )
+            } else {
+                state.advice().to_string()
+            };
             TerminalRow {
                 device_id,
                 branch_id: row.get("branch_id"),
                 device_code: row.get("device_code"),
                 name: row.get("name"),
                 state: state.as_str().to_string(),
-                advice: state.advice().to_string(),
+                advice,
                 seconds_since_seen: age,
                 last_heartbeat_at: beat,
                 observed_ip: row.get("observed_ip"),
                 app_version: row.get("app_version"),
                 heartbeat_hub_id: row.get("heartbeat_hub_id"),
+                clock_skew_secs: skew,
                 is_paired: paired,
                 is_active: row.get::<i64, _>("is_active") == 1,
             }

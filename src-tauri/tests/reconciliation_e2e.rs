@@ -134,7 +134,8 @@ async fn missing_rows_are_delivered_in_both_directions_and_verified() {
 
     // The measured result, not the predicted one.
     assert_eq!(
-        outcome.diverged_after, 0,
+        outcome.diverged_after,
+        0,
         "table still differs after repair: {}",
         outcome.summary()
     );
@@ -177,7 +178,10 @@ async fn a_sale_that_conflicts_is_left_untouched_on_both_sides() {
     // And it is still reported as diverging, rather than counted as handled.
     assert_eq!(outcome.diverged_after, 1, "{}", outcome.summary());
     assert!(
-        outcome.audit.iter().any(|line| line.contains("left for review")),
+        outcome
+            .audit
+            .iter()
+            .any(|line| line.contains("left for review")),
         "{:?}",
         outcome.audit
     );
@@ -441,7 +445,11 @@ async fn a_barcode_with_a_blank_timestamp_is_unreachable_until_it_is_backfilled(
             .await
             .unwrap();
         rows.iter()
-            .filter_map(|r| r.get("barcode").and_then(|v| v.as_str()).map(str::to_string))
+            .filter_map(|r| {
+                r.get("barcode")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            })
             .collect::<Vec<_>>()
     };
 

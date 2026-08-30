@@ -162,10 +162,10 @@ pub fn barcode_match(our_barcodes: &[String], listing: &SourceProduct) -> bool {
     if theirs.len() < 8 {
         return false;
     }
-    our_barcodes
-        .iter()
-        .map(|ours| digits(ours))
-        .any(|ours| ours.len() >= 8 && (ours == theirs || ours.trim_start_matches('0') == theirs.trim_start_matches('0')))
+    our_barcodes.iter().map(|ours| digits(ours)).any(|ours| {
+        ours.len() >= 8
+            && (ours == theirs || ours.trim_start_matches('0') == theirs.trim_start_matches('0'))
+    })
 }
 
 /// Below this a listing is not worth an operator's attention.
@@ -381,8 +381,10 @@ pub async fn suspend_if_pack_changed(
     stored: &StoredMatch,
     listing: &SourceProduct,
 ) -> AppResult<bool> {
-    let (Some(was), Some(now)) = (stored.source_pack_size.as_deref(), listing.pack_text.as_deref())
-    else {
+    let (Some(was), Some(now)) = (
+        stored.source_pack_size.as_deref(),
+        listing.pack_text.as_deref(),
+    ) else {
         return Ok(false);
     };
     if was.trim().eq_ignore_ascii_case(now.trim()) {

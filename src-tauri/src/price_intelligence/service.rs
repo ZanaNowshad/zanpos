@@ -128,12 +128,13 @@ async fn product_facts(pool: &SqlitePool, product_id: &str) -> AppResult<Product
     .await?
     .ok_or_else(|| AppError::NotFound(format!("Product {product_id} not found")))?;
 
-    let barcodes: Vec<String> =
-        sqlx::query_scalar("SELECT barcode FROM product_barcodes WHERE product_id = ? AND deleted_at IS NULL")
-            .bind(product_id)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
+    let barcodes: Vec<String> = sqlx::query_scalar(
+        "SELECT barcode FROM product_barcodes WHERE product_id = ? AND deleted_at IS NULL",
+    )
+    .bind(product_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
 
     Ok(ProductFacts {
         name: row.get("name"),
@@ -328,8 +329,7 @@ pub async fn confirm_match(
     actor_user_id: &str,
     candidate: &Candidate,
 ) -> AppResult<MarketPriceReport> {
-    let match_id =
-        matching::confirm(pool, product_id, branch_id, actor_user_id, candidate).await?;
+    let match_id = matching::confirm(pool, product_id, branch_id, actor_user_id, candidate).await?;
 
     // The offers already in hand are recorded immediately, so confirming makes
     // the panel useful now rather than after the next refresh cycle.

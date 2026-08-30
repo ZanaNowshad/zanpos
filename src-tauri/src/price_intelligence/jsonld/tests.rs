@@ -14,7 +14,10 @@ fn an_aggregator_page_yields_one_offer_per_retailer() {
     let product = product_from_html(AKELNY_PRODUCT).expect("no Product node");
 
     assert_eq!(product.name, "Almarai UHT Premium Strawberry Milk");
-    assert_eq!(product.sku.as_deref(), Some("f4bf784f-1089-4a77-bd71-30a7c719a18c"));
+    assert_eq!(
+        product.sku.as_deref(),
+        Some("f4bf784f-1089-4a77-bd71-30a7c719a18c")
+    );
     assert_eq!(product.category.as_deref(), Some("Dairy & Eggs"));
     assert_eq!(product.offers.len(), 2);
 
@@ -46,7 +49,10 @@ fn a_shop_page_yields_its_barcode_brand_and_stock_state() {
     // Price is nested in a priceSpecification here, not on the Offer itself.
     assert_eq!(offer.price_raw, "1.275");
     assert_eq!(offer.currency.as_deref(), Some("BHD"));
-    assert_eq!(offer.seller.as_deref(), Some("Bahrain Pharmacy Online Store"));
+    assert_eq!(
+        offer.seller.as_deref(),
+        Some("Bahrain Pharmacy Online Store")
+    );
     // The page says OutOfStock, and an out-of-stock price is not a shelf price.
     assert!(!offer.in_stock);
 }
@@ -56,7 +62,10 @@ fn a_shop_page_yields_its_barcode_brand_and_stock_state() {
 #[test]
 fn a_search_page_with_no_product_node_yields_nothing() {
     assert!(product_from_html(BP_SEARCH).is_none());
-    assert!(!script_blocks(BP_SEARCH).is_empty(), "fixture lost its ld+json");
+    assert!(
+        !script_blocks(BP_SEARCH).is_empty(),
+        "fixture lost its ld+json"
+    );
 }
 
 #[test]
@@ -90,11 +99,19 @@ fn an_offer_that_says_nothing_about_stock_counts_as_in_stock() {
 
 #[test]
 fn a_barcode_that_is_not_a_barcode_is_dropped() {
-    for bad in ["\"N/A\"", "\"123\"", "\"88016190532560000\"", "\"88A1619053256\""] {
+    for bad in [
+        "\"N/A\"",
+        "\"123\"",
+        "\"88016190532560000\"",
+        "\"88A1619053256\"",
+    ] {
         let html = format!(
             r#"<script type="application/ld+json">{{"@type":"Product","name":"X","gtin":{bad},"offers":{{"@type":"Offer","price":"1.000"}}}}</script>"#
         );
-        assert!(product_from_html(&html).unwrap().gtin.is_none(), "kept {bad}");
+        assert!(
+            product_from_html(&html).unwrap().gtin.is_none(),
+            "kept {bad}"
+        );
     }
 }
 

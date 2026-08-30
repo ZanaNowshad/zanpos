@@ -46,9 +46,15 @@ async fn a_terminal_that_never_checked_in_is_not_online() {
     .unwrap();
 
     let roster = crate::commands::device_state::roster(&pool).await.unwrap();
-    let row = roster.iter().find(|r| r.device_code == "POS-7757Z").unwrap();
+    let row = roster
+        .iter()
+        .find(|r| r.device_code == "POS-7757Z")
+        .unwrap();
 
-    assert_eq!(row.state, "never_seen", "a stored status was believed again");
+    assert_eq!(
+        row.state, "never_seen",
+        "a stored status was believed again"
+    );
     assert_ne!(row.state, "online");
     assert_eq!(row.seconds_since_seen, None);
     // Every state carries what to do about it, so the screen cannot invent its
@@ -83,7 +89,10 @@ async fn a_hub_paired_terminal_without_a_heartbeat_reads_as_never_seen() {
     .unwrap();
 
     let roster = crate::commands::device_state::roster(&pool).await.unwrap();
-    let row = roster.iter().find(|row| row.device_id == "dev_paired").unwrap();
+    let row = roster
+        .iter()
+        .find(|row| row.device_id == "dev_paired")
+        .unwrap();
     assert_eq!(row.state, "never_seen");
 }
 
@@ -167,13 +176,10 @@ async fn the_screen_and_the_ai_tool_read_the_same_derivation() {
     let roster = crate::commands::device_state::roster(&pool).await.unwrap();
     let from_screen = roster.iter().find(|r| r.device_code == "POS09").unwrap();
 
-    let from_ai = crate::ai::tools_parity::execute(
-        &pool,
-        "get_terminal_roster",
-        &serde_json::json!({}),
-    )
-    .await
-    .unwrap();
+    let from_ai =
+        crate::ai::tools_parity::execute(&pool, "get_terminal_roster", &serde_json::json!({}))
+            .await
+            .unwrap();
 
     assert!(
         from_ai.contains(&from_screen.state),

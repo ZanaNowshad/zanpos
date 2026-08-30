@@ -148,4 +148,3 @@ pub(super) async fn parity_rows(
         }
     }
 }
-

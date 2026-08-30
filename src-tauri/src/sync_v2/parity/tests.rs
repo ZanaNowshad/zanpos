@@ -47,8 +47,9 @@ fn bucketing_is_pinned_so_two_machines_agree() {
     assert_eq!(bucket_of("6291001234567", 64), 41);
 
     // Spread, so one bucket does not hold the catalogue.
-    let spread: std::collections::BTreeSet<u32> =
-        (0..500).map(|n| bucket_of(&format!("prd_{n}"), 64)).collect();
+    let spread: std::collections::BTreeSet<u32> = (0..500)
+        .map(|n| bucket_of(&format!("prd_{n}"), 64))
+        .collect();
     assert!(spread.len() > 50, "only {} buckets used", spread.len());
 
     // Never out of range, including the degenerate setting.
@@ -65,7 +66,9 @@ async fn every_row_lands_in_exactly_one_bucket() {
         add_product(&pool, &format!("prd_{n}"), &format!("Product {n}"), 100).await;
     }
 
-    let digests = bucket_digests(&pool, "products", DEFAULT_BUCKETS).await.unwrap();
+    let digests = bucket_digests(&pool, "products", DEFAULT_BUCKETS)
+        .await
+        .unwrap();
     assert_eq!(digests.len(), DEFAULT_BUCKETS as usize);
     assert_eq!(digests.iter().map(|d| d.count).sum::<i64>(), 40);
 }
@@ -85,8 +88,12 @@ async fn a_single_changed_row_is_narrowed_to_its_id() {
         .await
         .unwrap();
 
-    let local_buckets = bucket_digests(&local, "products", DEFAULT_BUCKETS).await.unwrap();
-    let hub_buckets = bucket_digests(&hub, "products", DEFAULT_BUCKETS).await.unwrap();
+    let local_buckets = bucket_digests(&local, "products", DEFAULT_BUCKETS)
+        .await
+        .unwrap();
+    let hub_buckets = bucket_digests(&hub, "products", DEFAULT_BUCKETS)
+        .await
+        .unwrap();
     let mismatched = mismatched_buckets(&local_buckets, &hub_buckets);
 
     // One row differs, so exactly one bucket should — this is what keeps the
@@ -95,8 +102,12 @@ async fn a_single_changed_row_is_narrowed_to_its_id() {
 
     let bucket = mismatched[0];
     let diff = diff_rows(
-        &row_digests(&local, "products", bucket, DEFAULT_BUCKETS).await.unwrap(),
-        &row_digests(&hub, "products", bucket, DEFAULT_BUCKETS).await.unwrap(),
+        &row_digests(&local, "products", bucket, DEFAULT_BUCKETS)
+            .await
+            .unwrap(),
+        &row_digests(&hub, "products", bucket, DEFAULT_BUCKETS)
+            .await
+            .unwrap(),
     );
     assert_eq!(diff.len(), 1);
     assert_eq!(diff[0].pk, "prd_17");
@@ -117,8 +128,12 @@ async fn a_row_only_one_side_holds_is_named_and_sided() {
     let mut found = Vec::new();
     for bucket in 0..DEFAULT_BUCKETS {
         found.extend(diff_rows(
-            &row_digests(&local, "products", bucket, DEFAULT_BUCKETS).await.unwrap(),
-            &row_digests(&hub, "products", bucket, DEFAULT_BUCKETS).await.unwrap(),
+            &row_digests(&local, "products", bucket, DEFAULT_BUCKETS)
+                .await
+                .unwrap(),
+            &row_digests(&hub, "products", bucket, DEFAULT_BUCKETS)
+                .await
+                .unwrap(),
         ));
     }
     found.sort_by(|a, b| a.pk.cmp(&b.pk));
@@ -141,8 +156,12 @@ async fn identical_terminals_report_no_buckets_and_no_rows() {
         add_product(&hub, &format!("prd_{n}"), &format!("Product {n}"), 100).await;
     }
 
-    let local_buckets = bucket_digests(&local, "products", DEFAULT_BUCKETS).await.unwrap();
-    let hub_buckets = bucket_digests(&hub, "products", DEFAULT_BUCKETS).await.unwrap();
+    let local_buckets = bucket_digests(&local, "products", DEFAULT_BUCKETS)
+        .await
+        .unwrap();
+    let hub_buckets = bucket_digests(&hub, "products", DEFAULT_BUCKETS)
+        .await
+        .unwrap();
     assert!(mismatched_buckets(&local_buckets, &hub_buckets).is_empty());
 }
 
@@ -155,15 +174,21 @@ async fn per_device_bookkeeping_columns_are_not_drift() {
     let hub = pool().await;
     add_product(&local, "prd_1", "Milk", 100).await;
     add_product(&hub, "prd_1", "Milk", 100).await;
-    sqlx::query("UPDATE products SET sync_status='synced', sync_attempts=4 WHERE product_id='prd_1'")
-        .execute(&hub)
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE products SET sync_status='synced', sync_attempts=4 WHERE product_id='prd_1'",
+    )
+    .execute(&hub)
+    .await
+    .unwrap();
 
     let bucket = bucket_of("prd_1", DEFAULT_BUCKETS);
     let diff = diff_rows(
-        &row_digests(&local, "products", bucket, DEFAULT_BUCKETS).await.unwrap(),
-        &row_digests(&hub, "products", bucket, DEFAULT_BUCKETS).await.unwrap(),
+        &row_digests(&local, "products", bucket, DEFAULT_BUCKETS)
+            .await
+            .unwrap(),
+        &row_digests(&hub, "products", bucket, DEFAULT_BUCKETS)
+            .await
+            .unwrap(),
     );
     assert!(diff.is_empty(), "{diff:?}");
 }
@@ -180,12 +205,20 @@ async fn the_bucket_checksums_agree_with_the_whole_table_checksum() {
         add_product(&hub, &format!("prd_{n}"), &format!("Product {n}"), 100).await;
     }
 
-    let same_table = crate::sync_v2::consistency::table_snapshot(&local, "products").await.unwrap();
-    let hub_table = crate::sync_v2::consistency::table_snapshot(&hub, "products").await.unwrap();
+    let same_table = crate::sync_v2::consistency::table_snapshot(&local, "products")
+        .await
+        .unwrap();
+    let hub_table = crate::sync_v2::consistency::table_snapshot(&hub, "products")
+        .await
+        .unwrap();
     assert_eq!(same_table.checksum, hub_table.checksum);
     assert!(mismatched_buckets(
-        &bucket_digests(&local, "products", DEFAULT_BUCKETS).await.unwrap(),
-        &bucket_digests(&hub, "products", DEFAULT_BUCKETS).await.unwrap(),
+        &bucket_digests(&local, "products", DEFAULT_BUCKETS)
+            .await
+            .unwrap(),
+        &bucket_digests(&hub, "products", DEFAULT_BUCKETS)
+            .await
+            .unwrap(),
     )
     .is_empty());
 
@@ -194,12 +227,18 @@ async fn the_bucket_checksums_agree_with_the_whole_table_checksum() {
         .execute(&hub)
         .await
         .unwrap();
-    let changed = crate::sync_v2::consistency::table_snapshot(&hub, "products").await.unwrap();
+    let changed = crate::sync_v2::consistency::table_snapshot(&hub, "products")
+        .await
+        .unwrap();
     assert_ne!(same_table.checksum, changed.checksum);
     assert_eq!(
         mismatched_buckets(
-            &bucket_digests(&local, "products", DEFAULT_BUCKETS).await.unwrap(),
-            &bucket_digests(&hub, "products", DEFAULT_BUCKETS).await.unwrap(),
+            &bucket_digests(&local, "products", DEFAULT_BUCKETS)
+                .await
+                .unwrap(),
+            &bucket_digests(&hub, "products", DEFAULT_BUCKETS)
+                .await
+                .unwrap(),
         )
         .len(),
         1
@@ -211,14 +250,25 @@ async fn the_bucket_checksums_agree_with_the_whole_table_checksum() {
 #[test]
 fn a_hub_on_a_different_bucket_count_is_flagged_not_silently_compared() {
     let local = vec![
-        BucketDigest { bucket: 0, count: 1, checksum: "a".into() },
-        BucketDigest { bucket: 1, count: 1, checksum: "b".into() },
+        BucketDigest {
+            bucket: 0,
+            count: 1,
+            checksum: "a".into(),
+        },
+        BucketDigest {
+            bucket: 1,
+            count: 1,
+            checksum: "b".into(),
+        },
     ];
-    let hub = vec![BucketDigest { bucket: 0, count: 1, checksum: "a".into() }];
+    let hub = vec![BucketDigest {
+        bucket: 0,
+        count: 1,
+        checksum: "a".into(),
+    }];
 
     assert_eq!(mismatched_buckets(&local, &hub), vec![1]);
 }
-
 
 // ── Acceptance: financial divergence must never read as "in step" ───────────
 //
@@ -275,14 +325,22 @@ async fn a_sale_present_on_one_side_only_is_reported_as_divergence() {
     // The hub took a sale this terminal never received.
     add_sale(&hub, "sale_missing", 4500).await;
 
-    let l = bucket_digests(&local, "sales", DEFAULT_BUCKETS).await.unwrap();
-    let h = bucket_digests(&hub, "sales", DEFAULT_BUCKETS).await.unwrap();
+    let l = bucket_digests(&local, "sales", DEFAULT_BUCKETS)
+        .await
+        .unwrap();
+    let h = bucket_digests(&hub, "sales", DEFAULT_BUCKETS)
+        .await
+        .unwrap();
     assert!(differs(&l, &h), "a missing sale read as in step");
 
     let bucket = bucket_of("sale_missing", DEFAULT_BUCKETS);
     let diff = diff_rows(
-        &row_digests(&local, "sales", bucket, DEFAULT_BUCKETS).await.unwrap(),
-        &row_digests(&hub, "sales", bucket, DEFAULT_BUCKETS).await.unwrap(),
+        &row_digests(&local, "sales", bucket, DEFAULT_BUCKETS)
+            .await
+            .unwrap(),
+        &row_digests(&hub, "sales", bucket, DEFAULT_BUCKETS)
+            .await
+            .unwrap(),
     );
     assert_eq!(diff.len(), 1);
     assert_eq!(diff[0].pk, "sale_missing");
@@ -302,8 +360,12 @@ async fn an_altered_payment_amount_is_reported_as_divergence() {
         .await
         .unwrap();
 
-    let l = bucket_digests(&local, "payments", DEFAULT_BUCKETS).await.unwrap();
-    let h = bucket_digests(&hub, "payments", DEFAULT_BUCKETS).await.unwrap();
+    let l = bucket_digests(&local, "payments", DEFAULT_BUCKETS)
+        .await
+        .unwrap();
+    let h = bucket_digests(&hub, "payments", DEFAULT_BUCKETS)
+        .await
+        .unwrap();
     assert!(differs(&l, &h), "an altered payment read as in step");
 }
 
@@ -327,8 +389,12 @@ async fn sale_items_are_compared_not_just_the_sale_header() {
     .await
     .unwrap();
 
-    let l = bucket_digests(&local, "sale_items", DEFAULT_BUCKETS).await.unwrap();
-    let h = bucket_digests(&hub, "sale_items", DEFAULT_BUCKETS).await.unwrap();
+    let l = bucket_digests(&local, "sale_items", DEFAULT_BUCKETS)
+        .await
+        .unwrap();
+    let h = bucket_digests(&hub, "sale_items", DEFAULT_BUCKETS)
+        .await
+        .unwrap();
     assert!(differs(&l, &h), "a missing sale line read as in step");
 }
 
@@ -341,8 +407,12 @@ async fn parity_returns_to_clean_once_the_missing_row_arrives() {
     add_sale(&hub, "sale_late", 3000).await;
 
     let before = differs(
-        &bucket_digests(&local, "sales", DEFAULT_BUCKETS).await.unwrap(),
-        &bucket_digests(&hub, "sales", DEFAULT_BUCKETS).await.unwrap(),
+        &bucket_digests(&local, "sales", DEFAULT_BUCKETS)
+            .await
+            .unwrap(),
+        &bucket_digests(&hub, "sales", DEFAULT_BUCKETS)
+            .await
+            .unwrap(),
     );
     assert!(before);
 
@@ -350,8 +420,12 @@ async fn parity_returns_to_clean_once_the_missing_row_arrives() {
     add_sale(&local, "sale_late", 3000).await;
 
     let after = differs(
-        &bucket_digests(&local, "sales", DEFAULT_BUCKETS).await.unwrap(),
-        &bucket_digests(&hub, "sales", DEFAULT_BUCKETS).await.unwrap(),
+        &bucket_digests(&local, "sales", DEFAULT_BUCKETS)
+            .await
+            .unwrap(),
+        &bucket_digests(&hub, "sales", DEFAULT_BUCKETS)
+            .await
+            .unwrap(),
     );
     assert!(!after, "parity stayed dirty after the row arrived");
 }
@@ -362,8 +436,15 @@ async fn parity_returns_to_clean_once_the_missing_row_arrives() {
 async fn every_financial_table_can_be_bucketed() {
     let pool = pool().await;
     for table in [
-        "sales", "sale_items", "payments", "refunds", "refund_items",
-        "cash_events", "shifts", "delivery_orders", "product_cost_history",
+        "sales",
+        "sale_items",
+        "payments",
+        "refunds",
+        "refund_items",
+        "cash_events",
+        "shifts",
+        "delivery_orders",
+        "product_cost_history",
     ] {
         let digests = bucket_digests(&pool, table, DEFAULT_BUCKETS).await;
         assert!(digests.is_ok(), "{table}: {:?}", digests.err());

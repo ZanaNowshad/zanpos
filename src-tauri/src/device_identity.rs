@@ -309,5 +309,125 @@ async fn insert_device_row(
     Ok(())
 }
 
+/// Re-issue this terminal's identity with a fresh ULID.
+///
+/// The recovery path for a database cloned onto a second PC (backup restore):
+/// both machines then share one `device_id`, which makes their heartbeats
+/// collide, their receipt counters mint the same numbers, and — because the
+/// pull filter skips a device's own `origin_device_id` — each side's rows
+/// invisible to the other. A fresh identity separates all three.
+///
+/// Every local row naming the old identity is rewritten and marked pending so
+/// it re-pushes under the new origin; the heartbeat counter and the sync
+/// watermarks reset so the new identity starts from a clean slate. Rows that
+/// arrived from other terminals keep their origin and are untouched.
+///
+/// Returns `(old_id, new_id)`.
+pub async fn rekey_to_fresh(pool: &SqlitePool) -> AppResult<(String, String)> {
+    let old_id = current(pool).await?;
+    if old_id == SEED_DEVICE_ID {
+        // The startup ensure() should already have moved off the seed; if it
+        // somehow did not, that path is the right one to take.
+        let new_id = ensure(pool).await?;
+        return Ok((old_id, new_id));
+    }
+
+    let new_id = Ulid::new().to_string();
+    let new_code = device_code_for(&new_id);
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let mut tx = pool.begin().await?;
+    sqlx::query("PRAGMA defer_foreign_keys = ON")
+        .execute(&mut *tx)
+        .await?;
+
+    // The device row itself: capture what identifies it to people, retire the
+    // old id locally, and register the new one under a fresh receipt-namespace
+    // code so future receipts cannot collide with the sibling's.
+    let old_row: Option<(String, String, String)> =
+        sqlx::query_as("SELECT branch_id, name, created_at FROM devices WHERE device_id = ?")
+            .bind(&old_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+
+    sqlx::query("DELETE FROM devices WHERE device_id = ?")
+        .bind(&old_id)
+        .execute(&mut *tx)
+        .await?;
+
+    if let Some((branch_id, name, created_at)) = old_row {
+        sqlx::query(
+            "INSERT INTO devices
+               (device_id, branch_id, device_code, name, status, is_active,
+                created_at, updated_at)
+             VALUES (?, ?, ?, ?, 'online', 1, ?, ?)",
+        )
+        .bind(&new_id)
+        .bind(&branch_id)
+        .bind(&new_code)
+        .bind(&name)
+        .bind(created_at)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    for (table, column) in IDENTITY_COLUMNS {
+        // Tables arrive across migrations; a database mid-upgrade may not have
+        // them all yet, and a missing table must not abort the re-key.
+        let sql = format!("UPDATE {table} SET {column} = ? WHERE {column} = ?");
+        if let Err(e) = sqlx::query(&sql)
+            .bind(&new_id)
+            .bind(&old_id)
+            .execute(&mut *tx)
+            .await
+        {
+            tracing::warn!("Re-key skipped {table}.{column}: {e}");
+        }
+    }
+    // The rewritten rows exist on the hub under the old origin; under the new
+    // one they must be offered again. Rows whose origin is another terminal
+    // are left alone — the hub already holds them.
+    for table in crate::sync_v2::apply::SYNC_TABLES
+        .iter()
+        .filter(|t| crate::sync_v2::apply::has_origin_device_id(t))
+    {
+        let sql = format!(
+            "UPDATE {table} SET sync_status = 'pending', sync_attempts = 0
+              WHERE origin_device_id = ?"
+        );
+        if let Err(e) = sqlx::query(&sql).bind(&new_id).execute(&mut *tx).await {
+            tracing::warn!("Re-key pending-mark skipped {table}: {e}");
+        }
+    }
+
+    sqlx::query(
+        "INSERT INTO app_config(key, value, updated_at) VALUES ('device_id', ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+    )
+    .bind(&new_id)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await?;
+    // The heartbeat sequence and the per-table watermarks are facts of the old
+    // identity. Keep the hub_url and everything else.
+    sqlx::query("DELETE FROM app_config WHERE key = 'heartbeat_seq'")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM app_config WHERE key LIKE 'sync_v2_watermark_%'")
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    crate::secure_store::set_secret(SECURE_KEY, &new_id);
+    tracing::info!(
+        old_device_id = %old_id,
+        device_id = %new_id,
+        "Device identity re-issued — this terminal was sharing {old_id} with another install"
+    );
+    Ok((old_id, new_id))
+}
+
 #[cfg(test)]
 mod tests;

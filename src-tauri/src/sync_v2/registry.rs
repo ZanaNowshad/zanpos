@@ -76,23 +76,61 @@ pub struct SyncTable {
 /// name, and parity coverage is derived from this list rather than repeated.
 pub const TABLES: &[SyncTable] = &[
     // ── Reference data: what the shop is configured to be ────────────────────
-    t("branches", "branch_id", Parity::Full, Deletion::SoftDeleteWithActiveFlag),
+    t(
+        "branches",
+        "branch_id",
+        Parity::Full,
+        Deletion::SoftDeleteWithActiveFlag,
+    ),
     t("roles", "role_id", Parity::Full, Deletion::Never),
-    t("users", "user_id", Parity::Full, Deletion::SoftDeleteWithActiveFlag),
-    t("devices", "device_id", Parity::Full, Deletion::SoftDeleteWithActiveFlag),
-    t("categories", "category_id", Parity::Full, Deletion::SoftDeleteWithActiveFlag),
-    t("tax_rules", "tax_rule_id", Parity::Full, Deletion::SoftDeleteWithActiveFlag),
+    t(
+        "users",
+        "user_id",
+        Parity::Full,
+        Deletion::SoftDeleteWithActiveFlag,
+    ),
+    t(
+        "devices",
+        "device_id",
+        Parity::Full,
+        Deletion::SoftDeleteWithActiveFlag,
+    ),
+    t(
+        "categories",
+        "category_id",
+        Parity::Full,
+        Deletion::SoftDeleteWithActiveFlag,
+    ),
+    t(
+        "tax_rules",
+        "tax_rule_id",
+        Parity::Full,
+        Deletion::SoftDeleteWithActiveFlag,
+    ),
     t("app_config", "key", Parity::Full, Deletion::Never),
-
     // ── Catalogue: what the tills sell ───────────────────────────────────────
-    t("products", "product_id", Parity::Full, Deletion::SoftDeleteWithActiveFlag),
+    t(
+        "products",
+        "product_id",
+        Parity::Full,
+        Deletion::SoftDeleteWithActiveFlag,
+    ),
     // Soft-delete-only, and it was Deletion::Never while three code paths
     // hard-deleted from it. With no is_active to fall back on, a removed
     // barcode had no marker at all and the hub handed its copy back.
-    t("product_barcodes", "barcode", Parity::Full, Deletion::SoftDeleteOnly),
+    t(
+        "product_barcodes",
+        "barcode",
+        Parity::Full,
+        Deletion::SoftDeleteOnly,
+    ),
     t("product_prices", "price_id", Parity::Full, Deletion::Never),
-    t("product_cost_history", "cost_history_id", Parity::Full, Deletion::Never),
-
+    t(
+        "product_cost_history",
+        "cost_history_id",
+        Parity::Full,
+        Deletion::Never,
+    ),
     // ── Stock ────────────────────────────────────────────────────────────────
     // `stock_levels` is a cache, not a fact: every terminal derives it from the
     // movement ledger. Comparing derived caches reports divergence whenever a
@@ -105,23 +143,50 @@ pub const TABLES: &[SyncTable] = &[
         Parity::Exempt("derived from the stock_movements ledger, which is parity-checked instead"),
         Deletion::Never,
     ),
-    t("stock_movements", "movement_id", Parity::Full, Deletion::Never),
-
+    t(
+        "stock_movements",
+        "movement_id",
+        Parity::Full,
+        Deletion::Never,
+    ),
     // ── People and partners ──────────────────────────────────────────────────
     // Soft-delete-only: a removed customer stays visible on other terminals.
-    t("customers", "customer_id", Parity::Full, Deletion::SoftDeleteOnly),
+    t(
+        "customers",
+        "customer_id",
+        Parity::Full,
+        Deletion::SoftDeleteOnly,
+    ),
     // The loyalty ledger. Points are derived from this the way stock is derived
     // from movements, so this is the table that has to agree between terminals —
     // `customers.loyalty_points` is a cache and no longer travels.
-    t("loyalty_events", "loyalty_event_id", Parity::Full, Deletion::Never),
-    t("suppliers", "supplier_id", Parity::Full, Deletion::DeactivateOnly),
-    t("riders", "rider_id", Parity::Full, Deletion::SoftDeleteWithActiveFlag),
-
+    t(
+        "loyalty_events",
+        "loyalty_event_id",
+        Parity::Full,
+        Deletion::Never,
+    ),
+    t(
+        "suppliers",
+        "supplier_id",
+        Parity::Full,
+        Deletion::DeactivateOnly,
+    ),
+    t(
+        "riders",
+        "rider_id",
+        Parity::Full,
+        Deletion::SoftDeleteWithActiveFlag,
+    ),
     // ── Purchasing ───────────────────────────────────────────────────────────
     t("purchase_orders", "po_id", Parity::Full, Deletion::Never),
-    t("purchase_order_lines", "po_line_id", Parity::Full, Deletion::Never),
+    t(
+        "purchase_order_lines",
+        "po_line_id",
+        Parity::Full,
+        Deletion::Never,
+    ),
     t("po_receipts", "receipt_id", Parity::Full, Deletion::Never),
-
     // ── Money. None of these was parity-checked before ───────────────────────
     // A till missing a day of sales must never be able to report 100%, which is
     // exactly what the old hand-kept list allowed.
@@ -129,13 +194,26 @@ pub const TABLES: &[SyncTable] = &[
     t("sale_items", "sale_item_id", Parity::Full, Deletion::Never),
     t("payments", "payment_id", Parity::Full, Deletion::Never),
     t("refunds", "refund_id", Parity::Full, Deletion::Never),
-    t("refund_items", "refund_item_id", Parity::Full, Deletion::Never),
-    t("cash_events", "cash_event_id", Parity::Full, Deletion::Never),
+    t(
+        "refund_items",
+        "refund_item_id",
+        Parity::Full,
+        Deletion::Never,
+    ),
+    t(
+        "cash_events",
+        "cash_event_id",
+        Parity::Full,
+        Deletion::Never,
+    ),
     t("shifts", "shift_id", Parity::Full, Deletion::SoftDeleteOnly),
-
     // ── Operations ───────────────────────────────────────────────────────────
-    t("delivery_orders", "delivery_id", Parity::Full, Deletion::Never),
-
+    t(
+        "delivery_orders",
+        "delivery_id",
+        Parity::Full,
+        Deletion::Never,
+    ),
     // ── The one genuine exemption ────────────────────────────────────────────
     // Each device writes its own hash-linked audit chain and only ever appends
     // to it, so two terminals hold different, equally correct chains and a

@@ -64,15 +64,23 @@ async fn deleted_at_of(pool: &SqlitePool) -> Option<String> {
 #[tokio::test]
 async fn a_deletion_arriving_from_the_hub_removes_the_row_locally() {
     let pool = pool().await;
-    apply_row(&pool, "customers", &customer("Ahmed", "2026-08-01T10:00:00Z", None))
-        .await
-        .unwrap();
+    apply_row(
+        &pool,
+        "customers",
+        &customer("Ahmed", "2026-08-01T10:00:00Z", None),
+    )
+    .await
+    .unwrap();
     assert_eq!(live_customers(&pool).await, 1);
 
     apply_row(
         &pool,
         "customers",
-        &customer("Ahmed", "2026-08-02T10:00:00Z", Some("2026-08-02T10:00:00Z")),
+        &customer(
+            "Ahmed",
+            "2026-08-02T10:00:00Z",
+            Some("2026-08-02T10:00:00Z"),
+        ),
     )
     .await
     .unwrap();
@@ -92,15 +100,23 @@ async fn a_restore_arriving_from_the_hub_brings_the_row_back() {
     apply_row(
         &pool,
         "customers",
-        &customer("Ahmed", "2026-08-02T10:00:00Z", Some("2026-08-02T10:00:00Z")),
+        &customer(
+            "Ahmed",
+            "2026-08-02T10:00:00Z",
+            Some("2026-08-02T10:00:00Z"),
+        ),
     )
     .await
     .unwrap();
     assert_eq!(live_customers(&pool).await, 0);
 
-    apply_row(&pool, "customers", &customer("Ahmed", "2026-08-03T10:00:00Z", None))
-        .await
-        .unwrap();
+    apply_row(
+        &pool,
+        "customers",
+        &customer("Ahmed", "2026-08-03T10:00:00Z", None),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(live_customers(&pool).await, 1, "the restore did not land");
     assert!(deleted_at_of(&pool).await.is_none());
@@ -148,9 +164,13 @@ async fn a_terminal_delete_then_restore_round_trips_to_another_node() {
     let terminal = pool().await;
     let hub = pool().await;
 
-    apply_row(&terminal, "customers", &customer("Ahmed", "2026-08-01T10:00:00Z", None))
-        .await
-        .unwrap();
+    apply_row(
+        &terminal,
+        "customers",
+        &customer("Ahmed", "2026-08-01T10:00:00Z", None),
+    )
+    .await
+    .unwrap();
 
     // Terminal deletes, exactly as `customer_delete` does.
     sqlx::query("UPDATE customers SET deleted_at=?, updated_at=? WHERE customer_id='cus_1'")
@@ -164,17 +184,33 @@ async fn a_terminal_delete_then_restore_round_trips_to_another_node() {
     apply_row(
         &hub,
         "customers",
-        &customer("Ahmed", "2026-08-02T10:00:00Z", Some("2026-08-02T10:00:00Z")),
+        &customer(
+            "Ahmed",
+            "2026-08-02T10:00:00Z",
+            Some("2026-08-02T10:00:00Z"),
+        ),
     )
     .await
     .unwrap();
-    assert_eq!(live_customers(&hub).await, 0, "delete did not reach the hub");
+    assert_eq!(
+        live_customers(&hub).await,
+        0,
+        "delete did not reach the hub"
+    );
 
     // And the reverse: restored here, cleared there.
-    apply_row(&hub, "customers", &customer("Ahmed", "2026-08-03T10:00:00Z", None))
-        .await
-        .unwrap();
-    assert_eq!(live_customers(&hub).await, 1, "restore did not reach the hub");
+    apply_row(
+        &hub,
+        "customers",
+        &customer("Ahmed", "2026-08-03T10:00:00Z", None),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        live_customers(&hub).await,
+        1,
+        "restore did not reach the hub"
+    );
 }
 
 // ── 5. The one that matters in a shop ───────────────────────────────────────
@@ -185,13 +221,21 @@ async fn a_terminal_delete_then_restore_round_trips_to_another_node() {
 #[tokio::test]
 async fn a_stale_edit_arriving_late_cannot_resurrect_a_deleted_row() {
     let pool = pool().await;
-    apply_row(&pool, "customers", &customer("Ahmed", "2026-08-01T10:00:00Z", None))
-        .await
-        .unwrap();
     apply_row(
         &pool,
         "customers",
-        &customer("Ahmed", "2026-08-05T10:00:00Z", Some("2026-08-05T10:00:00Z")),
+        &customer("Ahmed", "2026-08-01T10:00:00Z", None),
+    )
+    .await
+    .unwrap();
+    apply_row(
+        &pool,
+        "customers",
+        &customer(
+            "Ahmed",
+            "2026-08-05T10:00:00Z",
+            Some("2026-08-05T10:00:00Z"),
+        ),
     )
     .await
     .unwrap();
@@ -227,14 +271,22 @@ async fn a_newer_restore_still_wins_over_an_older_deletion() {
     apply_row(
         &pool,
         "customers",
-        &customer("Ahmed", "2026-08-05T10:00:00Z", Some("2026-08-05T10:00:00Z")),
+        &customer(
+            "Ahmed",
+            "2026-08-05T10:00:00Z",
+            Some("2026-08-05T10:00:00Z"),
+        ),
     )
     .await
     .unwrap();
 
-    apply_row(&pool, "customers", &customer("Ahmed", "2026-08-06T10:00:00Z", None))
-        .await
-        .unwrap();
+    apply_row(
+        &pool,
+        "customers",
+        &customer("Ahmed", "2026-08-06T10:00:00Z", None),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(live_customers(&pool).await, 1);
 }
@@ -250,13 +302,21 @@ async fn parity_now_reports_a_row_deleted_on_only_one_side() {
     let local = pool().await;
     let hub = pool().await;
     for node in [&local, &hub] {
-        apply_row(node, "customers", &customer("Ahmed", "2026-08-01T10:00:00Z", None))
-            .await
-            .unwrap();
+        apply_row(
+            node,
+            "customers",
+            &customer("Ahmed", "2026-08-01T10:00:00Z", None),
+        )
+        .await
+        .unwrap();
     }
     assert!(mismatched_buckets(
-        &bucket_digests(&local, "customers", DEFAULT_BUCKETS).await.unwrap(),
-        &bucket_digests(&hub, "customers", DEFAULT_BUCKETS).await.unwrap(),
+        &bucket_digests(&local, "customers", DEFAULT_BUCKETS)
+            .await
+            .unwrap(),
+        &bucket_digests(&hub, "customers", DEFAULT_BUCKETS)
+            .await
+            .unwrap(),
     )
     .is_empty());
 
@@ -267,8 +327,12 @@ async fn parity_now_reports_a_row_deleted_on_only_one_side() {
 
     assert!(
         !mismatched_buckets(
-            &bucket_digests(&local, "customers", DEFAULT_BUCKETS).await.unwrap(),
-            &bucket_digests(&hub, "customers", DEFAULT_BUCKETS).await.unwrap(),
+            &bucket_digests(&local, "customers", DEFAULT_BUCKETS)
+                .await
+                .unwrap(),
+            &bucket_digests(&hub, "customers", DEFAULT_BUCKETS)
+                .await
+                .unwrap(),
         )
         .is_empty(),
         "a one-sided deletion still reads as identical"

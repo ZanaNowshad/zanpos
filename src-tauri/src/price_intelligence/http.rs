@@ -101,7 +101,10 @@ pub async fn fetch_text(url: &str, crawl_delay: Option<Duration>) -> AppResult<S
 
     let response = client()
         .get(parsed.clone())
-        .header("accept", "text/html,application/xhtml+xml,application/xml;q=0.9")
+        .header(
+            "accept",
+            "text/html,application/xhtml+xml,application/xml;q=0.9",
+        )
         .send()
         .await
         .map_err(|error| AppError::Internal(format!("{host} could not be reached: {error}")))?;

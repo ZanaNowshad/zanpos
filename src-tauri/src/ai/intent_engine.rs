@@ -28,12 +28,7 @@ pub struct IntentDef {
 
 /// Whether an intent name performs mutations (needs confirmation).
 pub fn is_mutation_intent(name: &str) -> bool {
-    matches!(
-        name,
-        "create_product"
-            | "receive_stock"
-            | "create_customer"
-    )
+    matches!(name, "create_product" | "receive_stock" | "create_customer")
 }
 
 /// List of valid intent names the AI may call.

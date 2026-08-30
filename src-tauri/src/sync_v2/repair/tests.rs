@@ -39,7 +39,10 @@ fn each_side_is_asked_only_for_the_rows_it_holds() {
     );
 
     assert_eq!(keys_from(&plan, Side::Hub), vec!["p_hub".to_string()]);
-    assert_eq!(keys_from(&plan, Side::Terminal), vec!["p_local".to_string()]);
+    assert_eq!(
+        keys_from(&plan, Side::Terminal),
+        vec!["p_local".to_string()]
+    );
     // The conflicting row is in neither delivery list.
     assert!(!keys_from(&plan, Side::Hub).contains(&"p_both".to_string()));
     assert!(!keys_from(&plan, Side::Terminal).contains(&"p_both".to_string()));
@@ -85,7 +88,10 @@ async fn local_rows_come_back_shaped_as_the_protocol_sends_them() {
     assert_eq!(row.get("name"), Some(&json!("Grocery")));
     // Per-device bookkeeping must not travel, or the receiving terminal inherits
     // this one's sync state and stops pushing its own changes.
-    assert!(!row.contains_key("sync_status"), "sync_status crossed the wire");
+    assert!(
+        !row.contains_key("sync_status"),
+        "sync_status crossed the wire"
+    );
     assert!(!row.contains_key("sync_attempts"));
 }
 
@@ -114,14 +120,20 @@ async fn a_primary_key_containing_sql_is_treated_as_data() {
     .unwrap();
 
     let hostile = "x'); DROP TABLE categories; --".to_string();
-    let rows = local_rows_by_pk(&pool, "categories", &[hostile]).await.unwrap();
-    assert!(rows.is_empty());
-
-    let survived: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM categories WHERE category_id='cat_keep'")
-        .fetch_one(&pool)
+    let rows = local_rows_by_pk(&pool, "categories", &[hostile])
         .await
         .unwrap();
-    assert_eq!(survived, 1, "the table did not survive a hostile primary key");
+    assert!(rows.is_empty());
+
+    let survived: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM categories WHERE category_id='cat_keep'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        survived, 1,
+        "the table did not survive a hostile primary key"
+    );
 }
 
 /// The summary is what an operator reads. It has to distinguish "repaired" from
@@ -146,7 +158,11 @@ fn the_summary_says_whether_the_table_actually_matches_now() {
         diverged_after: 3,
         ..repaired.clone()
     };
-    assert!(stuck.summary().contains("3 still differ"), "{}", stuck.summary());
+    assert!(
+        stuck.summary().contains("3 still differ"),
+        "{}",
+        stuck.summary()
+    );
     assert!(!stuck.summary().contains("now matches"));
 }
 
@@ -206,7 +222,9 @@ async fn an_unchecked_table_is_refused_before_any_network_call() {
         Some("dev-test"),
     );
 
-    let err = reconcile_table(&pool, &client, "audit_logs").await.unwrap_err();
+    let err = reconcile_table(&pool, &client, "audit_logs")
+        .await
+        .unwrap_err();
     assert!(
         format!("{err}").contains("not a parity-checked table"),
         "{err}"

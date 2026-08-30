@@ -21,8 +21,8 @@ mod errors;
 pub mod hub;
 mod inventory;
 mod license;
-pub mod printing;
 mod price_intelligence;
+pub mod printing;
 mod product_image_search;
 mod product_image_worker;
 mod secure_store;
@@ -128,7 +128,6 @@ pub struct HubRuntime {
     pub handle: Option<crate::hub::HubHandle>,
     pub last_error: Option<String>,
 }
-
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -978,6 +977,7 @@ pub fn run() {
             commands::device_commands::device_list,
             commands::device_commands::device_create,
             commands::device_commands::device_toggle_active,
+            commands::device_commands::device_rekey,
             // WhatsApp
             commands::whatsapp_commands::whatsapp_status,
             commands::whatsapp_commands::whatsapp_send_delivery,

@@ -72,12 +72,7 @@ pub async fn search(query: &SearchQuery) -> AppResult<Vec<SourceProduct>> {
     if tokens.is_empty() {
         return Ok(Vec::new());
     }
-    let term = tokens
-        .iter()
-        .take(3)
-        .cloned()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let term = tokens.iter().take(3).cloned().collect::<Vec<_>>().join(" ");
 
     let results = http::fetch_text(&search_url(&term), CRAWL_DELAY).await?;
     let slugs = slugs_from_results(&results);

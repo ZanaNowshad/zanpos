@@ -7,9 +7,7 @@ const BP_PRODUCT: &str = include_str!("../../../tests/fixtures/price/bp_product.
 const BP_SEARCH: &str = include_str!("../../../tests/fixtures/price/bp_search.html");
 
 fn query(name: &str) -> SearchQuery {
-    SearchQuery {
-        name: name.into(),
-    }
+    SearchQuery { name: name.into() }
 }
 
 // ── Reading a page into a listing ────────────────────────────────────────────
@@ -76,7 +74,9 @@ fn a_page_with_no_readable_price_yields_no_listing() {
     let html = r#"<script type="application/ld+json">
         {"@type":"Product","name":"Mystery","offers":{"@type":"Offer","price":"ask in store"}}</script>"#;
     assert!(product_from_page("generic", "https://x.test/p/1", html, None, None).is_none());
-    assert!(product_from_page("generic", "https://x.test/p/1", "<html></html>", None, None).is_none());
+    assert!(
+        product_from_page("generic", "https://x.test/p/1", "<html></html>", None, None).is_none()
+    );
 }
 
 /// One unreadable retailer on a multi-retailer page is a gap; one invented
@@ -115,7 +115,9 @@ fn a_product_name_finds_its_slug_without_a_search_endpoint() {
     let ranked = akelny::rank_slugs(&slugs, &tokenize("Almarai Processed Cream Cheese"));
 
     assert!(
-        ranked.iter().any(|slug| slug.starts_with("almarai-processed-cream-cheese")),
+        ranked
+            .iter()
+            .any(|slug| slug.starts_with("almarai-processed-cream-cheese")),
         "{ranked:?}"
     );
     assert!(ranked.len() <= MAX_CANDIDATES);
@@ -190,7 +192,10 @@ async fn the_unsupported_source_never_fetches_and_never_errors() {
 #[test]
 fn an_unknown_source_falls_back_to_the_structured_data_adapter() {
     assert_eq!(Adapter::for_source("akelny"), Adapter::Akelny);
-    assert_eq!(Adapter::for_source("bahrain_pharmacy"), Adapter::BahrainPharmacy);
+    assert_eq!(
+        Adapter::for_source("bahrain_pharmacy"),
+        Adapter::BahrainPharmacy
+    );
     assert_eq!(Adapter::for_source("some_new_shop"), Adapter::Generic);
 }
 

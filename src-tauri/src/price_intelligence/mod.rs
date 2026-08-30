@@ -32,8 +32,8 @@
 pub mod http;
 pub mod jsonld;
 pub mod matching;
-pub mod observe;
 pub mod money;
+pub mod observe;
 pub mod pack;
 pub mod route;
 pub mod service;

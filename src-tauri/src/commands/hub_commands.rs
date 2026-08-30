@@ -4,6 +4,8 @@ use crate::errors::AppError;
 use crate::AppState;
 use rand::RngCore;
 use serde::Serialize;
+use sqlx::Row;
+use std::collections::HashMap;
 use tauri::State;
 
 #[derive(Serialize)]
@@ -48,25 +50,54 @@ pub async fn hub_status(
     let rt = state.hub.lock().await;
     let running = rt.handle.is_some();
     let last_error = rt.last_error.clone();
-    let terminals = rt
-        .handle
-        .as_ref()
-        .map(|h| {
-            h.seen
-                .lock()
-                .map(|m| {
-                    m.iter()
-                        .map(|(d, (ip, ts))| TerminalSeen {
-                            device_id: d.clone(),
-                            ip: ip.clone(),
-                            last_seen: ts.clone(),
-                        })
-                        .collect()
+    drop(rt);
+    // Derived from the devices table rather than the in-memory seen map alone:
+    // the map resets when the hub restarts, which made every terminal look
+    // like it had never contacted this hub until the next beat arrived. The
+    // in-memory entries still overlay it so a beat recorded in the last few
+    // seconds is not hidden by a stale read.
+    let terminals = if hub_mode {
+        let mut seen: HashMap<String, TerminalSeen> = sqlx::query(
+            "SELECT device_id, observed_ip, last_seen_at FROM devices
+              WHERE last_seen_at IS NOT NULL AND observed_ip IS NOT NULL
+                AND deleted_at IS NULL",
+        )
+        .fetch_all(&state.db)
+        .await
+        .map(|rows| {
+            rows.iter()
+                .map(|row| {
+                    let device_id: String = row.get("device_id");
+                    (
+                        device_id.clone(),
+                        TerminalSeen {
+                            device_id,
+                            ip: row.get("observed_ip"),
+                            last_seen: row.get("last_seen_at"),
+                        },
+                    )
                 })
-                .unwrap_or_default()
+                .collect()
         })
         .unwrap_or_default();
-    drop(rt);
+        let rt = state.hub.lock().await;
+        if let Some(h) = rt.handle.as_ref() {
+            if let Ok(m) = h.seen.lock() {
+                for (device_id, (ip, ts)) in m.iter() {
+                    seen.entry(device_id.clone())
+                        .or_insert_with(|| TerminalSeen {
+                            device_id: device_id.clone(),
+                            ip: ip.clone(),
+                            last_seen: ts.clone(),
+                        });
+                }
+            }
+        }
+        drop(rt);
+        seen.into_values().collect()
+    } else {
+        Vec::new()
+    };
     Ok(HubStatus {
         mode: if hub_mode {
             "hub"

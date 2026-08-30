@@ -55,7 +55,14 @@ pub async fn market_price_confirm_match(
 ) -> Result<MarketPriceReport, AppError> {
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     let branch_id = crate::db::helpers::active_branch_id(&state.db).await?;
-    service::confirm_match(&state.db, &product_id, &branch_id, &actor_user_id, &candidate).await
+    service::confirm_match(
+        &state.db,
+        &product_id,
+        &branch_id,
+        &actor_user_id,
+        &candidate,
+    )
+    .await
 }
 
 /// Mark a stored pairing as wrong so it stops being offered.

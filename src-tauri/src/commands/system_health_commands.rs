@@ -45,6 +45,12 @@ pub struct HealthSummary {
     pub stuck_sync_rows: i64,
     pub device_count: i64,
     pub hub_mode: String,
+    /// Most recent pull applied to this database, from per-table health.
+    pub last_successful_sync_at: Option<String>,
+    /// This installation's own last accepted heartbeat, hub or self.
+    pub last_heartbeat_at: Option<String>,
+    /// The migration schema version, so a mixed-version fleet is visible.
+    pub schema_version: i64,
     pub checked_at: String,
 }
 
@@ -197,6 +203,20 @@ pub async fn run_local_health_check(
             fix_action: Some("reset_stuck_sync".into()),
         });
     }
+    // A quarantined row is knowingly missing data: the sync cycle advances
+    // past it so its table can keep working, which is exactly why a healthy
+    // report must say so.
+    let quarantined = crate::sync_v2::dead_letter::pending_count(pool).await;
+    if quarantined > 0 {
+        findings.push(HealthFinding {
+            code: "sync.quarantined_rows".into(),
+            severity: HealthSeverity::Critical,
+            area: "Sync".into(),
+            title: format!("{quarantined} sync row(s) are quarantined"),
+            detail: "These rows failed repeatedly and were set aside so their table can keep syncing. Review them under Sync → Diagnostics.".into(),
+            fix_action: None,
+        });
+    }
     if pending_total > 0 {
         findings.push(HealthFinding {
             code: "sync.pending_rows".into(),
@@ -286,19 +306,40 @@ pub async fn run_local_health_check(
         });
     }
 
+    let own_device = app_config(pool, "device_id").await;
     let mut devices = Vec::new();
     if table_exists(pool, "devices").await {
+        // Same derivation the Command Center roster uses: state is worked out
+        // from heartbeat evidence, never read from `devices.status` — that
+        // column is written when a row is created and then, in practice, never
+        // again, so a report that repeats it is reporting fiction.
         let rows = sqlx::query(
-            "SELECT device_id, device_code, name, status, is_active
-             FROM devices ORDER BY is_active DESC, device_code",
+            "SELECT d.device_id, d.device_code, d.name, d.is_active,
+                    d.last_heartbeat_at, d.observed_ip, d.heartbeat_seq,
+                    EXISTS(SELECT 1 FROM hub_paired_devices p
+                            WHERE p.device_id = d.device_id AND p.revoked_at IS NULL)
+                        AS has_live_pairing
+               FROM devices d WHERE d.deleted_at IS NULL
+              ORDER BY d.is_active DESC, d.device_code",
         )
         .fetch_all(pool)
         .await
         .unwrap_or_default();
+        let now = chrono::Utc::now();
         for r in rows {
             let active: i64 = r.try_get("is_active").unwrap_or(0);
+            let device_id: String = r.try_get("device_id").unwrap_or_default();
+            let beat: Option<String> = r.try_get("last_heartbeat_at").ok().flatten();
+            let paired = own_device.as_deref() == Some(device_id.as_str())
+                || r.try_get::<i64, _>("has_live_pairing").unwrap_or(0) == 1
+                || r.try_get::<i64, _>("heartbeat_seq").unwrap_or(0) > 0
+                || beat.is_some();
+            let state = crate::commands::device_state::device_state(
+                paired && active == 1,
+                crate::commands::device_state::seconds_since(beat.as_deref(), now),
+            );
             devices.push(HealthDevice {
-                device_id: r.try_get("device_id").unwrap_or_default(),
+                device_id,
                 label: format!(
                     "{} — {}",
                     r.try_get::<String, _>("device_code").unwrap_or_default(),
@@ -311,18 +352,44 @@ pub async fn run_local_health_check(
                 }
                 .into(),
                 status: if active == 1 {
-                    r.try_get("status").unwrap_or_else(|_| "active".into())
+                    state.as_str().to_string()
                 } else {
                     "inactive".into()
                 },
-                ip: None,
-                last_seen: None,
+                ip: r.try_get("observed_ip").ok().flatten(),
+                last_seen: beat,
             });
         }
     }
 
+    // Health context the operator asked for by name: when sync last landed,
+    // when this installation last beat, and the schema version a mixed fleet
+    // needs to see before rows start erroring one by one.
+    let last_successful_sync_at = sqlx::query_scalar::<_, String>(
+        "SELECT MAX(last_pull_success_at) FROM sync_table_health
+          WHERE last_pull_success_at IS NOT NULL",
+    )
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    let last_heartbeat_at = match own_device.as_deref() {
+        Some(id) => sqlx::query_scalar::<_, String>(
+            "SELECT last_heartbeat_at FROM devices WHERE device_id = ?",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .filter(|s| !s.is_empty()),
+        None => None,
+    };
+    let schema_version = crate::sync_v2::consistency::schema_version(pool).await;
+
     let ok = db_integrity == "ok"
         && stuck_total == 0
+        && quarantined == 0
         && stuck_ai_runs == 0
         && stuck_ai_actions == 0
         && device_count > 0;
@@ -336,6 +403,9 @@ pub async fn run_local_health_check(
             stuck_sync_rows: stuck_total,
             device_count,
             hub_mode,
+            last_successful_sync_at,
+            last_heartbeat_at,
+            schema_version,
             checked_at,
         },
         findings,
@@ -429,22 +499,32 @@ pub async fn apply_health_fix(
 }
 
 pub fn merge_seen_devices(report: &mut SystemHealthReport, seen: &HubSeenSnapshot) {
+    let now = chrono::Utc::now();
     for (device_id, (ip, last_seen)) in seen.iter() {
+        let state = crate::commands::device_state::device_state(
+            true,
+            crate::commands::device_state::seconds_since(Some(last_seen), now),
+        );
         if let Some(existing) = report
             .devices
             .iter_mut()
             .find(|d| d.device_id == *device_id)
         {
+            // A deactivated row keeps its state — old seen entries from before
+            // the deactivation must not relabel it online.
+            if existing.status == "inactive" {
+                continue;
+            }
             existing.ip = Some(ip.clone());
             existing.last_seen = Some(last_seen.clone());
             existing.role = "hub terminal".into();
-            existing.status = "seen on hub".into();
+            existing.status = state.as_str().to_string();
         } else {
             report.devices.push(HealthDevice {
                 device_id: device_id.clone(),
                 label: device_id.clone(),
                 role: "hub terminal".into(),
-                status: "seen on hub".into(),
+                status: state.as_str().to_string(),
                 ip: Some(ip.clone()),
                 last_seen: Some(last_seen.clone()),
             });
@@ -543,6 +623,12 @@ fn merge_hub_report(
     local.summary.pending_sync_rows += hub_report.summary.pending_sync_rows;
     local.summary.stuck_sync_rows += hub_report.summary.stuck_sync_rows;
     local.summary.device_count = local.devices.len() as i64;
+    if local.summary.last_successful_sync_at.is_none() {
+        local.summary.last_successful_sync_at = hub_report.summary.last_successful_sync_at;
+    }
+    if local.summary.last_heartbeat_at.is_none() {
+        local.summary.last_heartbeat_at = hub_report.summary.last_heartbeat_at;
+    }
     local.summary.ok = local.summary.ok && hub_report.summary.ok;
     local
 }
@@ -561,7 +647,8 @@ pub async fn system_health_apply_fix(
             message: "Triggered a sync cycle.".into(),
         });
     }
-    let result = apply_health_fix(&state.db, &input.fix_action, &sync_commands::SYNC_TABLES).await?;
+    let result =
+        apply_health_fix(&state.db, &input.fix_action, &sync_commands::SYNC_TABLES).await?;
     if result.rows_changed > 0 {
         sync_commands::schedule_immediate_sync(&state);
     }
@@ -642,6 +729,9 @@ mod tests {
                 stuck_sync_rows: 0,
                 device_count: 0,
                 hub_mode: "hub".into(),
+                last_successful_sync_at: None,
+                last_heartbeat_at: None,
+                schema_version: 1,
                 checked_at: "2026-07-05T00:00:00Z".into(),
             },
             findings: vec![],

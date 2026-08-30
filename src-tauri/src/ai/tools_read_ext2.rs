@@ -1578,11 +1578,11 @@ async fn product_versions(
         "SELECT price_minor FROM product_prices
           WHERE product_id = ? AND price_type = 'selling' AND effective_to IS NULL",
     )
-        .bind(pid)
-        .fetch_optional(pool)
-        .await?
-        .flatten()
-        .unwrap_or(0);
+    .bind(pid)
+    .fetch_optional(pool)
+    .await?
+    .flatten()
+    .unwrap_or(0);
     let header = format!(
         "[DB] Price history for {} ({}):\n  Current price: BHD {}",
         name.as_deref().unwrap_or(pid),
@@ -2006,10 +2006,10 @@ async fn user_permissions(pool: &SqlitePool, input: &serde_json::Value) -> AppRe
            FROM users u JOIN roles r ON r.role_id = u.role_id
           WHERE u.user_id = ?",
     )
-        .bind(uid)
-        .fetch_optional(pool)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("User {uid} not found")))?;
+    .bind(uid)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("User {uid} not found")))?;
     let name = s_str(&row, "display_name");
     let role = s_str(&row, "role");
     let active = s_i64(&row, "is_active") == 1;

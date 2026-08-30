@@ -153,11 +153,22 @@ pub(super) fn check_auth(
 struct HeartbeatRequest {
     sequence: u64,
     app_version: String,
+    /// The terminal's own wall clock at send time. Absent from terminals that
+    /// predate the field; the hub leaves `heartbeat_sent_at` NULL for those.
+    #[serde(default)]
+    sent_at: Option<String>,
 }
 
 /// Persist one authenticated terminal heartbeat using hub time and the address
 /// observed by the hub. A sequence must move strictly forward, so a delayed or
 /// replayed request cannot make stale metadata look fresh.
+///
+/// Answers are diagnoses, not just "yes/no": 404 means the hub holds no row for
+/// this device at all (re-register), 410 means the row is there but turned off,
+/// 403 means the pairing was revoked, and 409 — with the hub's current sequence
+/// in the body — means another installation is beating under the same identity.
+/// A silent 204 for any of those used to leave a terminal believing it was
+/// online while the hub's `last_seen_at` stayed frozen.
 async fn heartbeat(
     State(state): State<HubState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -193,6 +204,21 @@ async fn heartbeat(
     if app_version.is_empty() || app_version.len() > 64 {
         return (StatusCode::BAD_REQUEST, "invalid app version").into_response();
     }
+    let sent_at = body
+        .sent_at
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            (
+                s.to_string(),
+                chrono::DateTime::parse_from_rfc3339(s).is_ok(),
+            )
+        });
+    if sent_at.as_ref().is_some_and(|(_, parsed)| !parsed) {
+        return (StatusCode::BAD_REQUEST, "invalid sent_at").into_response();
+    }
+    let sent_at = sent_at.map(|(s, _)| s);
 
     let now = chrono::Utc::now().to_rfc3339();
     let observed_ip = addr.ip().to_string();
@@ -203,6 +229,63 @@ async fn heartbeat(
         .flatten()
         .unwrap_or_default();
 
+    // Read the row's state before deciding anything, so each failure mode can
+    // say *why* instead of collapsing into one 404.
+    struct DeviceBeat {
+        heartbeat_seq: i64,
+        active: bool,
+        pairing_revoked: bool,
+    }
+    let beat = sqlx::query_as::<_, (i64, i64, i64)>(
+        "SELECT COALESCE(d.heartbeat_seq, 0),
+                CASE WHEN d.is_active = 1 AND d.deleted_at IS NULL THEN 1 ELSE 0 END,
+                EXISTS(SELECT 1 FROM hub_paired_devices p
+                        WHERE p.device_id = d.device_id AND p.revoked_at IS NOT NULL)
+           FROM devices d WHERE d.device_id = ?",
+    )
+    .bind(device_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map(|row| {
+        row.map(|(heartbeat_seq, active, pairing_revoked)| DeviceBeat {
+            heartbeat_seq,
+            active: active == 1,
+            pairing_revoked: pairing_revoked == 1,
+        })
+    });
+
+    let beat = match beat {
+        Ok(Some(beat)) => beat,
+        Ok(None) => {
+            return (StatusCode::NOT_FOUND, "device is not registered").into_response();
+        }
+        Err(error) => {
+            tracing::warn!("Hub heartbeat lookup failed for {device_id}: {error}");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
+    if beat.pairing_revoked {
+        // A revoked device can still pass check_auth through the legacy shared
+        // store token, which has no per-device revocation. Close that gap here:
+        // revocation means this identity is not welcome, whatever token it
+        // presents.
+        return (StatusCode::FORBIDDEN, "device pairing was revoked").into_response();
+    }
+    if !beat.active {
+        return (StatusCode::GONE, "device is deactivated on the hub").into_response();
+    }
+    if sequence <= beat.heartbeat_seq {
+        // A later sequence is already on record for this identity. Tell the
+        // caller the value so it can catch up — saying nothing made the
+        // terminal report success while the hub's last_seen_at stayed frozen.
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "current_sequence": beat.heartbeat_seq })),
+        )
+            .into_response();
+    }
+
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
         Err(error) => {
@@ -210,10 +293,12 @@ async fn heartbeat(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
+    // The sequence guard stays on the UPDATE itself: two beats for the same
+    // device racing through this handler must not both record.
     let updated = match sqlx::query(
         "UPDATE devices
             SET last_heartbeat_at = ?, last_seen_at = ?, observed_ip = ?, app_version = ?,
-                heartbeat_seq = ?, heartbeat_hub_id = ?
+                heartbeat_seq = ?, heartbeat_hub_id = ?, heartbeat_sent_at = ?
           WHERE device_id = ? AND is_active = 1 AND deleted_at IS NULL
             AND heartbeat_seq < ?",
     )
@@ -223,6 +308,7 @@ async fn heartbeat(
     .bind(app_version)
     .bind(sequence)
     .bind(&hub_id)
+    .bind(sent_at)
     .bind(device_id)
     .bind(sequence)
     .execute(&mut *tx)
@@ -236,18 +322,14 @@ async fn heartbeat(
     };
 
     if !updated {
-        let registered: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM devices
-              WHERE device_id = ? AND is_active = 1 AND deleted_at IS NULL)",
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({ "current_sequence": beat.heartbeat_seq })),
         )
-        .bind(device_id)
-        .fetch_one(&mut *tx)
-        .await
-        .unwrap_or(false);
-        if !registered {
-            return (StatusCode::NOT_FOUND, "device is not registered").into_response();
-        }
-    } else if let Err(error) = sqlx::query(
+            .into_response();
+    }
+
+    if let Err(error) = sqlx::query(
         "UPDATE hub_paired_devices SET last_seen_at = ?
           WHERE device_id = ? AND revoked_at IS NULL",
     )
@@ -264,10 +346,8 @@ async fn heartbeat(
         tracing::warn!("Hub heartbeat commit failed for {device_id}: {error}");
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
-    if updated {
-        if let Ok(mut seen) = state.seen.lock() {
-            seen.insert(device_id.to_string(), (observed_ip, now));
-        }
+    if let Ok(mut seen) = state.seen.lock() {
+        seen.insert(device_id.to_string(), (observed_ip, now));
     }
     StatusCode::NO_CONTENT.into_response()
 }

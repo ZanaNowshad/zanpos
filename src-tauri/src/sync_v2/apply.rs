@@ -1,4 +1,5 @@
 use crate::errors::{AppError, AppResult};
+use crate::sync_v2::parse_ts;
 use serde_json::{Map, Value};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqlitePool};
@@ -261,16 +262,35 @@ async fn apply_row_inner(
         "stock_levels" => apply_stock_level_seed(pool, obj).await,
         "users" => {
             let user_id = obj.get("user_id").and_then(|v| v.as_str()).unwrap_or("");
-            if let Some(username) = obj.get("username").and_then(|v| v.as_str()) {
-                let now = chrono::Utc::now().to_rfc3339();
-                let _ = sqlx::query(
-                    "UPDATE users SET is_active = 0, deleted_at = ? WHERE username = ? AND user_id <> ?",
-                )
-                .bind(&now)
-                .bind(username)
-                .bind(user_id)
-                .execute(pool)
-                .await;
+            // Deactivating a colliding local account is destructive, exactly
+            // like retiring a device or closing a shift — only a row that is
+            // actually news may trigger it. A stale re-pull carrying the same
+            // username used to deactivate a live local user before the LWW
+            // guard discarded the row itself.
+            let fresh = is_fresh(pool, "users", "user_id", obj).await?;
+            if fresh {
+                if let Some(username) = obj.get("username").and_then(|v| v.as_str()) {
+                    let now = chrono::Utc::now().to_rfc3339();
+                    // The colliding local row must yield its username, not just
+                    // its life: `username` is a full UNIQUE index, so leaving
+                    // the name on a deactivated row would make the incoming
+                    // row's own write fail on it. Same retire-and-rename the
+                    // devices code-collision guard uses.
+                    let _ = sqlx::query(
+                        "UPDATE users
+                            SET is_active = 0,
+                                deleted_at = ?,
+                                username = username || '-DEACT-' || substr(user_id, -6),
+                                updated_at = ?
+                          WHERE username = ? AND user_id <> ?",
+                    )
+                    .bind(&now)
+                    .bind(&now)
+                    .bind(username)
+                    .bind(user_id)
+                    .execute(pool)
+                    .await;
+                }
             }
 
             let mut obj_norm = obj.clone();
@@ -362,7 +382,8 @@ async fn apply_row_inner(
                      ON CONFLICT(key) DO UPDATE SET
                        value      = excluded.value,
                        updated_at = excluded.updated_at
-                     WHERE datetime(app_config.updated_at) < datetime(excluded.updated_at)",
+                     WHERE strftime('%Y-%m-%dT%H:%M:%f', app_config.updated_at)
+                         < strftime('%Y-%m-%dT%H:%M:%f', excluded.updated_at)",
                 )
                 .bind(key)
                 .bind(value)
@@ -422,12 +443,37 @@ async fn is_fresh(
         return Ok(true); // never seen — this row is news
     };
 
-    let newer: Option<i64> = sqlx::query_scalar("SELECT datetime(?) < datetime(?)")
-        .bind(&local)
-        .bind(incoming)
-        .fetch_optional(pool)
-        .await?;
+    // Millisecond precision, both formats normalised. datetime() truncates to
+    // whole seconds, so a row stamped in the same second as the local copy
+    // compared equal and was treated as not-fresh — which for the destructive
+    // side effects this guards is the safer half of the two errors.
+    let newer: Option<i64> = sqlx::query_scalar(
+        "SELECT strftime('%Y-%m-%dT%H:%M:%f', ?) < strftime('%Y-%m-%dT%H:%M:%f', ?)",
+    )
+    .bind(&local)
+    .bind(incoming)
+    .fetch_optional(pool)
+    .await?;
     Ok(newer.unwrap_or(0) == 1)
+}
+
+/// Tables whose rows carry a `version` edit counter. Where the counter exists,
+/// it is the deterministic tie-break when two terminals stamp the same
+/// millisecond; where it does not, comparison stays on timestamps alone.
+pub(crate) fn has_version_column(table: &str) -> bool {
+    matches!(
+        table,
+        "branches"
+            | "devices"
+            | "users"
+            | "categories"
+            | "tax_rules"
+            | "products"
+            | "customers"
+            | "delivery_orders"
+            | "shifts"
+            | "riders"
+    )
 }
 
 pub(crate) fn is_safe_col(name: &str) -> bool {
@@ -515,7 +561,8 @@ async fn apply_product_barcode(pool: &SqlitePool, obj: &Map<String, Value>) -> A
                     updated_at  = COALESCE(NULLIF(TRIM(?), ''), datetime('now')),
                     sync_status = 'pending'
               WHERE barcode = ? AND product_id <> ? AND deleted_at IS NULL
-                AND datetime(updated_at) < datetime(?)",
+                AND strftime('%Y-%m-%dT%H:%M:%f', updated_at)
+                  < strftime('%Y-%m-%dT%H:%M:%f', ?)",
         )
         .bind(updated_at)
         .bind(updated_at)
@@ -583,12 +630,34 @@ pub(crate) async fn apply_lww(
 
     let target = conflict_target(table, pk);
 
+    // Freshness at millisecond precision, both timestamp formats normalised.
+    // datetime() truncates to whole seconds, so a row stamped in the same
+    // second as the local copy was silently discarded by first-arrival — with
+    // no conflict record, because the detector only fires for a *strictly
+    // newer* arrival. On an exact tie the `version` counter decides, so two
+    // terminals editing the same row in the same millisecond converge on the
+    // copy with more edits instead of whichever happened to arrive first.
+    let fresh_guard = if has_version_column(table) {
+        format!(
+            "WHERE strftime('%Y-%m-%dT%H:%M:%f', {table}.updated_at) \
+                  < strftime('%Y-%m-%dT%H:%M:%f', excluded.updated_at)
+                OR (strftime('%Y-%m-%dT%H:%M:%f', {table}.updated_at) \
+                  = strftime('%Y-%m-%dT%H:%M:%f', excluded.updated_at)
+                AND {table}.version < excluded.version)"
+        )
+    } else {
+        format!(
+            "WHERE strftime('%Y-%m-%dT%H:%M:%f', {table}.updated_at) \
+                  < strftime('%Y-%m-%dT%H:%M:%f', excluded.updated_at)"
+        )
+    };
+
     let sql = if has_updated_at && !set_with_sync.is_empty() {
         format!(
             "INSERT INTO {} ({}) VALUES ({})
              ON CONFLICT({}) DO UPDATE SET {}
-             WHERE datetime({0}.updated_at) < datetime(excluded.updated_at)",
-            table, col_list, val_list, target, set_with_sync,
+             {}",
+            table, col_list, val_list, target, set_with_sync, fresh_guard,
         )
     } else {
         format!(
@@ -690,12 +759,21 @@ async fn apply_customer_by_primary_key(
     let set_clause = format!("{}, sync_status = 'synced'", set_parts.join(", "));
     let has_updated_at = obj.contains_key("updated_at");
 
+    // Same millisecond-precision guard and version tie-break as apply_lww —
+    // customers are edited at the counter from two terminals at once more than
+    // any other LWW table.
+    let fresh_guard = "WHERE strftime('%Y-%m-%dT%H:%M:%f', customers.updated_at) \
+              < strftime('%Y-%m-%dT%H:%M:%f', excluded.updated_at)
+            OR (strftime('%Y-%m-%dT%H:%M:%f', customers.updated_at) \
+              = strftime('%Y-%m-%dT%H:%M:%f', excluded.updated_at)
+            AND customers.version < excluded.version)";
+
     let sql = if has_updated_at && !set_clause.is_empty() {
         format!(
             "INSERT INTO customers ({}) VALUES ({})
              ON CONFLICT(customer_id) DO UPDATE SET {}
-             WHERE datetime(customers.updated_at) < datetime(excluded.updated_at)",
-            col_list, val_list, set_clause,
+             {}",
+            col_list, val_list, set_clause, fresh_guard,
         )
     } else {
         format!(
@@ -778,8 +856,15 @@ async fn record_concurrent_edit(
     };
 
     // Only rows that are about to win are interesting; a stale arrival is
-    // discarded by the freshness guard and overwrites nothing.
-    if incoming_at <= local_at.as_str() || incoming_version > local_version {
+    // discarded by the freshness guard and overwrites nothing. Comparison is
+    // on parsed instants, not strings — RFC3339 ("T") and importer format
+    // (space) do not sort by time as text, which made the detector misfire
+    // for rows written in mixed formats.
+    let incoming_later = match (parse_ts(incoming_at), parse_ts(&local_at)) {
+        (Some(incoming), Some(local)) => incoming > local,
+        _ => incoming_at > local_at.as_str(),
+    };
+    if !incoming_later || incoming_version > local_version {
         return;
     }
 
@@ -911,6 +996,10 @@ pub(crate) async fn apply_append_only(
 
 /// Whether a table has an `origin_device_id` column.
 /// Pull queries add a `neq` filter for tables that have this column.
+///
+/// Pinned to the live schema by `registry::tests`: a table gaining the column
+/// (or one listed here losing it) fails the test rather than silently changing
+/// which rows echo back to the device that wrote them.
 pub fn has_origin_device_id(table: &str) -> bool {
     matches!(
         table,
@@ -925,6 +1014,11 @@ pub fn has_origin_device_id(table: &str) -> bool {
             | "delivery_orders"
             | "cash_events"
             | "loyalty_events"
+            | "riders"
+            // customers' origin is stripped from the wire, so hub rows carry an
+            // empty origin and the filter is inert — but the column exists, and
+            // the pin test keeps this list honest about it.
+            | "customers"
     )
 }
 
@@ -1045,6 +1139,7 @@ fn per_device_bookkeeping(table: &str, col_name: &str) -> bool {
                 | "app_version"
                 | "heartbeat_seq"
                 | "heartbeat_hub_id"
+                | "heartbeat_sent_at"
                 | "version"
         ) | ("customers", "origin_device_id" | "version")
             | (
@@ -1360,9 +1455,13 @@ mod tests {
         assert_eq!(level_of(&pool).await.as_deref(), Some("40"));
 
         // Far in the future, so nothing but authority can decide this.
-        apply_row(&pool, "stock_levels", &remote_level("999", "2030-01-01T00:00:00Z"))
-            .await
-            .unwrap();
+        apply_row(
+            &pool,
+            "stock_levels",
+            &remote_level("999", "2030-01-01T00:00:00Z"),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             level_of(&pool).await.as_deref(),
@@ -1377,9 +1476,13 @@ mod tests {
     async fn a_terminal_with_no_movements_accepts_the_row_as_an_opening_balance() {
         let pool = stocked_pool().await;
 
-        apply_row(&pool, "stock_levels", &remote_level("25", "2026-08-02T09:00:00Z"))
-            .await
-            .unwrap();
+        apply_row(
+            &pool,
+            "stock_levels",
+            &remote_level("25", "2026-08-02T09:00:00Z"),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(level_of(&pool).await.as_deref(), Some("25"));
     }
@@ -1389,9 +1492,13 @@ mod tests {
     #[tokio::test]
     async fn an_accepted_seed_is_not_queued_for_push() {
         let pool = stocked_pool().await;
-        apply_row(&pool, "stock_levels", &remote_level("25", "2026-08-02T09:00:00Z"))
-            .await
-            .unwrap();
+        apply_row(
+            &pool,
+            "stock_levels",
+            &remote_level("25", "2026-08-02T09:00:00Z"),
+        )
+        .await
+        .unwrap();
 
         let status: String =
             sqlx::query_scalar("SELECT sync_status FROM stock_levels WHERE product_id='prd_1'")
@@ -1406,9 +1513,13 @@ mod tests {
     #[tokio::test]
     async fn a_movement_arriving_after_a_seed_recomputes_from_the_ledger() {
         let pool = stocked_pool().await;
-        apply_row(&pool, "stock_levels", &remote_level("25", "2026-08-02T09:00:00Z"))
-            .await
-            .unwrap();
+        apply_row(
+            &pool,
+            "stock_levels",
+            &remote_level("25", "2026-08-02T09:00:00Z"),
+        )
+        .await
+        .unwrap();
 
         // A movement whose own snapshot says 30 — the ledger anchor.
         add_movement(&pool, "mv_1", "5", "30", "2026-08-03T09:00:00Z").await;
@@ -1418,9 +1529,13 @@ mod tests {
         assert_eq!(level_of(&pool).await.as_deref(), Some("30"));
 
         // And from here the seed can no longer come back and undo it.
-        apply_row(&pool, "stock_levels", &remote_level("25", "2031-01-01T00:00:00Z"))
-            .await
-            .unwrap();
+        apply_row(
+            &pool,
+            "stock_levels",
+            &remote_level("25", "2031-01-01T00:00:00Z"),
+        )
+        .await
+        .unwrap();
         assert_eq!(level_of(&pool).await.as_deref(), Some("30"));
     }
 
@@ -1478,14 +1593,22 @@ mod tests {
     #[tokio::test]
     async fn a_newer_row_with_no_more_edits_is_recorded_as_a_concurrent_edit() {
         let pool = test_pool().await;
-        apply_row(&pool, "categories", &category("Grocery", 5, "2026-08-01T10:00:00Z"))
-            .await
-            .unwrap();
+        apply_row(
+            &pool,
+            "categories",
+            &category("Grocery", 5, "2026-08-01T10:00:00Z"),
+        )
+        .await
+        .unwrap();
 
         // Later by the clock, but only 3 edits deep against our 5.
-        apply_row(&pool, "categories", &category("Produce", 3, "2026-08-01T11:00:00Z"))
-            .await
-            .unwrap();
+        apply_row(
+            &pool,
+            "categories",
+            &category("Produce", 3, "2026-08-01T11:00:00Z"),
+        )
+        .await
+        .unwrap();
 
         let found = conflicts(&pool).await;
         assert_eq!(found, vec![("concurrent_edit".into(), "cat_1".into())]);
@@ -1504,12 +1627,20 @@ mod tests {
     #[tokio::test]
     async fn an_edit_built_on_top_of_ours_is_not_a_conflict() {
         let pool = test_pool().await;
-        apply_row(&pool, "categories", &category("Grocery", 5, "2026-08-01T10:00:00Z"))
-            .await
-            .unwrap();
-        apply_row(&pool, "categories", &category("Produce", 6, "2026-08-01T11:00:00Z"))
-            .await
-            .unwrap();
+        apply_row(
+            &pool,
+            "categories",
+            &category("Grocery", 5, "2026-08-01T10:00:00Z"),
+        )
+        .await
+        .unwrap();
+        apply_row(
+            &pool,
+            "categories",
+            &category("Produce", 6, "2026-08-01T11:00:00Z"),
+        )
+        .await
+        .unwrap();
 
         assert!(conflicts(&pool).await.is_empty());
     }
@@ -1518,12 +1649,20 @@ mod tests {
     #[tokio::test]
     async fn a_stale_row_that_loses_is_not_reported() {
         let pool = test_pool().await;
-        apply_row(&pool, "categories", &category("Grocery", 5, "2026-08-01T10:00:00Z"))
-            .await
-            .unwrap();
-        apply_row(&pool, "categories", &category("Old", 2, "2026-07-01T09:00:00Z"))
-            .await
-            .unwrap();
+        apply_row(
+            &pool,
+            "categories",
+            &category("Grocery", 5, "2026-08-01T10:00:00Z"),
+        )
+        .await
+        .unwrap();
+        apply_row(
+            &pool,
+            "categories",
+            &category("Old", 2, "2026-07-01T09:00:00Z"),
+        )
+        .await
+        .unwrap();
 
         assert!(conflicts(&pool).await.is_empty());
         let name: String =
@@ -1539,12 +1678,20 @@ mod tests {
     #[tokio::test]
     async fn the_edit_counter_never_moves_backwards() {
         let pool = test_pool().await;
-        apply_row(&pool, "categories", &category("Grocery", 9, "2026-08-01T10:00:00Z"))
-            .await
-            .unwrap();
-        apply_row(&pool, "categories", &category("Produce", 3, "2026-08-01T11:00:00Z"))
-            .await
-            .unwrap();
+        apply_row(
+            &pool,
+            "categories",
+            &category("Grocery", 9, "2026-08-01T10:00:00Z"),
+        )
+        .await
+        .unwrap();
+        apply_row(
+            &pool,
+            "categories",
+            &category("Produce", 3, "2026-08-01T11:00:00Z"),
+        )
+        .await
+        .unwrap();
 
         let version: i64 =
             sqlx::query_scalar("SELECT version FROM categories WHERE category_id='cat_1'")
@@ -1558,9 +1705,13 @@ mod tests {
     #[tokio::test]
     async fn a_first_delivery_is_not_a_concurrent_edit() {
         let pool = test_pool().await;
-        apply_row(&pool, "categories", &category("Grocery", 1, "2026-08-01T10:00:00Z"))
-            .await
-            .unwrap();
+        apply_row(
+            &pool,
+            "categories",
+            &category("Grocery", 1, "2026-08-01T10:00:00Z"),
+        )
+        .await
+        .unwrap();
 
         assert!(conflicts(&pool).await.is_empty());
     }
@@ -1613,6 +1764,216 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(n, "New", "older update must not overwrite");
+    }
+
+    /// Two terminals edit the same row inside the same second (same
+    /// millisecond, even): before the tie-break, whichever copy arrived first
+    /// won and the other was discarded without a record. The edit counter now
+    /// decides, so the more-edited copy converges everywhere.
+    #[tokio::test]
+    async fn a_same_millisecond_tie_is_broken_by_the_edit_counter() {
+        let pool = test_pool().await;
+        let base = json!({"category_id":"TIE1","name":"First","sort_order":0,"is_active":1,
+            "created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00.000Z","version":1});
+        apply_lww(
+            &pool,
+            "categories",
+            "category_id",
+            base.as_object().unwrap(),
+            &[],
+        )
+        .await
+        .unwrap();
+
+        // Same timestamp, more edits: must win the tie.
+        let winner = json!({"category_id":"TIE1","name":"More edits","sort_order":0,"is_active":1,
+            "created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00.000Z","version":2});
+        apply_lww(
+            &pool,
+            "categories",
+            "category_id",
+            winner.as_object().unwrap(),
+            &[],
+        )
+        .await
+        .unwrap();
+        let n: String = sqlx::query_scalar("SELECT name FROM categories WHERE category_id='TIE1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n, "More edits");
+
+        // Same timestamp, fewer edits: must lose the tie and not regress the
+        // counter.
+        let loser = json!({"category_id":"TIE1","name":"Fewer edits","sort_order":0,"is_active":1,
+            "created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00.000Z","version":1});
+        apply_lww(
+            &pool,
+            "categories",
+            "category_id",
+            loser.as_object().unwrap(),
+            &[],
+        )
+        .await
+        .unwrap();
+        let (n, v): (String, i64) =
+            sqlx::query_as("SELECT name, version FROM categories WHERE category_id='TIE1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(n, "More edits");
+        assert_eq!(v, 2);
+    }
+
+    /// The importer writes `datetime('now')` (space, no zone); everything else
+    /// writes RFC3339. The two formats must compare as the same instant, not
+    /// as different strings — the tie-break above depends on it.
+    #[tokio::test]
+    async fn mixed_timestamp_formats_compare_as_instants() {
+        let pool = test_pool().await;
+        let base = json!({"category_id":"MIX1","name":"Importer","sort_order":0,"is_active":1,
+            "created_at":"2026-01-01 10:00:00","updated_at":"2026-01-01 10:00:00","version":1});
+        apply_lww(
+            &pool,
+            "categories",
+            "category_id",
+            base.as_object().unwrap(),
+            &[],
+        )
+        .await
+        .unwrap();
+
+        // Same instant in RFC3339, one more edit: wins via the tie-break even
+        // though the strings differ.
+        let winner = json!({"category_id":"MIX1","name":"RFC3339","sort_order":0,"is_active":1,
+            "created_at":"2026-01-01T10:00:00Z","updated_at":"2026-01-01T10:00:00Z","version":2});
+        apply_lww(
+            &pool,
+            "categories",
+            "category_id",
+            winner.as_object().unwrap(),
+            &[],
+        )
+        .await
+        .unwrap();
+        let n: String = sqlx::query_scalar("SELECT name FROM categories WHERE category_id='MIX1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n, "RFC3339");
+    }
+
+    /// The concurrent-edit detector compares instants now, not strings. An
+    /// importer-format row one second newer than the local RFC3339 copy sorts
+    /// *before* it as text (' ' < 'T'), so the old text comparison silently
+    /// missed the conflict.
+    #[tokio::test]
+    async fn concurrent_edit_detection_compares_instants_across_formats() {
+        let pool = test_pool().await;
+        let base = json!({"category_id":"FMT1","name":"Local","sort_order":0,"is_active":1,
+            "created_at":"2026-01-01T10:00:00Z","updated_at":"2026-01-01T10:00:00Z","version":3});
+        apply_lww(
+            &pool,
+            "categories",
+            "category_id",
+            base.as_object().unwrap(),
+            &[],
+        )
+        .await
+        .unwrap();
+
+        // One second newer in importer format, same edit count: a concurrent
+        // edit about to overwrite local changes.
+        let incoming = json!({"category_id":"FMT1","name":"Remote","sort_order":0,"is_active":1,
+            "created_at":"2026-01-01 10:00:01","updated_at":"2026-01-01 10:00:01","version":3});
+        apply_lww(
+            &pool,
+            "categories",
+            "category_id",
+            incoming.as_object().unwrap(),
+            &[],
+        )
+        .await
+        .unwrap();
+        let conflicts = conflicts(&pool).await;
+        assert!(
+            conflicts.iter().any(|(kind, _)| kind == "concurrent_edit"),
+            "a newer same-version row in the other format must be recorded: {conflicts:?}"
+        );
+    }
+
+    /// Deactivating a same-username local account is as destructive as
+    /// retiring a device, and a stale re-pull used to do it anyway — before
+    /// the LWW guard even decided the row was stale.
+    #[tokio::test]
+    async fn a_stale_users_row_with_a_shared_username_does_not_deactivate_a_live_account() {
+        let pool = test_pool().await;
+        let branch_id: String = sqlx::query_scalar("SELECT branch_id FROM branches LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO users (user_id, branch_id, display_name, username, pin_hash, role_id,
+                                is_active, created_at, updated_at)
+             VALUES ('U-LIVE', ?, 'Live local', 'shared-name', 'x', '01JROLES000000000000000001',
+                     1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .bind(&branch_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO users (user_id, branch_id, display_name, username, pin_hash, role_id,
+                                is_active, created_at, updated_at)
+             VALUES ('U-STALE', ?, 'Stale remote', 'stale-own-name', 'x', '01JROLES000000000000000001',
+                     1, '2026-01-01T00:00:00Z', '2026-01-10T00:00:00Z')",
+        )
+        .bind(&branch_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Stale: the remote copy of U-STALE is OLDER than the local row, so
+        // nothing may happen — not even to the live account sharing the
+        // username the stale row carries.
+        let stale = json!({"user_id":"U-STALE","display_name":"Stale remote",
+            "username":"shared-name","pin_hash":"x","role_id":"01JROLES000000000000000001",
+            "is_active":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-05T00:00:00Z"});
+        apply_row(&pool, "users", &stale).await.unwrap();
+        let (live_active, live_name): (i64, String) =
+            sqlx::query_as("SELECT is_active, username FROM users WHERE user_id='U-LIVE'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            live_active, 1,
+            "a stale users row must not deactivate a live account sharing its username"
+        );
+        assert_eq!(live_name, "shared-name");
+
+        // Fresh: the remote copy is news, so the colliding local account
+        // genuinely must yield — its name is retired so the incoming row can
+        // take it, which a full UNIQUE index would otherwise refuse.
+        let fresh = json!({"user_id":"U-STALE","display_name":"Stale remote",
+            "username":"shared-name","pin_hash":"x","role_id":"01JROLES000000000000000001",
+            "is_active":1,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-15T00:00:00Z"});
+        apply_row(&pool, "users", &fresh).await.unwrap();
+        let (live_active, live_name): (i64, String) =
+            sqlx::query_as("SELECT is_active, username FROM users WHERE user_id='U-LIVE'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(live_active, 0, "a fresh colliding username must win");
+        assert_ne!(
+            live_name, "shared-name",
+            "the loser must yield the unique name"
+        );
+        let taken: String =
+            sqlx::query_scalar("SELECT username FROM users WHERE user_id='U-STALE'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(taken, "shared-name");
     }
 
     #[tokio::test]

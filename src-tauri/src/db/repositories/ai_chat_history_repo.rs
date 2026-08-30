@@ -145,11 +145,18 @@ mod tests {
             .unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         sqlx::query("INSERT INTO ai_sessions(session_id,branch_id,user_id,provider,model,status,started_at) VALUES('S1','B1','U1','test','test','ended',datetime('now'))").execute(&pool).await.unwrap();
-        assert!(
-            save_message(&pool, "missing", "C1", "B1", "U1", "assistant", "hello", "text")
-                .await
-                .is_err()
-        );
+        assert!(save_message(
+            &pool,
+            "missing",
+            "C1",
+            "B1",
+            "U1",
+            "assistant",
+            "hello",
+            "text"
+        )
+        .await
+        .is_err());
         assert!(
             save_message(&pool, "S1", "C1", "B2", "U1", "assistant", "hello", "text")
                 .await
@@ -218,9 +225,18 @@ mod tests {
         assert_eq!(limited.last().unwrap().content, "ordered-30");
 
         let oversized = "x".repeat(50_001);
-        let oversized_id = save_message(&pool, "S1", "C1", "B1", "U1", "assistant", &oversized, "text")
-            .await
-            .unwrap();
+        let oversized_id = save_message(
+            &pool,
+            "S1",
+            "C1",
+            "B1",
+            "U1",
+            "assistant",
+            &oversized,
+            "text",
+        )
+        .await
+        .unwrap();
         let stored: String =
             sqlx::query_scalar("SELECT content FROM ai_chat_messages WHERE message_id=?")
                 .bind(oversized_id)

@@ -5,10 +5,9 @@
 //! `whatsapp_name` was added — and that placeholder shares its statement with
 //! the branch filter.
 
-use crate::commands::customer_commands::customer_list_inner;
 use super::tests::{make_pool, BRANCH_A, BRANCH_B, USER_A};
+use crate::commands::customer_commands::customer_list_inner;
 use sqlx::SqlitePool;
-
 
 async fn seed_with_whatsapp_name(
     pool: &SqlitePool,
@@ -41,7 +40,14 @@ async fn seed_with_whatsapp_name(
 #[tokio::test]
 async fn a_customer_is_found_by_either_name() {
     let pool = make_pool().await;
-    seed_with_whatsapp_name(&pool, "cus_ali", "Ali Baqala", Some("Ali ⚡"), "+97333050666").await;
+    seed_with_whatsapp_name(
+        &pool,
+        "cus_ali",
+        "Ali Baqala",
+        Some("Ali ⚡"),
+        "+97333050666",
+    )
+    .await;
 
     for query in ["Baqala", "Ali ⚡"] {
         let page = customer_list_inner(&pool, USER_A, query, None, None)
@@ -75,7 +81,14 @@ async fn a_customer_without_a_whatsapp_name_is_still_searchable() {
 #[tokio::test]
 async fn searching_by_whatsapp_name_stays_inside_the_branch() {
     let pool = make_pool().await;
-    seed_with_whatsapp_name(&pool, "cus_here", "Ours", Some("Shared Name"), "+97333050888").await;
+    seed_with_whatsapp_name(
+        &pool,
+        "cus_here",
+        "Ours",
+        Some("Shared Name"),
+        "+97333050888",
+    )
+    .await;
     sqlx::query(
         "INSERT INTO customers
            (customer_id, branch_id, name, whatsapp_name, phone, loyalty_points,

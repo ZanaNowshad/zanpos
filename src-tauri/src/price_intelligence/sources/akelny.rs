@@ -62,7 +62,9 @@ pub fn slugs_from_sitemap(xml: &str) -> Vec<String> {
     let mut rest = xml;
     while let Some(start) = rest.find("<loc>") {
         let after = &rest[start + 5..];
-        let Some(end) = after.find("</loc>") else { break };
+        let Some(end) = after.find("</loc>") else {
+            break;
+        };
         let url = after[..end].trim();
         if let Some(slug) = url.strip_prefix(PRODUCT_PREFIX) {
             let slug = slug.trim_end_matches('/');

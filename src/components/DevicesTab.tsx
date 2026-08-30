@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Monitor, Power, Trash2 } from "lucide-react";
+import { Monitor, Power, Trash2, RefreshCw } from "lucide-react";
 import { useAutoFocus } from "../hooks/useAutoFocus";
 import type { DeviceRow } from "../types";
 import { DEVICE } from "../types";
@@ -32,6 +32,8 @@ export default function DevicesTab({ sessionUserId }: Props) {
   const [name, setName]         = useState("");
   const [saving, setSaving]     = useState(false);
   const [pendingRemove, setPendingRemove] = useState<DeviceRow | null>(null);
+  const [pendingRekey, setPendingRekey] = useState(false);
+  const [rekeyNotice, setRekeyNotice] = useState<string | null>(null);
   const codeRef = useAutoFocus<HTMLInputElement>();
 
   const load = useCallback(async () => {
@@ -92,6 +94,22 @@ export default function DevicesTab({ sessionUserId }: Props) {
     }
   }
 
+  /* Re-issuing identity is the recovery for a database cloned onto a second PC
+     (backup restore): both machines then share one device_id, so heartbeats
+     collide and each side's data is invisible to the other. Irreversible — the
+     backend rewrites this terminal's origin across its whole history. */
+  async function handleRekey() {
+    setPendingRekey(false);
+    try {
+      await cmd.deviceRekey(sessionUserId);
+      setRekeyNotice(t("deviceRekeyDone"));
+      setError(null);
+      load();
+    } catch (e: unknown) {
+      setError(typeof e === "string" ? e : t("deviceRekeyFailed"));
+    }
+  }
+
   return (
     <PageTemplate
       contentFlat
@@ -106,6 +124,9 @@ export default function DevicesTab({ sessionUserId }: Props) {
         onDismiss: () => setError(null),
       } : undefined}
     >
+      {rekeyNotice && (
+        <div className="devices-rekey-notice" role="status">{rekeyNotice}</div>
+      )}
       {loading ? (
         <LoadingSkeleton variant="table" count={4} />
       ) : devices.length === 0 ? (
@@ -155,7 +176,22 @@ export default function DevicesTab({ sessionUserId }: Props) {
           rowKey={d => d.device_id}
           isRowActive={d => d.device_id === DEVICE.device_id}
           isRowMuted={d => !d.is_active}
-          rowAction={d => d.device_id === DEVICE.device_id ? null : (
+          rowAction={d => d.device_id === DEVICE.device_id ? (
+            /* The one action the terminal you are standing at may take: it is
+               the only install that can re-issue its own identity, which is
+               the recovery for a cloned database sharing an id with another PC. */
+            <div className="devices-row-actions">
+              <button
+                type="button"
+                className="btn-secondary zp-row-action devices-rekey-btn"
+                onClick={() => { setPendingRekey(true); setRekeyNotice(null); }}
+                aria-label={`${t("deviceRekeyLabel")} ${d.device_name}`}
+              >
+                <RefreshCw size={14} aria-hidden="true" />
+                <span className="zp-action-label">{t("deviceRekeyLabel")}</span>
+              </button>
+            </div>
+          ) : (
             /* No actions on the terminal you are standing at: the backend
                refuses to deactivate or remove it, so offering the buttons
                would only produce an error banner. */
@@ -216,6 +252,16 @@ export default function DevicesTab({ sessionUserId }: Props) {
         cancelLabel={t("cancel")}
         onConfirm={() => { if (pendingRemove) void handleRemove(pendingRemove); }}
         onCancel={() => setPendingRemove(null)}
+      />
+
+      <ConfirmDialog
+        open={pendingRekey}
+        title={t("deviceRekeyLabel")}
+        message={t("deviceRekeyWarning")}
+        confirmLabel={t("deviceRekeyLabel")}
+        cancelLabel={t("cancel")}
+        onConfirm={() => { void handleRekey(); }}
+        onCancel={() => setPendingRekey(false)}
       />
     </PageTemplate>
   );

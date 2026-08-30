@@ -165,7 +165,9 @@ fn oversized_specs_are_refused_with_a_correctable_message_rather_than_truncated(
         .to_string();
     assert!(error.contains("limit is 12"), "unhelpful error: {error}");
 
-    let many_rows: Vec<Value> = (0..MAX_ROWS + 1).map(|i| json!({ "name": i.to_string() })).collect();
+    let many_rows: Vec<Value> = (0..MAX_ROWS + 1)
+        .map(|i| json!({ "name": i.to_string() }))
+        .collect();
     assert!(parse_form_spec(&json!({
         "title": "T",
         "table": {

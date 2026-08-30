@@ -48,7 +48,10 @@ fn a_row_only_one_side_holds_is_delivered_even_for_money() {
     let missing_there = resolve("sales", &row("sale_1", Divergence::MissingOnHub));
     assert!(matches!(
         missing_there,
-        Resolution::Deliver { from: Side::Terminal, .. }
+        Resolution::Deliver {
+            from: Side::Terminal,
+            ..
+        }
     ));
 }
 
@@ -61,13 +64,25 @@ fn a_catalogue_row_that_differs_is_escalated_with_its_own_reason() {
     let product = resolve("products", &row("prd_1", Divergence::Different));
     let payment = resolve("payments", &row("pay_1", Divergence::Different));
 
-    let (Resolution::Escalate { reason: product_reason }, Resolution::Escalate { reason: payment_reason }) =
-        (product, payment)
+    let (
+        Resolution::Escalate {
+            reason: product_reason,
+        },
+        Resolution::Escalate {
+            reason: payment_reason,
+        },
+    ) = (product, payment)
     else {
         panic!("expected both to escalate");
     };
-    assert!(product_reason.contains("last-writer-wins"), "{product_reason}");
-    assert!(payment_reason.contains("evidence of a real transaction"), "{payment_reason}");
+    assert!(
+        product_reason.contains("last-writer-wins"),
+        "{product_reason}"
+    );
+    assert!(
+        payment_reason.contains("evidence of a real transaction"),
+        "{payment_reason}"
+    );
     assert_ne!(product_reason, payment_reason);
 }
 
@@ -94,7 +109,10 @@ fn a_plan_separates_what_can_be_delivered_from_what_needs_a_person() {
     assert_eq!(plan.escalated.len(), 1);
     assert_eq!(plan.escalated[0].pk, "sale_c");
     assert!(plan.needs_review());
-    assert!(!plan.is_fully_automatic(), "a conflict must block the automatic path");
+    assert!(
+        !plan.is_fully_automatic(),
+        "a conflict must block the automatic path"
+    );
 }
 
 #[test]
@@ -136,8 +154,12 @@ fn the_audit_record_covers_the_refusals_as_well_as_the_repairs() {
     let lines = audit_lines(&plan);
 
     assert_eq!(lines.len(), 2);
-    assert!(lines.iter().any(|l| l.contains("payments/pay_1") && l.contains("deliver from hub")));
-    assert!(lines.iter().any(|l| l.contains("payments/pay_2") && l.contains("left for review")));
+    assert!(lines
+        .iter()
+        .any(|l| l.contains("payments/pay_1") && l.contains("deliver from hub")));
+    assert!(lines
+        .iter()
+        .any(|l| l.contains("payments/pay_2") && l.contains("left for review")));
     // Every line names the row and carries a reason, or the record is useless
     // to the person reading it a week later.
     for line in &lines {

@@ -125,8 +125,8 @@ mod tool_names {
             };
             for word in body.split(|c: char| !(c.is_ascii_lowercase() || c == '_')) {
                 let looks_like_a_tool = [
-                    "get_", "list_", "find_", "search_", "create_", "update_",
-                    "set_", "adjust_", "bulk_", "export_", "check_", "preview_",
+                    "get_", "list_", "find_", "search_", "create_", "update_", "set_", "adjust_",
+                    "bulk_", "export_", "check_", "preview_",
                 ]
                 .iter()
                 .any(|prefix| word.starts_with(prefix))

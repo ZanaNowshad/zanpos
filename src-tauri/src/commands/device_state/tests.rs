@@ -32,16 +32,31 @@ fn unpaired_outranks_every_other_signal() {
             "age {age:?} overrode an unbound record"
         );
     }
-    assert_ne!(DeviceState::Unpaired.advice(), DeviceState::NeverSeen.advice());
+    assert_ne!(
+        DeviceState::Unpaired.advice(),
+        DeviceState::NeverSeen.advice()
+    );
 }
 
 #[test]
 fn the_thresholds_sit_where_they_are_documented() {
     assert_eq!(device_state(true, Some(0)), DeviceState::Online);
-    assert_eq!(device_state(true, Some(ONLINE_WITHIN_SECS)), DeviceState::Online);
-    assert_eq!(device_state(true, Some(ONLINE_WITHIN_SECS + 1)), DeviceState::Stale);
-    assert_eq!(device_state(true, Some(STALE_WITHIN_SECS)), DeviceState::Stale);
-    assert_eq!(device_state(true, Some(STALE_WITHIN_SECS + 1)), DeviceState::Offline);
+    assert_eq!(
+        device_state(true, Some(ONLINE_WITHIN_SECS)),
+        DeviceState::Online
+    );
+    assert_eq!(
+        device_state(true, Some(ONLINE_WITHIN_SECS + 1)),
+        DeviceState::Stale
+    );
+    assert_eq!(
+        device_state(true, Some(STALE_WITHIN_SECS)),
+        DeviceState::Stale
+    );
+    assert_eq!(
+        device_state(true, Some(STALE_WITHIN_SECS + 1)),
+        DeviceState::Offline
+    );
 }
 
 /// A till mid-reboot and a till that died look identical for the first few
@@ -107,7 +122,11 @@ fn each_state_carries_distinct_advice() {
     let mut advice: Vec<&str> = states.iter().map(|s| s.advice()).collect();
     advice.sort_unstable();
     advice.dedup();
-    assert_eq!(advice.len(), states.len(), "two states give the same advice");
+    assert_eq!(
+        advice.len(),
+        states.len(),
+        "two states give the same advice"
+    );
 
     let mut names: Vec<&str> = states.iter().map(|s| s.as_str()).collect();
     names.sort_unstable();

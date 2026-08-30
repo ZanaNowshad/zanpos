@@ -5910,7 +5910,9 @@ async fn market_price_answer(pool: &SqlitePool, wanted: &str) -> AppResult<Strin
                     .as_deref()
                     .map(|p| format!(" ({p})"))
                     .unwrap_or_default(),
-                cheapest.map(money).unwrap_or_else(|| "no price listed".into())
+                cheapest
+                    .map(money)
+                    .unwrap_or_else(|| "no price listed".into())
             ));
         }
     }

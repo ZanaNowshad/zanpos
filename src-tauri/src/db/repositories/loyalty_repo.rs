@@ -104,11 +104,13 @@ pub async fn ledger_balance(pool: &SqlitePool, customer_id: &str) -> AppResult<O
 /// wire, so no terminal can overwrite another's derived total.
 pub async fn recompute(pool: &SqlitePool, customer_id: &str) -> AppResult<i64> {
     let Some(balance) = ledger_balance(pool, customer_id).await? else {
-        return Ok(sqlx::query_scalar("SELECT loyalty_points FROM customers WHERE customer_id = ?")
-            .bind(customer_id)
-            .fetch_optional(pool)
-            .await?
-            .unwrap_or(0));
+        return Ok(sqlx::query_scalar(
+            "SELECT loyalty_points FROM customers WHERE customer_id = ?",
+        )
+        .bind(customer_id)
+        .fetch_optional(pool)
+        .await?
+        .unwrap_or(0));
     };
     sqlx::query(
         "UPDATE customers

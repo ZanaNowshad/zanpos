@@ -22,9 +22,18 @@ fn the_size_strings_the_live_sources_actually_publish() {
     assert_eq!(balm.multiplier, 1);
 
     assert_eq!(pack("PONDS TALC D/F 300GM").each_milli, 300_000);
-    assert_eq!(pack("VASELINE HAND CREAM + ANTI-BAC 75 ML").each_milli, 75_000);
-    assert_eq!(pack("JOHNSON COSMETIC PADS 80 S").dimension, Dimension::Count);
-    assert_eq!(pack("VICHY NORMADERM DEEP CLEANSING GEL 200 ML").each_milli, 200_000);
+    assert_eq!(
+        pack("VASELINE HAND CREAM + ANTI-BAC 75 ML").each_milli,
+        75_000
+    );
+    assert_eq!(
+        pack("JOHNSON COSMETIC PADS 80 S").dimension,
+        Dimension::Count
+    );
+    assert_eq!(
+        pack("VICHY NORMADERM DEEP CLEANSING GEL 200 ML").each_milli,
+        200_000
+    );
 }
 
 /// `0.10OZ 3 G` is one tube labelled twice. The metric figure is the declared
@@ -96,7 +105,13 @@ fn a_multiplier_is_only_read_when_it_leads_the_measurement() {
 /// name-only, which the trust model already refuses to trust unattended.
 #[test]
 fn text_with_no_size_returns_nothing_rather_than_guessing() {
-    for text in ["", "Coca-Cola", "Fresh Bread", "Assorted Chocolates", "Item 5"] {
+    for text in [
+        "",
+        "Coca-Cola",
+        "Fresh Bread",
+        "Assorted Chocolates",
+        "Item 5",
+    ] {
         assert!(parse_pack(text).is_none(), "invented a size for {text:?}");
     }
 }

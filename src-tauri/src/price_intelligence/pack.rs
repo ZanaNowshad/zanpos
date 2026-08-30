@@ -64,7 +64,11 @@ impl PackSize {
         if a <= 0 || b <= 0 {
             return false;
         }
-        let denominator = if self.approximate || other.approximate { 12 } else { 50 };
+        let denominator = if self.approximate || other.approximate {
+            12
+        } else {
+            50
+        };
         (a - b).abs() * denominator <= a.max(b)
     }
 
@@ -164,9 +168,18 @@ pub fn parse_pack(text: &str) -> Option<PackSize> {
 }
 
 fn is_loose(lower: &str) -> bool {
-    ["per kg", "per kilo", "/kg", "per litre", "per liter", "/l ", "per piece", "per pc"]
-        .iter()
-        .any(|needle| lower.contains(needle))
+    [
+        "per kg",
+        "per kilo",
+        "/kg",
+        "per litre",
+        "per liter",
+        "/l ",
+        "per piece",
+        "per pc",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
 
 fn loose_dimension(lower: &str) -> Dimension {
@@ -269,7 +282,11 @@ fn scale_amount(number: &str, scale: i64) -> Option<i64> {
     if whole.is_empty() && fraction.is_empty() {
         return None;
     }
-    let whole: i64 = if whole.is_empty() { 0 } else { whole.parse().ok()? };
+    let whole: i64 = if whole.is_empty() {
+        0
+    } else {
+        whole.parse().ok()?
+    };
     let mut value = whole.checked_mul(scale)?;
     let mut step = scale;
     for digit in fraction.chars() {

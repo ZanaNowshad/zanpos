@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { HubStatus, HubTruthCompareResult, SyncConflictRow } from "../../types";
+import type { HubStatus, HubTruthCompareResult, SyncConflictRow, SyncStatus } from "../../types";
 import {
   hubStatus,
   hubEnable,
@@ -10,6 +10,7 @@ import {
   hubTruthCompare,
   hubTruthPull,
   syncConflictsList,
+  syncStatus,
 } from "../../tauri/commands";
 import AppConfirmModal from "../AppConfirmModal";
 import TerminalRosterPanel from "./TerminalRosterPanel";
@@ -31,6 +32,7 @@ export default function HubTab({ sessionUserId }: Props) {
   const [truth, setTruth] = useState<HubTruthCompareResult | null>(null);
   const [conflicts, setConflicts] = useState<SyncConflictRow[]>([]);
   const [truthLoading, setTruthLoading] = useState(false);
+  const [sync, setSync] = useState<SyncStatus | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -44,6 +46,22 @@ export default function HubTab({ sessionUserId }: Props) {
   }, [sessionUserId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Connectivity on a terminal is heartbeat evidence, not the configured URL.
+  // The card used to be unconditionally green because the URL existed — which
+  // is exactly the fiction the roster derivation exists to remove.
+  useEffect(() => {
+    if (status?.mode !== "terminal") { return; }
+    let cancelled = false;
+    const poll = () => {
+      syncStatus(sessionUserId)
+        .then(s => { if (!cancelled) setSync(s); })
+        .catch(() => { /* keep last known */ });
+    };
+    poll();
+    const id = window.setInterval(poll, 15_000);
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, [sessionUserId, status?.mode]);
 
   const loadTruth = useCallback(async () => {
     setTruthLoading(true);
@@ -284,11 +302,24 @@ export default function HubTab({ sessionUserId }: Props) {
         <h3 className="bo-section-title">{t("connectedToHub")}</h3>
         {message && <div className="settings-action-msg settings-action-ok">{message}</div>}
         {truthPanel}
-        <div className="hub-status-card hub-online">
+        <div className={`hub-status-card ${sync?.online ? "hub-online" : "hub-offline"}`}>
           <div className="hub-status-row">
             <span>{t("hubAddress")}:</span>
             <strong><code>{hub_url}</code></strong>
           </div>
+          <div className="hub-status-row">
+            <span>{t("connection")}:</span>
+            <strong>
+              {sync === null
+                ? t("checkingConnection")
+                : sync.online
+                  ? t("connectedToHubOk")
+                  : t("notReachingHub")}
+            </strong>
+          </div>
+          {sync !== null && !sync.online && sync.last_error && (
+            <div className="modal-error">{sync.last_error}</div>
+          )}
         </div>
 
         <h4>{t("changeHubAddress")}</h4>

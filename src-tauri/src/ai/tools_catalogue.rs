@@ -1015,7 +1015,9 @@ fn defs_shift_bulk_engine() -> Vec<ToolDef> {
 /// into a neighbouring chunk.
 #[inline(never)]
 fn defs_interactive_input() -> Vec<ToolDef> {
-    let cell_types = json!(["text", "textarea", "number", "money", "integer", "barcode", "select", "date", "toggle"]);
+    let cell_types = json!([
+        "text", "textarea", "number", "money", "integer", "barcode", "select", "date", "toggle"
+    ]);
     let options = json!({
         "type": "array",
         "description": "Required when type is select.",

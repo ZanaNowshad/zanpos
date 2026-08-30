@@ -441,9 +441,13 @@ pub async fn execute(
                    (barcode_id, product_id, barcode, created_at, updated_at)
                  VALUES (?,?,?,?,?)",
             )
-                .bind(&id).bind(&product_id).bind(&barcode).bind(&now)
+            .bind(&id)
+            .bind(&product_id)
+            .bind(&barcode)
             .bind(&now)
-            .execute(pool).await?;
+            .bind(&now)
+            .execute(pool)
+            .await?;
             audit_ext(
                 pool,
                 "barcode_added",

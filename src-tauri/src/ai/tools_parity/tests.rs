@@ -101,10 +101,10 @@ async fn the_terminal_seeded_at_setup_reads_as_never_seen_not_online() {
     sqlx::query(
         "INSERT INTO app_config (key, value, updated_at) VALUES ('device_id', ?, '2026-01-01')",
     )
-        .bind("01JDEVICE0000000000000001")
-        .execute(&pool)
-        .await
-        .unwrap();
+    .bind("01JDEVICE0000000000000001")
+    .execute(&pool)
+    .await
+    .unwrap();
 
     let out = terminal_roster(&pool).await.unwrap();
 

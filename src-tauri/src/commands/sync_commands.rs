@@ -71,6 +71,7 @@ pub fn table_pk(table: &str) -> &str {
         "product_prices" => "price_id",
         "product_cost_history" => "cost_history_id",
         "cash_events" => "cash_event_id",
+        "loyalty_events" => "loyalty_event_id",
         _ => "id",
     }
 }
@@ -137,6 +138,13 @@ pub async fn sync_status(
             .ok()
             .flatten(),
     );
+    // Derived from the same timestamp the offline chip already shows, instead
+    // of being hardcoded null — a dashboard that cannot say how stale it is
+    // cannot warn about it either.
+    let days_since_last_sync = last_sync
+        .as_deref()
+        .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
+        .map(|ts| (chrono::Utc::now() - ts.with_timezone(&chrono::Utc)).num_seconds() / 86_400);
 
     let consecutive_failure_count = {
         let st = state.sync_worker.state.lock().await;
@@ -150,7 +158,7 @@ pub async fn sync_status(
         "hub_url": hub_url,
         "pending_events": pending,
         "last_successful_sync_at": last_sync,
-        "days_since_last_sync": null,
+        "days_since_last_sync": days_since_last_sync,
         "last_error": last_error,
         "last_heartbeat_at": last_heartbeat_at,
         "last_heartbeat_error": last_heartbeat_error,
@@ -352,36 +360,43 @@ async fn count_pending_irreplaceable(pool: &sqlx::SqlitePool) -> AppResult<i64> 
     Ok(total)
 }
 
+/// Child-first delete order for "replace this terminal's data with the hub's".
+/// Pinned to the registry by a test — the hand-kept copy once omitted
+/// `loyalty_events`, so its rows survived a join wipe while every other
+/// synced table was emptied.
+pub(crate) const JOIN_WIPE_CHILD_FIRST: &[&str] = &[
+    "cash_events",
+    "product_cost_history",
+    "product_prices",
+    "delivery_orders",
+    "audit_logs",
+    "stock_levels",
+    "stock_movements",
+    "refund_items",
+    "refunds",
+    "payments",
+    "sale_items",
+    "sales",
+    "shifts",
+    "loyalty_events",
+    "riders",
+    "customers",
+    "users",
+    "roles",
+    "devices",
+    "po_receipts",
+    "purchase_order_lines",
+    "purchase_orders",
+    "suppliers",
+    "product_barcodes",
+    "products",
+    "tax_rules",
+    "categories",
+    "branches",
+];
+
 async fn clear_join_replica_unchecked(pool: &sqlx::SqlitePool) -> AppResult<()> {
-    let child_first = [
-        "cash_events",
-        "product_cost_history",
-        "product_prices",
-        "delivery_orders",
-        "audit_logs",
-        "stock_levels",
-        "stock_movements",
-        "refund_items",
-        "refunds",
-        "payments",
-        "sale_items",
-        "sales",
-        "shifts",
-        "riders",
-        "customers",
-        "users",
-        "roles",
-        "devices",
-        "po_receipts",
-        "purchase_order_lines",
-        "purchase_orders",
-        "suppliers",
-        "product_barcodes",
-        "products",
-        "tax_rules",
-        "categories",
-        "branches",
-    ];
+    let child_first = JOIN_WIPE_CHILD_FIRST;
     let mut tx = pool.begin().await?;
     sqlx::query("PRAGMA defer_foreign_keys = ON")
         .execute(&mut *tx)
@@ -469,10 +484,11 @@ pub async fn setup_pull_catalog(state: State<'_, AppState>) -> Result<PullSummar
         .fetch_one(&state.db)
         .await
         .unwrap_or(0);
-    let product_barcodes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM product_barcodes WHERE deleted_at IS NULL")
-        .fetch_one(&state.db)
-        .await
-        .unwrap_or(0);
+    let product_barcodes: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM product_barcodes WHERE deleted_at IS NULL")
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0);
     let product_prices: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM product_prices")
         .fetch_one(&state.db)
         .await
@@ -863,6 +879,9 @@ pub struct SyncDiagnostics {
     pub tables: Vec<SyncDiagTable>,
     pub consistency_score: Option<u8>,
     pub conflicts_open: i64,
+    /// Rows set aside in the dead-letter queue. Anything above zero means
+    /// this terminal is knowingly missing data.
+    pub quarantined_rows: i64,
 }
 
 #[derive(Serialize)]
@@ -1101,6 +1120,7 @@ pub async fn sync_diagnostics(
         tables,
         consistency_score,
         conflicts_open,
+        quarantined_rows: crate::sync_v2::dead_letter::pending_count(&state.db).await,
     })
 }
 
@@ -1157,7 +1177,9 @@ pub async fn sync_parity_report(
 ) -> Result<ParityTableReport, AppError> {
     rbac::manager_or_owner(&state.db, &actor_user_id).await?;
     if !crate::sync_v2::consistency::CONSISTENCY_TABLES.contains(&table.as_str()) {
-        return Err(AppError::Validation(format!("{table} is not a synced table")));
+        return Err(AppError::Validation(format!(
+            "{table} is not a synced table"
+        )));
     }
     let buckets = crate::sync_v2::parity::DEFAULT_BUCKETS;
 
@@ -1204,7 +1226,9 @@ pub async fn sync_parity_report(
         let hub_rows: Vec<crate::sync_v2::parity::RowDigest> = client
             .hub_parity(&table, buckets, Some(*bucket))
             .await?
-            .and_then(|body| serde_json::from_value(body.get("rows").cloned().unwrap_or_default()).ok())
+            .and_then(|body| {
+                serde_json::from_value(body.get("rows").cloned().unwrap_or_default()).ok()
+            })
             .unwrap_or_default();
         for row in crate::sync_v2::parity::diff_rows(&local_rows, &hub_rows) {
             rows.push(ParityRow {
@@ -1225,7 +1249,11 @@ pub async fn sync_parity_report(
         hub_count: hub.iter().map(|b| b.count).sum(),
         buckets_checked: local.len(),
         buckets_mismatched: mismatched.len(),
-        status: if rows.is_empty() { "in_step".into() } else { "diverged".into() },
+        status: if rows.is_empty() {
+            "in_step".into()
+        } else {
+            "diverged".into()
+        },
         table,
         rows,
         truncated,
@@ -1395,7 +1423,12 @@ mod tests {
             hub_count,
             local_checksum: String::new(),
             hub_checksum: String::new(),
-            status: if local_count == hub_count { "match" } else { "count_mismatch" }.to_string(),
+            status: if local_count == hub_count {
+                "match"
+            } else {
+                "count_mismatch"
+            }
+            .to_string(),
         }
     }
 
@@ -1567,8 +1600,13 @@ mod tests {
 
         // Whoever is present must be able to see how much has not left the
         // till, why, and clear a backed-off queue.
-        for _open_to_everyone in ["sync_status", "sync_trigger_now", "sync_reset_stuck",
-                                  "sync_queue_list", "sync_queue_stats"] {
+        for _open_to_everyone in [
+            "sync_status",
+            "sync_trigger_now",
+            "sync_reset_stuck",
+            "sync_queue_list",
+            "sync_queue_stats",
+        ] {
             rbac::require_any_role(&pool, cashier)
                 .await
                 .expect("a cashier must be able to keep sync moving");

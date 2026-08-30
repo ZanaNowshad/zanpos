@@ -20,6 +20,19 @@ pub struct HttpSyncClient {
     pub(super) http: reqwest::Client,
 }
 
+/// How the hub answered one heartbeat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeartbeatOutcome {
+    /// The hub recorded the beat and this terminal is the freshest
+    /// claimant of its device row.
+    Accepted,
+    /// The hub's stored sequence is ahead of ours: another installation
+    /// shares this device identity (a cloned or restored database).
+    /// Carries the hub's current sequence so the caller can jump its
+    /// durable counter forward and beat again immediately.
+    Stale { current_sequence: u64 },
+}
+
 impl HttpSyncClient {
     pub fn new(url: &str, key: &str, device_id: Option<&str>) -> Self {
         let mut headers = reqwest::header::HeaderMap::new();
@@ -42,15 +55,25 @@ impl HttpSyncClient {
     }
 
     /// Tell the hub this authenticated terminal is alive. The hub supplies the
-    /// timestamp and observed address; the terminal supplies only a durable,
-    /// monotonic sequence and its bounded application version.
-    pub async fn heartbeat(&self, sequence: u64, app_version: &str) -> AppResult<()> {
+    /// timestamp and observed address; the terminal supplies a durable,
+    /// monotonic sequence, its bounded application version, and its own wall
+    /// clock so the hub can surface clock skew.
+    ///
+    /// A stale sequence is not an error: it is a diagnosis. The caller decides
+    /// between catching up and surfacing the shared-identity conflict.
+    pub async fn heartbeat(
+        &self,
+        sequence: u64,
+        sent_at: &str,
+        app_version: &str,
+    ) -> AppResult<HeartbeatOutcome> {
         let response = self
             .http
             .post(format!("{}/zanpos/heartbeat", self.base_url))
             .header("Authorization", format!("Bearer {}", self.key))
             .json(&serde_json::json!({
                 "sequence": sequence,
+                "sent_at": sent_at,
                 "app_version": app_version,
             }))
             .send()
@@ -60,12 +83,34 @@ impl HttpSyncClient {
             })?;
 
         match response.status() {
-            status if status.is_success() => Ok(()),
+            status if status.is_success() => Ok(HeartbeatOutcome::Accepted),
+            StatusCode::CONFLICT => {
+                // 409: the hub holds a later sequence for this device id — two
+                // installations share one identity. Answer carries the hub's
+                // current sequence for the caller to catch up to.
+                let body = response.text().await.unwrap_or_default();
+                let current_sequence = serde_json::from_str::<Value>(&body)
+                    .ok()
+                    .and_then(|v| v.get("current_sequence").and_then(Value::as_u64))
+                    .ok_or_else(|| {
+                        AppError::Internal(format!(
+                            "Hub heartbeat rejected (409) with an unreadable answer: {body}"
+                        ))
+                    })?;
+                Ok(HeartbeatOutcome::Stale { current_sequence })
+            }
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(AppError::Validation(
                 "Hub rejected this terminal's credentials; pair it again".into(),
             )),
-            StatusCode::NOT_FOUND => Err(AppError::Validation(
-                "This terminal is not registered on the hub; register or pair it again".into(),
+            StatusCode::NOT_FOUND => Err(AppError::NotFound(
+                "This terminal is not registered on the hub; it will re-register itself \
+                 automatically"
+                    .into(),
+            )),
+            StatusCode::GONE => Err(AppError::Validation(
+                "This terminal was deactivated on the hub; ask a manager to reactivate it \
+                 before it can appear online"
+                    .into(),
             )),
             status if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS => {
                 let body = response.text().await.unwrap_or_default();

@@ -135,6 +135,7 @@ pub(super) async fn push_table(
                     "app_version",
                     "heartbeat_seq",
                     "heartbeat_hub_id",
+                    "heartbeat_sent_at",
                 ] {
                     object.remove(hub_owned);
                 }

@@ -90,7 +90,10 @@ pub async fn search(base_url: &str, query: &SearchQuery) -> AppResult<Vec<Source
     let results = http::fetch_text(&url, CRAWL_DELAY).await?;
 
     let mut products = Vec::new();
-    for link in candidate_links(&results, &host).into_iter().take(MAX_CANDIDATES) {
+    for link in candidate_links(&results, &host)
+        .into_iter()
+        .take(MAX_CANDIDATES)
+    {
         let Ok(html) = http::fetch_text(&link, CRAWL_DELAY).await else {
             continue;
         };

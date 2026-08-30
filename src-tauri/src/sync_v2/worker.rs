@@ -5,8 +5,11 @@ use crate::sync_v2::apply::{
     self, has_origin_device_id, pk_for_table, skip_on_wire, value_from_row_column,
     ALLOWED_CONFIG_KEYS,
 };
-use crate::sync_v2::client::HttpSyncClient;
+use crate::sync_v2::client::{HeartbeatOutcome, HttpSyncClient};
 use crate::sync_v2::consistency;
+// Timestamp parsing shared with apply.rs — one definition for the two formats
+// this codebase writes, so watermark math and conflict detection agree.
+use crate::sync_v2::parse_ts;
 use crate::telemetry::{self, ZanposSpan};
 use serde_json::Value;
 use sqlx::Column;
@@ -23,21 +26,6 @@ const BATCH_SIZE: i64 = 50;
 /// timestamp fractionally behind one we have already passed. The watermark only
 /// moves forward, so without an overlap that row is never offered again.
 const PULL_LOOKBACK_SECS: i64 = 2;
-
-/// Parse a timestamp in either format this codebase writes.
-///
-/// Most code writes RFC3339 via chrono; the catalogue importer and several SQL
-/// defaults write `datetime('now')`, which has a space instead of a `T` and no
-/// zone. Text comparison ranks `T` (0x54) above a space (0x20), so the two
-/// formats do not sort against each other correctly.
-fn parse_ts(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(raw) {
-        return Some(dt.with_timezone(&chrono::Utc));
-    }
-    chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S")
-        .ok()
-        .map(|naive| naive.and_utc())
-}
 
 /// The `since` value to send the hub: the stored watermark, less the overlap.
 fn pull_since(stored: &str) -> String {
@@ -248,6 +236,109 @@ impl SyncWorker {
         Ok(next)
     }
 
+    /// Move the durable sequence forward to the hub's value. Only ever forward:
+    /// a lower hub value (hub DB restored from an older backup, or a race) must
+    /// not rewind a counter whose whole purpose is monotonicity.
+    async fn adopt_heartbeat_sequence(&self, current: u64) -> AppResult<()> {
+        let stored: Option<String> =
+            sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'heartbeat_seq'")
+                .fetch_optional(&self.pool)
+                .await?;
+        if stored
+            .as_deref()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0)
+            >= current
+        {
+            return Ok(());
+        }
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO app_config (key, value, updated_at)
+             VALUES ('heartbeat_seq', ?, ?)
+             ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value, updated_at = excluded.updated_at",
+        )
+        .bind(current.to_string())
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn is_hub_mode(&self) -> bool {
+        sqlx::query_scalar::<_, String>("SELECT value FROM app_config WHERE key = 'hub_mode'")
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten()
+            .map(|v| v == "1")
+            .unwrap_or(false)
+    }
+
+    /// The hub is nobody's client, so its own heartbeat never crosses a wire.
+    /// Record one locally instead, so the roster derivation has the same
+    /// evidence for the hub's own row that it has for every calling terminal.
+    async fn record_self_heartbeat(&self) {
+        let Ok(device_id) = self.active_device_id().await else {
+            return;
+        };
+        let now = chrono::Utc::now().to_rfc3339();
+        if let Err(error) = sqlx::query(
+            "UPDATE devices
+                SET last_heartbeat_at = ?, last_seen_at = ?, observed_ip = '127.0.0.1',
+                    app_version = ?, heartbeat_hub_id = ?, heartbeat_sent_at = ?,
+                    heartbeat_seq = heartbeat_seq + 1
+              WHERE device_id = ? AND is_active = 1 AND deleted_at IS NULL",
+        )
+        .bind(&now)
+        .bind(&now)
+        .bind(env!("CARGO_PKG_VERSION"))
+        .bind(&device_id)
+        .bind(&now)
+        .bind(&device_id)
+        .execute(&self.pool)
+        .await
+        {
+            tracing::warn!("Hub self-heartbeat failed: {error}");
+        }
+    }
+
+    /// One authenticated beat, including recovery from a stale sequence.
+    ///
+    /// A `Stale` answer means the hub's sequence is ahead of ours — two
+    /// installations share this device identity (a cloned or restored
+    /// database). The durable counter jumps to the hub's value and one
+    /// immediate retry follows; if the sibling is beating faster than the jump
+    /// can land, the conflict is surfaced instead of spinning.
+    async fn send_heartbeat(&self, client: &HttpSyncClient) -> AppResult<()> {
+        let sent_at = chrono::Utc::now().to_rfc3339();
+        let sequence = self.next_heartbeat_sequence().await?;
+        match client
+            .heartbeat(sequence, &sent_at, env!("CARGO_PKG_VERSION"))
+            .await?
+        {
+            HeartbeatOutcome::Accepted => Ok(()),
+            HeartbeatOutcome::Stale { current_sequence } => {
+                self.adopt_heartbeat_sequence(current_sequence).await?;
+                let next = self.next_heartbeat_sequence().await?;
+                match client
+                    .heartbeat(next, &sent_at, env!("CARGO_PKG_VERSION"))
+                    .await?
+                {
+                    HeartbeatOutcome::Accepted => Ok(()),
+                    HeartbeatOutcome::Stale { current_sequence } => {
+                        Err(AppError::Conflict(format!(
+                            "Another installation shares this terminal's identity (hub sequence \
+                             {current_sequence}). Re-issue this device's identity in Settings → \
+                             Devices to separate them."
+                        )))
+                    }
+                }
+            }
+        }
+    }
+
     /// Spawn background loop with supervisor restart on panic.
     /// Uses adaptive backoff: 3+ consecutive failures → 2× interval, 6+ → 5× interval.
     pub fn spawn(worker: Arc<Self>) {
@@ -256,15 +347,43 @@ impl SyncWorker {
             loop {
                 let device_id = heartbeat_worker.active_device_id().await.ok();
                 let client = heartbeat_worker.load_client().await;
-                let (Some(device_id), Some(client)) = (device_id, client) else {
-                    tokio::time::sleep(Duration::from_secs(5)).await;
-                    continue;
+                let result = match (device_id.clone(), client) {
+                    (Some(device_id), Some(client)) => {
+                        match heartbeat_worker.send_heartbeat(&client).await {
+                            Ok(()) => Ok(()),
+                            // The hub has no active row for this device. Mark the
+                            // local row pending so the next data cycle re-registers
+                            // it; a heartbeat alone cannot resurrect a row the hub
+                            // does not hold.
+                            Err(error @ AppError::NotFound(_)) => {
+                                let _ = sqlx::query(
+                                    "UPDATE devices
+                                        SET sync_status = 'pending', sync_attempts = 0
+                                      WHERE device_id = ? AND is_active = 1",
+                                )
+                                .bind(&device_id)
+                                .execute(heartbeat_worker.pool())
+                                .await;
+                                Err(error)
+                            }
+                            Err(error) => Err(error),
+                        }
+                    }
+                    _ if heartbeat_worker.is_hub_mode().await => {
+                        // The hub is nobody's client — no hub_url, so no client.
+                        // Its own device row still needs heartbeat evidence or
+                        // the Command Center roster reads it as never seen.
+                        heartbeat_worker.record_self_heartbeat().await;
+                        Ok(())
+                    }
+                    _ => {
+                        // Not joined / no token — not a failure to count, and
+                        // nothing to do until configuration changes.
+                        tokio::time::sleep(Duration::from_secs(5)).await;
+                        continue;
+                    }
                 };
 
-                let result = match heartbeat_worker.next_heartbeat_sequence().await {
-                    Ok(sequence) => client.heartbeat(sequence, env!("CARGO_PKG_VERSION")).await,
-                    Err(error) => Err(error),
-                };
                 let mut state = heartbeat_worker.state.lock().await;
                 match result {
                     Ok(()) => {
@@ -276,7 +395,7 @@ impl SyncWorker {
                         state.last_heartbeat_error = None;
                     }
                     Err(error) => {
-                        tracing::warn!("Terminal heartbeat failed for {device_id}: {error}");
+                        tracing::warn!("Terminal heartbeat failed for {:?}: {error}", device_id);
                         state.online = false;
                         state.last_heartbeat_error = Some(error.to_string());
                         state.last_error = Some(error.to_string());
@@ -641,12 +760,12 @@ impl SyncWorker {
             st.last_error = Some("Store token missing — re-enter it in Settings → Hub.".into());
             return None;
         }
-        let device_id =
-            sqlx::query_scalar::<_, String>("SELECT value FROM app_config WHERE key='device_id'")
-                .fetch_optional(&self.pool)
-                .await
-                .ok()
-                .flatten();
+        // Same resolution as active_device_id() — the heartbeat loop and every
+        // push/pull use one definition of "this device". Reading app_config here
+        // and the devices fallback there split them once: a pre-identity-key
+        // install heartbeated without the X-Zanpos-Device header and the hub
+        // answered 400 to every beat.
+        let device_id = self.active_device_id().await.ok();
         Some(HttpSyncClient::new(&url, &token, device_id.as_deref()))
     }
 
@@ -913,16 +1032,9 @@ impl SyncWorker {
             return false;
         }
 
-        crate::sync_v2::dead_letter::quarantine(
-            &self.pool,
-            table,
-            entity_id,
-            row,
-            reason,
-            attempts,
-        )
-        .await
-        .is_ok()
+        crate::sync_v2::dead_letter::quarantine(&self.pool, table, entity_id, row, reason, attempts)
+            .await
+            .is_ok()
     }
 
     async fn record_sync_conflict(
@@ -1134,6 +1246,13 @@ impl SyncWorker {
 
                 let batch_count = rows.len();
                 let mut applied = 0usize;
+                // Rows set aside (quarantined or skipped for a duplicate
+                // barcode) still advance the watermark — that is the point of
+                // setting them aside — but they were never applied, and
+                // counting them as applied let a table report a successful
+                // cycle while missing data. They are surfaced separately via
+                // sync_diagnostics.quarantined_rows and the dead-letter queue.
+                let mut skipped = 0usize;
                 let mut hit_failure = false;
 
                 for row in &rows {
@@ -1165,7 +1284,7 @@ impl SyncWorker {
                                 tracing::warn!(
                                     "Sync v2: skipped duplicate product barcode from hub; use Duplicate Products to merge catalog rows"
                                 );
-                                applied += 1;
+                                skipped += 1;
                                 if let Some(ts) = row.get("updated_at").and_then(|v| v.as_str()) {
                                     if ts_after(ts, &max_applied_ts) {
                                         max_applied_ts = ts.to_string();
@@ -1215,7 +1334,7 @@ impl SyncWorker {
                                                     max_applied_ts = ts.to_string();
                                                 }
                                             }
-                                            applied += 1;
+                                            skipped += 1;
                                             continue;
                                         }
                                         tracing::warn!(
@@ -1249,14 +1368,13 @@ impl SyncWorker {
                                     .quarantine_if_hopeless(table, row, &internal_error)
                                     .await
                                 {
-                                    if let Some(ts) =
-                                        row.get("updated_at").and_then(|v| v.as_str())
+                                    if let Some(ts) = row.get("updated_at").and_then(|v| v.as_str())
                                     {
                                         if ts_after(ts, &max_applied_ts) {
                                             max_applied_ts = ts.to_string();
                                         }
                                     }
-                                    applied += 1;
+                                    skipped += 1;
                                     continue;
                                 }
 
@@ -1288,6 +1406,12 @@ impl SyncWorker {
                 }
 
                 total_pulled += applied as u32;
+                if skipped > 0 {
+                    tracing::warn!(
+                        "Sync v2: {skipped} row(s) from {table} set aside without being applied \
+                         (quarantine or duplicate-barcode) — see sync_diagnostics"
+                    );
+                }
 
                 if hit_failure {
                     break;
@@ -1511,6 +1635,149 @@ mod tests {
 
         let restarted_worker = super::SyncWorker::new(pool);
         assert_eq!(restarted_worker.next_heartbeat_sequence().await.unwrap(), 3);
+    }
+
+    /// Catch-up moves the durable counter forward, never back: a hub restored
+    /// from an older backup must not rewind a counter whose whole purpose is
+    /// monotonicity.
+    #[tokio::test]
+    async fn adopting_the_hub_sequence_never_rewinds() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE app_config (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO app_config(key, value, updated_at) VALUES ('heartbeat_seq','50',datetime('now'))")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let worker = super::SyncWorker::new(pool.clone());
+
+        worker.adopt_heartbeat_sequence(30).await.unwrap();
+        let stored: String =
+            sqlx::query_scalar("SELECT value FROM app_config WHERE key='heartbeat_seq'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            stored, "50",
+            "a lower hub value must not rewind the counter"
+        );
+
+        worker.adopt_heartbeat_sequence(75).await.unwrap();
+        let stored: String =
+            sqlx::query_scalar("SELECT value FROM app_config WHERE key='heartbeat_seq'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stored, "75");
+    }
+
+    /// The full catch-up the heartbeat loop performs when the hub says "another
+    /// installation already beat under your identity": jump to the hub's value
+    /// and land the next beat, against a real hub on 127.0.0.1.
+    #[tokio::test]
+    async fn send_heartbeat_catches_up_when_the_hub_sequence_is_ahead() {
+        let term_pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations")
+            .run(&term_pool)
+            .await
+            .unwrap();
+        let hub_pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&hub_pool).await.unwrap();
+
+        let branch_id: String = sqlx::query_scalar("SELECT branch_id FROM branches LIMIT 1")
+            .fetch_one(&hub_pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO devices (device_id, branch_id, device_code, name, status, is_active,
+                                  heartbeat_seq, created_at, updated_at)
+             VALUES ('CLONE-A', ?, 'CLONE01', 'Clone A', 'offline', 1, 10, datetime('now'), datetime('now'))",
+        )
+        .bind(&branch_id)
+        .execute(&hub_pool)
+        .await
+        .unwrap();
+        let handle = crate::hub::start_hub(hub_pool.clone(), 0, "clone-token-0123456789ab")
+            .await
+            .unwrap();
+        let client = super::HttpSyncClient::new(
+            &format!("http://127.0.0.1:{}", handle.port),
+            "clone-token-0123456789ab",
+            Some("CLONE-A"),
+        );
+
+        let worker = super::SyncWorker::new(term_pool.clone());
+        worker.send_heartbeat(&client).await.unwrap();
+
+        // The terminal caught up past the hub's sequence and the beat landed.
+        let stored: String =
+            sqlx::query_scalar("SELECT value FROM app_config WHERE key='heartbeat_seq'")
+                .fetch_one(&term_pool)
+                .await
+                .unwrap();
+        assert_eq!(stored, "11");
+        let hub_seq: i64 =
+            sqlx::query_scalar("SELECT heartbeat_seq FROM devices WHERE device_id='CLONE-A'")
+                .fetch_one(&hub_pool)
+                .await
+                .unwrap();
+        assert_eq!(hub_seq, 11, "the hub must have the landed beat on record");
+        handle.shutdown();
+    }
+
+    /// The hub's own row gets heartbeat evidence too, or the roster — which is
+    /// derived from evidence — reads the hub itself as never seen.
+    #[tokio::test]
+    async fn the_hub_records_its_own_heartbeat_locally() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        sqlx::query(
+            "UPDATE devices SET device_code='HUB01' WHERE device_id='01JDEVICE0000000000000001'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO app_config(key, value, updated_at) VALUES ('device_id','01JDEVICE0000000000000001',datetime('now'))")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let worker = super::SyncWorker::new(pool.clone());
+        worker.record_self_heartbeat().await;
+
+        let (seen, ip, seq): (Option<String>, Option<String>, i64) = sqlx::query_as(
+            "SELECT last_heartbeat_at, observed_ip, heartbeat_seq
+               FROM devices WHERE device_id='01JDEVICE0000000000000001'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            seen.is_some(),
+            "the hub's own row must carry heartbeat evidence"
+        );
+        assert_eq!(ip.as_deref(), Some("127.0.0.1"));
+        assert!(seq > 0);
     }
 
     #[test]

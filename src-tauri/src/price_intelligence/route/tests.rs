@@ -48,7 +48,11 @@ fn a_phone_routes_to_electronics_alone() {
     // pretending a grocery aggregator might know.
     let sources = registered();
     let chosen = sources_for(&routes, &sources);
-    assert_eq!(chosen, vec!["akelny"], "only the general fallback should match");
+    assert_eq!(
+        chosen,
+        vec!["akelny"],
+        "only the general fallback should match"
+    );
 }
 
 /// A product filed under nothing still has to route, or the feature only works
@@ -77,14 +81,20 @@ fn the_shops_own_category_outweighs_a_word_in_the_name() {
 #[test]
 fn arabic_names_route_as_readily_as_english() {
     assert_eq!(routes_for("حليب المراعي كامل الدسم", None)[0].name, "food");
-    assert_eq!(routes_for("شامبو هيد اند شولدرز", None)[0].name, "personal_care");
+    assert_eq!(
+        routes_for("شامبو هيد اند شولدرز", None)[0].name,
+        "personal_care"
+    );
 }
 
 #[test]
 fn routes_come_back_strongest_first() {
     let routes = routes_for("Johnson Baby Shampoo 200ml", Some("Baby & Kids"));
     let scores: Vec<u8> = routes.iter().map(|route| route.score).collect();
-    assert!(scores.windows(2).all(|pair| pair[0] >= pair[1]), "{scores:?}");
+    assert!(
+        scores.windows(2).all(|pair| pair[0] >= pair[1]),
+        "{scores:?}"
+    );
     assert!(names(&routes).contains(&"baby"));
 }
 

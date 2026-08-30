@@ -83,7 +83,9 @@ pub async fn quarantine(
     .bind(ulid::Ulid::new().to_string())
     .bind(table)
     .bind(entity_id)
-    .bind(format!("{table} row set aside after {attempts} failed attempts"))
+    .bind(format!(
+        "{table} row set aside after {attempts} failed attempts"
+    ))
     .bind(format!(
         "This record could not be applied and has been set aside so the rest of \
          {table} can keep syncing. It is stored in full and can be replayed once \

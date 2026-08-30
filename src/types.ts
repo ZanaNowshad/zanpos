@@ -746,6 +746,8 @@ export interface DeviceRow {
   device_name: string;
   is_active:   boolean;
   created_at:  string;
+  /** When the hub last accepted a heartbeat from this terminal, if ever. */
+  last_seen_at: string | null;
 }
 
 // ─── Phase 10b: Thermal config ────────────────────────────────────────────────
@@ -960,6 +962,8 @@ export interface SyncDiagnostics {
   tables: SyncDiagTable[];
   consistency_score: number | null;
   conflicts_open: number;
+  /** Rows set aside in the dead-letter queue — knowingly missing data. */
+  quarantined_rows: number;
 }
 
 export interface HubTruthTableCompare {
@@ -1495,6 +1499,9 @@ export interface HealthSummary {
   stuck_sync_rows: number;
   device_count: number;
   hub_mode: string;
+  last_successful_sync_at: string | null;
+  last_heartbeat_at: string | null;
+  schema_version: number;
   checked_at: string;
 }
 

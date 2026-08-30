@@ -27,7 +27,9 @@ export const MOCK_SESSION = {
 export const APP_CONFIG = {
   setup_complete: true,
   database_path: "mock.db",
-  hub_mode: "standalone",
+  /* Consistent with hub_status/terminal_roster below: this fixture machine IS
+     the hub, so its own status, health report and roster must all agree. */
+  hub_mode: "hub",
   hub_url: null,
   branch_id: BRANCH_ID,
   device_id: DEVICE_ID,
@@ -201,14 +203,19 @@ export const RANGE_SUMMARY = {
 export const SYNC_STATUS = {
   online: true,
   hub_configured: true,
+  // Hub mode means no hub_url — the real backend never produces the pair this
+  // fixture used to have, and a mock that cannot exist in reality only teaches
+  // QA a lie about what the chip will show.
   mode: "hub",
-  hub_url: "https://hub.local",
+  hub_url: null,
   pending_events: 11,
   last_successful_sync_at: new Date(Date.now() - 25 * 60_000).toISOString(),
   days_since_last_sync: 0,
   last_error: null,
+  last_heartbeat_at: new Date(Date.now() - 12_000).toISOString(),
+  last_heartbeat_error: null,
   device_id: DEVICE_ID,
-  consecutive_errors: 0,
+  consecutive_failure_count: 0,
 };
 
 export const WHATSAPP_STATUS = { connected: false };
@@ -270,15 +277,23 @@ export const HEALTH_REPORT = {
     ok: true, db_integrity: "ok", migration_count: 42,
     pending_sync_rows: 11, stuck_sync_rows: 0, device_count: 2,
     hub_mode: "hub", checked_at: new Date().toISOString(),
+    last_successful_sync_at: new Date(Date.now() - 25 * 60_000).toISOString(),
+    last_heartbeat_at: new Date(Date.now() - 12_000).toISOString(),
+    schema_version: 60,
   },
   findings: [
     { code: "wa_disconnected", severity: "warning", area: "whatsapp",
       title: "WhatsApp is disconnected", detail: "14 messages are queued on this device.",
       fix_action: null },
   ],
+  // Status is derived from heartbeat evidence, exactly as the backend derives
+  // it — the stored `devices.status` column was the lie this fixture used to
+  // repeat, and a health report that cannot go stale is the thing being tested.
   devices: [
-    { device_id: DEVICE_ID, label: "Front till", role: "terminal", status: "online",
-      ip: "192.168.1.20", last_seen: new Date().toISOString() },
+    { device_id: DEVICE_ID, label: "TILL-01 — Front counter", role: "hub terminal", status: "online",
+      ip: "192.168.1.20", last_seen: new Date(Date.now() - 12_000).toISOString() },
+    { device_id: "dev_mock_02", label: "TILL-02 — Second lane", role: "hub terminal", status: "offline",
+      ip: "192.168.1.21", last_seen: new Date(Date.now() - 190_000_000).toISOString() },
   ],
   tables: [],
 };

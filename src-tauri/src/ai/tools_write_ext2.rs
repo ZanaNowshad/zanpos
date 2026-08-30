@@ -1232,12 +1232,13 @@ pub async fn execute(
                    (barcode_id, product_id, barcode, created_at, updated_at)
                  VALUES (?, ?, ?, ?, ?)",
             )
-                .bind(ulid::Ulid::new().to_string())
-                .bind(&product_id)
-                .bind(&barcode)
-                .bind(&now)
+            .bind(ulid::Ulid::new().to_string())
+            .bind(&product_id)
+            .bind(&barcode)
             .bind(&now)
-            .execute(pool).await?;
+            .bind(&now)
+            .execute(pool)
+            .await?;
             audit2(
                 pool,
                 "ghost_barcode_resolved",

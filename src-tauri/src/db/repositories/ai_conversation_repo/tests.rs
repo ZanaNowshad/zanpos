@@ -33,7 +33,9 @@ async fn seed_message(pool: &SqlitePool, conversation_id: &str, branch: &str, us
 async fn a_thread_is_named_after_the_first_thing_the_operator_said() {
     let pool = pool().await;
     ensure(&pool, "c1", "b1", "u1").await.unwrap();
-    note_message(&pool, "c1", Some("What did we take yesterday?")).await.unwrap();
+    note_message(&pool, "c1", Some("What did we take yesterday?"))
+        .await
+        .unwrap();
 
     let listed = list(&pool, "b1", "u1").await.unwrap();
     assert_eq!(listed.len(), 1);
@@ -48,24 +50,38 @@ async fn a_thread_is_named_after_the_first_thing_the_operator_said() {
 async fn later_messages_do_not_rename_the_thread() {
     let pool = pool().await;
     ensure(&pool, "c1", "b1", "u1").await.unwrap();
-    note_message(&pool, "c1", Some("Check the milk price")).await.unwrap();
-    note_message(&pool, "c1", Some("Actually do the VAT return")).await.unwrap();
+    note_message(&pool, "c1", Some("Check the milk price"))
+        .await
+        .unwrap();
+    note_message(&pool, "c1", Some("Actually do the VAT return"))
+        .await
+        .unwrap();
     note_message(&pool, "c1", None).await.unwrap();
 
     let listed = list(&pool, "b1", "u1").await.unwrap();
     assert_eq!(listed[0].title, "Check the milk price");
     assert_eq!(listed[0].message_count, 3);
 
-    rename(&pool, "c1", "b1", "u1", "VAT return, August").await.unwrap();
-    note_message(&pool, "c1", Some("and the stock count")).await.unwrap();
-    assert_eq!(list(&pool, "b1", "u1").await.unwrap()[0].title, "VAT return, August");
+    rename(&pool, "c1", "b1", "u1", "VAT return, August")
+        .await
+        .unwrap();
+    note_message(&pool, "c1", Some("and the stock count"))
+        .await
+        .unwrap();
+    assert_eq!(
+        list(&pool, "b1", "u1").await.unwrap()[0].title,
+        "VAT return, August"
+    );
 }
 
 /// Chat input arrives with newlines in it, and a title that wraps to four lines
 /// turns a 260px history sidebar into a wall.
 #[test]
 fn a_title_is_one_line_and_cut_on_a_word() {
-    assert_eq!(title_from("  check\n the   milk \n price "), "check the milk price");
+    assert_eq!(
+        title_from("  check\n the   milk \n price "),
+        "check the milk price"
+    );
 
     let long = "please go through every product in the dairy category and tell me which ones have not sold";
     let title = title_from(long);
@@ -106,10 +122,19 @@ async fn reading_a_thread_is_scoped_to_its_owner_in_the_query() {
     ensure(&pool, "c1", "b1", "u1").await.unwrap();
     seed_message(&pool, "c1", "b1", "u1", 1).await;
 
-    assert_eq!(messages(&pool, "c1", "b1", "u1", 50).await.unwrap().len(), 1);
+    assert_eq!(
+        messages(&pool, "c1", "b1", "u1", 50).await.unwrap().len(),
+        1
+    );
     // Guessed from elsewhere: nothing, rather than someone else's chat.
-    assert!(messages(&pool, "c1", "b1", "u2", 50).await.unwrap().is_empty());
-    assert!(messages(&pool, "c1", "b2", "u1", 50).await.unwrap().is_empty());
+    assert!(messages(&pool, "c1", "b1", "u2", 50)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(messages(&pool, "c1", "b2", "u1", 50)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 /// The whole point of threads: yesterday's question does not arrive in today's
@@ -120,7 +145,9 @@ async fn one_thread_never_returns_anothers_messages() {
     for (id, n) in [("c1", 1), ("c2", 2)] {
         ensure(&pool, id, "b1", "u1").await.unwrap();
         seed_message(&pool, id, "b1", "u1", n).await;
-        note_message(&pool, id, Some(&format!("thread {n}"))).await.unwrap();
+        note_message(&pool, id, Some(&format!("thread {n}")))
+            .await
+            .unwrap();
     }
 
     let first = messages(&pool, "c1", "b1", "u1", 50).await.unwrap();
@@ -153,12 +180,17 @@ async fn archiving_hides_the_thread_but_keeps_what_was_said() {
     let pool = pool().await;
     ensure(&pool, "c1", "b1", "u1").await.unwrap();
     seed_message(&pool, "c1", "b1", "u1", 1).await;
-    note_message(&pool, "c1", Some("do the thing")).await.unwrap();
+    note_message(&pool, "c1", Some("do the thing"))
+        .await
+        .unwrap();
 
     archive(&pool, "c1", "b1", "u1").await.unwrap();
 
     assert!(list(&pool, "b1", "u1").await.unwrap().is_empty());
-    assert_eq!(messages(&pool, "c1", "b1", "u1", 50).await.unwrap().len(), 1);
+    assert_eq!(
+        messages(&pool, "c1", "b1", "u1", 50).await.unwrap().len(),
+        1
+    );
     // Archiving twice, or archiving someone else's, is a clean error.
     assert!(archive(&pool, "c1", "b1", "u1").await.is_err());
     assert!(archive(&pool, "c1", "b1", "u2").await.is_err());
@@ -175,9 +207,15 @@ async fn reopening_lands_on_the_thread_last_spoken_to() {
     ensure(&pool, "c2", "b1", "u1").await.unwrap();
     note_message(&pool, "c2", Some("second")).await.unwrap();
 
-    assert_eq!(most_recent(&pool, "b1", "u1").await.unwrap().as_deref(), Some("c2"));
+    assert_eq!(
+        most_recent(&pool, "b1", "u1").await.unwrap().as_deref(),
+        Some("c2")
+    );
     archive(&pool, "c2", "b1", "u1").await.unwrap();
-    assert_eq!(most_recent(&pool, "b1", "u1").await.unwrap().as_deref(), Some("c1"));
+    assert_eq!(
+        most_recent(&pool, "b1", "u1").await.unwrap().as_deref(),
+        Some("c1")
+    );
 }
 
 /// Everything said before threads existed becomes one thread rather than
@@ -225,7 +263,10 @@ async fn the_migration_gathers_pre_existing_messages_into_one_thread() {
     assert_eq!(listed[0].title, "Earlier conversation");
     assert_eq!(listed[0].message_count, 3);
     assert_eq!(
-        messages(&pool, &listed[0].conversation_id, "b1", "u1", 50).await.unwrap().len(),
+        messages(&pool, &listed[0].conversation_id, "b1", "u1", 50)
+            .await
+            .unwrap()
+            .len(),
         3
     );
 }

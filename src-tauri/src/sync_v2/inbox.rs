@@ -109,7 +109,12 @@ pub async fn claim(
 }
 
 /// Mark a claimed event as applied.
-pub async fn confirm(pool: &SqlitePool, table: &str, entity_id: &str, payload: &Map<String, Value>) {
+pub async fn confirm(
+    pool: &SqlitePool,
+    table: &str,
+    entity_id: &str,
+    payload: &Map<String, Value>,
+) {
     let (event_id, _) = event_id(table, entity_id, payload);
     let _ = sqlx::query(
         "UPDATE sync_inbox SET status = 'applied', processed_at = ? WHERE event_id = ?",

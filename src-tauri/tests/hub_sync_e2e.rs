@@ -215,10 +215,7 @@ async fn two_offline_terminals_converge_through_the_hub_after_create_update_dele
     assert_eq!(authoritative.len(), 2);
     assert_eq!(authoritative[0].1, "A renamed by B");
     assert_eq!(authoritative[1].2, 0);
-    assert_eq!(
-        authoritative[1].3.as_deref(),
-        Some("2026-08-01T11:00:00Z")
-    );
+    assert_eq!(authoritative[1].3.as_deref(), Some("2026-08-01T11:00:00Z"));
 
     handle.shutdown();
 }

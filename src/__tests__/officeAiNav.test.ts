@@ -236,6 +236,9 @@ describe("ZANPOS Command navigation", () => {
         stuck_sync_rows: 2,
         device_count: 3,
         hub_mode: "terminal",
+        last_successful_sync_at: null,
+        last_heartbeat_at: null,
+        schema_version: 22,
         checked_at: "2026-07-08T10:00:00Z",
       },
       findings: [
@@ -268,6 +271,7 @@ describe("ZANPOS Command navigation", () => {
       online: false,
       consistency_score: 67,
       conflicts_open: 1,
+      quarantined_rows: 0,
       tables: [{
         table: "products",
         pending: 4,

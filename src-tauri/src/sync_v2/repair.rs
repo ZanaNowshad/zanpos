@@ -157,7 +157,11 @@ async fn deliver_to_hub(
 }
 
 /// Local rows for a set of primary keys, shaped as the sync protocol sends them.
-async fn local_rows_by_pk(pool: &SqlitePool, table: &str, pks: &[String]) -> AppResult<Vec<serde_json::Value>> {
+async fn local_rows_by_pk(
+    pool: &SqlitePool,
+    table: &str,
+    pks: &[String],
+) -> AppResult<Vec<serde_json::Value>> {
     let pk = crate::sync_v2::apply::pk_for_table(table);
     // Bound parameters. The keys came off the wire from the hub.
     let placeholders = std::iter::repeat_n("?", pks.len())
@@ -307,7 +311,8 @@ pub fn describe(rows: &[DivergentRow]) -> Vec<String> {
                 row.pk,
                 match row.divergence {
                     Divergence::MissingLocally => "on the hub, not here (a pull that never landed)",
-                    Divergence::MissingOnHub => "here, not on the hub (a push still queued or lost)",
+                    Divergence::MissingOnHub =>
+                        "here, not on the hub (a push still queued or lost)",
                     Divergence::Different => "on both, contents disagree",
                 }
             )

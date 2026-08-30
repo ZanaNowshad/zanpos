@@ -187,6 +187,39 @@ step(`File size rule (max ${MAX_LINES} lines)`);
   if (!fresh.length) pass("no new oversized files");
 }
 
+step("One version, everywhere");
+{
+  // tauri.conf.json is the authority — it is what the bundler stamps on the
+  // installer and what the release manifest advertises. The other two are
+  // checked against it rather than merged into it, because a mismatch is not a
+  // formatting problem: if Cargo.toml lags, `env!("CARGO_PKG_VERSION")` reports
+  // the old number, and that value is what `download_and_install_update` writes
+  // into the update_applied audit row and what a terminal reports as its
+  // installed version. The shop would then see a till claiming a version it is
+  // not running.
+  const conf = JSON.parse(readFileSync(join(ROOT, "src-tauri", "tauri.conf.json"), "utf8"));
+  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+  const cargo = /^version\s*=\s*"([^"]+)"/m.exec(
+    readFileSync(join(ROOT, "src-tauri", "Cargo.toml"), "utf8"),
+  );
+
+  const found = {
+    "tauri.conf.json": conf.version,
+    "package.json": pkg.version,
+    "src-tauri/Cargo.toml": cargo?.[1],
+  };
+  const wrong = Object.entries(found).filter(([, v]) => v !== conf.version);
+  if (wrong.length) {
+    for (const [file, v] of wrong) {
+      fail(`${file} says ${v ?? "(unreadable)"}, tauri.conf.json says ${conf.version}`);
+    }
+  } else if (!/^\d+\.\d+\.\d+$/.test(conf.version)) {
+    fail(`version ${conf.version} is not a plain x.y.z — the updater compares these`);
+  } else {
+    pass(`${conf.version} in all three`);
+  }
+}
+
 step("Test modules are cfg-gated");
 {
   // `#[cfg(test)]` applies to the item immediately after it, so inserting a new

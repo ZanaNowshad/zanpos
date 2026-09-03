@@ -243,6 +243,12 @@ pub async fn device_rekey(
 
     let (old_device_id, device_id) = crate::device_identity::rekey_to_fresh(&state.db).await?;
 
+    // Every other holder of "which terminal is this" reads it from the database
+    // and so picks the new value up immediately. The diagnostics module caches it
+    // in process memory instead — for good reason, since it is stamped onto every
+    // event — so it is the one place that has to be told.
+    crate::diagnostics::set_device_id(device_id.clone());
+
     let branch_id = active_branch_id(&state).await.unwrap_or_default();
     if let Err(error) = crate::db::repositories::audit_hash::insert_audit_entry(
         &state.db,

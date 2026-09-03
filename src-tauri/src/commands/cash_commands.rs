@@ -230,7 +230,12 @@ pub async fn cash_events_list(
 }
 
 /// Inner function — callable from both `cash_drawer_summary` and `cash_x_report`.
-async fn drawer_summary_inner(
+/// Inner drawer summary — testable without AppState, like its EOD sibling.
+///
+/// The expected-cash formula lives in three places: here, `shift_repo::close_shift`
+/// and `report_eod_cashup_inner`. They are kept in step by hand, and a shop only
+/// finds out they have drifted when the drawer count disagrees with the report.
+pub(crate) async fn drawer_summary_inner(
     pool: &sqlx::SqlitePool,
     shift_id: &str,
 ) -> AppResult<CashDrawerSummary> {
@@ -290,6 +295,14 @@ async fn drawer_summary_inner(
             // Only deduct the cash portion of refunds: proportionally scale
             // refund_total by (cash_paid / sale_total) for split-payment sales.
             // The old EXISTS-based approach overcounted (BUG-REPORTS-3 fix).
+            //
+            // The `exchange_credit` carve-out matters as much as the cash ratio:
+            // when a returned item's value goes towards a replacement rather than
+            // back across the counter, no notes leave the drawer. Deducting the
+            // whole refund made the X-report and drawer summary read short by the
+            // credited amount for the rest of the shift, while `close_shift` —
+            // which does carve it out — disagreed until the shift ended, at which
+            // point the number moved for no reason the manager could see.
             sqlx::query_scalar::<_, i64>(
                 "SELECT COALESCE(SUM(
                     CASE WHEN s.net_total_minor <= 0 THEN 0
@@ -298,7 +311,15 @@ async fn drawer_summary_inner(
                          FROM payments p2
                          WHERE p2.sale_id = s.sale_id AND p2.payment_method = 'cash'),
                         s.net_total_minor
-                    ) * r.refund_total_minor / s.net_total_minor
+                    ) * MAX(
+                        r.refund_total_minor - COALESCE((
+                            SELECT SUM(ep.amount_minor)
+                            FROM payments ep
+                            WHERE ep.payment_method = 'exchange_credit'
+                              AND ep.external_reference = r.refund_id
+                        ), 0),
+                        0
+                    ) / s.net_total_minor
                     END
                 ), 0)
                  FROM refunds r

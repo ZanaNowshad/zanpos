@@ -45,22 +45,30 @@ async fn get_qty(pool: &SqlitePool, product_id: &str, branch_id: &str) -> f64 {
 }
 
 /// H3: Transaction-aware variant of get_qty for use inside write transactions.
+/// The shelf quantity, or an error — never a silent zero.
+///
+/// This used to swallow the query failure (`.ok().flatten()`) and fall back to
+/// `0.0`. Every caller feeds the result into `upsert_level_tx`, which writes an
+/// **absolute** quantity, so a failed read did not merely lose information: it
+/// overwrote a real shelf count with `0 + delta`. A void restocking two units
+/// against a shelf of two hundred would have written two.
+///
+/// A product with no stock row at all is still legitimately zero — that is a
+/// missing row, not a failed query, and the two are now distinguishable.
 async fn get_qty_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     product_id: &str,
     branch_id: &str,
-) -> f64 {
+) -> AppResult<f64> {
     let qty: Option<String> = sqlx::query_scalar(
         "SELECT quantity_on_hand FROM stock_levels WHERE product_id = ? AND branch_id = ?",
     )
     .bind(product_id)
     .bind(branch_id)
     .fetch_optional(&mut **tx)
-    .await
-    .ok()
-    .flatten();
+    .await?;
 
-    qty.and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0)
+    Ok(qty.and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0))
 }
 
 /// H3: Transaction-aware upsert_level (replaces the old pool-based version).
@@ -247,77 +255,71 @@ async fn check_alert(pool: &SqlitePool, product_id: &str, new_qty: f64) -> Optio
     }
 }
 
-// ── deduct_sale ───────────────────────────────────────────────────────────────
-
-/// Called AFTER finalize_sale commits. Stock levels have already been atomically
-/// deducted within the sale transaction. This function only writes movement
-/// records and sets sync_status — it does NOT touch stock_levels again.
-/// Returns alerts for products that crossed below their reorder point.
+/// Record the stock movements for a sale, inside the caller's transaction.
 ///
-/// `known_qtys` is an optional map of `product_id → quantity_after` captured
-/// inside the sale transaction (before commit). When provided, movement records
-/// use these exact post-deduction quantities instead of re-reading stock_levels.
-pub async fn deduct_sale(
-    pool: &SqlitePool,
+/// The sale used to decrement `stock_levels` inside its transaction and write
+/// the movements afterwards, in a separate one. The comment on the failure path
+/// said what that costs: "deduct_sale movement records failed … Stock levels
+/// were already updated in the sale transaction." A failure there left the shelf
+/// count reduced with nothing in the ledger to say why — an unexplainable
+/// quantity, permanently, because nothing ever retried it.
+///
+/// So the ledger travels with the sale. Either the sale, its stock deduction and
+/// its movements all land, or none of them do. A sale that cannot record what it
+/// took off the shelf is a sale that should not commit; refusing it leaves the
+/// till in a state the next attempt can succeed from, which is strictly better
+/// than a receipt whose stock effect is missing.
+///
+/// `quantities_after` carries the post-deduction totals the caller already
+/// computed, so this does not re-read what it just wrote.
+pub async fn record_sale_movements_tx(
+    tx: &mut Transaction<'_, Sqlite>,
     sale_id: &str,
     cashier_user_id: &str,
     branch_id: &str,
     device_id: &str,
-    known_qtys: Option<&HashMap<String, f64>>,
-) -> AppResult<Vec<LowStockAlert>> {
+    quantities_after: &HashMap<String, f64>,
+) -> AppResult<()> {
     let now = chrono::Utc::now().to_rfc3339();
 
-    // Load sale items with track_inventory flag
     let rows = sqlx::query(
-        "SELECT si.product_id, si.quantity, p.track_inventory, p.name
+        "SELECT si.product_id, si.quantity
          FROM sale_items si
          JOIN products p ON p.product_id = si.product_id
          WHERE si.sale_id = ? AND si.voided = 0 AND si.product_id IS NOT NULL
            AND p.track_inventory = 1",
     )
     .bind(sale_id)
-    .fetch_all(pool)
+    .fetch_all(&mut **tx)
     .await?;
-
-    let mut alerts = Vec::new();
 
     for row in &rows {
         let product_id: String = row.get("product_id");
         let qty_str: String = row.get("quantity");
         let sold_qty: f64 = qty_str.parse().unwrap_or(0.0);
-        let sold_qty_decimal =
-            rust_decimal::Decimal::from_str(&qty_str).unwrap_or(rust_decimal::Decimal::ZERO);
         if sold_qty <= 0.0 {
             continue;
         }
+        let sold_qty_decimal =
+            rust_decimal::Decimal::from_str(&qty_str).unwrap_or(rust_decimal::Decimal::ZERO);
 
-        // Guard: skip if a movement for this sale+product already exists
-        // (idempotency for crash-recovery / retry of deduct_sale).
+        // One movement per sale line, keyed by the sale it belongs to. The
+        // replay of an idempotent sale returns the original without reaching
+        // here, so a duplicate cannot arise from a retry; this guard covers a
+        // sale whose movements were written by an older, post-commit build.
         let already: Option<String> = sqlx::query_scalar(
             "SELECT movement_id FROM stock_movements
              WHERE reference_type = 'sale' AND reference_id = ? AND product_id = ? LIMIT 1",
         )
         .bind(sale_id)
         .bind(&product_id)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten();
+        .fetch_optional(&mut **tx)
+        .await?;
         if already.is_some() {
             continue;
         }
 
-        let movement_id = Ulid::new().to_string();
-
-        // Movement and FEFO lot allocation share one short post-sale transaction.
-        // This runs only after the sale has committed, so failure is logged by
-        // finalize_sale and can never roll the sale back.
-        let mut tx = pool.begin().await?;
-        let new_qty = if let Some(qtys) = known_qtys {
-            *qtys.get(&product_id).unwrap_or(&0.0)
-        } else {
-            get_qty_tx(&mut tx, &product_id, branch_id).await
-        };
+        let new_qty = *quantities_after.get(&product_id).unwrap_or(&0.0);
         sqlx::query(
             "INSERT INTO stock_movements
              (movement_id, product_id, branch_id, device_id, origin_device_id, movement_type,
@@ -325,7 +327,7 @@ pub async fn deduct_sale(
               created_by_user_id, created_at, sync_status)
              VALUES (?,?,?,?,?,'sale',?,?,   'sale',?,?,?,'pending')",
         )
-        .bind(&movement_id)
+        .bind(Ulid::new().to_string())
         .bind(&product_id)
         .bind(branch_id)
         .bind(device_id)
@@ -335,27 +337,47 @@ pub async fn deduct_sale(
         .bind(sale_id)
         .bind(cashier_user_id)
         .bind(&now)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
-        crate::inventory::lots::consume_fefo(&mut tx, &product_id, branch_id, sold_qty_decimal)
-            .await?;
-        tx.commit().await?;
-        // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
-        if let Some(alert) = check_alert(pool, &product_id, new_qty).await {
+        crate::inventory::lots::consume_fefo(tx, &product_id, branch_id, sold_qty_decimal).await?;
+    }
+
+    Ok(())
+}
+
+/// Low-stock alerts for a committed sale, read after the fact.
+///
+/// Split out from the movement write: an alert is something to show the cashier,
+/// not part of the books, so it must not be able to fail a sale.
+pub async fn low_stock_after_sale(
+    pool: &SqlitePool,
+    quantities_after: &HashMap<String, f64>,
+) -> Vec<LowStockAlert> {
+    let mut alerts = Vec::new();
+    for (product_id, qty) in quantities_after {
+        if let Some(alert) = check_alert(pool, product_id, *qty).await {
             alerts.push(alert);
         }
     }
-
-    Ok(alerts)
+    alerts
 }
 
-// ── return_refund ─────────────────────────────────────────────────────────────
-
-/// Called after create_refund commits. Returns stock for tracked items.
-/// `branch_id` / `device_id` come from the original sale's branch/device.
-pub async fn return_refund(
-    pool: &SqlitePool,
+/// Put refunded items back on the shelf, on the caller's open connection.
+///
+/// `create_refund` holds a `BEGIN IMMEDIATE` on one connection to serialise
+/// concurrent refunds, and used to credit stock *after* committing it — with the
+/// failure only logged: "stock credit failed after refund commit — manual
+/// reconciliation may be required". A refund that does not return its stock is
+/// worse than one that fails outright: the customer has their money, the shelf
+/// count still says the goods were sold, and the only record of the discrepancy
+/// is a log line nobody reads.
+///
+/// Running on the refund's own connection puts the stock return inside the same
+/// transaction. A refund that cannot credit stock now does not happen at all,
+/// which the operator can see and retry.
+pub async fn return_refund_conn(
+    conn: &mut sqlx::SqliteConnection,
     refund_id: &str,
     created_by_user_id: &str,
     branch_id: &str,
@@ -363,16 +385,15 @@ pub async fn return_refund(
 ) -> AppResult<()> {
     let now = chrono::Utc::now().to_rfc3339();
 
-    // Join refund_items → sale_items → products to get product + qty
     let rows = sqlx::query(
-        "SELECT si.product_id, ri.quantity, p.track_inventory
+        "SELECT si.product_id, ri.quantity
          FROM refund_items ri
          JOIN sale_items si ON si.sale_item_id = ri.sale_item_id
          JOIN products p ON p.product_id = si.product_id
          WHERE ri.refund_id = ? AND si.product_id IS NOT NULL AND p.track_inventory = 1",
     )
     .bind(refund_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
 
     for row in &rows {
@@ -383,24 +404,46 @@ pub async fn return_refund(
             continue;
         }
 
-        // H3: Wrap read-modify-write in an exclusive transaction to prevent
-        // two concurrent refunds interleaving and silently losing stock.
-        let mut tx = pool.begin().await?;
-
-        let current = get_qty_tx(&mut tx, &product_id, branch_id).await;
+        let current: f64 = sqlx::query_scalar(
+            "SELECT CAST(quantity_on_hand AS REAL) FROM stock_levels
+             WHERE product_id = ? AND branch_id = ?",
+        )
+        .bind(&product_id)
+        .bind(branch_id)
+        .fetch_optional(&mut *conn)
+        .await?
+        .unwrap_or(0.0);
         let new_qty = current + returned_qty;
-        let movement_id = Ulid::new().to_string();
 
-        upsert_level_tx(&mut tx, &product_id, branch_id, new_qty, &now).await?;
+        sqlx::query(
+            "INSERT INTO stock_levels
+               (stock_level_id, product_id, branch_id, quantity_on_hand,
+                last_movement_at, created_at, updated_at, sync_status)
+             VALUES (?,?,?,?,?,?,?,'pending')
+             ON CONFLICT(product_id, branch_id) DO UPDATE SET
+               quantity_on_hand = excluded.quantity_on_hand,
+               last_movement_at = excluded.last_movement_at,
+               updated_at       = excluded.updated_at,
+               sync_status      = 'pending'",
+        )
+        .bind(format!("SL-{product_id}-{branch_id}"))
+        .bind(&product_id)
+        .bind(branch_id)
+        .bind(format_qty(new_qty))
+        .bind(&now)
+        .bind(&now)
+        .bind(&now)
+        .execute(&mut *conn)
+        .await?;
 
         sqlx::query(
             "INSERT INTO stock_movements
              (movement_id, product_id, branch_id, device_id, origin_device_id, movement_type,
               quantity_delta, quantity_after, reference_type, reference_id,
               created_by_user_id, created_at, sync_status)
-             VALUES (?,?,?,?,?,'refund',?,?, 'refund',?,?,?,'pending')",
+             VALUES (?,?,?,?,?,'refund',?,?,   'refund',?,?,?,'pending')",
         )
-        .bind(&movement_id)
+        .bind(Ulid::new().to_string())
         .bind(&product_id)
         .bind(branch_id)
         .bind(device_id)
@@ -410,13 +453,63 @@ pub async fn return_refund(
         .bind(refund_id)
         .bind(created_by_user_id)
         .bind(&now)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
-
-        tx.commit().await?;
-        // sync_status='pending' is set by column DEFAULT — sync worker picks it up
     }
 
+    Ok(())
+}
+
+/// Record stock changing hands when two products are merged into one.
+///
+/// A merge folds the loser's shelf quantity into the survivor. That is a real
+/// movement of stock between two product ids, and it was written straight into
+/// `stock_levels` with nothing in the ledger to explain it: the survivor's count
+/// jumped, the movements did not account for the jump, and the two could never
+/// be reconciled again.
+///
+/// Two rows, because two products changed: the source goes to zero, the target
+/// gains what the source had. Both name the merge as their source so the pair
+/// can be found together, and the quantity is only moved — never created.
+pub async fn record_merge_movements_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    source_product_id: &str,
+    target_product_id: &str,
+    branch_id: &str,
+    quantity: f64,
+    target_quantity_after: f64,
+    actor_user_id: &str,
+    device_id: &str,
+) -> AppResult<()> {
+    if quantity <= 0.0 {
+        return Ok(());
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+
+    for (product_id, delta, after) in [
+        (source_product_id, -quantity, 0.0),
+        (target_product_id, quantity, target_quantity_after),
+    ] {
+        sqlx::query(
+            "INSERT INTO stock_movements
+             (movement_id, product_id, branch_id, device_id, origin_device_id, movement_type,
+              quantity_delta, quantity_after, reference_type, reference_id,
+              created_by_user_id, created_at, sync_status)
+             VALUES (?,?,?,?,?,'merge',?,?,   'product_merge',?,?,?,'pending')",
+        )
+        .bind(Ulid::new().to_string())
+        .bind(product_id)
+        .bind(branch_id)
+        .bind(device_id)
+        .bind(device_id)
+        .bind(format_qty(delta))
+        .bind(format_qty(after))
+        .bind(source_product_id)
+        .bind(actor_user_id)
+        .bind(&now)
+        .execute(&mut **tx)
+        .await?;
+    }
     Ok(())
 }
 
@@ -457,7 +550,7 @@ pub async fn return_void_sale(
             continue;
         }
 
-        let current = get_qty_tx(tx, &product_id, branch_id).await;
+        let current = get_qty_tx(tx, &product_id, branch_id).await?;
         let new_qty = current + returned_qty;
         let movement_id = Ulid::new().to_string();
 
@@ -506,7 +599,7 @@ pub async fn manual_adjust(
 
     // H3: Exclusive transaction for read-modify-write
     let mut tx = pool.begin().await?;
-    let current = get_qty_tx(&mut tx, product_id, branch_id).await;
+    let current = get_qty_tx(&mut tx, product_id, branch_id).await?;
     let new_qty = current + quantity_delta;
     let movement_id = Ulid::new().to_string();
 
@@ -563,7 +656,7 @@ pub async fn stock_take(
 
     // H3: Exclusive transaction for read-modify-write (current qty → delta → upsert)
     let mut tx = pool.begin().await?;
-    let current = get_qty_tx(&mut tx, product_id, branch_id).await;
+    let current = get_qty_tx(&mut tx, product_id, branch_id).await?;
     let delta = new_quantity - current;
     let movement_id = Ulid::new().to_string();
 

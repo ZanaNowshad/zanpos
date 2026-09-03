@@ -209,7 +209,14 @@ async fn run_verification_inner(
     .await?;
 
     if verdict.matched {
-        mark_delivery_paid(db, &receipt_number, &conf_id).await;
+        mark_delivery_paid(
+            db,
+            &receipt_number,
+            &conf_id,
+            "zanai-auto",
+            "Auto-confirmed via OCR + AI match",
+        )
+        .await;
         tracing::info!(
             "ZanAI confirmed payment for receipt {receipt_number} from {}",
             customer_name.as_deref().unwrap_or(customer_jid)
@@ -303,7 +310,42 @@ fn amount_digits(amount: &str) -> String {
         .collect()
 }
 
-fn ocr_amount_tokens(text: &str) -> Vec<String> {
+/// An amount as OCR read it: the digits, and how many followed the last
+/// separator.
+///
+/// The digits alone are not the amount. Stripping separators made `1.500` and
+/// `15.00` the same string, so a screenshot of a 15.00 payment satisfied a 1.500
+/// expectation — the check that is supposed to confirm the customer paid the
+/// right amount could not see where the decimal point was.
+///
+/// The separator *character* still has to be ignored: OCR confuses `.`, `,`, `:`
+/// and the Arabic decimal mark freely. What it cannot ignore is the separator's
+/// *position*, which is what `decimals` records. `1,500` still matches `1.500` —
+/// same digits, same three decimal places, just a comma the scanner read instead
+/// of a point — while `15.00` no longer does.
+#[derive(Debug, PartialEq, Eq)]
+struct OcrAmount {
+    digits: String,
+    decimals: usize,
+}
+
+fn parse_ocr_amount(token: &str) -> Option<OcrAmount> {
+    let normalized = normalize_digits(token);
+    let digits = amount_digits(&normalized);
+    if digits.is_empty() {
+        return None;
+    }
+    let decimals = match normalized.rfind(['.', ',', ':', '٫']) {
+        Some(at) => normalized[at + '٫'.len_utf8()..]
+            .chars()
+            .filter(|c| c.is_ascii_digit())
+            .count(),
+        None => 0,
+    };
+    Some(OcrAmount { digits, decimals })
+}
+
+fn ocr_amount_tokens(text: &str) -> Vec<OcrAmount> {
     let normalized = normalize_digits(text);
     let mut tokens = Vec::new();
     let mut current = String::new();
@@ -311,17 +353,15 @@ fn ocr_amount_tokens(text: &str) -> Vec<String> {
         if c.is_ascii_digit() || matches!(c, '.' | ',' | ':' | '٫') {
             current.push(c);
         } else if !current.is_empty() {
-            let digits = amount_digits(&current);
-            if !digits.is_empty() {
-                tokens.push(digits);
+            if let Some(amount) = parse_ocr_amount(&current) {
+                tokens.push(amount);
             }
             current.clear();
         }
     }
     if !current.is_empty() {
-        let digits = amount_digits(&current);
-        if !digits.is_empty() {
-            tokens.push(digits);
+        if let Some(amount) = parse_ocr_amount(&current) {
+            tokens.push(amount);
         }
     }
     tokens
@@ -349,8 +389,8 @@ fn deterministic_verdict(
     expected_amount: &str,
     business_name: &str,
 ) -> Option<Verdict> {
-    let expected = amount_digits(expected_amount);
-    if expected.is_empty() || !ocr_amount_tokens(ocr_text).iter().any(|t| t == &expected) {
+    let expected = parse_ocr_amount(expected_amount)?;
+    if !ocr_amount_tokens(ocr_text).contains(&expected) {
         return None;
     }
 
@@ -374,7 +414,19 @@ fn deterministic_verdict(
 
 /// Mark the delivery for a receipt paid using the existing idempotent repo fn.
 /// Best-effort: a receipt without a delivery row simply records no mark-paid.
-async fn mark_delivery_paid(db: &SqlitePool, receipt_number: &str, conf_id: &str) {
+///
+/// `confirmed_by` is who actually decided, not who usually does. It was hardcoded
+/// to the automatic verifier, so a manager overriding a rejected screenshot was
+/// recorded in `delivery_orders.paid_confirmed_by_user_id` and in the audit entry
+/// as `zanai-auto`. The question that gets asked afterwards is who accepted this
+/// payment, and the trail answered with the wrong name.
+async fn mark_delivery_paid(
+    db: &SqlitePool,
+    receipt_number: &str,
+    conf_id: &str,
+    confirmed_by: &str,
+    how: &str,
+) {
     let delivery_id: Option<String> = sqlx::query_scalar(
         "SELECT delivery_id FROM delivery_orders WHERE receipt_number=? ORDER BY created_at DESC LIMIT 1",
     )
@@ -386,9 +438,9 @@ async fn mark_delivery_paid(db: &SqlitePool, receipt_number: &str, conf_id: &str
     if let Some(did) = delivery_id {
         let input = crate::domain::delivery::ConfirmPaymentInput {
             delivery_id: did.clone(),
-            confirmed_by_user_id: "zanai-auto".into(),
-            payment_reference: Some("WhatsApp screenshot — ZanAI verified".into()),
-            payment_note: Some("Auto-confirmed via OCR + AI match".into()),
+            confirmed_by_user_id: confirmed_by.to_string(),
+            payment_reference: Some("WhatsApp screenshot".into()),
+            payment_note: Some(how.to_string()),
         };
         if let Err(e) = crate::db::repositories::delivery_repo::confirm_payment(db, &input).await {
             tracing::warn!("payment matched but delivery {did} mark-paid failed: {e}");
@@ -497,7 +549,14 @@ pub async fn payment_confirmation_override(
     .await?;
     if confirm {
         if let Some(rn) = receipt {
-            mark_delivery_paid(&state.db, &rn, &id).await;
+            mark_delivery_paid(
+                &state.db,
+                &rn,
+                &id,
+                &actor_user_id,
+                "Manually confirmed from the notification panel",
+            )
+            .await;
         }
     }
     Ok(())
@@ -505,6 +564,48 @@ pub async fn payment_confirmation_override(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_amount_check_sees_where_the_decimal_point_is() {
+        let business = "ZAN Cafe W.L.L.";
+
+        // The right amount, however the scanner rendered the separator.
+        for rendered in [
+            "BENEFITPAY Paid BHD 1.500 Recipient: ZAN Cafe W.L.L.",
+            "BENEFITPAY Paid BHD 1,500 Recipient: ZAN Cafe W.L.L.",
+            "BENEFITPAY Paid BHD 1:500 Recipient: ZAN Cafe W.L.L.",
+        ] {
+            assert!(
+                deterministic_verdict(rendered, "1.500", business).is_some(),
+                "a correct payment was rejected over the separator character: {rendered}"
+            );
+        }
+
+        // Same digits, decimal point somewhere else. Stripping separators made
+        // these identical, so a screenshot of a 15.00 payment confirmed a 1.500
+        // bill — the amount check could not see the difference it exists to see.
+        for wrong in [
+            "BENEFITPAY Paid BHD 15.00 Recipient: ZAN Cafe W.L.L.",
+            "BENEFITPAY Paid BHD 150.0 Recipient: ZAN Cafe W.L.L.",
+        ] {
+            assert!(
+                deterministic_verdict(wrong, "1.500", business).is_none(),
+                "a payment of a different amount was accepted: {wrong}"
+            );
+        }
+
+        // And the business still has to be the recipient.
+        assert!(
+            deterministic_verdict(
+                "BENEFITPAY Paid BHD 1.500 Recipient: Someone Else",
+                "1.500",
+                business,
+            )
+            .is_none(),
+            "a payment to another recipient was accepted"
+        );
+    }
+
     use super::*;
 
     #[test]

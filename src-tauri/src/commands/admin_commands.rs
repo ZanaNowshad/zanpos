@@ -102,7 +102,7 @@ pub struct RoleRow {
 
 // ─── Shared price join ────────────────────────────────────────────────────────
 
-const ADMIN_PRODUCT_QUERY: &str = r#"
+const ADMIN_PRODUCT_QUERY_TEMPLATE: &str = r#"
     SELECT p.product_id, p.category_id, c.name AS category_name,
            p.name, p.sku, p.barcode, p.track_inventory, p.allow_decimal_quantity,
            p.is_active, p.tax_rule_id, p.reorder_point, p.image_path,
@@ -112,12 +112,23 @@ const ADMIN_PRODUCT_QUERY: &str = r#"
     FROM products p
     JOIN categories c ON c.category_id = p.category_id
     LEFT JOIN tax_rules t ON t.tax_rule_id = p.tax_rule_id AND t.is_active = 1
-    LEFT JOIN product_prices pp ON pp.product_id = p.product_id
-        AND pp.branch_id IS NULL
-        AND pp.price_type = 'selling'
-        AND datetime(pp.effective_from) <= datetime('now')
-        AND (pp.effective_to IS NULL OR datetime(pp.effective_to) > datetime('now'))
+    LEFT JOIN product_prices pp ON pp.product_id = p.product_id AND {price_in_force}
 "#;
+
+/// The back-office product query, with the one authoritative price predicate in.
+///
+/// Built once. Without the tie-break this join also *duplicated rows*: a LEFT
+/// JOIN that matches two open price rows returns the product twice, so the
+/// manager's product list showed the same item repeated at two prices.
+fn admin_product_query() -> &'static str {
+    static QUERY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    QUERY.get_or_init(|| {
+        ADMIN_PRODUCT_QUERY_TEMPLATE.replace(
+            "{price_in_force}",
+            crate::db::repositories::pricing::PRICE_IN_FORCE,
+        )
+    })
+}
 
 fn row_to_admin_product(r: &sqlx::sqlite::SqliteRow) -> AdminProduct {
     let track: i64 = r.get("track_inventory");
@@ -316,7 +327,7 @@ pub async fn admin_list_products(
     // Paginated items — limit/offset are i64 values under our control, not user strings
     let sql = format!(
         "{} WHERE {where_sql} ORDER BY p.is_active DESC, p.name LIMIT {limit} OFFSET {offset}",
-        ADMIN_PRODUCT_QUERY,
+        admin_product_query(),
     );
     let rows = bind_all!(sqlx::query(&sql)).fetch_all(&state.db).await?;
 
@@ -582,7 +593,7 @@ pub async fn admin_create_product(
     }
 
     // Return the newly created product
-    let sql = format!("{} WHERE p.product_id = ?", ADMIN_PRODUCT_QUERY);
+    let sql = format!("{} WHERE p.product_id = ?", admin_product_query());
     let row = sqlx::query(&sql)
         .bind(&product_id)
         .fetch_one(&state.db)
@@ -657,11 +668,16 @@ pub async fn admin_update_product(
 
     // Check if price changed — fetch full old price row for H-8 re-enqueue
     // (read before the transaction so we know the current state)
+    //
+    // Through the view, so "did the price change" is asked against the same
+    // price the tills and the product list show. This was `LIMIT 1` over every
+    // open row with no ordering: with two of them — an import that did not close
+    // the old one, a row synced from another branch — it could read the stale
+    // one, conclude the price was unchanged, and write nothing. The overlap then
+    // stayed, and the manager's edit silently did not happen.
     let old_price_row = sqlx::query(
-        "SELECT price_id, price_minor, effective_from FROM product_prices
-         WHERE product_id = ? AND branch_id IS NULL
-           AND price_type = 'selling' AND effective_to IS NULL
-         LIMIT 1",
+        "SELECT price_id, price_minor, effective_from FROM v_current_selling_price
+         WHERE product_id = ?",
     )
     .bind(&input.product_id)
     .fetch_optional(&state.db)
@@ -713,6 +729,39 @@ pub async fn admin_update_product(
             e.into()
         }
     })?;
+
+    // A cost change is history, the same as a price change.
+    //
+    // `product_cost_history` is documented as the record of why a cost moved,
+    // but only two of the five writers of `products.cost_minor` populated it —
+    // goods receipt and catalogue import. A manager editing the cost by hand,
+    // which is the most common way a supplier price change gets recorded, left
+    // nothing behind, so the answer to "why did this cost change" was silence.
+    if let Some(new_cost) = input.cost_minor {
+        let old_cost: Option<i64> =
+            sqlx::query_scalar("SELECT cost_minor FROM products WHERE product_id = ?")
+                .bind(&input.product_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .flatten();
+        if old_cost != Some(new_cost) {
+            sqlx::query(
+                "INSERT INTO product_cost_history
+                   (cost_history_id, product_id, old_cost_minor, new_cost_minor, supplier_id,
+                    source, actor_user_id, created_at, updated_at, sync_status)
+                 VALUES (?, ?, ?, ?, NULL, 'manual_edit', ?, ?, ?, 'pending')",
+            )
+            .bind(Ulid::new().to_string())
+            .bind(&input.product_id)
+            .bind(old_cost)
+            .bind(new_cost)
+            .bind(&input.updated_by_user_id)
+            .bind(&now)
+            .bind(&now)
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
 
     if current_price != Some(input.price_minor) {
         // Close old price
@@ -790,7 +839,7 @@ pub async fn admin_update_product(
         tracing::error!("AUDIT WRITE FAILED [PRODUCT_UPDATED]: {:?}", e);
     }
 
-    let sql = format!("{} WHERE p.product_id = ?", ADMIN_PRODUCT_QUERY);
+    let sql = format!("{} WHERE p.product_id = ?", admin_product_query());
     let row = sqlx::query(&sql)
         .bind(&input.product_id)
         .fetch_one(&state.db)
@@ -829,6 +878,7 @@ pub async fn admin_merge_products(
         &source_product_id,
         &target_product_id,
         transfer,
+        &actor_user_id,
     )
     .await?;
 
@@ -2356,8 +2406,14 @@ pub async fn admin_run_diagnostics(state: State<'_, AppState>) -> AppResult<Diag
     }
 
     // 3. Check for stuck actions (status='executing' with no resolution)
+    // `ai_actions` names these `tool_name` and `prepared_at`. This asked for
+    // `action_type` and `created_at`, neither of which exists, and the
+    // `.unwrap_or_default()` below turned the resulting error into an empty
+    // result — so the detector reported no stuck actions no matter how many
+    // there were, and the repair beneath it was never reached.
     let stuck_action_rows = sqlx::query(
-        "SELECT action_id, action_type FROM ai_actions WHERE status='executing' AND created_at < datetime('now','-10 minutes')"
+        "SELECT action_id, tool_name FROM ai_actions
+          WHERE status='executing' AND prepared_at < datetime('now','-10 minutes')",
     )
     .fetch_all(&state.db)
     .await
@@ -2374,7 +2430,7 @@ pub async fn admin_run_diagnostics(state: State<'_, AppState>) -> AppResult<Diag
         ));
         for (action_id, _action_type) in &stuck_actions {
             let now = chrono::Utc::now().to_rfc3339();
-            sqlx::query("UPDATE ai_actions SET status='failed', error_message='Auto-cleared by diagnostics (stuck)', completed_at=? WHERE action_id=?")
+            sqlx::query("UPDATE ai_actions SET status='failed', error_message='Auto-cleared by diagnostics (stuck)', executed_at=? WHERE action_id=?")
                 .bind(&now)
                 .bind(action_id)
                 .execute(&state.db)
@@ -2710,10 +2766,27 @@ mod product_image_search_contract_tests {
             ProductImageSearchMode::Change,
         );
 
-        assert_eq!(fetch, "6281007023028 Almarai Full Fat Milk");
+        // Name first, barcode last — and the order is the assertion, not an
+        // incidental detail of how the string is built.
+        //
+        // This previously pinned "6281007023028 Almarai Full Fat Milk". Leading
+        // an *image* search with thirteen digits weights it toward pictures of
+        // barcodes and listing pages, and away from photographs of the product,
+        // which is one of the two reasons wrong images were being applied. The
+        // barcode still goes, because a retailer page that publishes it narrows
+        // the result usefully — it just must not lead.
+        assert_eq!(fetch, "Almarai Full Fat Milk 6281007023028");
+        assert!(
+            fetch.starts_with("Almarai"),
+            "the product name must lead an image query: {fetch}"
+        );
         assert!(change.contains("Dairy"));
         assert!(change.contains("MILK-1L"));
         assert!(change.contains("product packaging front"));
+        assert!(
+            change.starts_with("Almarai"),
+            "change mode must lead with the name too: {change}"
+        );
 
         let html = r#"
           murl&quot;:&quot;https://cdn.example.com/current.jpg&quot;

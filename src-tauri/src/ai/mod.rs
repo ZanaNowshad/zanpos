@@ -5,7 +5,6 @@ pub mod config;
 pub mod engine;
 pub mod forms;
 pub mod intent_engine;
-pub mod oauth;
 pub mod openai_client;
 pub mod proactive;
 pub mod provider;

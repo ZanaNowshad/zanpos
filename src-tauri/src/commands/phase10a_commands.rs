@@ -80,13 +80,27 @@ pub async fn db_backup(
         std::path::PathBuf::from(&dest_path)
     };
 
-    // Flush WAL to main DB file before copying to ensure a consistent snapshot
-    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+    // `VACUUM INTO` writes a consistent snapshot in one read transaction.
+    //
+    // This was `PRAGMA wal_checkpoint(TRUNCATE)` then `fs::copy` — two steps,
+    // with a window between them in which a sale can commit. A copy taken across
+    // that window is not promised to be a valid database, and a backup that is
+    // not a database is worse than none: it looks like safety.
+    //
+    // It refuses to overwrite, so an existing destination is cleared first; the
+    // caller chose the path, and `fs::copy` overwrote too.
+    let _ = std::fs::remove_file(&dest);
+    let dest_sql = dest.display().to_string();
+    if dest_sql.contains('\'') {
+        return Err(AppError::Validation(
+            "The backup path cannot contain a quote character.".into(),
+        ));
+    }
+    sqlx::query(&format!("VACUUM INTO '{dest_sql}'"))
         .execute(&state.db)
         .await
-        .map_err(|e| AppError::Internal(format!("WAL checkpoint failed: {e}")))?;
-
-    std::fs::copy(&src, &dest).map_err(|e| AppError::Internal(format!("Backup failed: {e}")))?;
+        .map_err(|e| AppError::Internal(format!("Backup failed: {e}")))?;
+    let _ = &src;
 
     Ok(dest.to_string_lossy().to_string())
 }

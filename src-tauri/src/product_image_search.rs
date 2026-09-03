@@ -37,6 +37,16 @@ pub struct ProductImageSearchResult {
     pub source: String,
     pub search_query: String,
     pub alternate_count: usize,
+    /// True only when the image was found by looking the barcode up directly,
+    /// so it identifies *this* product rather than merely resembling it.
+    ///
+    /// The Bing fallback cannot set this. It takes whichever image a search
+    /// engine happened to rank first for a query built from the name and
+    /// barcode, and nothing checks that the result depicts the product at all —
+    /// which is exactly how a wrong picture ends up on a shelf label. A human
+    /// looking at the result can judge it; an unattended worker cannot, so the
+    /// worker refuses anything without this flag.
+    pub barcode_verified: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,10 +94,19 @@ pub(crate) fn build_search_query(
     category_name: Option<&str>,
     mode: ProductImageSearchMode,
 ) -> String {
+    // Name first, barcode last.
+    //
+    // The barcode led this query, which is the right shape for Open Food Facts —
+    // a barcode database, where the number is the key — and the wrong shape for
+    // an image search. Barcode digits almost never appear in image metadata, and
+    // where they do it is typically on a picture *of a barcode* or a listing
+    // page, so leading with thirteen digits weights the query toward exactly the
+    // results nobody wants and dilutes the term that actually retrieves product
+    // photographs.
+    //
+    // Both are still sent. The name carries the search; the barcode narrows it
+    // when a retailer page happens to publish it.
     let mut parts = Vec::new();
-    if let Some(value) = clean_piece(barcode, 32) {
-        parts.push(value);
-    }
     if let Some(value) = clean_piece(Some(product_name), 100) {
         parts.push(value);
     }
@@ -99,6 +118,9 @@ pub(crate) fn build_search_query(
             parts.push(value);
         }
         parts.push("product packaging front".to_string());
+    }
+    if let Some(value) = clean_piece(barcode, 32) {
+        parts.push(value);
     }
     parts.join(" ").chars().take(220).collect()
 }
@@ -255,6 +277,8 @@ pub async fn search_product_image(
                 source: "Open Food Facts".into(),
                 search_query: query,
                 alternate_count: candidates.len().saturating_sub(1),
+                // Looked up by barcode: this is the product, not one like it.
+                barcode_verified: true,
             });
         }
     }
@@ -291,5 +315,7 @@ pub async fn search_product_image(
         source: "Bing Images".into(),
         search_query: query,
         alternate_count: candidates.len().saturating_sub(1),
+        // A ranked guess. Fine to show someone; not fine to apply unattended.
+        barcode_verified: false,
     })
 }

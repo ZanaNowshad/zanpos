@@ -7,9 +7,13 @@ pub mod consistency;
 pub mod dead_letter;
 pub mod inbox;
 pub mod parity;
+#[cfg(test)]
+mod prune_tests;
 pub mod reconcile;
 pub mod registry;
 pub mod repair;
+#[cfg(test)]
+mod schema_compat_tests;
 #[cfg(test)]
 mod tombstone_tests;
 pub mod worker;

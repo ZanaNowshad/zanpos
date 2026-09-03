@@ -36,7 +36,7 @@ mod telemetry_uploader;
 pub use ai::action_registry::{ActionDefinition, ActionKind, ActionRegistry, ConfirmationPolicy};
 pub use telemetry::{shutdown as shutdown_telemetry, ZanposSpan};
 
-use crate::sync::SyncWorker;
+use crate::sync_v2::SyncWorker;
 use chrono::Utc;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -608,14 +608,69 @@ pub fn run() {
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(86_400)).await;
                     let now = Utc::now().to_rfc3339();
-                    let mut alerts: Vec<serde_json::Value> = Vec::new();
+                    // Maintenance findings go through `proactive_alerts` like
+                    // every other alert in the application.
+                    //
+                    // They used to be ad-hoc JSON emitted one at a time on a
+                    // "proactive-alert" channel. Nothing listened to it — the UI
+                    // subscribes to "proactive-alerts", plural, with an array
+                    // payload — and the objects did not carry the fields that
+                    // listener renders. They were never written to the table
+                    // either, so the `admin_get_alerts` poll could not find them
+                    // as a fallback. A quarantined sale, a failed integrity check
+                    // and an orphaned foreign key were each announced into
+                    // nothing, and the cycle logged how many it had raised.
+                    //
+                    // Persisting them gives them the path every other alert
+                    // already has: stored, broadcast, shown in the KPI panel, and
+                    // dismissible by a manager.
+                    let mut alerts: Vec<crate::domain::ai_admin::ProactiveAlert> = Vec::new();
+                    let maint_branch = crate::db::helpers::active_branch_id(&db)
+                        .await
+                        .unwrap_or_default();
+                    let today = now.chars().take(10).collect::<String>();
+                    let mut raise =
+                        |alert_type: &str, severity: &str, title: &str, detail: String| {
+                            alerts.push(crate::domain::ai_admin::ProactiveAlert {
+                                // Deterministic per type per day, so a fault that
+                                // persists across cycles updates one alert rather
+                                // than adding another every 24 hours until nobody
+                                // reads them.
+                                alert_id: format!("maint_{alert_type}_{today}"),
+                                branch_id: maint_branch.clone(),
+                                alert_type: alert_type.to_string(),
+                                severity: severity.to_string(),
+                                title: title.to_string(),
+                                description: detail,
+                                detail_json: None,
+                                detected_at: now.clone(),
+                                dismissed_at: None,
+                                dismissed_by_user_id: None,
+                                created_at: now.clone(),
+                            });
+                        };
 
                     // The sync inbox gains a row per record received, so it has
                     // to be swept or it outgrows the data it describes. Settled
                     // rows only: failures are what somebody still has to look
                     // at, and an inbox that discards its own evidence is worse
                     // than not having one.
-                    match crate::sync_v2::inbox::prune(&db, 30).await {
+                    //
+                    // This is what `retention_days_logs` now governs. It used to
+                    // delete audit rows and stock movements — an append-only
+                    // hash chain and the ledger stock is derived from — under a
+                    // label that says neither. Local bookkeeping is what the
+                    // setting always described, so it is what it now controls.
+                    let log_days: i64 = sqlx::query_scalar(
+                        "SELECT CAST(value AS INTEGER) FROM app_config WHERE key = 'retention_days_logs'",
+                    )
+                    .fetch_optional(&db)
+                    .await
+                    .ok()
+                    .flatten()
+                    .flatten()
+                    .unwrap_or(30);
+                    match crate::sync_v2::inbox::prune(&db, log_days).await {
                         Ok(removed) if removed > 0 => {
                             tracing::info!("Auto-maintenance: pruned {removed} settled sync events");
                         }
@@ -628,17 +683,16 @@ pub fn run() {
                     // rather than sitting quietly in a table nobody opens.
                     let quarantined = crate::sync_v2::dead_letter::pending_count(&db).await;
                     if quarantined > 0 {
-                        alerts.push(serde_json::json!({
-                            "alert_id": format!("maint_dlq_{}", now),
-                            "severity": "warning",
-                            "title": "Records could not be synced",
-                            "detail": format!(
+                        raise(
+                            "sync_quarantine",
+                            "warning",
+                            "Records could not be synced",
+                            format!(
                                 "{quarantined} record(s) could not be applied and have been set \
                                  aside so the rest of sync could continue. They are stored in \
                                  full and can be replayed once the cause is fixed."
                             ),
-                            "created_at": now,
-                        }));
+                        );
                     }
 
                     match sqlx::query_scalar::<_, String>("PRAGMA quick_check")
@@ -647,13 +701,10 @@ pub fn run() {
                     {
                         Ok(result) if result != "ok" => {
                             tracing::warn!("Auto-maintenance: quick_check: {result}");
-                            alerts.push(serde_json::json!({
-                                "alert_id": format!("maint_quick_{}", now),
-                                "severity": "warning",
-                                "title": "Database integrity warning",
-                                "detail": result,
-                                "created_at": now,
-                            }));
+                            // Critical rather than warning: `quick_check`
+                            // reporting anything but "ok" means the file holding
+                            // the shop's takings is damaged.
+                            raise("db_integrity", "critical", "Database integrity warning", result);
                         }
                         Err(e) => {
                             tracing::error!("Auto-maintenance: quick_check failed: {e}");
@@ -690,19 +741,29 @@ pub fn run() {
                                 "Auto-maintenance: {} foreign key violation(s) found",
                                 rows.len()
                             );
-                            alerts.push(serde_json::json!({
-                                "alert_id": format!("maint_fk_{}", now),
-                                "severity": "warning",
-                                "title": "Foreign key integrity",
-                                "detail": format!("{} orphaned reference(s) found", rows.len()),
-                                "created_at": now,
-                            }));
+                            raise(
+                                "foreign_key_integrity",
+                                "warning",
+                                "Foreign key integrity",
+                                format!("{} orphaned reference(s) found", rows.len()),
+                            );
                         }
                     }
 
                     for alert in &alerts {
-                        if let Err(e) = app_handle_maint.emit("proactive-alert", alert) {
-                            tracing::warn!("Auto-maintenance: failed to emit alert: {e}");
+                        if let Err(e) =
+                            crate::db::repositories::proactive_repo::insert_alert(&db, alert).await
+                        {
+                            tracing::warn!("Auto-maintenance: could not record alert: {e}");
+                        }
+                    }
+                    if !alerts.is_empty() {
+                        // The channel and payload shape the KPI panel actually
+                        // listens for. Broadcast after the rows are written, so a
+                        // client that reloads rather than receiving the event
+                        // still finds them.
+                        if let Err(e) = app_handle_maint.emit("proactive-alerts", &alerts) {
+                            tracing::warn!("Auto-maintenance: failed to emit alerts: {e}");
                         }
                     }
 

@@ -42,10 +42,13 @@ pub struct MergeOutcome {
 }
 
 // Selling-price join shared by every scan query (current, branch-default price).
-const PRICE_JOIN: &str = "LEFT JOIN product_prices pp ON pp.product_id = p.product_id \
-     AND pp.branch_id IS NULL AND pp.price_type = 'selling' \
-     AND datetime(pp.effective_from) <= datetime('now') \
-     AND (pp.effective_to IS NULL OR datetime(pp.effective_to) > datetime('now'))";
+/// Through the view, like every other price reader.
+///
+/// This was a copy of the price predicate that had lost the tie-break, so with
+/// two open price rows the duplicate-finder showed a product at whichever price
+/// the join reached first — and, being a LEFT JOIN in a list query, showed the
+/// product twice.
+const PRICE_JOIN: &str = "LEFT JOIN v_current_selling_price pp ON pp.product_id = p.product_id";
 
 fn rows_to_groups(rows: &[sqlx::sqlite::SqliteRow], match_type: &str) -> Vec<DuplicateGroup> {
     let mut groups: Vec<DuplicateGroup> = Vec::new();
@@ -262,127 +265,8 @@ pub async fn soft_delete_product(pool: &SqlitePool, product_id: &str) -> AppResu
     Ok(name)
 }
 
-/// Merge `source` into `target`: combine stock per branch, re-point stock
-/// movements, optionally reassign sale history, then archive the source.
-///
-/// This is the single source of truth for product merges — the AI
-/// `merge_products` tool and the admin command both call it.
-pub async fn merge_products(
-    pool: &SqlitePool,
-    source_id: &str,
-    target_id: &str,
-    transfer_history: bool,
-) -> AppResult<MergeOutcome> {
-    if source_id == target_id {
-        return Err(AppError::Validation(
-            "source and target product must be different".into(),
-        ));
-    }
-
-    // Validate both products exist and the source is not already archived.
-    let source_name: Option<String> =
-        sqlx::query_scalar("SELECT name FROM products WHERE product_id = ? AND deleted_at IS NULL")
-            .bind(source_id)
-            .fetch_optional(pool)
-            .await?
-            .flatten();
-    let source_name = source_name.ok_or_else(|| {
-        AppError::Validation(format!(
-            "Source product {source_id} not found or already deleted"
-        ))
-    })?;
-
-    let target_name: Option<String> =
-        sqlx::query_scalar("SELECT name FROM products WHERE product_id = ? AND deleted_at IS NULL")
-            .bind(target_id)
-            .fetch_optional(pool)
-            .await?
-            .flatten();
-    let target_name = target_name.ok_or_else(|| {
-        AppError::Validation(format!(
-            "Target product {target_id} not found or already deleted"
-        ))
-    })?;
-
-    let now = chrono::Utc::now().to_rfc3339();
-
-    // ── Merge stock levels — re-point or sum each source row into the target ────
-    let source_stock: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT stock_level_id, branch_id, quantity_on_hand FROM stock_levels WHERE product_id = ?",
-    )
-    .bind(source_id)
-    .fetch_all(pool)
-    .await?;
-
-    for (sl_id, branch_id, qty_str) in &source_stock {
-        let source_qty: f64 = qty_str.parse().unwrap_or(0.0);
-        let updated = sqlx::query(
-            "UPDATE stock_levels SET \
-               quantity_on_hand = CAST(CAST(quantity_on_hand AS REAL) + ? AS TEXT), \
-               last_movement_at = ?, updated_at = ?, sync_status = 'pending' \
-             WHERE product_id = ? AND branch_id = ?",
-        )
-        .bind(source_qty)
-        .bind(&now)
-        .bind(&now)
-        .bind(target_id)
-        .bind(branch_id)
-        .execute(pool)
-        .await?
-        .rows_affected();
-
-        if updated > 0 {
-            // Target already had stock in this branch — drop the merged source row.
-            sqlx::query("DELETE FROM stock_levels WHERE stock_level_id = ?")
-                .bind(sl_id)
-                .execute(pool)
-                .await?;
-        } else {
-            // Target had no row for this branch — re-point the source row.
-            sqlx::query(
-                "UPDATE stock_levels SET product_id = ?, updated_at = ?, sync_status = 'pending' \
-                 WHERE stock_level_id = ?",
-            )
-            .bind(target_id)
-            .bind(&now)
-            .bind(sl_id)
-            .execute(pool)
-            .await?;
-        }
-    }
-
-    // ── Transfer stock movements ────────────────────────────────────────────────
-    sqlx::query("UPDATE stock_movements SET product_id = ? WHERE product_id = ?")
-        .bind(target_id)
-        .bind(source_id)
-        .execute(pool)
-        .await?;
-
-    // ── Optionally reassign sale history ────────────────────────────────────────
-    if transfer_history {
-        sqlx::query("UPDATE sale_items SET product_id = ? WHERE product_id = ?")
-            .bind(target_id)
-            .bind(source_id)
-            .execute(pool)
-            .await?;
-    }
-
-    // ── Archive the source ──────────────────────────────────────────────────────
-    sqlx::query(
-        "UPDATE products SET is_active = 0, deleted_at = ?, updated_at = ?, sync_status = 'pending' \
-         WHERE product_id = ?",
-    )
-    .bind(&now)
-    .bind(&now)
-    .bind(source_id)
-    .execute(pool)
-    .await?;
-
-    Ok(MergeOutcome {
-        source_name,
-        target_name,
-    })
-}
+/// Merging lives in its own module; re-exported so callers keep one import.
+pub use super::product_merge::merge_products;
 
 #[cfg(test)]
 mod tests {

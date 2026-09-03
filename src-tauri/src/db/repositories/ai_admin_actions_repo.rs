@@ -98,6 +98,47 @@ const ACTION_LIST_DEFAULT_LIMIT: i64 = 50;
 /// keeps the API forward-compatible if a new state is ever added.
 ///
 /// Ordering is deterministic: newest preparation first, `action_id` breaking
+/// Take exclusive ownership of a prepared action before executing it.
+///
+/// The confirm path used to read the status, run the mutation, and only then
+/// flip the row to `executed`. `mark_executed` is atomic, but it was the *last*
+/// step — so the whole mutation sat inside the window between the check and the
+/// claim. Two confirms of one action (a double-click before the button
+/// disables, a client retry after a lost response) both read `prepared`, both
+/// ran the tool to completion, and both committed; only the second
+/// `mark_executed` failed, long after the damage. For a partial goods receipt
+/// that meant the stock went up twice, since receiving 3 of 10 twice breaks no
+/// over-receipt rule.
+///
+/// Claiming first closes it: the loser of the race never reaches the tool.
+pub async fn claim_for_execution(pool: &SqlitePool, action_id: &str) -> AppResult<()> {
+    let rows = sqlx::query(
+        "UPDATE ai_actions SET status = 'executing' WHERE action_id = ? AND status = 'prepared'",
+    )
+    .bind(action_id)
+    .execute(pool)
+    .await?
+    .rows_affected();
+
+    if rows == 0 {
+        return Err(AppError::Conflict(
+            "This action is already being executed, or has been executed already.".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Hand a claimed action back if the mutation failed, so it can be retried.
+pub async fn release_claim(pool: &SqlitePool, action_id: &str) -> AppResult<()> {
+    sqlx::query(
+        "UPDATE ai_actions SET status = 'prepared' WHERE action_id = ? AND status = 'executing'",
+    )
+    .bind(action_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// ties (ULIDs are monotonic, so this is stable across equal timestamps).
 pub async fn list_actions(
     pool: &SqlitePool,
@@ -156,7 +197,7 @@ pub async fn mark_executed(pool: &SqlitePool, action_id: &str, result_json: &str
     let now = chrono::Utc::now().to_rfc3339();
     let rows = sqlx::query(
         "UPDATE ai_actions SET status = 'executed', executed_at = ?, result_json = ?
-         WHERE action_id = ? AND status = 'prepared'",
+         WHERE action_id = ? AND status IN ('prepared', 'executing')",
     )
     .bind(&now)
     .bind(result_json)

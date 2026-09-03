@@ -211,7 +211,11 @@ async fn z_report(
     let (tx_count, net_total, discount_total, tax_total): (i64, i64, i64, i64) = sqlx::query_as(
         "SELECT COUNT(DISTINCT s.sale_id), COALESCE(SUM(s.net_total_minor),0),
                 COALESCE(SUM(s.discount_total_minor),0), COALESCE(SUM(s.tax_total_minor),0)
-         FROM sales s WHERE s.branch_id = ? AND s.business_date = ? AND s.status != 'voided'",
+         FROM sales s WHERE s.branch_id = ? AND s.business_date = ? AND s.status != 'voided'
+           AND (s.is_delivery = 0 OR EXISTS (
+               SELECT 1 FROM delivery_orders d
+                WHERE d.sale_id = s.sale_id AND d.payment_status = 'paid'
+           ))",
     )
     .bind(&branch)
     .bind(&date)
@@ -222,6 +226,10 @@ async fn z_report(
         "SELECT p.payment_method, COALESCE(SUM(p.amount_minor),0) AS total
          FROM payments p JOIN sales s ON s.sale_id = p.sale_id
          WHERE s.branch_id = ? AND s.business_date = ? AND s.status != 'voided'
+           AND (s.is_delivery = 0 OR EXISTS (
+               SELECT 1 FROM delivery_orders d
+                WHERE d.sale_id = s.sale_id AND d.payment_status = 'paid'
+           ))
          GROUP BY p.payment_method",
     )
     .bind(&branch)
@@ -303,7 +311,15 @@ async fn x_report(
                  FROM payments p2
                  WHERE p2.sale_id = s.sale_id AND p2.payment_method = 'cash'),
                 s.net_total_minor
-            ) * r.refund_total_minor / s.net_total_minor
+            ) * MAX(
+                r.refund_total_minor - COALESCE((
+                    SELECT SUM(ep.amount_minor)
+                    FROM payments ep
+                    WHERE ep.payment_method = 'exchange_credit'
+                      AND ep.external_reference = r.refund_id
+                ), 0),
+                0
+            ) / s.net_total_minor
             END
         ), 0)
          FROM refunds r

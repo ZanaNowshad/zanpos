@@ -324,6 +324,10 @@ pub async fn execute(
                 &actor_id,
                 &actor_id,
                 true,
+                // Refunding the whole of one sale is a thing that can only
+                // happen once, so the sale identifies it. Asking twice gets the
+                // refund already made rather than a second payout or an error.
+                Some(format!("ai-refund-full-{}", sale.sale_id)),
             )
             .await?;
             audit_ext(
@@ -415,9 +419,29 @@ pub async fn execute(
                 money::parse_major_to_minor(&counted_bhd, 3)
             };
             let notes = str(input, "notes");
-            let now = chrono::Utc::now().to_rfc3339();
-            sqlx::query("UPDATE shifts SET status='closed', closed_at=?, counted_cash_minor=?, notes=? WHERE shift_id=?")
-                .bind(&now).bind(counted_minor).bind(&notes).bind(&shift_id).execute(pool).await?;
+
+            // Close through the repository, not with an UPDATE of our own.
+            //
+            // This was a second implementation and it was missing three things
+            // the real one does. It had no `AND status = 'open'`, so closing an
+            // already-closed shift succeeded and overwrote `counted_cash_minor`
+            // — a cash count could be revised after the fact, which is precisely
+            // what a variance exists to prevent. It never computed
+            // `expected_cash_minor` or `cash_difference_minor`, so a shift closed
+            // through the assistant recorded no variance at all. And it set
+            // neither `sync_status` nor `version`, so the close might not reach
+            // the other terminals.
+            crate::db::repositories::shift_repo::close_shift(
+                pool,
+                &shift_id,
+                counted_minor,
+                if notes.trim().is_empty() {
+                    None
+                } else {
+                    Some(notes.clone())
+                },
+            )
+            .await?;
             audit_ext(
                 pool,
                 "shift_closed",
@@ -674,7 +698,15 @@ pub async fn execute(
                 .unwrap_or("9600".into())
                 .parse()
                 .unwrap_or(9600);
-            let payload = vec![0x1B_u8, b'p', 0x00, 0x19, 0xFA]; // ESC p 0 t1 t2
+            // The one encoder, not a second copy of the byte sequence.
+            //
+            // This literal carried (0x19, 0xFA) = (25, 250) — the exact values
+            // `thermal_commands` documents as the bug it fixed, because t2 is
+            // outside the 1-127 range and some older Epson models clamp it to a
+            // pulse too short to trip the solenoid. `write_to_port` reports
+            // success as soon as the bytes are flushed, so on affected hardware
+            // this said "drawer opened" and the drawer stayed shut.
+            let payload = crate::commands::thermal_commands::esc_open_drawer();
             tokio::task::spawn_blocking(move || {
                 crate::commands::thermal_commands::write_to_port(&port, baud, payload)
             })

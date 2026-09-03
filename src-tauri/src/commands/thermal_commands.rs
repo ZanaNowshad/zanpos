@@ -650,7 +650,7 @@ pub async fn print_receipt_raw(
 /// Previous values (0x19, 0xFA) = (25, 250) had t2 outside the 1–127 range;
 /// some older Epson models silently clamp out-of-range values, risking a too-short
 /// pulse that fails to trip the solenoid.
-fn esc_open_drawer() -> Vec<u8> {
+pub(crate) fn esc_open_drawer() -> Vec<u8> {
     vec![ESC, b'p', 0x00, 60, 120]
 }
 

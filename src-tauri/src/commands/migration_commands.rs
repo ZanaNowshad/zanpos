@@ -2325,7 +2325,18 @@ fn walk_for_db_files(
 // ─── Command 9: migration_read_file ──────────────────────────────────────────
 
 #[tauri::command]
-pub async fn migration_read_file(path: String, max_chars: Option<usize>) -> AppResult<String> {
+pub async fn migration_read_file(
+    path: String,
+    max_chars: Option<usize>,
+    actor_user_id: String,
+    state: State<'_, AppState>,
+) -> AppResult<String> {
+    // The other ten commands in this file are manager/owner gated; these two were
+    // not, so any caller reaching the IPC boundary could read up to 32,000
+    // characters from any file under Desktop, Documents, Downloads or AppData.
+    // The path allowlist limits *where*, not *who*.
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+
     // Finding 4: reject paths outside approved directories or in sensitive locations
     if !is_safe_read_path(&path) {
         return Err(AppError::Validation(
@@ -2359,7 +2370,14 @@ pub async fn migration_read_file(path: String, max_chars: Option<usize>) -> AppR
 pub async fn migration_decompress(
     archive_path: String,
     dest_dir: Option<String>,
+    actor_user_id: String,
+    state: State<'_, AppState>,
 ) -> AppResult<DecompressResult> {
+    // Entries inside the archive are zip-slip guarded, but `dest_dir` is chosen
+    // by the caller and was not, so an unguarded caller could have this process
+    // write a ZIP's contents anywhere it can reach.
+    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+
     tokio::task::spawn_blocking(move || -> AppResult<DecompressResult> {
         let archive = std::path::PathBuf::from(&archive_path);
         let dest = match dest_dir {
@@ -3257,7 +3275,13 @@ async fn execute_migration_agent_tool(
                 .get("max_chars")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(4000) as usize;
-            migration_read_file(path.to_string(), Some(max_chars)).await
+            migration_read_file(
+                path.to_string(),
+                Some(max_chars),
+                actor_user_id.to_string(),
+                state.clone(),
+            )
+            .await
         }
 
         "mg_shell" => {
@@ -3278,7 +3302,13 @@ async fn execute_migration_agent_tool(
                 .get("dest_dir")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
-            let r = migration_decompress(archive_path.to_string(), dest_dir).await?;
+            let r = migration_decompress(
+                archive_path.to_string(),
+                dest_dir,
+                actor_user_id.to_string(),
+                state.clone(),
+            )
+            .await?;
             let mut out = format!(
                 "Extracted {} files to: {}\n",
                 r.extracted_files.len(),
@@ -3730,7 +3760,6 @@ You have access to powerful tools that let you read and migrate ALL common datab
 |--------|------|-------|
 | category_id | TEXT | ULID, generate new |
 | name | TEXT NOT NULL | |
-| color | TEXT | hex color e.g. '#FF5733', nullable |
 | is_active | INTEGER | 1=active, 0=inactive |
 | created_at | TEXT | ISO8601 UTC |
 
@@ -3743,7 +3772,7 @@ You have access to powerful tools that let you read and migrate ALL common datab
 | description | TEXT | nullable |
 | sku | TEXT | nullable, must be unique if set |
 | barcode | TEXT | nullable (legacy single barcode) |
-| price_minor | INTEGER NOT NULL | BHD × 1000: 1.500 BHD = 1500 |
+| (price) | — | NOT a column on products. Selling price is a row in `product_prices` (see below) — insert one per product or the till cannot ring it up. |
 | cost_minor | INTEGER | nullable, BHD × 1000 |
 | track_inventory | INTEGER | 1=track, 0=service/don't track |
 | is_active | INTEGER | 1=active |
@@ -3787,12 +3816,14 @@ You have access to powerful tools that let you read and migrate ALL common datab
 | cashier_user_id | TEXT | map from source user or use owner user_id |
 | customer_id | TEXT | nullable |
 | net_total_minor | INTEGER | BHD × 1000 |
-| discount_minor | INTEGER | default 0 |
-| tax_minor | INTEGER | default 0 |
+| gross_total_minor | INTEGER | BHD × 1000, before discount and tax |
+| discount_total_minor | INTEGER | default 0 |
+| tax_total_minor | INTEGER | default 0 |
 | status | TEXT | always 'completed' for historical |
 | business_date | TEXT | YYYY-MM-DD |
 | sold_at | TEXT | ISO8601 UTC |
-| source | TEXT | set to 'migrated' |
+| idempotency_key | TEXT NOT NULL UNIQUE | required; use the source receipt id so re-running an import cannot duplicate a sale |
+| device_id / origin_device_id | TEXT NOT NULL | the importing terminal |
 
 ### sale_items
 | Column | Type | Notes |
@@ -3800,20 +3831,23 @@ You have access to powerful tools that let you read and migrate ALL common datab
 | sale_item_id | TEXT | ULID |
 | sale_id | TEXT | FK → sales.sale_id |
 | product_id | TEXT | nullable (if product deleted) |
-| product_name | TEXT NOT NULL | snapshot of name at time of sale |
+| product_name_snapshot | TEXT NOT NULL | snapshot of name at time of sale |
 | quantity | TEXT | decimal as text e.g. '2.000' |
 | unit_price_minor | INTEGER | BHD × 1000 |
 | line_total_minor | INTEGER | unit_price_minor × qty |
-| discount_minor | INTEGER | default 0 |
+| line_discount_minor | INTEGER | default 0 |
+| tax_amount_minor | INTEGER | default 0 |
 
 ### payments (linked to sales)
 | Column | Type | Notes |
 |--------|------|-------|
 | payment_id | TEXT | ULID |
 | sale_id | TEXT | FK → sales.sale_id |
-| method | TEXT | 'cash' or 'card' or 'wallet' |
+| payment_method | TEXT | CHECK: one of 'cash', 'card', 'wallet', 'other' |
 | amount_minor | INTEGER | BHD × 1000 |
-| reference | TEXT | nullable (card auth code etc.) |
+| external_reference | TEXT | nullable (card auth code etc.) |
+| recorded_by_user_id | TEXT NOT NULL | |
+| recorded_at | TEXT NOT NULL | ISO8601 UTC |
 
 ---
 
@@ -3840,12 +3874,11 @@ Mapping:
 - `ProductGroup.Name` → `categories.name`
 - `ProductGroup.IsEnabled` (BIT) → `categories.is_active` (1/0)
 - `ProductGroup.ParentGroupId` — informational only; ZANPOS categories are flat; ignore hierarchy
-- `color` → set '#6B7280' (neutral gray) as default
 
 INSERT example:
 ```sql
-INSERT INTO categories (category_id, name, color, is_active, created_at)
-VALUES ('01NEWULID...', 'Beverages', '#6B7280', 1, '2024-01-01T00:00:00Z');
+INSERT INTO categories (category_id, name, is_active, created_at, updated_at)
+VALUES ('01NEWULID...', 'Beverages', 1, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z');
 ```
 
 ### STEP 3 — Products (Product → products + product_barcodes)

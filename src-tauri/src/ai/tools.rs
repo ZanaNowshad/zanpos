@@ -964,7 +964,15 @@ async fn execute_read_tool_inner(
                          FROM payments p2
                          WHERE p2.sale_id = s.sale_id AND p2.payment_method = 'cash'),
                         s.net_total_minor
-                    ) * r.refund_total_minor / s.net_total_minor
+                    ) * MAX(
+                        r.refund_total_minor - COALESCE((
+                            SELECT SUM(ep.amount_minor)
+                            FROM payments ep
+                            WHERE ep.payment_method = 'exchange_credit'
+                              AND ep.external_reference = r.refund_id
+                        ), 0),
+                        0
+                    ) / s.net_total_minor
                     END
                 ), 0)
                  FROM refunds r
@@ -1239,6 +1247,9 @@ async fn execute_read_tool_inner(
         "sync_queue_list" => {
             let mut items = Vec::new();
             for table in crate::commands::sync_commands::SYNC_TABLES.iter() {
+                // The table name here comes from the sanctioned list itself, so
+                // no allow-list check is needed — unlike the two tools below,
+                // which take it from a string the model supplied.
                 let pk = crate::commands::sync_commands::table_pk(table);
                 let sql = format!(
                     "SELECT {pk} AS _pk, sync_status, sync_attempts, created_at
@@ -1314,12 +1325,21 @@ async fn execute_read_tool_inner(
             let fmt = |n: i64| money::format_minor(n, currency_exp);
 
             let row = sqlx::query(
+                // Deliveries still out with a rider are not takings yet — every
+                // report on the Reports page excludes them until the money comes
+                // back, and this one did not, so the assistant's figure for a
+                // period was larger than the same period on screen.
                 "SELECT COUNT(*) AS cnt,
-                        COALESCE(SUM(net_total_minor),      0) AS net,
-                        COALESCE(SUM(tax_total_minor),      0) AS tax,
-                        COALESCE(SUM(discount_total_minor), 0) AS discount
-                 FROM sales
-                 WHERE branch_id = ? AND business_date BETWEEN ? AND ? AND status != 'voided'",
+                        COALESCE(SUM(s.net_total_minor),      0) AS net,
+                        COALESCE(SUM(s.tax_total_minor),      0) AS tax,
+                        COALESCE(SUM(s.discount_total_minor), 0) AS discount
+                 FROM sales s
+                 WHERE s.branch_id = ? AND s.business_date BETWEEN ? AND ?
+                   AND s.status != 'voided'
+                   AND (s.is_delivery = 0 OR EXISTS (
+                       SELECT 1 FROM delivery_orders d
+                        WHERE d.sale_id = s.sale_id AND d.payment_status = 'paid'
+                   ))",
             )
             .bind(branch_id)
             .bind(from)
@@ -1397,14 +1417,19 @@ async fn execute_read_tool_inner(
             let fmt = |n: i64| money::format_minor(n, currency_exp);
 
             let rows = sqlx::query(
-                "SELECT p.name,
-                        SUM(si.unit_price_minor * CAST(si.quantity AS REAL)) AS revenue,
+                // Revenue as the receipt shows it, matching `report_top_products`.
+                // Unit price times quantity ignores line discounts, so this
+                // disagreed with the Reports page; the INNER JOIN to `products`
+                // also dropped a deleted product's whole history out of the
+                // ranking while the totals it belonged to stayed put.
+                "SELECT si.product_name_snapshot AS name,
+                        SUM(si.line_total_minor) AS revenue,
                         COUNT(DISTINCT s.sale_id) AS txn_count
                  FROM sale_items si
-                 JOIN sales s    ON s.sale_id    = si.sale_id
-                 JOIN products p ON p.product_id = si.product_id
-                 WHERE s.business_date >= date('now', ? || ' days') AND s.status != 'voided'
-                 GROUP BY si.product_id, p.name
+                 JOIN sales s ON s.sale_id = si.sale_id
+                 WHERE s.business_date >= date('now', ? || ' days')
+                   AND s.status != 'voided' AND si.voided = 0
+                 GROUP BY si.product_id, si.product_name_snapshot
                  ORDER BY revenue DESC
                  LIMIT ?",
             )
@@ -1740,10 +1765,15 @@ async fn execute_read_tool_inner(
                 .ok_or_else(|| AppError::Validation("Missing to".into()))?;
             let fmt = |n: i64| money::format_minor(n, currency_exp);
             let rows = sqlx::query(
+                // Voided sales are counted, not summed. A void is a sale that
+                // did not happen: including its total overstated the cashier's
+                // takings and skewed the ranking this query orders by.
                 "SELECT COALESCE(u.display_name, s.cashier_user_id) AS cashier,
-                        COUNT(*) AS txn_count,
-                        COALESCE(SUM(s.net_total_minor), 0) AS net_total,
-                        COALESCE(SUM(s.discount_total_minor), 0) AS discounts,
+                        COUNT(CASE WHEN s.status != 'voided' THEN 1 END) AS txn_count,
+                        COALESCE(SUM(CASE WHEN s.status != 'voided'
+                                          THEN s.net_total_minor ELSE 0 END), 0) AS net_total,
+                        COALESCE(SUM(CASE WHEN s.status != 'voided'
+                                          THEN s.discount_total_minor ELSE 0 END), 0) AS discounts,
                         COUNT(CASE WHEN s.status='voided' THEN 1 END) AS voids
                  FROM sales s
                  LEFT JOIN users u ON u.user_id = s.cashier_user_id
@@ -5047,6 +5077,17 @@ async fn execute_mutation_raw_inner(
             let (table, row_id) = event_id
                 .split_once(':')
                 .ok_or_else(|| AppError::Validation("Expected format table:entity_id".into()))?;
+            // The table name comes out of a string the model supplied and goes
+            // straight into SQL. `table_pk` defaults an unrecognised table to
+            // `id` rather than refusing it, so without this the assistant could
+            // name any table it liked and reach one the sync catalogue never
+            // sanctioned. `sync_conflict_resolve` in `sync_commands` already
+            // checks exactly this before the identical `format!`.
+            if !crate::commands::sync_commands::SYNC_TABLES.contains(&table) {
+                return Err(AppError::Validation(format!(
+                    "'{table}' is not a table the sync queue covers."
+                )));
+            }
             let pk = crate::commands::sync_commands::table_pk(table);
             let sql =
                 format!("UPDATE {table} SET sync_status='pending', sync_attempts=0 WHERE {pk}=?");
@@ -5078,6 +5119,17 @@ async fn execute_mutation_raw_inner(
             let (table, row_id) = event_id
                 .split_once(':')
                 .ok_or_else(|| AppError::Validation("Expected format table:entity_id".into()))?;
+            // The table name comes out of a string the model supplied and goes
+            // straight into SQL. `table_pk` defaults an unrecognised table to
+            // `id` rather than refusing it, so without this the assistant could
+            // name any table it liked and reach one the sync catalogue never
+            // sanctioned. `sync_conflict_resolve` in `sync_commands` already
+            // checks exactly this before the identical `format!`.
+            if !crate::commands::sync_commands::SYNC_TABLES.contains(&table) {
+                return Err(AppError::Validation(format!(
+                    "'{table}' is not a table the sync queue covers."
+                )));
+            }
             let pk = crate::commands::sync_commands::table_pk(table);
             let sql =
                 format!("UPDATE {table} SET sync_status='synced', sync_attempts=0 WHERE {pk}=?");
@@ -5152,77 +5204,28 @@ async fn execute_mutation_raw_inner(
             let sale_id = sale_id.ok_or_else(|| {
                 AppError::NotFound(format!("Sale {receipt} not found or already voided"))
             })?;
-            let now = chrono::Utc::now().to_rfc3339();
-            sqlx::query("UPDATE sales SET status='voided', updated_at=?, sync_status='pending' WHERE sale_id=?")
-                .bind(&now).bind(&sale_id).execute(pool).await?;
-            sqlx::query("UPDATE sale_items SET voided=1 WHERE sale_id=?")
-                .bind(&sale_id)
-                .execute(pool)
-                .await?;
-            // Restore inventory: add back quantities from voided sale items
-            {
-                let items = sqlx::query_as::<_, (String, String, String)>(
-                    "SELECT si.product_id, si.quantity, s.branch_id
-                     FROM sale_items si JOIN sales s ON s.sale_id = si.sale_id
-                     WHERE si.sale_id = ?",
-                )
-                .bind(&sale_id)
-                .fetch_all(pool)
-                .await?;
-                let now2 = chrono::Utc::now().to_rfc3339();
-                for (pid, qty, branch_id) in &items {
-                    let (device_id, actor_branch_id) = active_device_branch(pool).await?;
-                    if branch_id != &actor_branch_id {
-                        return Err(AppError::Permission(
-                            "Sale does not belong to the authenticated branch".into(),
-                        ));
-                    }
-                    let level_id = format!("SL-{pid}-{branch_id}");
-                    sqlx::query(
-                        "INSERT INTO stock_levels (stock_level_id,product_id,branch_id,quantity_on_hand,last_movement_at,created_at,updated_at) \
-                         VALUES (?,?,?,?,?,?,?) \
-                         ON CONFLICT(product_id,branch_id) DO UPDATE SET \
-                           quantity_on_hand = CAST(CAST(stock_levels.quantity_on_hand AS REAL) + CAST(? AS REAL) AS TEXT), \
-                           last_movement_at=?, updated_at=?, sync_status='pending'",
-                    )
-                    .bind(level_id)
-                    .bind(pid)
-                    .bind(branch_id)
-                    .bind(qty)
-                    .bind(&now2)
-                    .bind(&now2)
-                    .bind(&now2)
-                    .bind(qty)
-                    .bind(&now2)
-                    .bind(&now2)
-                    .execute(pool)
-                    .await?;
-                    let qty_after: String = sqlx::query_scalar(
-                        "SELECT quantity_on_hand FROM stock_levels WHERE product_id=? AND branch_id=?",
-                    )
-                    .bind(pid)
-                    .bind(branch_id)
+            // The branch check happens before anything is written. It used to sit
+            // inside the stock loop, after the sale had already been marked
+            // voided, so a cross-branch void left the books reversed and the
+            // shelf untouched.
+            let sale_branch: String =
+                sqlx::query_scalar("SELECT branch_id FROM sales WHERE sale_id = ?")
+                    .bind(&sale_id)
                     .fetch_one(pool)
                     .await?;
-                    let mid = ulid::Ulid::new().to_string();
-                    sqlx::query(
-                        "INSERT INTO stock_movements (movement_id,product_id,branch_id,device_id,origin_device_id,movement_type,quantity_delta,quantity_after,reference_type,notes,created_by_user_id,created_at) \
-                         VALUES (?,?,?,?,?,'sale_void',?,?,'sale',?,?,?)",
-                    )
-                    .bind(&mid)
-                    .bind(pid)
-                    .bind(branch_id)
-                    .bind(&device_id)
-                    .bind(&device_id)
-                    .bind(qty)
-                    .bind(&qty_after)
-                    .bind(reason)
-                    .bind(&actor_id)
-                    .bind(&now2)
-                    .execute(pool)
-                    .await?;
-                }
+            let (_device_id, actor_branch_id) = active_device_branch(pool).await?;
+            if sale_branch != actor_branch_id {
+                return Err(AppError::Permission(
+                    "Sale does not belong to the authenticated branch".into(),
+                ));
             }
+
+            // One implementation, shared with the till. This was five separate
+            // statements against the pool with a permission check partway down
+            // the stock loop, so a refused void left the sale reversed, the
+            // shelf untouched and nothing in the audit log.
+            crate::db::repositories::sale_repo::void_sale(pool, &sale_id, &actor_id, Some(reason))
+                .await?;
             write_audit(
                 pool,
                 "AI_ADMIN",
@@ -5254,10 +5257,22 @@ async fn execute_mutation_raw_inner(
                     .flatten();
             let name = name.ok_or_else(|| AppError::NotFound("Customer not found".into()))?;
             let snapshot = json!({"customer_id": cid, "name": name});
-            sqlx::query("DELETE FROM customers WHERE customer_id=?")
-                .bind(cid)
-                .execute(pool)
-                .await?;
+            // Soft-delete, like every other removable entity here. A hard
+            // DELETE fails for any customer who has ever earned points
+            // (`loyalty_events` has a foreign key and no cascade), and for the
+            // few it did remove it left `sales.customer_id` pointing at nothing
+            // and wrote no tombstone — so the deletion never reached the other
+            // tills and the customer came back on the next sync.
+            let now = chrono::Utc::now().to_rfc3339();
+            sqlx::query(
+                "UPDATE customers SET deleted_at = ?, updated_at = ?, sync_status = 'pending'
+                 WHERE customer_id = ?",
+            )
+            .bind(&now)
+            .bind(&now)
+            .bind(cid)
+            .execute(pool)
+            .await?;
             write_audit(
                 pool,
                 "AI_ADMIN",
@@ -5375,6 +5390,23 @@ async fn execute_mutation_raw_inner(
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             let pts = input.get("points").and_then(|v| v.as_i64()).unwrap_or(0);
+
+            // Refuse a deduction the customer cannot cover, as the manager
+            // screen does. `record` clamps at zero, so an over-deduction used to
+            // "succeed" — reporting a new total of 0 while writing an event for
+            // the full requested amount.
+            if pts < 0 {
+                let balance = crate::db::repositories::loyalty_repo::ledger_balance(pool, cid)
+                    .await?
+                    .unwrap_or(0);
+                if balance + pts < 0 {
+                    return Err(AppError::Validation(format!(
+                        "That would take {} points off a balance of {balance}.",
+                        -pts
+                    )));
+                }
+            }
+
             let new_total = crate::db::repositories::loyalty_repo::record(
                 pool,
                 crate::db::repositories::loyalty_repo::AwardContext {
@@ -5435,7 +5467,10 @@ async fn execute_mutation_raw_inner(
                 }
                 // Read current price before overwriting
                 if let Ok(old_price) = sqlx::query_scalar::<_, i64>(
-                    "SELECT price_minor FROM product_prices WHERE product_id=? AND price_type='selling' AND effective_to IS NULL",
+                    // Through the view, which is the one definition of the price
+                    // in force. Read directly, this missed `effective_from`, so a
+                    // price scheduled for next week read as today's.
+                    "SELECT price_minor FROM v_current_selling_price WHERE product_id=?",
                 )
                 .bind(pid)
                 .fetch_one(pool)

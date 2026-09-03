@@ -33,6 +33,149 @@ use ulid::Ulid;
 /// from the admin edit — and a raw text compare ranks 'T' above ' ', so an
 /// RFC3339 row reads as not-yet-effective while a closed row reads as still
 /// open. Both mistakes price a sale wrongly.
+/// Void a completed sale: status, stock and audit entry, or none of them.
+///
+/// There were two implementations of this. The till's was one transaction; the
+/// assistant's was five separate statements against the pool, with a permission
+/// check *inside* the stock loop that returned an error after the sale had
+/// already been marked voided. That path left a sale voided with its stock not
+/// returned and no audit row — a reversal that happened to the books but not to
+/// the shelf, and which nothing recorded.
+///
+/// A reversal is the operation an audit looks at hardest, so it is the last one
+/// that should exist twice. `reason` is carried into the audit entry rather than
+/// dropped, because "who voided this and why" is the question actually asked.
+pub async fn void_sale(
+    pool: &SqlitePool,
+    sale_id: &str,
+    voided_by_user_id: &str,
+    reason: Option<&str>,
+) -> AppResult<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut tx = pool.begin().await?;
+
+    let row = sqlx::query(
+        "UPDATE sales SET status = 'voided', updated_at = ?, sync_status = 'pending'
+         WHERE sale_id = ? AND status = 'completed'
+         RETURNING branch_id, device_id",
+    )
+    .bind(&now)
+    .bind(sale_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    let (branch_id, device_id) = match row {
+        Some(r) => (
+            r.get::<String, _>("branch_id"),
+            r.get::<String, _>("device_id"),
+        ),
+        None => {
+            return Err(AppError::NotFound(
+                "Sale not found or already voided".into(),
+            ))
+        }
+    };
+
+    // Points the sale awarded go back with it.
+    //
+    // A void reverses the sale entirely, so the loyalty it earned has to reverse
+    // entirely too. Nothing did this: a sale could be rung up, its points
+    // awarded, then voided minutes later — the stock returned, the sale was
+    // marked voided, and the points stayed on the customer for good. Repeated,
+    // that is free loyalty at no cost.
+    let awarded =
+        crate::db::repositories::loyalty_repo::points_awarded_for_sale(&mut tx, sale_id).await?;
+    let already_back =
+        crate::db::repositories::loyalty_repo::points_reversed_for_sale(&mut tx, sale_id).await?;
+    let owed_back = awarded - already_back;
+    if owed_back > 0 {
+        let customer: Option<String> =
+            sqlx::query_scalar("SELECT customer_id FROM sales WHERE sale_id = ?")
+                .bind(sale_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .flatten();
+        if let Some(customer_id) = customer {
+            crate::db::repositories::loyalty_repo::record_tx(
+                &mut tx,
+                crate::db::repositories::loyalty_repo::AwardContext {
+                    customer_id: &customer_id,
+                    branch_id: Some(&branch_id),
+                    device_id: Some(&device_id),
+                    event: crate::db::repositories::loyalty_repo::LoyaltyEvent::Adjust,
+                    points_delta: -owed_back,
+                    reference_type: Some("sale_reversal"),
+                    reference_id: Some(sale_id),
+                    reason: Some("sale voided"),
+                    actor_user_id: Some(voided_by_user_id),
+                },
+            )
+            .await?;
+        }
+    }
+
+    // Sale status, stock restoration, and the required audit event are one
+    // transaction. No partially voided sale can survive an audit failure.
+    crate::inventory::movements::return_void_sale(
+        &mut tx,
+        sale_id,
+        voided_by_user_id,
+        &branch_id,
+        &device_id,
+    )
+    .await?;
+
+    // The audit row is authoritative and commits with the sale/stock changes.
+    let audit_id = ulid::Ulid::new().to_string();
+    let prev_hash = crate::db::repositories::audit_hash::fetch_last_hash_tx(&mut tx, &device_id)
+        .await
+        .unwrap_or_default();
+    let hash = crate::db::repositories::audit_hash::compute_audit_hash(
+        &crate::db::repositories::audit_hash::AuditHashInput {
+            audit_log_id: &audit_id,
+            event_type: "sale.voided",
+            entity_type: "sale",
+            entity_id: sale_id,
+            actor_user_id: voided_by_user_id,
+            actor_type: "user",
+            created_at: &now,
+            before_json: None,
+            after_json: None,
+            reason,
+            previous_hash: &prev_hash,
+        },
+    );
+    sqlx::query(
+        "INSERT INTO audit_logs
+           (audit_log_id, event_type, entity_type, entity_id,
+            actor_user_id, actor_type, device_id, origin_device_id, branch_id,
+            created_at, reason, hash, previous_hash)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    )
+    .bind(&audit_id)
+    .bind("sale.voided")
+    .bind("sale")
+    .bind(sale_id)
+    .bind(voided_by_user_id)
+    .bind("user")
+    .bind(&device_id)
+    .bind(&device_id)
+    .bind(&branch_id)
+    .bind(&now)
+    .bind(reason)
+    .bind(&hash)
+    .bind(if prev_hash.is_empty() {
+        None
+    } else {
+        Some(prev_hash.clone())
+    })
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(())
+}
+
 pub(crate) async fn current_selling_prices(
     pool: &SqlitePool,
     product_ids: &[&str],
@@ -45,21 +188,12 @@ pub(crate) async fn current_selling_prices(
         .map(|_| "?")
         .collect::<Vec<_>>()
         .join(",");
+    let price_in_force = crate::db::repositories::pricing::PRICE_IN_FORCE;
     let sql = format!(
         "SELECT pp.product_id, pp.price_minor
          FROM product_prices pp
          WHERE pp.product_id IN ({placeholders})
-           AND pp.price_id = (
-               SELECT candidate.price_id FROM product_prices candidate
-               WHERE candidate.product_id = pp.product_id
-                 AND candidate.branch_id IS NULL
-                 AND candidate.price_type = 'selling'
-                 AND datetime(candidate.effective_from) <= datetime('now')
-                 AND (candidate.effective_to IS NULL
-                      OR datetime(candidate.effective_to) > datetime('now'))
-               ORDER BY datetime(candidate.effective_from) DESC, candidate.price_id DESC
-               LIMIT 1
-           )"
+           AND {price_in_force}"
     );
     let mut q = sqlx::query(&sql);
     for pid in product_ids {
@@ -84,7 +218,7 @@ async fn money_for_operator(pool: &SqlitePool, minor: i64) -> String {
             .ok()
             .flatten()
             .unwrap_or_else(|| "BHD".to_string());
-    let exponent = crate::commands::setup_commands::currency_exponent(&currency).max(0) as u32;
+    let exponent = crate::domain::money::currency_exponent(&currency).max(0) as u32;
     format!(
         "{currency} {}",
         crate::domain::money::format_minor(minor, exponent)
@@ -102,10 +236,21 @@ where
 {
     // Atomic per-device counter — UPDATE...RETURNING prevents races.
     // The counter persists independently of sale rows; pruning old sales cannot cause collisions.
+    //
+    // `RETURNING next_receipt_seq - 1` gives the value the column held *before*
+    // this call, which is what the column's name promises: the next number to
+    // use. Returning the post-increment value instead meant a device's very
+    // first receipt was numbered 00000002 and 00000001 was never issued — a gap
+    // at the top of every shop's receipt book, and the first thing anyone
+    // reconciling a sequence would ask about.
+    //
+    // Safe on a till already trading: it has issued 2..N and the column holds
+    // N+1, so the next receipt becomes N+1 rather than N+2. That number has
+    // never been used, so this closes the gap without a collision.
     let seq: i64 = sqlx::query_scalar(
         "UPDATE devices SET next_receipt_seq = next_receipt_seq + 1
          WHERE device_id = ?
-         RETURNING next_receipt_seq",
+         RETURNING next_receipt_seq - 1",
     )
     .bind(device_id)
     .fetch_one(executor)
@@ -114,7 +259,104 @@ where
     Ok(format!("{}-{}-{:08}", branch_code, device_code, seq))
 }
 
+/// The receipt number of a sale already recorded under this idempotency key.
+///
+/// Kept separate so the two callers — the fast path before any work is done,
+/// and the race path where a concurrent submit won the insert — ask the same
+/// question the same way.
+async fn existing_sale_for_key(
+    pool: &SqlitePool,
+    idempotency_key: &str,
+) -> AppResult<Option<String>> {
+    Ok(
+        sqlx::query_scalar("SELECT receipt_number FROM sales WHERE idempotency_key = ?")
+            .bind(idempotency_key)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
+/// Marks the one error the wrapper below turns back into a success.
+///
+/// Carried as a sentinel rather than by matching on SQLite's message text,
+/// which differs between builds and would silently stop matching one day.
+const DUPLICATE_SALE_MARKER: &str = "__zanpos_duplicate_idempotency_key__";
+
+/// True when this error is the `sales.idempotency_key` UNIQUE index refusing a
+/// second sale for the same submission.
+fn is_duplicate_idempotency_key(error: &sqlx::Error) -> bool {
+    matches!(error, sqlx::Error::Database(db)
+        if db.is_unique_violation() && db.message().contains("idempotency_key"))
+}
+
+/// Record a sale, or return the one this submission already made.
 pub async fn finalize_sale(
+    pool: &SqlitePool,
+    cart: &Cart,
+    payments: Vec<PaymentInput>,
+    idempotency_key: &str,
+    customer_id: Option<&str>,
+    created_offline: bool,
+    delivery: Option<DeliveryInput>,
+    allow_negative_stock: bool,
+) -> AppResult<SaleResult> {
+    // ── Idempotent replay ────────────────────────────────────────────────────
+    //
+    // The POS sends the cart id as the key, so pressing Charge twice sends the
+    // same one. `sales.idempotency_key` is UNIQUE, so the second attempt could
+    // never create a second sale — but it failed with a raw constraint error,
+    // and the cashier was shown "Sale failed" for a sale that had just
+    // succeeded. The dangerous step is the one after that: believing it did not
+    // go through, they rebuild the cart, which mints a *new* cart id, and now
+    // there genuinely are two sales for one basket.
+    //
+    // Same shape for a lost response — the app is closed or the till is
+    // restarted between commit and the reply. The cart is still on screen, and
+    // pressing Charge again is exactly the right instinct.
+    //
+    // So a repeat of a key that has already been used returns the sale it
+    // already made. That is what an idempotency key is for, and it turns the
+    // most likely double-ring into a no-op.
+    if let Some(existing) = existing_sale_for_key(pool, idempotency_key).await? {
+        tracing::info!(
+            "Sale {} replayed from idempotency key — returning the original sale",
+            existing
+        );
+        return crate::db::repositories::refund_repo::get_sale_result_by_receipt(pool, &existing)
+            .await;
+    }
+
+    match finalize_sale_txn(
+        pool,
+        cart,
+        payments,
+        idempotency_key,
+        customer_id,
+        created_offline,
+        delivery,
+        allow_negative_stock,
+    )
+    .await
+    {
+        // A concurrent submit committed first. Its sale is the sale; this one
+        // rolled back and never existed.
+        Err(AppError::Conflict(marker)) if marker == DUPLICATE_SALE_MARKER => {
+            let receipt = existing_sale_for_key(pool, idempotency_key)
+                .await?
+                .ok_or_else(|| {
+                    AppError::Internal(
+                        "a duplicate sale key was rejected but no sale holds it".into(),
+                    )
+                })?;
+            crate::db::repositories::refund_repo::get_sale_result_by_receipt(pool, &receipt).await
+        }
+        other => other,
+    }
+}
+
+/// The transaction itself. Everything from the receipt number to the commit.
+#[allow(clippy::too_many_arguments)]
+async fn finalize_sale_txn(
     pool: &SqlitePool,
     cart: &Cart,
     payments: Vec<PaymentInput>,
@@ -172,23 +414,24 @@ pub async fn finalize_sale(
     // A changed cart price is accepted only when the manager-only price command
     // recorded an exact server-side match for this cart line. Cart payload fields
     // alone are not authorization because IPC input can be crafted.
-    let approved_price_overrides: std::collections::HashMap<String, (Option<String>, i64)> =
-        sqlx::query(
-            "SELECT cart_line_id, product_id, price_minor
+    type ApprovedPrice = (Option<String>, i64, Option<String>);
+    let approved_price_overrides: std::collections::HashMap<String, ApprovedPrice> = sqlx::query(
+        "SELECT cart_line_id, product_id, price_minor, approved_quantity
          FROM pos_price_overrides
          WHERE cart_id = ?",
-        )
-        .bind(&cart.cart_id)
-        .fetch_all(pool)
-        .await?
-        .into_iter()
-        .map(|row: sqlx::sqlite::SqliteRow| {
-            let line_id: String = row.get("cart_line_id");
-            let product_id: Option<String> = row.get("product_id");
-            let price: i64 = row.get("price_minor");
-            (line_id, (product_id, price))
-        })
-        .collect();
+    )
+    .bind(&cart.cart_id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|row: sqlx::sqlite::SqliteRow| {
+        let line_id: String = row.get("cart_line_id");
+        let product_id: Option<String> = row.get("product_id");
+        let price: i64 = row.get("price_minor");
+        let quantity: Option<String> = row.get("approved_quantity");
+        (line_id, (product_id, price, quantity))
+    })
+    .collect();
 
     // Map from active_lines index → the catalogue price when the cart line is
     // stale, i.e. the cashier scanned before a price change landed. The sale is
@@ -209,17 +452,69 @@ pub async fn finalize_sale(
         if let Some(ref product_id) = line.product_id {
             if let Some(&db_p) = db_prices.get(product_id.as_str()) {
                 if line.unit_price_minor != db_p {
+                    // The approval is for a price *and* a quantity. A line that
+                    // grew after it was approved is priced from the catalogue
+                    // again, which fails the payment check below and tells the
+                    // cashier to get the new quantity approved. `approved_quantity`
+                    // is NULL only on rows written before it was recorded.
                     let override_matches = approved_price_overrides
                         .get(&line.cart_line_id)
-                        .is_some_and(|(product_id, price)| {
+                        .is_some_and(|(product_id, price, quantity)| {
                             product_id.as_deref() == line.product_id.as_deref()
                                 && *price == line.unit_price_minor
+                                && quantity.as_deref().is_none_or(|approved| {
+                                    crate::domain::money::cmp_decimal_qty(&line.quantity, approved)
+                                        != Some(std::cmp::Ordering::Greater)
+                                })
                         });
                     if !override_matches {
                         price_corrections.push((i, db_p));
                     }
                 }
             }
+        }
+    }
+
+    // ── Guard: every discount was approved by the discount command ───────────
+    //
+    // The price check above exists because a cart arriving over IPC is not
+    // authorisation. Discounts arrived on the same payload and were used
+    // verbatim, so `pos_apply_bill_discount`'s manager check, its upper bound,
+    // its required reason and its audit entry could all be skipped by calling
+    // finalize directly with the discount already in the cart. That is money out
+    // of the till with no approval and no record of who took it.
+    //
+    // `pos_discount_authorizations` holds what the discount commands actually
+    // approved. A discount that is not there, or is there for a different
+    // amount, is refused.
+    let approved_discounts: std::collections::HashMap<String, i64> = sqlx::query_as::<
+        _,
+        (String, i64),
+    >(
+        "SELECT cart_line_id, discount_minor FROM pos_discount_authorizations WHERE cart_id = ?",
+    )
+    .bind(&cart.cart_id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .collect();
+
+    let unapproved = |line_id: &str, amount: i64| -> bool {
+        amount > 0 && approved_discounts.get(line_id).copied() != Some(amount)
+    };
+
+    if unapproved("", cart.bill_discount_minor) {
+        return Err(AppError::Validation(
+            "This bill discount has not been approved. Apply it again from the              discount screen so a manager can authorise it."
+                .into(),
+        ));
+    }
+    for line in &active_lines {
+        if unapproved(&line.cart_line_id, line.line_discount_minor) {
+            return Err(AppError::Validation(format!(
+                "The discount on '{}' has not been approved. Apply it again from                  the discount screen so a manager can authorise it.",
+                line.product_name
+            )));
         }
     }
 
@@ -359,7 +654,18 @@ pub async fn finalize_sale(
     .bind(&now)
     .bind(&now)
     .execute(&mut *tx)
-    .await?;
+    .await
+    // The other half of the replay. The check above runs before the transaction
+    // opens, so two submits close enough together can both pass it; the UNIQUE
+    // index is what actually decides, and the loser lands here. Rolling back and
+    // returning the winner's sale is the same answer, reached a moment later.
+    .map_err(|error| {
+        if is_duplicate_idempotency_key(&error) {
+            AppError::Conflict(DUPLICATE_SALE_MARKER.into())
+        } else {
+            AppError::from(error)
+        }
+    })?;
 
     let mut item_summaries = Vec::new();
     for (i, line) in active_lines.iter().enumerate() {
@@ -712,29 +1018,32 @@ pub async fn finalize_sale(
         .bind(&cart.cart_id)
         .execute(&mut *tx)
         .await?;
+    sqlx::query("DELETE FROM pos_discount_authorizations WHERE cart_id = ?")
+        .bind(&cart.cart_id)
+        .execute(&mut *tx)
+        .await?;
 
-    tx.commit().await?;
-    tracing::info!("Sale finalized: {} ({})", sale_id, receipt_number);
-
-    // Deduct inventory (after commit; failures don't roll back sale).
-    // branch_id and device_id come from the cart — always the real active values.
-    let low_stock_alerts = movements::deduct_sale(
-        pool,
+    // The ledger entries for what this sale took off the shelf, written in the
+    // same transaction as the deduction itself. They used to go in after the
+    // commit, in a transaction of their own, so a failure there left the shelf
+    // count reduced with nothing in the ledger to explain it — and nothing ever
+    // retried. Now the sale and its movements stand or fall together.
+    movements::record_sale_movements_tx(
+        &mut tx,
         &sale_id,
         &cart.cashier_user_id,
         &cart.branch_id,
         &cart.device_id,
-        Some(&captured_qtys),
+        &captured_qtys,
     )
-    .await
-    .inspect_err(|e| {
-        tracing::error!(
-            "T06: deduct_sale movement records failed for sale {}: {e}. \
-             Stock levels were already updated in the sale transaction.",
-            sale_id
-        );
-    })
-    .unwrap_or_default();
+    .await?;
+
+    tx.commit().await?;
+    tracing::info!("Sale finalized: {} ({})", sale_id, receipt_number);
+
+    // Low-stock alerts are for the cashier's screen, not for the books, so they
+    // are read after the commit where a failure costs nothing.
+    let low_stock_alerts = movements::low_stock_after_sale(pool, &captured_qtys).await;
 
     Ok(SaleResult {
         sale_id,
@@ -1375,9 +1684,16 @@ mod tests {
         assert_eq!(count, 0, "no sale should be persisted on underpay");
     }
 
-    // ── 3. Duplicate idempotency key is rejected ──────────────────────────────
+    // ── 3. A repeated idempotency key replays the original sale ───────────────
+    //
+    // This asserted a `Database` unique-constraint error, which is what the code
+    // used to do and is the wrong answer for an idempotency key. The POS sends
+    // the cart id, so a double-pressed Charge button sent the same key twice and
+    // the cashier was shown "Sale failed" for a sale that had just gone through.
+    // Rebuilding the cart to try again mints a new id, and that is how one basket
+    // becomes two sales. The second call now returns the first sale.
     #[tokio::test]
-    async fn test_finalize_sale_idempotency_key_unique() {
+    async fn test_finalize_sale_idempotency_key_replays() {
         let pool = make_pool().await;
         let shift_id = insert_shift(&pool).await;
 
@@ -1397,7 +1713,7 @@ mod tests {
             CASHIER.into(),
         );
         cart1.lines.push(cola_line("1"));
-        finalize_sale(
+        let first = finalize_sale(
             &pool,
             &cart1,
             payments(),
@@ -1412,7 +1728,7 @@ mod tests {
 
         let mut cart2 = Cart::new(BRANCH.into(), DEVICE.into(), shift_id, CASHIER.into());
         cart2.lines.push(cola_line("1"));
-        let err = finalize_sale(
+        let replayed = finalize_sale(
             &pool,
             &cart2,
             payments(),
@@ -1423,13 +1739,20 @@ mod tests {
             false,
         )
         .await
-        .unwrap_err();
+        .expect("a repeated key must return the sale it already made");
 
-        // Expect a DB error (UNIQUE constraint on idempotency_key)
-        assert!(
-            matches!(err, AppError::Database(_)),
-            "expected Database unique-constraint error, got {err:?}"
+        assert_eq!(
+            replayed.receipt_number, first.receipt_number,
+            "the replay issued a second receipt number"
         );
+        assert_eq!(replayed.sale_id, first.sale_id);
+
+        // And exactly one sale exists, whatever the second call returned.
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sales")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "the repeated key created a second sale");
     }
 
     #[tokio::test]
@@ -1531,6 +1854,30 @@ mod tests {
         assert_eq!(result.tax_total_minor, 0, "zero-rated items carry no tax");
     }
 
+    /// Stand-in for a manager approving a discount at the till.
+    ///
+    /// `finalize_sale` refuses a discount with no row in
+    /// `pos_discount_authorizations`: a discount arriving on the cart is not
+    /// authorisation, which is the whole point of the table. Tests that exercise
+    /// discount arithmetic record the approval the way `pos_apply_*_discount`
+    /// does.
+    async fn approve_discount(pool: &SqlitePool, cart_id: &str, line_id: &str, minor: i64) {
+        sqlx::query(
+            "INSERT INTO pos_discount_authorizations
+               (cart_id, cart_line_id, discount_minor, reason, authorized_by_user_id, created_at)
+             VALUES (?, ?, ?, 'test', ?, datetime('now'))
+             ON CONFLICT(cart_id, cart_line_id) DO UPDATE SET
+               discount_minor = excluded.discount_minor",
+        )
+        .bind(cart_id)
+        .bind(line_id)
+        .bind(minor)
+        .bind(CASHIER)
+        .execute(pool)
+        .await
+        .expect("record the manager approval");
+    }
+
     // ── 5. Line discount reduces net total ────────────────────────────────────
     #[tokio::test]
     async fn test_finalize_sale_with_line_discount() {
@@ -1545,7 +1892,9 @@ mod tests {
         line.line_total_minor = 400;
         line.line_discount_minor = 100; // discount 100 minor
         line.line_total_minor = 300; // after discount
+        let line_id = line.cart_line_id.clone();
         cart.lines.push(line);
+        approve_discount(&pool, &cart.cart_id, &line_id, 100).await;
 
         let payments = vec![PaymentInput {
             method: "cash".into(),

@@ -1,5 +1,7 @@
 pub mod helpers;
 #[cfg(test)]
+mod invariants;
+#[cfg(test)]
 mod million_row_tests;
 pub mod repositories;
 

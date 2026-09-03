@@ -125,6 +125,52 @@ pub async fn recompute(pool: &SqlitePool, customer_id: &str) -> AppResult<i64> {
     Ok(balance)
 }
 
+/// The same, on a connection the caller already holds open.
+///
+/// `create_refund` runs under its own `BEGIN IMMEDIATE` on one connection, so it
+/// cannot hand over a `Transaction`. Reversing a sale's points has to happen
+/// inside that same unit or a refund could succeed while the points it was
+/// meant to claw back stayed on the customer.
+pub async fn record_conn(
+    conn: &mut sqlx::SqliteConnection,
+    ctx: AwardContext<'_>,
+) -> AppResult<i64> {
+    record_on(conn, ctx).await
+}
+
+/// How many points a sale awarded, according to the ledger.
+///
+/// Read from `loyalty_events` rather than recomputed from the sale total: the
+/// award rule can change, and a reversal has to give back what was actually
+/// given, not what today's rule would have given.
+pub async fn points_awarded_for_sale(
+    conn: &mut sqlx::SqliteConnection,
+    sale_id: &str,
+) -> AppResult<i64> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(SUM(points_delta), 0) FROM loyalty_events
+          WHERE reference_type = 'sale' AND reference_id = ? AND event_type = 'earn'",
+    )
+    .bind(sale_id)
+    .fetch_one(conn)
+    .await?)
+}
+
+/// Points already clawed back against a sale, so a partial refund cannot be
+/// reversed twice and repeated partials cannot exceed what was awarded.
+pub async fn points_reversed_for_sale(
+    conn: &mut sqlx::SqliteConnection,
+    sale_id: &str,
+) -> AppResult<i64> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(-SUM(points_delta), 0) FROM loyalty_events
+          WHERE reference_type = 'sale_reversal' AND reference_id = ?",
+    )
+    .bind(sale_id)
+    .fetch_one(conn)
+    .await?)
+}
+
 /// Append one event and return the new balance.
 pub async fn record(pool: &SqlitePool, ctx: AwardContext<'_>) -> AppResult<i64> {
     let mut conn = pool.acquire().await?;
@@ -159,6 +205,20 @@ async fn record_on(conn: &mut sqlx::SqliteConnection, ctx: AwardContext<'_>) -> 
     .unwrap_or(0);
 
     let after = (previous + ctx.points_delta).max(0);
+    // Store the delta that was actually applied, not the one that was asked for.
+    //
+    // Every row has to satisfy `points_after = previous.points_after +
+    // points_delta`, because that is the equation `ledger_balance` inverts: it
+    // anchors on the oldest surviving event's running total and adds every later
+    // delta. Storing a raw −50 next to a clamped `after` of 0 breaks it, and the
+    // damage surfaces later, somewhere else: redeem 50 against a balance of 5
+    // (stored: delta −50, after 0), earn 20 (after 20, correct), then let any
+    // sync-triggered `recompute` run — 5 + (−50) + 20 = −25, clamped to 0, and
+    // twenty legitimately earned points are gone with nothing to explain it.
+    //
+    // Clamping is still right at the point of writing; what was wrong was
+    // recording an intent the row did not carry out.
+    let applied_delta = after - previous;
     let now = chrono::Utc::now().to_rfc3339();
 
     sqlx::query(
@@ -174,7 +234,7 @@ async fn record_on(conn: &mut sqlx::SqliteConnection, ctx: AwardContext<'_>) -> 
     .bind(ctx.device_id)
     .bind(ctx.device_id)
     .bind(ctx.event.as_str())
-    .bind(ctx.points_delta)
+    .bind(applied_delta)
     .bind(after)
     .bind(ctx.reference_type)
     .bind(ctx.reference_id)

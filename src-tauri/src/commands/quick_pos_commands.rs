@@ -82,19 +82,19 @@ pub(crate) async fn load_inner(pool: &SqlitePool) -> AppResult<Vec<QuickPosSlot>
             continue;
         };
 
-        // Same price predicate the catalogue uses: normalised through
-        // datetime() because effective_from is written in two formats.
-        let row = sqlx::query(
+        // The one price predicate, shared with the catalogue and with checkout.
+        // This was a copy of it that had lost the tie-break, so a product with
+        // two open price rows showed one price on the tile and was charged
+        // another at the till.
+        let price_in_force = crate::db::repositories::pricing::PRICE_IN_FORCE;
+        let row = sqlx::query(&format!(
             "SELECT p.product_id, p.name, p.image_path,
                     COALESCE(pp.price_minor, 0) AS price_minor
                FROM products p
                LEFT JOIN product_prices pp ON pp.product_id = p.product_id
-                    AND pp.branch_id IS NULL
-                    AND pp.price_type = 'selling'
-                    AND datetime(pp.effective_from) <= datetime('now')
-                    AND (pp.effective_to IS NULL OR datetime(pp.effective_to) > datetime('now'))
-              WHERE p.product_id = ? AND p.is_active = 1 AND p.deleted_at IS NULL",
-        )
+                    AND {price_in_force}
+              WHERE p.product_id = ? AND p.is_active = 1 AND p.deleted_at IS NULL"
+        ))
         .bind(&product_id)
         .fetch_optional(pool)
         .await?;

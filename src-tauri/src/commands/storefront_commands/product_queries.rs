@@ -18,11 +18,17 @@ const PRODUCT_SELECT: &str = "
         SELECT candidate.price_id FROM product_prices candidate
         WHERE candidate.product_id=p.product_id AND candidate.price_type='selling'
           AND (candidate.branch_id=? OR candidate.branch_id IS NULL)
-          AND candidate.effective_from<=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          -- Normalised on both sides, matching `sale_repo`. Comparing the raw
+          -- text against an RFC3339 'now' happened to work for rows this
+          -- application wrote, and not for rows the legacy-POS importer wrote
+          -- with datetime('now') — and the raw ORDER BY ranked every 'T' row
+          -- above every space row whatever the actual instant. The storefront
+          -- could publish a price the till would not charge.
+          AND datetime(candidate.effective_from)<=datetime('now')
           AND (candidate.effective_to IS NULL OR
-               candidate.effective_to>strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+               datetime(candidate.effective_to)>datetime('now'))
         ORDER BY CASE WHEN candidate.branch_id=? THEN 0 ELSE 1 END,
-                 candidate.effective_from DESC,candidate.price_id DESC LIMIT 1)
+                 datetime(candidate.effective_from) DESC,candidate.price_id DESC LIMIT 1)
     LEFT JOIN (
         SELECT published_at FROM storefront_releases
         WHERE status='published' ORDER BY version DESC LIMIT 1

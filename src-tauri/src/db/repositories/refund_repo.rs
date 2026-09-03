@@ -136,6 +136,32 @@ pub async fn get_sale_result_by_receipt(
     })
 }
 
+/// The refund already recorded under this key, if there is one.
+///
+/// A retry after a timeout, or a second tap on Refund, has to be answered with
+/// the reversal that already exists. Returning an error instead would tell the
+/// operator the refund failed when the customer has already been paid, and the
+/// obvious next thing they would do is refund again.
+async fn existing_refund_for_key(
+    pool: &SqlitePool,
+    idempotency_key: &str,
+) -> AppResult<Option<RefundResult>> {
+    Ok(sqlx::query(
+        "SELECT refund_id, refund_receipt_number, refund_total_minor, currency, created_at
+           FROM refunds WHERE idempotency_key = ?",
+    )
+    .bind(idempotency_key)
+    .fetch_optional(pool)
+    .await?
+    .map(|r| RefundResult {
+        refund_id: r.get("refund_id"),
+        refund_receipt_number: r.get("refund_receipt_number"),
+        refund_total_minor: r.get("refund_total_minor"),
+        currency: r.get("currency"),
+        created_at: r.get("created_at"),
+    }))
+}
+
 pub async fn create_refund(
     pool: &SqlitePool,
     original_sale_id: &str,
@@ -144,9 +170,18 @@ pub async fn create_refund(
     reason_code: &str,
     created_by_user_id: &str,
     override_used: bool,
+    idempotency_key: Option<String>,
 ) -> AppResult<RefundResult> {
     if items.is_empty() {
         return Err(AppError::Validation("No items selected for refund".into()));
+    }
+
+    // A repeat of a refund already made is answered with that refund, not with a
+    // second one. Checked before the write lock so the common case costs one read.
+    if let Some(key) = idempotency_key.as_deref().filter(|k| !k.trim().is_empty()) {
+        if let Some(existing) = existing_refund_for_key(pool, key).await? {
+            return Ok(existing);
+        }
     }
 
     // Acquire a single connection and start with BEGIN IMMEDIATE.
@@ -263,13 +298,32 @@ pub async fn create_refund(
 
     let refund_total: i64 = items.iter().map(|i| i.refund_amount_minor).sum();
     let refund_id = Ulid::new().to_string();
+    // `refunds.idempotency_key` is UNIQUE, which reads like retry protection, but
+    // the key used to be built from `refund_id` — a ULID minted a line above — so
+    // it differed on every call and the constraint could never fire. The caller
+    // supplies it now, the way `finalize_sale` takes one from the cart, and a
+    // repeat is answered from the row that already exists rather than paying out
+    // again. Falling back to the refund's own id keeps older callers working; it
+    // gives them no protection, which is exactly what they had before.
+    let idempotency_key = idempotency_key
+        .filter(|k| !k.trim().is_empty())
+        .unwrap_or_else(|| format!("refund-{refund_id}"));
 
     // Atomic per-device counter — shared with sales so receipt numbers are a single
     // device-scoped sequence. UPDATE...RETURNING prevents races.
+    //
+    // `- 1` for the same reason `sale_repo::next_receipt_number` has it: the
+    // column holds the *next* number to use, so the value to issue is the one it
+    // held before the bump. Taking the post-increment value here while sales took
+    // the pre-increment value meant this refund kept the number the following
+    // sale would go on to claim — the same receipt number on two documents in two
+    // tables, which neither UNIQUE constraint can see — and skipped a number
+    // besides. Migration 0064 pushes the counter past everything already issued
+    // so tills that have refunded do not collide on the first sale after upgrade.
     let seq: i64 = match sqlx::query_scalar(
         "UPDATE devices SET next_receipt_seq = next_receipt_seq + 1
          WHERE device_id = ?
-         RETURNING next_receipt_seq",
+         RETURNING next_receipt_seq - 1",
     )
     .bind(&device_id)
     .fetch_one(&mut *conn)
@@ -281,7 +335,6 @@ pub async fn create_refund(
     let refund_receipt_number = format!("{}-{}-{:08}", branch_code, device_code, seq);
 
     let now = chrono::Utc::now().to_rfc3339();
-    let idempotency_key = format!("refund-{}", refund_id);
 
     // Validate reason_code is one of the accepted values; fall back to 'other'
     let safe_reason_code = match reason_code {
@@ -424,50 +477,97 @@ pub async fn create_refund(
         abort!(AppError::Database(e));
     }
 
+    // Claw back the share of the sale's loyalty that this refund undoes.
+    //
+    // Nothing did this: points earned on a sale survived its refund, so buying
+    // and returning the same basket repeatedly farmed loyalty at no cost. The
+    // reversal is proportional — refund half the sale, give back half the points
+    // — and capped by what is still outstanding, so a sequence of partial
+    // refunds can never claw back more than was awarded.
+    //
+    // Read from the ledger rather than recomputed from the total: the earning
+    // rule can change, and a reversal must return what was actually given.
+    let awarded =
+        crate::db::repositories::loyalty_repo::points_awarded_for_sale(&mut conn, original_sale_id)
+            .await
+            .unwrap_or(0);
+    if awarded > 0 {
+        let already_back = crate::db::repositories::loyalty_repo::points_reversed_for_sale(
+            &mut conn,
+            original_sale_id,
+        )
+        .await
+        .unwrap_or(0);
+        let sale_net: i64 =
+            sqlx::query_scalar("SELECT net_total_minor FROM sales WHERE sale_id = ?")
+                .bind(original_sale_id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap_or(0);
+        let customer: Option<String> =
+            match sqlx::query_scalar("SELECT customer_id FROM sales WHERE sale_id = ?")
+                .bind(original_sale_id)
+                .fetch_optional(&mut *conn)
+                .await
+            {
+                Ok(row) => row.flatten(),
+                Err(e) => abort!(AppError::Database(e)),
+            };
+
+        if let Some(customer_id) = customer {
+            if sale_net > 0 {
+                let share = (awarded as i128 * refund_total as i128 / sale_net as i128) as i64;
+                let claw_back = share.min(awarded - already_back).max(0);
+                if claw_back > 0 {
+                    if let Err(e) = crate::db::repositories::loyalty_repo::record_conn(
+                        &mut conn,
+                        crate::db::repositories::loyalty_repo::AwardContext {
+                            customer_id: &customer_id,
+                            branch_id: Some(&branch_id),
+                            device_id: Some(&device_id),
+                            event: crate::db::repositories::loyalty_repo::LoyaltyEvent::Adjust,
+                            points_delta: -claw_back,
+                            reference_type: Some("sale_reversal"),
+                            reference_id: Some(original_sale_id),
+                            reason: Some("items refunded"),
+                            actor_user_id: Some(created_by_user_id),
+                        },
+                    )
+                    .await
+                    {
+                        abort!(e);
+                    }
+                }
+            }
+        }
+    }
+
+    // Put the goods back on the shelf inside the refund's own transaction.
+    //
+    // This used to run after the COMMIT with its failure only logged — "stock
+    // credit failed after refund commit — manual reconciliation may be
+    // required". A refund that does not return its stock is worse than one that
+    // fails: the customer has their money, the shelf count still says the goods
+    // were sold, and nothing but a log line records the gap. Inside the
+    // transaction, a refund that cannot credit stock does not happen, and the
+    // operator can see that and try again.
+    if let Err(e) = movements::return_refund_conn(
+        &mut conn,
+        &refund_id,
+        created_by_user_id,
+        &branch_id,
+        &device_id,
+    )
+    .await
+    {
+        abort!(e);
+    }
+
     if let Err(e) = sqlx::query("COMMIT").execute(&mut *conn).await {
         let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
         return Err(AppError::Database(e));
     }
     tracing::info!("Refund created: {} ({})", refund_id, refund_receipt_number);
-
-    // Fetch the original sale's branch_id and device_id for inventory and sync.
-    // We do this once and reuse for both stock return and sync tracking.
-    let sale_meta = sqlx::query("SELECT device_id, branch_id FROM sales WHERE sale_id = ?")
-        .bind(original_sale_id)
-        .fetch_optional(pool)
-        .await;
-
-    // Return stock for refunded items (after commit; stock credit failure does NOT
-    // roll back the already-committed refund — the refund is accepted regardless).
-    // Errors are logged so operators can reconcile manually if needed.
-    // Pass real branch/device from the original sale so movements carry correct identity.
-    if let Ok(Some(ref meta)) = sale_meta {
-        let device_id: String = meta.get("device_id");
-        let branch_id_str: String = meta.get("branch_id");
-        if let Err(e) = movements::return_refund(
-            pool,
-            &refund_id,
-            created_by_user_id,
-            &branch_id_str,
-            &device_id,
-        )
-        .await
-        {
-            // Stock credit failed — refund is still valid; stock may need manual correction.
-            tracing::error!(
-                refund_id = %refund_id,
-                sale_id = %original_sale_id,
-                "return_refund: stock credit failed after refund commit — manual reconciliation may be required: {e}"
-            );
-        }
-    } else {
-        // Sale meta unavailable — stock credit skipped; log for manual reconciliation.
-        tracing::error!(
-            refund_id = %refund_id,
-            sale_id = %original_sale_id,
-            "return_refund: could not resolve branch/device — stock NOT credited for refund"
-        );
-    }
 
     // sync_status='pending' is set by column DEFAULT — sync worker picks it up
 
@@ -643,6 +743,7 @@ mod tests {
             "defective",
             CASHIER,
             false,
+            None,
         )
         .await
         .expect("create_refund");
@@ -662,9 +763,18 @@ mod tests {
         let shift_id = insert_shift(&pool).await;
         let (sale_id, _) = create_test_sale(&pool, &shift_id, "idem-refund-empty").await;
 
-        let err = create_refund(&pool, &sale_id, vec![], "test", "other", CASHIER, false)
-            .await
-            .unwrap_err();
+        let err = create_refund(
+            &pool,
+            &sale_id,
+            vec![],
+            "test",
+            "other",
+            CASHIER,
+            false,
+            None,
+        )
+        .await
+        .unwrap_err();
 
         assert!(
             matches!(err, AppError::Validation(_)),
@@ -693,6 +803,7 @@ mod tests {
             "other",
             CASHIER,
             false,
+            None,
         )
         .await
         .unwrap_err();
@@ -727,6 +838,7 @@ mod tests {
             "other",
             CASHIER,
             false,
+            None,
         )
         .await
         .expect("refund 1");
@@ -738,6 +850,7 @@ mod tests {
             "other",
             CASHIER,
             false,
+            None,
         )
         .await
         .expect("refund 2");
@@ -770,6 +883,7 @@ mod tests {
             "customer_return",
             CASHIER,
             false,
+            None,
         )
         .await
         .expect("partial refund");
@@ -808,6 +922,7 @@ mod tests {
             "other",
             CASHIER,
             false,
+            None,
         )
         .await
         .unwrap_err();
@@ -848,6 +963,7 @@ mod tests {
             "other",
             CASHIER,
             false,
+            None,
         )
         .await
         .unwrap_err();
@@ -882,6 +998,7 @@ mod tests {
             "other",
             CASHIER,
             false,
+            None,
         )
         .await
         .expect("first refund should succeed");
@@ -895,6 +1012,7 @@ mod tests {
             "other",
             CASHIER,
             false,
+            None,
         )
         .await
         .unwrap_err();
@@ -928,6 +1046,7 @@ mod tests {
             "INVALID_CODE",
             CASHIER,
             false,
+            None,
         )
         .await
         .expect("refund with invalid code");

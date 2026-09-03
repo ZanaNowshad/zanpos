@@ -135,6 +135,43 @@ pub fn add_decimal_qty_str(a: &str, b: &str) -> String {
     }
 }
 
+/// Order two decimal quantity strings without going through floating point.
+///
+/// `"1.10"` and `"1.1"` are the same quantity written two ways, and `"2"` and
+/// `"10"` must not order as text — both happen, because quantities are stored as
+/// whatever string the writer produced. Returns `None` when either side does not
+/// parse, so a caller has to decide what an unreadable quantity means rather
+/// than being handed a silent `Equal`.
+pub fn cmp_decimal_qty(a: &str, b: &str) -> Option<std::cmp::Ordering> {
+    fn scaled(q: &str, frac_len: usize) -> Option<i64> {
+        let (int_str, frac_str) = q.trim().split_once('.').unwrap_or((q.trim(), ""));
+        if int_str.is_empty() || !int_str.bytes().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        if !frac_str.bytes().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        let int_val: i64 = int_str.parse().ok()?;
+        let padded = format!("{:0<width$}", frac_str, width = frac_len);
+        let frac_val: i64 = if frac_len == 0 {
+            0
+        } else {
+            padded[..frac_len].parse().ok()?
+        };
+        int_val
+            .checked_mul(10_i64.checked_pow(frac_len as u32)?)?
+            .checked_add(frac_val)
+    }
+
+    let frac_len = a
+        .trim()
+        .split_once('.')
+        .map_or(0, |(_, f)| f.len())
+        .max(b.trim().split_once('.').map_or(0, |(_, f)| f.len()))
+        .min(9);
+    Some(scaled(a, frac_len)?.cmp(&scaled(b, frac_len)?))
+}
+
 /// Parse a decimal price string (e.g. "1.500") into minor units (1500 fils).
 /// Uses integer arithmetic only — no floating point.
 /// Returns None for negative, unparseable, out-of-range, or inputs with more
@@ -174,6 +211,12 @@ pub fn format_minor(minor: i64, exponent: u32) -> String {
     let abs_divisor = divisor as u64;
     let whole = abs / abs_divisor;
     let frac = abs % abs_divisor;
+    // A zero-exponent currency has no minor unit, so it has no decimal point.
+    // The unconditional separator rendered ¥1000 as "1000.0" — a decimal place
+    // that does not exist in the currency, printed on the receipt.
+    if exponent == 0 {
+        return format!("{sign}{whole}");
+    }
     format!(
         "{}{}.{:0>width$}",
         sign,
@@ -181,6 +224,21 @@ pub fn format_minor(minor: i64, exponent: u32) -> String {
         frac,
         width = exponent as usize
     )
+}
+
+/// How many decimal places a currency's minor units carry (ISO 4217).
+///
+/// This lived in `commands::setup_commands`, which made it the one rule the
+/// repository layer had to reach *upward* into the command layer to obtain — the
+/// only such dependency in the crate. It is a property of the currency, not of a
+/// Tauri command, and it belongs beside [`format_minor`], which is the function
+/// that consumes it.
+pub fn currency_exponent(currency: &str) -> i32 {
+    match currency {
+        "BHD" | "KWD" | "OMR" => 3,
+        "JPY" | "KRW" | "IDR" => 0,
+        _ => 2, // USD, EUR, GBP, SAR, AED, QAR, EGP, MAD, etc.
+    }
 }
 
 /// Apply a percentage discount given in basis points (100 bp = 1%).
@@ -200,6 +258,26 @@ pub fn calc_tax_exclusive(price_minor: i64, rate_basis_points: i64) -> i64 {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn quantities_compare_by_value_not_by_spelling() {
+        use std::cmp::Ordering::*;
+        // Same number, two spellings — the trailing zero must not make it larger.
+        assert_eq!(cmp_decimal_qty("1.10", "1.1"), Some(Equal));
+        assert_eq!(cmp_decimal_qty("2", "2.000"), Some(Equal));
+        // Text ordering would put "10" below "2"; value ordering must not.
+        assert_eq!(cmp_decimal_qty("10", "2"), Some(Greater));
+        assert_eq!(cmp_decimal_qty("2", "10"), Some(Less));
+        // A weighed line against a whole-number approval.
+        assert_eq!(cmp_decimal_qty("0.750", "1"), Some(Less));
+        assert_eq!(cmp_decimal_qty("1.001", "1"), Some(Greater));
+        // Unreadable input is not silently equal — the caller has to decide.
+        assert_eq!(cmp_decimal_qty("", "1"), None);
+        assert_eq!(cmp_decimal_qty("-1", "1"), None);
+        assert_eq!(cmp_decimal_qty("two", "1"), None);
+        assert_eq!(cmp_decimal_qty("1", "1e3"), None);
+    }
+
     use super::*;
 
     #[test]
@@ -232,5 +310,42 @@ mod tests {
     fn discount_10pct() {
         // 10% off 1.000 BHD → 0.100 BHD discount
         assert_eq!(apply_discount_bp(1000, 1000), 100);
+    }
+
+    /// The exponent decides where the decimal point goes on every receipt and
+    /// every reported total, so it is pinned rather than assumed. ZANPOS is a
+    /// Bahrain product and BHD is the case that matters, but two decimals is
+    /// what every other currency falls back to.
+    #[test]
+    fn currency_exponents_match_iso_4217_minor_units() {
+        for three in ["BHD", "KWD", "OMR"] {
+            assert_eq!(currency_exponent(three), 3, "{three}");
+        }
+        for zero in ["JPY", "KRW", "IDR"] {
+            assert_eq!(currency_exponent(zero), 0, "{zero}");
+        }
+        for two in ["USD", "EUR", "GBP", "SAR", "AED"] {
+            assert_eq!(currency_exponent(two), 2, "{two}");
+        }
+        // An unknown code takes the common case rather than panicking: the
+        // alternative is a receipt that cannot be printed at all.
+        assert_eq!(currency_exponent(""), 2);
+        assert_eq!(currency_exponent("ZZZ"), 2);
+    }
+
+    /// The exponent and the formatter are the two halves of rendering an amount,
+    /// which is why they now live beside each other. A currency with no minor
+    /// unit must not be given a decimal point.
+    #[test]
+    fn the_exponent_and_the_formatter_agree() {
+        let bhd = currency_exponent("BHD").max(0) as u32;
+        assert_eq!(format_minor(1000, bhd), "1.000");
+
+        let usd = currency_exponent("USD").max(0) as u32;
+        assert_eq!(format_minor(1000, usd), "10.00");
+
+        let jpy = currency_exponent("JPY").max(0) as u32;
+        assert_eq!(format_minor(1000, jpy), "1000");
+        assert_eq!(format_minor(-1000, jpy), "-1000");
     }
 }

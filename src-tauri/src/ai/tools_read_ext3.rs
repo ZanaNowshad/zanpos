@@ -200,7 +200,7 @@ async fn supplier_products(
     let rows = sqlx::query(
         "SELECT p.name, pp.price_minor, COALESCE(p.cost_minor,0) AS cost, p.is_active
          FROM products p
-         JOIN product_prices pp ON pp.product_id = p.product_id AND pp.price_type = 'selling' AND pp.effective_to IS NULL
+         JOIN v_current_selling_price pp ON pp.product_id = p.product_id
          WHERE p.default_supplier_id = ? ORDER BY p.name LIMIT 200",
     )
     .bind(id)
@@ -243,14 +243,29 @@ async fn inventory_valuation(
         .get("include_zero_cost")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    // What the stock on the shelf is worth: quantity times unit cost, scoped to
+    // this branch.
+    //
+    // This used to sum `cost_minor` once per product and never join
+    // `stock_levels` — its own comment admitted it — so a line with 500 units at
+    // 0.500 contributed 0.500 to "total cost basis" instead of 250.000, and a
+    // product that was completely out of stock still contributed a full unit's
+    // cost as though one sat on the shelf. `dead_stock_value` two files away
+    // already does it correctly; this is the same shape.
+    let (_device_id, branch_id) = crate::ai::tools::active_device_branch(pool).await?;
     let rows = sqlx::query(
         "SELECT COALESCE(c.name,'(uncategorised)') AS cat, p.name,
-                COALESCE(p.cost_minor,0) AS cost
-         FROM products p LEFT JOIN categories c ON c.category_id = p.category_id
-         WHERE p.is_active = 1
+                CAST(COALESCE(sl.quantity_on_hand,'0') AS REAL)
+                  * COALESCE(p.cost_minor,0) AS cost
+         FROM products p
+         LEFT JOIN categories c ON c.category_id = p.category_id
+         LEFT JOIN stock_levels sl
+                ON sl.product_id = p.product_id AND sl.branch_id = ?
+         WHERE p.is_active = 1 AND p.deleted_at IS NULL
            AND (? = 1 OR (p.cost_minor IS NOT NULL AND p.cost_minor > 0))
          ORDER BY cat, p.name LIMIT 500",
     )
+    .bind(&branch_id)
     .bind(if include_zero { 1i64 } else { 0i64 })
     .fetch_all(pool)
     .await?;
@@ -262,8 +277,10 @@ async fn inventory_valuation(
         );
     }
 
-    // inventory_valuation uses cost only (no stock_quantity available without stock_levels JOIN)
-    let total_value: i64 = rows.iter().map(|r| s_i64(r, "cost")).sum();
+    let total_value: i64 = rows
+        .iter()
+        .map(|r| r.get::<f64, _>("cost").round() as i64)
+        .sum();
 
     let no_cost: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM products WHERE is_active=1 AND (cost_minor IS NULL OR cost_minor=0)",
@@ -276,7 +293,7 @@ async fn inventory_valuation(
     let mut cat_totals: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
     for r in &rows {
         let cat = s_str(r, "cat");
-        let val = s_i64(r, "cost");
+        let val = r.get::<f64, _>("cost").round() as i64;
         *cat_totals.entry(cat).or_insert(0) += val;
     }
     let cat_lines: Vec<String> = cat_totals
@@ -285,7 +302,7 @@ async fn inventory_valuation(
         .collect();
 
     Ok(format!(
-        "[DB] Inventory valuation ({} products with cost):\n  Total cost basis: BHD {}\n  Products missing cost: {no_cost}\nBy category:\n{}",
+        "[DB] Inventory valuation ({} products, stock \u{d7} cost):\n  Total stock value: BHD {}\n  Products missing cost: {no_cost}\nBy category:\n{}",
         rows.len(), fmt(total_value),
         cat_lines.join("\n")
     ))
@@ -301,7 +318,7 @@ async fn overstock_alert(pool: &SqlitePool, input: &serde_json::Value) -> AppRes
         "SELECT p.name,
                 COALESCE(SUM(si.quantity),0) / ? AS daily_rate
          FROM products p
-         JOIN product_prices pp ON pp.product_id = p.product_id AND pp.price_type = 'selling' AND pp.effective_to IS NULL
+         JOIN v_current_selling_price pp ON pp.product_id = p.product_id
          LEFT JOIN sale_items si ON si.product_id = p.product_id
          LEFT JOIN sales s ON s.sale_id = si.sale_id
              AND s.sold_at >= date('now','-'||?||' days') AND s.status != 'voided'
@@ -575,7 +592,9 @@ async fn petty_cash_log(
          FROM cash_events ce
          LEFT JOIN shifts sh ON sh.shift_id = ce.shift_id
          LEFT JOIN users u ON u.user_id = sh.cashier_user_id
-         WHERE date(ce.created_at) BETWEEN ? AND ?
+         -- Bahrain local date: `created_at` is UTC, so a late-night cash
+         -- event would otherwise be filed under the previous day.
+         WHERE DATE(ce.created_at, '+3 hours') BETWEEN ? AND ?
          ORDER BY ce.created_at DESC LIMIT 100",
     )
     .bind(from)
@@ -642,7 +661,7 @@ async fn user_shift_summary(
                 COALESCE(SUM(s.net_total_minor),0) AS revenue
          FROM shifts sh
          LEFT JOIN sales s ON s.shift_id = sh.shift_id AND s.status != 'voided'
-         WHERE sh.cashier_user_id = ? AND date(sh.opened_at) BETWEEN ? AND ?
+         WHERE sh.cashier_user_id = ? AND COALESCE(sh.business_date, DATE(sh.opened_at, '+3 hours')) BETWEEN ? AND ?
          GROUP BY sh.shift_id ORDER BY sh.opened_at DESC LIMIT 30",
     )
     .bind(uid)
@@ -884,7 +903,7 @@ async fn stockout_cost(
         "SELECT p.name, pp.price_minor,
                 COALESCE(SUM(si.quantity),0) / ? AS daily_rate
          FROM products p
-         JOIN product_prices pp ON pp.product_id = p.product_id AND pp.price_type = 'selling' AND pp.effective_to IS NULL
+         JOIN v_current_selling_price pp ON pp.product_id = p.product_id
          LEFT JOIN sale_items si ON si.product_id = p.product_id
          LEFT JOIN sales s ON s.sale_id = si.sale_id
              AND s.sold_at >= date('now','-'||?||' days') AND s.status != 'voided'

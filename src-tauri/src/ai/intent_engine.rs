@@ -9,7 +9,6 @@
 //!
 //! The AI describes WHAT it wants to do. The engine handles HOW.
 
-#![allow(dead_code)]
 use crate::db::repositories::ai_admin_repo;
 use crate::domain::money;
 use crate::errors::{AppError, AppResult};
@@ -20,6 +19,8 @@ use sqlx::{Row, SqlitePool};
 // ── Intent Definition ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Retained: the declarative intent registry was superseded by tool_catalogue.
+#[allow(dead_code)]
 pub struct IntentDef {
     pub name: &'static str,
     pub description: &'static str,
@@ -49,6 +50,8 @@ pub const INTENT_NAMES: &[&str] = &[
     "get_audit_log",
     "open_tab",
 ];
+// Retained: the declarative intent registry was superseded by tool_catalogue.
+#[allow(dead_code)]
 pub fn all_intents() -> Vec<IntentDef> {
     // `update_product`, `create_user` and `backup_database` used to sit in this
     // list with full schemas while `execute_intent` had no arm for any of them,
@@ -207,7 +210,7 @@ async fn get_product_detail(pool: &SqlitePool, params: &Value) -> AppResult<Inte
                 c.name as cat_name, sl.quantity_on_hand, pp.price_minor
          FROM products p LEFT JOIN categories c ON c.category_id = p.category_id
          LEFT JOIN stock_levels sl ON sl.product_id = p.product_id
-         LEFT JOIN product_prices pp ON pp.product_id = p.product_id AND pp.price_type = 'selling'
+         LEFT JOIN v_current_selling_price pp ON pp.product_id = p.product_id
          WHERE p.product_id = ?"
     ).bind(pid).fetch_optional(pool).await?.ok_or(AppError::NotFound("Product not found".into()))?;
     Ok(IntentResult {
@@ -264,16 +267,31 @@ async fn get_sales_report_intent(
         .get("to_date")
         .and_then(|v| v.as_str())
         .ok_or(AppError::Validation("to_date required".into()))?;
-    let txn_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sales WHERE branch_id=? AND sold_at BETWEEN ? AND ?",
+    // `business_date` and not `sold_at`, and voided sales left out.
+    //
+    // `sold_at` is a full RFC3339 timestamp and the bounds are plain dates, so
+    // `sold_at BETWEEN '2026-08-31' AND '2026-09-01'` compares '2026-09-01T09:00:00Z'
+    // against '2026-09-01' as text and finds it larger: every sale on the closing
+    // day was dropped. `business_date` is the date the till itself recorded, in
+    // the same shape as the bounds.
+    //
+    // Voided sales were counted too, so this figure exceeded the till and every
+    // other report in the app, which all filter them. Someone asking the
+    // assistant what the shop took got a number that agreed with nothing.
+    let (txn_count, net, tax): (i64, Option<i64>, Option<i64>) = sqlx::query_as(
+        "SELECT COUNT(*),
+                COALESCE(SUM(net_total_minor), 0),
+                COALESCE(SUM(tax_total_minor), 0)
+           FROM sales
+          WHERE branch_id = ?
+            AND business_date BETWEEN ? AND ?
+            AND status != 'voided'",
     )
     .bind(branch_id)
     .bind(from)
     .bind(to)
     .fetch_one(pool)
     .await?;
-    let net: Option<i64> = sqlx::query_scalar("SELECT COALESCE(SUM(net_total_minor),0) FROM sales WHERE branch_id=? AND sold_at BETWEEN ? AND ?").bind(branch_id).bind(from).bind(to).fetch_one(pool).await?;
-    let tax: Option<i64> = sqlx::query_scalar("SELECT COALESCE(SUM(tax_total_minor),0) FROM sales WHERE branch_id=? AND sold_at BETWEEN ? AND ?").bind(branch_id).bind(from).bind(to).fetch_one(pool).await?;
     Ok(IntentResult {
         ok: true,
         data: json!({"from":from,"to":to,"transactions":txn_count,"net_total":money::format_minor(net.unwrap_or(0),3),"tax":money::format_minor(tax.unwrap_or(0),3)}),
@@ -333,7 +351,7 @@ async fn list_users_intent(pool: &SqlitePool) -> AppResult<IntentResult> {
 }
 
 async fn get_cash_status_intent(pool: &SqlitePool, _branch_id: &str) -> AppResult<IntentResult> {
-    let row = sqlx::query("SELECT COALESCE(SUM(CASE WHEN event_type='paid_in' THEN amount_minor ELSE 0 END),0) as paid_in, COALESCE(SUM(CASE WHEN event_type='paid_out' THEN amount_minor ELSE 0 END),0) as paid_out, COALESCE(SUM(CASE WHEN event_type='safe_drop' THEN amount_minor ELSE 0 END),0) as safe_drops FROM cash_events WHERE DATE(created_at)=DATE('now')").fetch_one(pool).await?;
+    let row = sqlx::query("SELECT COALESCE(SUM(CASE WHEN event_type='paid_in' THEN amount_minor ELSE 0 END),0) as paid_in, COALESCE(SUM(CASE WHEN event_type='paid_out' THEN amount_minor ELSE 0 END),0) as paid_out, COALESCE(SUM(CASE WHEN event_type='safe_drop' THEN amount_minor ELSE 0 END),0) as safe_drops FROM cash_events WHERE DATE(created_at, '+3 hours') = DATE('now', '+3 hours')").fetch_one(pool).await?;
     Ok(IntentResult {
         ok: true,
         data: json!({"paid_in":row.get::<i64,_>(0),"paid_out":row.get::<i64,_>(1),"safe_drops":row.get::<i64,_>(2)}),
@@ -403,6 +421,20 @@ async fn receive_stock_intent(
     let mid = ulid::Ulid::new().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     let level_id = format!("SL-{}-{}", pid, _branch_id);
+    // One transaction, and `quantity_after` read back rather than assumed.
+    //
+    // Two defects sat here. The level and the movement were written straight to
+    // the pool as separate statements, so a failure between them left the cached
+    // quantity changed with nothing in the ledger to explain it — the exact
+    // divergence `inventory::movements` holds a transaction to prevent.
+    //
+    // The worse one: `quantity_after` was bound to the *delta*. Receiving five
+    // units recorded `quantity_after = 5` however many were already on the
+    // shelf. That column is what `apply::ledger_balance` anchors on when it
+    // derives stock from the movement ledger, so a single one of these rows made
+    // the derived figure wrong for that product from then on — and made
+    // `stock_drift_report` show a discrepancy nothing could account for.
+    let mut tx = pool.begin().await?;
     sqlx::query(
         "INSERT INTO stock_levels (stock_level_id,product_id,branch_id,quantity_on_hand,last_movement_at,created_at,updated_at) \
          VALUES (?,?,?,?,?,?,?) \
@@ -412,9 +444,22 @@ async fn receive_stock_intent(
     )
     .bind(&level_id).bind(pid).bind(_branch_id).bind(qty).bind(&now).bind(&now).bind(&now)
     .bind(qty).bind(&now).bind(&now)
-    .execute(pool).await?;
+    .execute(&mut *tx).await?;
+
+    // The post-receipt quantity, read inside the transaction that wrote it.
+    let quantity_after: String = sqlx::query_scalar(
+        "SELECT quantity_on_hand FROM stock_levels WHERE product_id = ? AND branch_id = ?",
+    )
+    .bind(pid)
+    .bind(_branch_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .unwrap_or_else(|| qty.to_string());
+
     sqlx::query("INSERT INTO stock_movements (movement_id,product_id,branch_id,device_id,movement_type,quantity_delta,quantity_after,notes,created_at,sync_status) VALUES (?,?,?,'SYSTEM','receive',?,?,'AI intent',?,'pending')")
-        .bind(&mid).bind(pid).bind(_branch_id).bind(qty).bind(qty).bind(&now).execute(pool).await?;
+        .bind(&mid).bind(pid).bind(_branch_id).bind(qty).bind(&quantity_after).bind(&now)
+        .execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(IntentResult {
         ok: true,
         data: json!({"movement_id":mid,"product_id":pid,"quantity":qty}),

@@ -35,6 +35,34 @@ fn pull_since(stored: &str) -> String {
     }
 }
 
+/// The retention cutoff, anchored so that every node computes the same one.
+///
+/// This was `now - N days`, an instant, and that is the bug. Each terminal and
+/// the hub run their daily prune whenever they happen to be switched on, so no
+/// two of them ever computed the same cutoff and each deleted a slightly
+/// different set of rows.
+///
+/// For these tables that difference does not heal. `sales`, `sale_items` and
+/// `payments` are `Deletion::Never` in the registry — the sync protocol has no
+/// way to say "this row was removed", only "this row exists" — and they are
+/// `Parity::Full`, so the gap is compared. Reconciliation therefore reads a
+/// pruned row as a delivery that never landed and hands it straight back, and
+/// the next prune deletes it again. A shop past its retention window would
+/// never again report parity, and pressing Repair would resurrect rows it had
+/// deliberately aged out.
+///
+/// Anchoring on a whole UTC day makes the cutoff a property of the calendar and
+/// the shared retention setting — which syncs, so every node has the same N —
+/// rather than of when a machine was running. Every node then deletes exactly
+/// the same rows. Divergence is bounded by one prune cycle instead of being
+/// permanent, and self-heals once the slower node has run.
+fn retention_cutoff(now: chrono::DateTime<chrono::Utc>, days: i64) -> String {
+    (now.date_naive() - chrono::Duration::days(days.max(0)))
+        .and_hms_opt(0, 0, 0)
+        .map(|midnight| midnight.and_utc().to_rfc3339())
+        .unwrap_or_default()
+}
+
 /// True when `candidate` is a strictly later instant than `current`.
 fn ts_after(candidate: &str, current: &str) -> bool {
     match (parse_ts(candidate), parse_ts(current)) {
@@ -1473,31 +1501,33 @@ impl SyncWorker {
 
     // ── Active device ─────────────────────────────────────────────────────────
 
-    async fn active_device_id(&self) -> AppResult<String> {
-        // Prefer the identity key written during setup — guaranteed to be THIS terminal's
-        // device_id regardless of how many other devices sync into the local `devices` table.
-        // ORDER BY device_code falls back for terminals set up before this key was introduced.
-        if let Ok(Some(id)) =
-            sqlx::query_scalar::<_, String>("SELECT value FROM app_config WHERE key = 'device_id'")
-                .fetch_optional(&self.pool)
-                .await
-        {
-            if !id.is_empty() {
-                return Ok(id);
-            }
-        }
-        let row = sqlx::query(
-            "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1",
-        )
-        .fetch_optional(&self.pool)
-        .await?
-        .ok_or_else(|| AppError::NotFound("No active device configured".into()))?;
-        Ok(row.get("device_id"))
+    /// Which terminal this is — resolved by [`crate::device_identity::current`],
+    /// the same function every other caller in the codebase uses.
+    ///
+    /// This used to be a second, private copy of that resolution, and its
+    /// fallback ordered by `device_code`. `device_identity`'s own module
+    /// documentation names that ordering as the one that must not be used, for
+    /// the reason it goes wrong: `devices` is a synced table, so once a terminal
+    /// has pulled its siblings' rows, ordering by a column they also populate can
+    /// resolve to *their* identity. The canonical resolver orders by `created_at`,
+    /// which a pulled sibling cannot win because the local row is always older.
+    ///
+    /// Getting this wrong is not a display problem. This value is the
+    /// `X-Zanpos-Device` header, so the hub records the beat against another
+    /// till's row — that till reads online while this one reads never-seen. And
+    /// it is the `origin_device_id` exclusion on every pull, so the hub filters
+    /// out the wrong terminal's work: this terminal never receives the other
+    /// till's sales, and is handed its own rows back instead.
+    pub(super) async fn active_device_id(&self) -> AppResult<String> {
+        crate::device_identity::current(&self.pool).await
     }
 
     // ── Daily data pruning ────────────────────────────────────────────────────
 
-    async fn prune_old_data(&self) {
+    /// The daily retention pass. Public because it is a maintenance operation in
+    /// its own right, and because what it deletes is a claim about the whole
+    /// fleet — proving it needs two databases and a hub, not one pool.
+    pub async fn prune_old_data(&self) {
         // Only prune once per 24 hours
         let last_prune: Option<String> =
             sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'last_prune_at'")
@@ -1527,60 +1557,67 @@ impl SyncWorker {
         .flatten()
         .unwrap_or(90);
 
-        let log_days: i64 = sqlx::query_scalar(
-            "SELECT CAST(value AS INTEGER) FROM app_config WHERE key = 'retention_days_logs'",
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .ok()
-        .flatten()
-        .flatten()
-        .unwrap_or(30);
+        // `retention_days_logs` is read where it is now applied — the local sync
+        // bookkeeping swept by the maintenance loop in `lib.rs`. It used to be
+        // read here to delete audit rows and stock movements, which is not what
+        // that setting says it does and is not what it should ever have done.
 
-        let sales_cutoff = (chrono::Utc::now() - chrono::Duration::days(sales_days)).to_rfc3339();
-        let log_cutoff = (chrono::Utc::now() - chrono::Duration::days(log_days)).to_rfc3339();
+        let sales_cutoff = retention_cutoff(chrono::Utc::now(), sales_days);
 
-        // 1. FK-safe delete: sale_items + payments before sales
-        let _ = sqlx::query(
-            "DELETE FROM sale_items WHERE sale_id IN (
-               SELECT sale_id FROM sales WHERE sync_status = 'synced' AND sold_at < ?
-             )",
-        )
-        .bind(&sales_cutoff)
-        .execute(&self.pool)
-        .await;
+        // Sales, with their lines and payments.
+        //
+        // A sale only goes if *everything* attached to it has reached the hub.
+        // The old form deleted lines and payments by their parent's state alone,
+        // so a sale that pushed while its lines were still queued — the ordinary
+        // shape of a partial push, since PUSH_ORDER sends `sales` before
+        // `sale_items` — lost those lines before they ever left the till. They
+        // existed nowhere else.
+        const PRUNABLE_SALES: &str = "SELECT sale_id FROM sales s
+             WHERE s.sync_status = 'synced' AND s.sold_at < ?
+               AND NOT EXISTS (SELECT 1 FROM sale_items i
+                                WHERE i.sale_id = s.sale_id AND i.sync_status <> 'synced')
+               AND NOT EXISTS (SELECT 1 FROM payments p
+                                WHERE p.sale_id = s.sale_id AND p.sync_status <> 'synced')";
 
-        let _ = sqlx::query(
-            "DELETE FROM payments WHERE sale_id IN (
-               SELECT sale_id FROM sales WHERE sync_status = 'synced' AND sold_at < ?
-             )",
-        )
-        .bind(&sales_cutoff)
-        .execute(&self.pool)
-        .await;
-
-        // 2. Sales themselves (only synced rows)
-        let _ = sqlx::query("DELETE FROM sales WHERE sync_status = 'synced' AND sold_at < ?")
-            .bind(&sales_cutoff)
-            .execute(&self.pool)
-            .await;
-
-        // 3. Audit logs older than log_days
-        let _ =
-            sqlx::query("DELETE FROM audit_logs WHERE created_at < ? AND sync_status = 'synced'")
-                .bind(&log_cutoff)
+        // FK-safe: children before parents.
+        for statement in [
+            format!("DELETE FROM sale_items WHERE sale_id IN ({PRUNABLE_SALES})"),
+            format!("DELETE FROM payments WHERE sale_id IN ({PRUNABLE_SALES})"),
+            format!("DELETE FROM sales WHERE sale_id IN ({PRUNABLE_SALES})"),
+        ] {
+            if let Err(e) = sqlx::query(&statement)
+                .bind(&sales_cutoff)
                 .execute(&self.pool)
-                .await;
+                .await
+            {
+                tracing::warn!("prune v2: sales retention pass failed: {e}");
+            }
+        }
 
-        // 4. Stock movements older than log_days
-        let _ = sqlx::query(
-            "DELETE FROM stock_movements WHERE created_at < ? AND sync_status = 'synced'",
-        )
-        .bind(&log_cutoff)
-        .execute(&self.pool)
-        .await;
+        // `audit_logs` and `stock_movements` are deliberately not pruned here.
+        //
+        // Both were, under `retention_days_logs`, and both broke something that
+        // reads them as complete:
+        //
+        //   * `audit_logs` is a per-device hash chain. Removing its oldest rows
+        //     leaves the first survivor pointing at a hash that is gone, and
+        //     `verify_chain` reported that as a broken link — so every install
+        //     older than the retention window accused itself of tampering.
+        //     `verify_chain` now tolerates a pruned floor, but the chain is
+        //     still the shop's evidence and thirty days of it is not evidence.
+        //
+        //   * `stock_movements` is the ledger every terminal derives stock from,
+        //     and the registry marks it `Parity::Full` for exactly that reason.
+        //     Deleting it under a setting labelled "logs" is not what that
+        //     setting says it does, and it is not what the documentation says
+        //     either. Its growth is bounded by trading volume — a busy
+        //     supermarket writes tens of megabytes a year — so there is no
+        //     pressure worth trading the inventory audit trail for.
+        //
+        // Both remain covered by `sales_days` indirectly: nothing else here
+        // deletes them, which is the intended state for an append-only ledger.
 
-        // 5. WAL checkpoint + VACUUM
+        // WAL checkpoint + VACUUM
         if let Err(e) = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
             .execute(&self.pool)
             .await
@@ -1602,18 +1639,49 @@ impl SyncWorker {
         .execute(&self.pool)
         .await;
 
-        tracing::info!(
-            "DB prune v2 complete — sales cutoff: {sales_cutoff}, log cutoff: {log_cutoff}"
-        );
+        tracing::info!("DB prune v2 complete — sales cutoff: {sales_cutoff}");
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        finish_pull, next_pull_offset, parse_ts, pending_push_sql, pull_since, ts_after,
-        PULL_LOOKBACK_SECS, PULL_ORDER, PUSH_ORDER,
+        finish_pull, next_pull_offset, parse_ts, pending_push_sql, pull_since, retention_cutoff,
+        ts_after, PULL_LOOKBACK_SECS, PULL_ORDER, PUSH_ORDER,
     };
+
+    // ── The retention cutoff has to be the same number on every node ──────────
+
+    /// The defect: the cutoff was `now - N days`, so a terminal pruning at 09:00
+    /// and a hub pruning at 14:00 deleted different sets of rows. For tables the
+    /// protocol cannot express a deletion for, that difference is permanent.
+    #[test]
+    fn two_nodes_pruning_at_different_times_of_day_agree_on_the_cutoff() {
+        let morning = chrono::DateTime::parse_from_rfc3339("2026-08-30T06:15:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let evening = chrono::DateTime::parse_from_rfc3339("2026-08-30T23:59:59Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+
+        assert_eq!(retention_cutoff(morning, 90), retention_cutoff(evening, 90));
+    }
+
+    #[test]
+    fn the_cutoff_lands_on_a_whole_day_the_stated_distance_back() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-08-30T13:45:12Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert_eq!(retention_cutoff(now, 90), "2026-06-01T00:00:00+00:00");
+        assert_eq!(retention_cutoff(now, 0), "2026-08-30T00:00:00+00:00");
+    }
+
+    /// A negative setting is a typo, not an instruction to delete the future.
+    #[test]
+    fn a_negative_retention_never_reaches_forward() {
+        let now = chrono::Utc::now();
+        assert!(retention_cutoff(now, -5) <= now.to_rfc3339());
+    }
 
     #[tokio::test]
     async fn heartbeat_sequence_is_monotonic_and_survives_worker_restart() {

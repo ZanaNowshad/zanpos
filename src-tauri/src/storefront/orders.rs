@@ -202,11 +202,12 @@ pub async fn ingest_storefront_message(
                  SELECT candidate.price_id FROM product_prices candidate
                  WHERE candidate.product_id=p.product_id AND candidate.price_type='selling'
                    AND (candidate.branch_id=? OR candidate.branch_id IS NULL)
-                   AND candidate.effective_from <= strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                   AND datetime(candidate.effective_from) <= datetime('now')
                    AND (candidate.effective_to IS NULL OR
-                        candidate.effective_to > strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+                        datetime(candidate.effective_to) > datetime('now'))
                  ORDER BY CASE WHEN candidate.branch_id=? THEN 0 ELSE 1 END,
-                          candidate.effective_from DESC,candidate.price_id DESC LIMIT 1)
+                          datetime(candidate.effective_from) DESC,
+                          candidate.price_id DESC LIMIT 1)
              WHERE p.product_id=? AND p.is_active=1 AND p.deleted_at IS NULL",
         )
         .bind(&branch_id)

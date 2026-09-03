@@ -5,7 +5,6 @@ use crate::domain::cart::{Cart, CartLine};
 use crate::domain::delivery::DeliveryInput;
 use crate::domain::sale::{PaymentInput, SaleResult};
 use crate::errors::AppError;
-use crate::inventory::movements;
 use crate::AppState;
 use sqlx::Row;
 use tauri::State;
@@ -46,6 +45,66 @@ pub struct AddItemInput {
     pub quantity: Option<String>,
 }
 
+/// Put `qty` of a product into the basket.
+///
+/// Both ways of adding an item — scanning it and tapping its tile — land here,
+/// because they had grown two copies of this logic and the copies had already
+/// drifted: only one of them checked the price override. That is the whole
+/// bypass the override quantity was meant to close, still open on the easier of
+/// the two paths, since the tile path takes an arbitrary quantity while a scan
+/// only ever adds one.
+pub(crate) async fn add_or_merge_line(
+    db: &sqlx::SqlitePool,
+    cart: &mut Cart,
+    product: &crate::domain::product::ProductWithPrice,
+    qty: &str,
+) -> Result<(), AppError> {
+    // A product nobody has priced is refused here rather than at the Charge
+    // button. `PRODUCT_QUERY` reads `COALESCE(pp.price_minor, 0)`, so an item
+    // with no `product_prices` row scans at 0.000 and looks free; checkout then
+    // refuses the whole basket for an "invalid price". The back office still
+    // needs to see unpriced products in order to price them, so the catalogue
+    // query keeps showing them — it is putting one in a customer's basket that
+    // has to stop, and the cashier should learn that while the item is still in
+    // their hand.
+    if product.price_minor <= 0 {
+        return Err(AppError::Validation(format!(
+            "'{}' has no price yet. Set one in the back office before selling it.",
+            product.product.name
+        )));
+    }
+
+    if let Some(i) = cart.active_line_for_product(&product.product.product_id) {
+        let merged = crate::domain::money::add_decimal_qty_str(&cart.lines[i].quantity, qty);
+        ensure_quantity_within_override(
+            db,
+            &cart.lines[i].cart_line_id,
+            &cart.lines[i].product_name,
+            &merged,
+        )
+        .await?;
+        cart.lines[i].image_path = product.product.image_path.clone();
+        cart.lines[i].quantity = merged;
+        cart.lines[i].recalculate();
+        return Ok(());
+    }
+
+    let mut line = CartLine::new(
+        Some(product.product.product_id.clone()),
+        product.product.name.clone(),
+        product.product.sku.clone(),
+        product.product.barcode.clone(),
+        qty,
+        product.price_minor,
+        product.product.tax_rule_id.clone().unwrap_or_default(),
+        product.tax_rate_basis_points,
+        product.tax_inclusive,
+    );
+    line.image_path = product.product.image_path.clone();
+    cart.lines.push(line);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn pos_add_item(
     input: AddItemInput,
@@ -73,34 +132,7 @@ pub async fn pos_add_item(
         }
     }
     let mut cart = input.cart;
-
-    // Merge with an existing active line for the same product rather than duplicating.
-    if let Some(existing) = cart
-        .lines
-        .iter_mut()
-        .find(|l| !l.voided && l.product_id.as_deref() == Some(product.product.product_id.as_str()))
-    {
-        existing.image_path = product.product.image_path.clone();
-        existing.quantity = crate::domain::money::add_decimal_qty_str(&existing.quantity, qty_str);
-        existing.recalculate();
-        return Ok(cart);
-    }
-
-    // No existing line — create a new one.
-    let image_path = product.product.image_path.clone();
-    let mut line = CartLine::new(
-        Some(product.product.product_id),
-        product.product.name,
-        product.product.sku,
-        product.product.barcode,
-        qty_str,
-        product.price_minor,
-        product.product.tax_rule_id.unwrap_or_default(),
-        product.tax_rate_basis_points,
-        product.tax_inclusive,
-    );
-    line.image_path = image_path;
-    cart.lines.push(line);
+    add_or_merge_line(&state.db, &mut cart, &product, qty_str).await?;
     Ok(cart)
 }
 
@@ -132,34 +164,7 @@ pub async fn pos_add_item_by_barcode(
     };
 
     let mut cart = input.cart;
-
-    // Merge with an existing active line for the same product rather than duplicating.
-    if let Some(existing) = cart
-        .lines
-        .iter_mut()
-        .find(|l| !l.voided && l.product_id.as_deref() == Some(product.product.product_id.as_str()))
-    {
-        existing.image_path = product.product.image_path.clone();
-        existing.quantity = crate::domain::money::add_decimal_qty_str(&existing.quantity, "1");
-        existing.recalculate();
-        return Ok(cart);
-    }
-
-    // No existing line — create a new one.
-    let image_path = product.product.image_path.clone();
-    let mut line = CartLine::new(
-        Some(product.product.product_id),
-        product.product.name,
-        product.product.sku,
-        product.product.barcode,
-        "1",
-        product.price_minor,
-        product.product.tax_rule_id.unwrap_or_default(),
-        product.tax_rate_basis_points,
-        product.tax_inclusive,
-    );
-    line.image_path = image_path;
-    cart.lines.push(line);
+    add_or_merge_line(&state.db, &mut cart, &product, "1").await?;
     Ok(cart)
 }
 
@@ -304,10 +309,48 @@ pub async fn pos_update_quantity(
         .iter_mut()
         .find(|l| l.cart_line_id == input.cart_line_id)
     {
+        ensure_quantity_within_override(
+            &state.db,
+            &line.cart_line_id,
+            &line.product_name,
+            &input.quantity,
+        )
+        .await?;
         line.quantity = input.quantity;
         line.recalculate();
     }
     Ok(cart)
+}
+
+/// Refuse to put more on a line than the manager approved at the override price.
+///
+/// A price override is approved for a line the manager is looking at, and both
+/// the scan-merge and the quantity keypad can grow that line afterwards without
+/// asking anyone. Catching it here tells the cashier while the item is still in
+/// their hand; `finalize_sale` checks the same thing again, because these
+/// commands take their cart over IPC and can simply be skipped.
+async fn ensure_quantity_within_override(
+    db: &sqlx::SqlitePool,
+    cart_line_id: &str,
+    product_name: &str,
+    wanted: &str,
+) -> Result<(), AppError> {
+    let approved: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT approved_quantity FROM pos_price_overrides WHERE cart_line_id = ?",
+    )
+    .bind(cart_line_id)
+    .fetch_optional(db)
+    .await?;
+    let Some(Some(approved)) = approved else {
+        return Ok(());
+    };
+    if crate::domain::money::cmp_decimal_qty(wanted, &approved) == Some(std::cmp::Ordering::Greater)
+    {
+        return Err(AppError::Validation(format!(
+            "'{product_name}' was approved at a special price for {approved}.              Ask a manager to approve the new quantity."
+        )));
+    }
+    Ok(())
 }
 
 #[derive(serde::Deserialize)]
@@ -338,14 +381,18 @@ pub async fn pos_set_line_price(
     line.unit_price_minor = input.price_minor;
     line.recalculate();
 
+    // The approval covers the quantity on the line as the manager sees it. It has
+    // to be recorded, because raising the quantity afterwards needs no manager.
     sqlx::query(
         "INSERT INTO pos_price_overrides
-         (cart_line_id, cart_id, product_id, price_minor, authorized_by_user_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+         (cart_line_id, cart_id, product_id, price_minor, approved_quantity,
+          authorized_by_user_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(cart_line_id) DO UPDATE SET
            cart_id = excluded.cart_id,
            product_id = excluded.product_id,
            price_minor = excluded.price_minor,
+           approved_quantity = excluded.approved_quantity,
            authorized_by_user_id = excluded.authorized_by_user_id,
            created_at = excluded.created_at",
     )
@@ -353,6 +400,7 @@ pub async fn pos_set_line_price(
     .bind(&cart.cart_id)
     .bind(&line.product_id)
     .bind(input.price_minor)
+    .bind(&line.quantity)
     .bind(&input.authorized_by_user_id)
     .bind(chrono::Utc::now().to_rfc3339())
     .execute(&state.db)
@@ -547,6 +595,50 @@ async fn load_discount_flags(db: &sqlx::SqlitePool) -> (bool, bool) {
     (require_discount_reason, cashier_can_discount)
 }
 
+/// Record — or withdraw — the approval for one discount on one cart.
+///
+/// `cart_line_id` is the line for a line discount and `""` for a whole-bill
+/// discount. A discount of zero removes the row, so clearing a discount also
+/// clears its authorisation and cannot be silently reinstated by an IPC payload.
+async fn record_discount_authorization(
+    db: &sqlx::SqlitePool,
+    cart_id: &str,
+    cart_line_id: &str,
+    discount_minor: i64,
+    reason: &str,
+    authorized_by_user_id: &str,
+) -> Result<(), AppError> {
+    if discount_minor <= 0 {
+        sqlx::query(
+            "DELETE FROM pos_discount_authorizations WHERE cart_id = ? AND cart_line_id = ?",
+        )
+        .bind(cart_id)
+        .bind(cart_line_id)
+        .execute(db)
+        .await?;
+        return Ok(());
+    }
+    sqlx::query(
+        "INSERT INTO pos_discount_authorizations
+           (cart_id, cart_line_id, discount_minor, reason, authorized_by_user_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(cart_id, cart_line_id) DO UPDATE SET
+           discount_minor        = excluded.discount_minor,
+           reason                = excluded.reason,
+           authorized_by_user_id = excluded.authorized_by_user_id,
+           created_at            = excluded.created_at",
+    )
+    .bind(cart_id)
+    .bind(cart_line_id)
+    .bind(discount_minor)
+    .bind(reason)
+    .bind(authorized_by_user_id)
+    .bind(chrono::Utc::now().to_rfc3339())
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn pos_apply_bill_discount(
     input: ApplyBillDiscountInput,
@@ -580,6 +672,19 @@ pub async fn pos_apply_bill_discount(
     } else {
         None
     };
+
+    // Record the approval where finalize can see it. Returning the discounted
+    // cart to the frontend is not proof of anything — the cart comes back over
+    // IPC and can say whatever the caller likes. Mirrors `pos_price_overrides`.
+    record_discount_authorization(
+        &state.db,
+        &cart.cart_id,
+        "",
+        discount,
+        &input.reason,
+        &input.authorized_by_user_id,
+    )
+    .await?;
 
     // Write audit entry so the discount reason is in the immutable log.
     if discount > 0 {
@@ -692,6 +797,15 @@ pub async fn pos_apply_line_discount(
             None
         };
         line.recalculate();
+        record_discount_authorization(
+            &state.db,
+            &cart.cart_id,
+            &input.cart_line_id,
+            discount,
+            &input.reason,
+            &input.authorized_by_user_id,
+        )
+        .await?;
 
         // Write audit entry for the line discount.
         if discount > 0 {
@@ -881,89 +995,9 @@ pub async fn pos_void_sale(
     // Voiding a completed sale is a manager/owner operation — not a cashier action.
     rbac::manager_or_owner(&state.db, &voided_by_user_id).await?;
 
-    let now = chrono::Utc::now().to_rfc3339();
-    let mut tx = state.db.begin().await?;
-
-    // Merge UPDATE + SELECT into a single RETURNING query (saves one round-trip).
-    let row = sqlx::query(
-        "UPDATE sales SET status = 'voided', updated_at = ?, sync_status = 'pending'
-         WHERE sale_id = ? AND status = 'completed'
-         RETURNING branch_id, device_id",
-    )
-    .bind(&now)
-    .bind(&sale_id)
-    .fetch_optional(&mut *tx)
-    .await?;
-
-    let (branch_id, device_id) = match row {
-        Some(r) => (
-            r.get::<String, _>("branch_id"),
-            r.get::<String, _>("device_id"),
-        ),
-        None => {
-            return Err(AppError::NotFound(
-                "Sale not found or already voided".into(),
-            ))
-        }
-    };
-
-    // Sale status, stock restoration, and the required audit event are one
-    // transaction. No partially voided sale can survive an audit failure.
-    movements::return_void_sale(
-        &mut tx,
-        &sale_id,
-        &voided_by_user_id,
-        &branch_id,
-        &device_id,
-    )
-    .await?;
-
-    // The audit row is authoritative and commits with the sale/stock changes.
-    let audit_id = ulid::Ulid::new().to_string();
-    let prev_hash = audit_hash::fetch_last_hash_tx(&mut tx, &device_id)
-        .await
-        .unwrap_or_default();
-    let hash = audit_hash::compute_audit_hash(&audit_hash::AuditHashInput {
-        audit_log_id: &audit_id,
-        event_type: "sale.voided",
-        entity_type: "sale",
-        entity_id: &sale_id,
-        actor_user_id: &voided_by_user_id,
-        actor_type: "user",
-        created_at: &now,
-        before_json: None,
-        after_json: None,
-        reason: None,
-        previous_hash: &prev_hash,
-    });
-    sqlx::query(
-        "INSERT INTO audit_logs
-           (audit_log_id, event_type, entity_type, entity_id,
-            actor_user_id, actor_type, device_id, origin_device_id, branch_id, created_at, hash, previous_hash)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-    )
-    .bind(&audit_id)
-    .bind("sale.voided")
-    .bind("sale")
-    .bind(&sale_id)
-    .bind(&voided_by_user_id)
-    .bind("user")
-    .bind(&device_id)
-    .bind(&device_id)
-    .bind(&branch_id)
-    .bind(&now)
-    .bind(&hash)
-    .bind(if prev_hash.is_empty() {
-        None
-    } else {
-        Some(prev_hash.clone())
-    })
-    .execute(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
-
-    // sync_status='pending' is set by column DEFAULT — sync worker picks it up
+    // Status, stock and the audit entry are one transaction in `sale_repo`, and
+    // the assistant's void goes through the same function.
+    sale_repo::void_sale(&state.db, &sale_id, &voided_by_user_id, None).await?;
 
     Ok(VoidSaleResult {
         voided: true,
@@ -1365,6 +1399,11 @@ mod tests {
         cart.lines.push(water_line("2"));
         cart.bill_discount_minor = 150;
         cart.bill_discount_reason = Some("loyalty".into());
+        // finalize refuses a discount the discount command never approved, so
+        // record the approval through the same function the command uses.
+        record_discount_authorization(&pool, &cart.cart_id, "", 150, "loyalty", CASHIER)
+            .await
+            .expect("approve the bill discount");
 
         let payments = vec![PaymentInput {
             method: "cash".into(),
@@ -1407,7 +1446,11 @@ mod tests {
         line.line_discount_minor = 100;
         line.line_discount_reason = Some("manager comp".into());
         line.recalculate();
+        let line_id = line.cart_line_id.clone();
         cart.lines.push(line);
+        record_discount_authorization(&pool, &cart.cart_id, &line_id, 100, "manager comp", CASHIER)
+            .await
+            .expect("approve the line discount");
 
         let payments = vec![PaymentInput {
             method: "cash".into(),

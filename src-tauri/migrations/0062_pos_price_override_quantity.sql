@@ -1,0 +1,17 @@
+-- How much of the line the manager actually approved at the overridden price.
+--
+-- `pos_price_overrides` recorded only the unit price, and `finalize_sale`
+-- checked only the unit price, so the approval said nothing about how many units
+-- it covered. Scanning the same barcode again merges into the existing line and
+-- raises its quantity (`pos_add_item_by_barcode`), and `pos_update_quantity`
+-- lets any cashier type a new quantity outright — neither touches this table.
+-- A manager marking one damaged item down to 0.100 therefore approved 0.100 for
+-- however many the cashier put on that line afterwards, with no second approval
+-- and nothing in the audit trail to show the quantity had moved.
+--
+-- Nullable on purpose. Override rows are per-cart and deleted when the sale
+-- commits, so in practice every row written after this migration carries a
+-- quantity; a NULL means the row predates it, and is honoured as before rather
+-- than refusing a sale for a cart that was already open. The one lasting case is
+-- a cart parked before the upgrade and resumed after it.
+ALTER TABLE pos_price_overrides ADD COLUMN approved_quantity TEXT;

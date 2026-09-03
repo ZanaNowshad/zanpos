@@ -1,6 +1,6 @@
 use crate::commands::override_token;
 use crate::commands::rbac;
-use crate::db::repositories::refund_repo;
+use crate::db::repositories::{audit_hash, refund_repo};
 use crate::domain::refund::{RefundItemInput, RefundResult, SaleForRefund};
 use crate::domain::sale::SaleResult;
 use crate::errors::AppError;
@@ -43,7 +43,7 @@ pub async fn receipt_reprint(
         &["owner", "manager", "cashier"],
     )
     .await?;
-    refund_repo::get_sale_result_by_receipt(&state.db, &receipt_number).await
+    let sale = refund_repo::get_sale_result_by_receipt(&state.db, &receipt_number).await
         .map_err(|e| {
             if matches!(e, AppError::NotFound(_)) {
                 AppError::NotFound(
@@ -52,7 +52,53 @@ pub async fn receipt_reprint(
             } else {
                 e
             }
-        })
+        })?;
+
+    // A reprint is a read, but it is not nothing.
+    //
+    // Duplicate receipts are how a returned item gets refunded twice, and the
+    // reprint itself left no trace at all — the till could not answer "who
+    // printed this, and how many times". The row records the reprint; it does
+    // not touch the sale, mint a receipt number or take a payment, which is what
+    // makes a reprint safe to repeat after a paper jam.
+    //
+    // Best-effort on purpose. A cashier standing at the counter with a jammed
+    // printer must not be refused their receipt because the audit write failed;
+    // the failure is logged rather than raised.
+    let (device_id, branch_id) = sale_origin(&state.db, &sale.sale_id).await;
+    if let Err(error) = audit_hash::insert_audit_entry_override(
+        &state.db,
+        "sale.receipt_reprinted",
+        "sale",
+        &sale.sale_id,
+        &requesting_user_id,
+        "user",
+        &device_id,
+        &branch_id,
+        None,
+        Some(&format!("{{\"receipt_number\":\"{receipt_number}\"}}")),
+        None,
+        false,
+    )
+    .await
+    {
+        tracing::warn!("receipt {receipt_number} reprinted but not audited: {error}");
+    }
+
+    Ok(sale)
+}
+
+/// Where a sale was rung up, for the audit entry's device and branch columns.
+async fn sale_origin(pool: &sqlx::SqlitePool, sale_id: &str) -> (String, String) {
+    sqlx::query_as::<_, (String, String)>(
+        "SELECT device_id, branch_id FROM sales WHERE sale_id = ?",
+    )
+    .bind(sale_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_default()
 }
 
 #[derive(serde::Deserialize)]
@@ -67,6 +113,11 @@ pub struct CreateRefundInput {
     /// attempts a cross-device refund. Manager/owner cross-device refunds do not
     /// need this token (their role is checked directly).
     pub manager_override_token: Option<String>,
+    /// Stable for one refund attempt, so a retry after a timeout is answered
+    /// with the reversal already made instead of paying the customer twice.
+    /// The refund screen mints it once and keeps it across retries, the same way
+    /// the cart id serves a sale.
+    pub idempotency_key: Option<String>,
 }
 
 /// Resolve the current device id from app_config. Returns empty string if not configured.
@@ -143,6 +194,7 @@ pub async fn refund_create(
         reason_code,
         &input.created_by_user_id,
         override_used,
+        input.idempotency_key,
     )
     .await
 }

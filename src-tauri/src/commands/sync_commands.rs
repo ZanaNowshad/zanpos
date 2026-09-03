@@ -866,6 +866,19 @@ pub struct SyncDiagTable {
     pub last_failed_row_id: Option<String>,
     pub retry_count: i64,
     pub table_checksum: Option<String>,
+    /// How far this table's pull has reached — the watermark the hub is asked
+    /// for rows after.
+    ///
+    /// It decides what this terminal is offered, and it only ever moves forward,
+    /// so when a table stops receiving rows this is the number that explains why:
+    /// a cursor sitting in the future (a clock that ran fast) or parked at an
+    /// instant the hub has already served past. It was stored in `app_config` and
+    /// shown nowhere, which left the one figure that explains a stalled table
+    /// visible only to someone willing to query the database by hand.
+    ///
+    /// `None` means nothing has been pulled yet, which is not the same as being
+    /// caught up.
+    pub pull_cursor: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1090,6 +1103,13 @@ pub async fn sync_diagnostics(
                 table_checksum: health
                     .as_ref()
                     .and_then(|r| r.get::<Option<String>, _>("table_checksum")),
+                pull_cursor: sqlx::query_scalar("SELECT value FROM app_config WHERE key = ?")
+                    .bind(format!("sync_v2_watermark_{table}"))
+                    .fetch_optional(&state.db)
+                    .await
+                    .ok()
+                    .flatten()
+                    .filter(|value: &String| !value.is_empty()),
             });
         }
 

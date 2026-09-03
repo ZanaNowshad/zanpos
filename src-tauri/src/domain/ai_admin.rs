@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -307,6 +306,8 @@ pub struct ProactiveAlert {
 // ── Session & usage tracking ─────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Retained: schema documentation: the table is queried inline, not through this type.
+#[allow(dead_code)]
 pub struct AiSession {
     pub session_id: String,
     pub branch_id: String,
@@ -324,6 +325,8 @@ pub struct AiSession {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Retained: schema documentation: the table is queried inline, not through this type.
+#[allow(dead_code)]
 pub struct AiUsageRecord {
     pub id: i64,
     pub session_id: String,
@@ -337,6 +340,8 @@ pub struct AiUsageRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+// Retained: schema documentation: the table is queried inline, not through this type.
+#[allow(dead_code)]
 pub struct AiFeedback {
     pub feedback_id: String,
     pub session_id: String,

@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use std::future::Future;
 use std::pin::Pin;
 
@@ -218,6 +217,8 @@ impl Operation for BulkStockSet {
 pub trait Operation: Send + Sync {
     fn id(&self) -> &'static str;
     fn schema(&self) -> Value;
+    // Retained: no caller: mutation classification is done by tool_policy instead.
+    #[allow(dead_code)]
     fn is_mutation(&self) -> bool {
         true
     }
@@ -243,6 +244,9 @@ pub trait Operation: Send + Sync {
 
 pub struct Preview {
     pub description: String,
+    // Retained: mirrors the SQL projection each op builds; the
+    // preview is serialised outward and never read back in Rust.
+    #[allow(dead_code)]
     pub count: Option<i64>,
     pub samples: Vec<Value>,
 }
@@ -271,6 +275,8 @@ impl Registry {
     pub fn find(&self, id: &str) -> Option<&dyn Operation> {
         self.0.iter().find(|o| o.id() == id).map(|o| o.as_ref())
     }
+    // Retained: no caller since the selector started returning ids directly.
+    #[allow(dead_code)]
     pub fn all_ids(&self) -> Vec<&'static str> {
         self.0.iter().map(|o| o.id()).collect()
     }
@@ -1089,7 +1095,7 @@ impl Operation for BulkPromotionRemove {
             for row in batch {
                 sqlx::query(
                     "UPDATE product_prices SET effective_to = ?, sync_status = 'pending' \
-                     WHERE product_id = ? AND price_type = 'promotional' AND effective_to > ?",
+                     WHERE product_id = ? AND price_type = 'promotional' AND datetime(effective_to) > datetime(?)",
                 )
                 .bind(&now)
                 .bind(&row.entity_id)

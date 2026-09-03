@@ -383,6 +383,119 @@ async fn a_full_sweep_covers_every_parity_checked_table() {
     handle.shutdown();
 }
 
+/// A hub one release behind must still accept what a newer till sends it.
+///
+/// This is the half of the rolling-upgrade failure that could not recover on its
+/// own. `push_table` answered 500 on the first row carrying a column the hub had
+/// never heard of, and `upsert_rows` reads any 5xx as transient — so the terminal
+/// retried the identical batch, hit the identical error, and that table stopped
+/// advancing for as long as the two builds differed. Which is exactly the window
+/// a staged rollout creates.
+///
+/// Over real HTTP, because the failure was in the status code the hub chose, and
+/// a unit test on `apply_row` would never have seen it.
+#[tokio::test]
+async fn a_hub_a_release_behind_still_accepts_a_push_from_a_newer_till() {
+    let (hub_pool, _term_pool, client, handle) = wire_up().await;
+    add_category(&hub_pool, "cat_keep", "Existing").await;
+
+    // What the next release's terminal would send: everything this hub knows,
+    // plus one column it does not.
+    let from_a_newer_build = serde_json::json!({
+        "category_id": "cat_future",
+        "name": "Sent by a newer till",
+        "created_at": "2026-08-01T00:00:00Z",
+        "updated_at": "2026-08-09T00:00:00Z",
+        "a_column_this_build_has_never_heard_of": "added next release",
+    });
+
+    client
+        .upsert_rows("categories", &[from_a_newer_build])
+        .await
+        .expect(
+            "the hub refused a push it should have accepted, and the till would retry for ever",
+        );
+
+    let names = category_names(&hub_pool).await;
+    assert!(
+        names.contains(&"Sent by a newer till".to_string()),
+        "the push was accepted but nothing landed: {names:?}"
+    );
+
+    handle.shutdown();
+}
+
+/// Retention pruning must not manufacture divergence out of nothing.
+///
+/// This is the failure that made a shop past its retention window unable to ever
+/// report parity again. `sales`, `sale_items` and `payments` are
+/// `Deletion::Never` — the protocol can say "this row exists" and nothing else —
+/// and `Parity::Full`, so they are compared in full. The cutoff used to be
+/// `now - N days`, an instant, so the hub pruning at 14:00 and a terminal
+/// pruning at 09:00 deleted different sets. Every row in the gap then read as a
+/// delivery that never landed: reconciliation handed it back, and the next prune
+/// deleted it again.
+///
+/// Both nodes prune here at genuinely different times of day, against a real hub
+/// over real HTTP, and the table has to come out identical.
+#[tokio::test]
+async fn two_nodes_pruning_hours_apart_still_agree_on_every_sale() {
+    let (hub_pool, term_pool, client, handle) = wire_up().await;
+
+    // Well past any retention window, and present on both sides — the ordinary
+    // state of an old sale that synced correctly months ago.
+    for pool in [&hub_pool, &term_pool] {
+        add_sale(pool, "SALE-AGED", 500, "2020-01-01T09:00:00Z").await;
+        sqlx::query("UPDATE sales SET sold_at = '2020-01-01T09:00:00Z', sync_status = 'synced'")
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    // Confirmed identical before either prune runs, so a divergence afterwards
+    // can only have been created by the pruning itself.
+    assert!(
+        repair::diverged(&term_pool, &client, "sales")
+            .await
+            .unwrap()
+            .unwrap()
+            .is_empty(),
+        "the fixture diverged before anything was pruned"
+    );
+
+    // Two nodes, two different moments — which is the whole point. Neither can
+    // know when the other last ran, so the cutoff has to come from the calendar
+    // rather than from the clock.
+    zanpos_lib::sync_v2::SyncWorker::new(hub_pool.clone())
+        .prune_old_data()
+        .await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    zanpos_lib::sync_v2::SyncWorker::new(term_pool.clone())
+        .prune_old_data()
+        .await;
+
+    let after = repair::diverged(&term_pool, &client, "sales")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        after.is_empty(),
+        "pruning created divergence the protocol cannot express: {after:?}"
+    );
+
+    // And it really did prune — a test that passes because nothing was deleted
+    // proves nothing.
+    for pool in [&hub_pool, &term_pool] {
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sales")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert_eq!(remaining, 0, "retention did not actually run");
+    }
+
+    handle.shutdown();
+}
+
 /// The reported symptom, end to end over the wire.
 ///
 /// A terminal showed 28,054 products, 28,119 prices and **0 barcodes**, and

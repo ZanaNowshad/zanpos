@@ -3,6 +3,8 @@ use crate::sync_v2::parse_ts;
 use serde_json::{Map, Value};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqlitePool};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, OnceLock, RwLock};
 
 /// Every table the sync protocol may read or write. The hub rejects any other
 /// name.
@@ -140,11 +142,32 @@ pub async fn apply_row(pool: &SqlitePool, table: &str, row: &Value) -> AppResult
         .unwrap_or_default()
         .to_string();
 
-    // A row without its own primary key cannot be deduplicated or looked up
-    // later, so it is applied without a record rather than not applied at all —
-    // the existing constraint-based protection still covers it.
+    // A row with no primary key is refused rather than applied.
+    //
+    // It used to be applied anyway, on the reasoning that "the existing
+    // constraint-based protection still covers it". It does not. Only
+    // `INTEGER PRIMARY KEY` is implicitly `NOT NULL` in SQLite; every table here
+    // keys on TEXT, so 63 of this schema's 80 primary-key columns accept NULL —
+    // and a primary-key index treats NULLs as distinct, so
+    // `ON CONFLICT(sale_id) DO UPDATE` cannot match one.
+    //
+    // `apply_lww` is exactly that statement, and `syncable_columns` drops null
+    // values from the column list, so an incoming row whose key is null or
+    // missing inserts a NULL-keyed row, fails to conflict with the NULL-keyed
+    // row from last time, and inserts another. Every sync cycle, without bound,
+    // duplicating whatever financial record it happened to be.
+    //
+    // Refusing is safe in the direction that matters: the row is reported and
+    // retried rather than silently multiplied, and after
+    // `dead_letter::QUARANTINE_AFTER_ATTEMPTS` it is set aside in full for
+    // somebody to look at.
     if entity_id.is_empty() {
-        return apply_row_inner(pool, table, obj).await;
+        return Err(AppError::Validation(format!(
+            "{table} row arrived without a `{}` — refusing to apply it, because a \
+             NULL primary key cannot be matched by ON CONFLICT and would insert a \
+             fresh duplicate on every cycle",
+            pk_for_table(table)
+        )));
     }
 
     if crate::sync_v2::inbox::claim(pool, table, &entity_id, obj).await?
@@ -497,15 +520,86 @@ pub(crate) fn is_safe_col(name: &str) -> bool {
 /// Nulls are skipped so a partial row cannot blank a column the sender never
 /// knew about. `deleted_at` is the single exception, because there a null is
 /// not an absence but the message itself: it is how a restore is expressed.
-pub(crate) fn syncable_columns(obj: &Map<String, Value>) -> Vec<&String> {
-    obj.keys()
+pub(crate) async fn syncable_columns<'a>(
+    pool: &SqlitePool,
+    table: &str,
+    obj: &'a Map<String, Value>,
+) -> AppResult<Vec<&'a String>> {
+    let known = known_columns(pool, table).await?;
+    Ok(obj
+        .keys()
         .filter(|k| {
             is_safe_col(k)
+                && known.contains(k.as_str())
                 && *k != "sync_status"
                 && *k != "sync_attempts"
                 && (*k == "deleted_at" || !matches!(obj.get(*k), Some(Value::Null)))
         })
-        .collect()
+        .collect())
+}
+
+/// The columns this build's schema actually has, per table.
+///
+/// Cached because it is consulted once per applied row and a catalogue sync
+/// applies tens of thousands. The schema cannot change while the process runs —
+/// migrations complete before any sync starts — so a single read is enough.
+static SCHEMA_COLUMNS: OnceLock<RwLock<HashMap<String, Arc<HashSet<String>>>>> = OnceLock::new();
+
+/// What this build knows how to store for `table`.
+///
+/// A fleet is *normally* mid-upgrade: the hub updates, or one till does, and for
+/// a while the two run different schema versions. That is the whole shape of the
+/// rollout the release system performs.
+///
+/// A row carrying a column the receiving build has never heard of used to be a
+/// hard error — `INSERT INTO products (a_column_added_last_release, …)` against a
+/// table without it. That failed the row, which failed the batch, which failed
+/// the table. In one direction the hub answered 500 to every push and the
+/// terminal retried the same batch for ever; in the other the terminal
+/// quarantined every row of the table after five attempts. Sync for that table
+/// stopped completely, on precisely the release that changed it, for exactly as
+/// long as the fleet was partly upgraded.
+///
+/// So an unknown column is now ignored rather than fatal. Each build writes what
+/// it understands; a column it does not know stays intact on the node that does
+/// and arrives here when this node upgrades. Nothing is invented and nothing is
+/// dropped from the sender — only this writer's statement is narrowed to what
+/// its own table can hold.
+async fn known_columns(pool: &SqlitePool, table: &str) -> AppResult<Arc<HashSet<String>>> {
+    let cache = SCHEMA_COLUMNS.get_or_init(|| RwLock::new(HashMap::new()));
+    if let Ok(read) = cache.read() {
+        if let Some(columns) = read.get(table) {
+            return Ok(columns.clone());
+        }
+    }
+
+    // `PRAGMA table_info` takes no bind parameters, so the name is interpolated —
+    // safe here because every caller has already been through `SYNC_TABLES`, and
+    // checked again rather than assumed.
+    if !SYNC_TABLES.contains(&table) {
+        return Err(AppError::Internal(format!(
+            "known_columns called for unregistered table '{table}'"
+        )));
+    }
+    let rows = sqlx::query(&format!("PRAGMA table_info({table})"))
+        .fetch_all(pool)
+        .await?;
+    let columns: Arc<HashSet<String>> = Arc::new(
+        rows.iter()
+            .filter_map(|row| row.try_get::<String, _>("name").ok())
+            .collect(),
+    );
+
+    // An empty answer means the table is not there at all — a pool mid-migration,
+    // or a test fixture. Not cached, so the next call sees the real schema
+    // instead of a permanent blank.
+    if columns.is_empty() {
+        return Ok(columns);
+    }
+    if let Ok(mut write) = cache.write() {
+        write.insert(table.to_string(), columns.clone());
+    }
+    Ok(columns)
 }
 
 /// What `ON CONFLICT` has to name for this table.
@@ -582,7 +676,7 @@ pub(crate) async fn apply_lww(
     obj: &Map<String, Value>,
     exclude_cols: &[&str],
 ) -> AppResult<()> {
-    let cols = syncable_columns(obj);
+    let cols = syncable_columns(pool, table, obj).await?;
 
     if cols.is_empty() {
         return Ok(());
@@ -720,7 +814,7 @@ async fn apply_customer_by_primary_key(
     pool: &SqlitePool,
     obj: &Map<String, Value>,
 ) -> AppResult<()> {
-    let cols = syncable_columns(obj);
+    let cols = syncable_columns(pool, "customers", obj).await?;
 
     if cols.is_empty() {
         return Ok(());
@@ -929,7 +1023,7 @@ pub(crate) async fn apply_append_only(
     table: &str,
     obj: &Map<String, Value>,
 ) -> AppResult<()> {
-    let cols = syncable_columns(obj);
+    let cols = syncable_columns(pool, table, obj).await?;
 
     if cols.is_empty() {
         return Ok(());
@@ -1270,43 +1364,18 @@ async fn apply_stock_level_seed(pool: &SqlitePool, obj: &Map<String, Value>) -> 
     apply_lww(pool, "stock_levels", "stock_level_id", obj, &[]).await
 }
 
+/// The ledger-derived quantity, from the module that defines the stock equation.
+///
+/// Was a second copy of the anchor-plus-deltas derivation. Two definitions of
+/// what stock *is* is precisely the drift this file exists to detect, so the
+/// derivation lives in one place and both the sync seed guard and the
+/// reconciliation report ask it the same question.
 async fn ledger_balance(
     pool: &SqlitePool,
     product_id: &str,
     branch_id: &str,
 ) -> AppResult<Option<f64>> {
-    let anchor: Option<(f64, String, i64)> = sqlx::query_as(
-        "SELECT CAST(quantity_after AS REAL), created_at, rowid
-           FROM stock_movements
-          WHERE product_id = ? AND branch_id = ?
-          ORDER BY datetime(created_at) ASC, rowid ASC
-          LIMIT 1",
-    )
-    .bind(product_id)
-    .bind(branch_id)
-    .fetch_optional(pool)
-    .await?;
-
-    let Some((anchor_after, anchor_at, anchor_rowid)) = anchor else {
-        return Ok(None);
-    };
-
-    let delta_sum: f64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(CAST(quantity_delta AS REAL)), 0.0)
-           FROM stock_movements
-          WHERE product_id = ? AND branch_id = ?
-            AND (datetime(created_at) > datetime(?)
-                 OR (datetime(created_at) = datetime(?) AND rowid > ?))",
-    )
-    .bind(product_id)
-    .bind(branch_id)
-    .bind(&anchor_at)
-    .bind(&anchor_at)
-    .bind(anchor_rowid)
-    .fetch_one(pool)
-    .await?;
-
-    Ok(Some(anchor_after + delta_sum))
+    crate::inventory::reconcile::ledger_quantity(pool, product_id, branch_id).await
 }
 
 pub(crate) async fn recompute_stock_level(

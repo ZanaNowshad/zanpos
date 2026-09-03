@@ -108,6 +108,48 @@ fn a_real_recent_beat_reads_as_online() {
     assert_eq!(device_state(true, Some(age)), DeviceState::Online);
 }
 
+// ── Clock skew ───────────────────────────────────────────────────────────────
+//
+// The sign is the entire content of this figure, and it was inverted: a till
+// running fast was reported as running slow. Nothing covered it, so the roster
+// told operators to move the clock in the wrong direction for however long that
+// stood.
+
+/// Positive means the terminal is ahead of the hub. A beat stamped by the
+/// terminal at 12:05 that the hub receives at 12:00 is a terminal five minutes
+/// fast, not five minutes slow.
+#[test]
+fn a_terminal_ahead_of_the_hub_reports_a_positive_skew() {
+    let skew = clock_skew_secs(Some("2026-08-30T12:00:00Z"), Some("2026-08-30T12:05:00Z"));
+    assert_eq!(skew, Some(300), "a fast terminal must read as ahead");
+}
+
+#[test]
+fn a_terminal_behind_the_hub_reports_a_negative_skew() {
+    let skew = clock_skew_secs(Some("2026-08-30T12:00:00Z"), Some("2026-08-30T11:55:00Z"));
+    assert_eq!(skew, Some(-300), "a slow terminal must read as behind");
+}
+
+/// LAN latency is milliseconds, so an aligned pair reads as zero rather than as
+/// a skew worth warning about.
+#[test]
+fn an_aligned_clock_reports_no_skew_worth_warning_about() {
+    let skew =
+        clock_skew_secs(Some("2026-08-30T12:00:00Z"), Some("2026-08-30T11:59:59.7Z")).unwrap();
+    assert!(skew.abs() <= 1, "{skew}");
+    assert!(skew.abs() <= CLOCK_SKEW_WARN_SECS);
+}
+
+#[test]
+fn a_terminal_without_a_sent_at_has_no_measurable_skew() {
+    assert_eq!(clock_skew_secs(Some("2026-08-30T12:00:00Z"), None), None);
+    assert_eq!(clock_skew_secs(None, Some("2026-08-30T12:00:00Z")), None);
+    assert_eq!(
+        clock_skew_secs(Some("2026-08-30T12:00:00Z"), Some("not a date")),
+        None
+    );
+}
+
 /// Every state has to tell an operator something different to do, or the extra
 /// states are decoration.
 #[test]

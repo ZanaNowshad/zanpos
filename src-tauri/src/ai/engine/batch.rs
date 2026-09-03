@@ -67,8 +67,7 @@ pub async fn execute_price_adjust(
         crate::ai::tool_policy::require_tool_enabled(pool, "bulk_price_adjust").await?;
         let sql = format!(
             "{} SELECT p.product_id, pp.price_minor FROM products p \
-             JOIN product_prices pp ON pp.product_id = p.product_id \
-               AND pp.price_type='selling' AND pp.effective_to IS NULL \
+             JOIN v_current_selling_price pp ON pp.product_id = p.product_id \
              WHERE {} AND p.product_id > ? ORDER BY p.product_id LIMIT ?",
             c.cte, c.where_sql
         );

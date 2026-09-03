@@ -637,57 +637,105 @@ pub async fn execute(
         "duplicate_product" => {
             let src_id = req_v(input, "product_id")?;
             let new_name = req_v(input, "new_name")?;
+
+            // This tool never worked. It selected `price_minor` and `track_stock`
+            // from `products`: the first has never been a column there — price
+            // lives in `product_prices`, which is the record checkout reads — and
+            // the second is spelled `track_inventory`. The `?` on that SELECT
+            // meant every invocation failed before writing anything.
             let row = sqlx::query(
-                "SELECT price_minor, cost_minor, category_id, tax_rule_id,
-                         track_stock, reorder_point, is_active
-                 FROM products WHERE product_id = ?",
+                "SELECT cost_minor, category_id, tax_rule_id, track_inventory,
+                        allow_decimal_quantity, reorder_point, currency
+                   FROM products WHERE product_id = ? AND deleted_at IS NULL",
             )
             .bind(&src_id)
             .fetch_optional(pool)
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Product {src_id} not found")))?;
+
+            // The active selling price, through the one view every reader uses.
+            // A duplicate with no price row is a product the till cannot ring up,
+            // so the price is carried across rather than defaulted to zero.
+            let price_minor: Option<i64> = sqlx::query_scalar(
+                "SELECT price_minor FROM v_current_selling_price WHERE product_id = ?",
+            )
+            .bind(&src_id)
+            .fetch_optional(pool)
+            .await?;
+
             let new_id = ulid::Ulid::new().to_string();
             let now = chrono::Utc::now().to_rfc3339();
+            let currency: String = row
+                .try_get::<Option<String>, _>("currency")
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "BHD".to_string());
+            let actor =
+                crate::ai::tool_policy::current_actor_id().unwrap_or_else(|| "unknown".into());
+
+            // One transaction. A product row without its price row is a catalogue
+            // entry that cannot be sold, and that is precisely what a partial
+            // success here would leave behind.
+            let mut tx = pool.begin().await?;
             sqlx::query(
-                "INSERT INTO products (product_id, name, price_minor, cost_minor, category_id,
-                 tax_rule_id, track_stock, reorder_point, is_active, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO products (product_id, name, cost_minor, category_id, tax_rule_id,
+                     track_inventory, allow_decimal_quantity, reorder_point, currency,
+                     is_active, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
             )
             .bind(&new_id)
             .bind(&new_name)
-            .bind(
-                row.try_get::<Option<i64>, _>("price_minor")
-                    .ok()
-                    .flatten()
-                    .unwrap_or(0),
-            )
             .bind(row.try_get::<Option<i64>, _>("cost_minor").ok().flatten())
-            .bind(
-                row.try_get::<Option<String>, _>("category_id")
-                    .ok()
-                    .flatten(),
-            )
+            // NOT NULL on both sides: a source product cannot have a null category.
+            .bind(row.try_get::<String, _>("category_id").unwrap_or_default())
             .bind(
                 row.try_get::<Option<String>, _>("tax_rule_id")
                     .ok()
                     .flatten(),
             )
             .bind(
-                row.try_get::<Option<i64>, _>("track_stock")
+                row.try_get::<Option<i64>, _>("track_inventory")
+                    .ok()
+                    .flatten()
+                    .unwrap_or(1),
+            )
+            .bind(
+                row.try_get::<Option<i64>, _>("allow_decimal_quantity")
                     .ok()
                     .flatten()
                     .unwrap_or(0),
             )
             .bind(
-                row.try_get::<Option<f64>, _>("reorder_point")
+                row.try_get::<Option<i64>, _>("reorder_point")
                     .ok()
-                    .flatten(),
+                    .flatten()
+                    .unwrap_or(0),
             )
-            .bind(1i64)
+            .bind(&currency)
             .bind(&now)
             .bind(&now)
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
+
+            if let Some(price_minor) = price_minor {
+                sqlx::query(
+                    "INSERT INTO product_prices (price_id, product_id, price_type, price_minor,
+                         currency, effective_from, created_by_user_id, created_at, updated_at)
+                     VALUES (?, ?, 'selling', ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(ulid::Ulid::new().to_string())
+                .bind(&new_id)
+                .bind(price_minor)
+                .bind(&currency)
+                .bind(&now)
+                .bind(&actor)
+                .bind(&now)
+                .bind(&now)
+                .execute(&mut *tx)
+                .await?;
+            }
+            tx.commit().await?;
+
             audit2(
                 pool,
                 "product_duplicated",
@@ -1115,6 +1163,25 @@ pub async fn execute(
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
             {
+                // `partial` and `received` are outcomes of actually receiving
+                // goods, never something to set directly. Writing `received`
+                // here moved no stock, no cost and no `received_qty` — it only
+                // made the order *read* as received, so the shop believed goods
+                // had arrived that never had. The column has no CHECK
+                // constraint to catch it, and `delete_purchase_order`'s "already
+                // received" guard reads this same field, so rewriting it also
+                // unlocked deleting an order that had stock against it.
+                if matches!(status, "partial" | "received") {
+                    return Err(AppError::Validation(
+                        "A purchase order becomes 'partial' or 'received' by receiving goods                          against it, not by setting its status. Use the receive action so the                          stock, cost and receipt record are written too."
+                            .into(),
+                    ));
+                }
+                if !matches!(status, "draft" | "ordered" | "cancelled") {
+                    return Err(AppError::Validation(format!(
+                        "'{status}' is not a purchase-order status."
+                    )));
+                }
                 sqlx::query(
                     "UPDATE purchase_orders SET status = ?, updated_at = ? WHERE po_id = ?",
                 )
@@ -1832,8 +1899,13 @@ pub async fn execute(
                 branch_phone: b_phone,
                 cashier_name: cashier,
                 sold_at,
+                // Derived from the branch currency this receipt is actually in,
+                // not the literal 3 that was here. The currency was already read
+                // on the line above and then ignored, so a shop on anything but a
+                // three-decimal currency had every amount on this receipt
+                // rendered with the decimal point in the wrong place.
+                currency_exponent: crate::domain::money::currency_exponent(&currency),
                 currency,
-                currency_exponent: 3,
                 items: receipt_items,
                 net_total_minor: net,
                 tax_total_minor: tax,

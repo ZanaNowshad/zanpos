@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use crate::db::repositories::{
     ai_admin_repo,
     proactive_repo::{self, ProactiveAlert},
@@ -289,26 +288,12 @@ async fn run_once(
     }
 
     if persisted > 0 {
+        // The repository and the domain now name the same type, so there is
+        // nothing to convert — and no eleven-field mapping to forget to update.
         let alerts = proactive_repo::list_undismissed(pool, &branch_id)
             .await
             .unwrap_or_default();
-        let domain_alerts: Vec<crate::domain::ai_admin::ProactiveAlert> = alerts
-            .into_iter()
-            .map(|a| crate::domain::ai_admin::ProactiveAlert {
-                alert_id: a.alert_id,
-                branch_id: a.branch_id,
-                alert_type: a.alert_type,
-                severity: a.severity,
-                title: a.title,
-                description: a.description,
-                detail_json: a.detail_json,
-                detected_at: a.detected_at,
-                dismissed_at: a.dismissed_at,
-                dismissed_by_user_id: a.dismissed_by_user_id,
-                created_at: a.created_at,
-            })
-            .collect();
-        let _ = app_handle.emit("proactive-alerts", &domain_alerts);
+        let _ = app_handle.emit("proactive-alerts", &alerts);
     }
 
     Ok(())
@@ -506,17 +491,21 @@ async fn rule_refund_spike(
     pool: &SqlitePool,
     thresholds: &DetectionThresholds,
 ) -> crate::errors::AppResult<Vec<NewAlert>> {
-    let today: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sales WHERE sale_status='refunded' AND date(sold_at)=date('now')",
-    )
-    .fetch_one(pool)
-    .await?;
+    // Counted from `refunds`, not from `sales`. This asked for
+    // `sales.sale_status='refunded'`: a column that does not exist, on a table
+    // whose `status` only ever holds completed/open/pending/voided. Refunds have
+    // always been their own append-only table, so even spelled correctly this
+    // rule would have counted zero for ever.
+    let today: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM refunds WHERE date(created_at)=date('now')")
+            .fetch_one(pool)
+            .await?;
     let avg: f64 = sqlx::query_scalar::<_, f64>(
         "SELECT COALESCE(AVG(cnt),0) FROM (
-            SELECT COUNT(*) AS cnt FROM sales
-            WHERE sale_status='refunded'
-            AND sold_at >= datetime('now','-7 days') AND date(sold_at)<date('now')
-            GROUP BY date(sold_at)
+            SELECT COUNT(*) AS cnt FROM refunds
+            WHERE created_at >= datetime('now','-7 days')
+              AND date(created_at)<date('now')
+            GROUP BY date(created_at)
          )",
     )
     .fetch_one(pool)
@@ -547,7 +536,7 @@ async fn rule_cash_discrepancy(
     thresholds: &DetectionThresholds,
 ) -> crate::errors::AppResult<Vec<NewAlert>> {
     let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM shifts WHERE date(started_at)=date('now')
+        "SELECT COUNT(*) FROM shifts WHERE date(opened_at)=date('now')
          AND cash_difference_minor IS NOT NULL AND ABS(cash_difference_minor) > ?",
     )
     .bind(thresholds.cash_discrepancy_minor)
@@ -579,12 +568,14 @@ async fn rule_sales_drop(
     thresholds: &DetectionThresholds,
 ) -> crate::errors::AppResult<Vec<NewAlert>> {
     let today: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(total_minor),0) FROM sales WHERE sale_status='completed' AND date(sold_at)=date('now')",
+        "SELECT COALESCE(SUM(net_total_minor),0) FROM sales
+          WHERE status='completed' AND date(sold_at)=date('now')",
     )
     .fetch_one(pool)
     .await?;
     let last_week: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(total_minor),0) FROM sales WHERE sale_status='completed' AND date(sold_at)=date('now','-7 days')",
+        "SELECT COALESCE(SUM(net_total_minor),0) FROM sales
+          WHERE status='completed' AND date(sold_at)=date('now','-7 days')",
     )
     .fetch_one(pool)
     .await?;
@@ -624,7 +615,7 @@ async fn rule_overstock(
          LEFT JOIN (
              SELECT si.product_id, SUM(si.quantity)/14.0 AS daily_rate
              FROM sale_items si JOIN sales s ON s.sale_id=si.sale_id
-             WHERE s.sale_status='completed' AND s.sold_at >= datetime('now','-14 days')
+             WHERE s.status='completed' AND s.sold_at >= datetime('now','-14 days')
              GROUP BY si.product_id
          ) v ON v.product_id=p.product_id
          WHERE p.is_active=1 AND p.deleted_at IS NULL AND v.daily_rate > 0
@@ -673,7 +664,7 @@ async fn rule_shift_too_long(
     let hours = thresholds.shift_too_long_hours;
     let interval = format!("-{hours} hours");
     let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM shifts WHERE ended_at IS NULL AND started_at < datetime('now', ?)",
+        "SELECT COUNT(*) FROM shifts WHERE closed_at IS NULL AND opened_at < datetime('now', ?)",
     )
     .bind(&interval)
     .fetch_one(pool)
@@ -730,13 +721,13 @@ async fn rule_high_discounts(
     thresholds: &DetectionThresholds,
 ) -> crate::errors::AppResult<Vec<NewAlert>> {
     let rows = sqlx::query(
-        "SELECT u.name AS cashier_name,
+        "SELECT u.display_name AS cashier_name,
                 SUM(si.line_discount_minor) * 100.0 / NULLIF(SUM(si.line_total_minor + si.line_discount_minor),0) AS discount_rate
          FROM sale_items si
          JOIN sales s ON s.sale_id=si.sale_id
-         JOIN users u ON u.user_id=s.user_id
-         WHERE s.sale_status='completed' AND date(s.sold_at)=date('now')
-         GROUP BY s.user_id
+         JOIN users u ON u.user_id=s.cashier_user_id
+         WHERE s.status='completed' AND date(s.sold_at)=date('now')
+         GROUP BY s.cashier_user_id
          HAVING discount_rate > ?",
     )
     .bind(thresholds.high_discount_pct)
@@ -778,8 +769,7 @@ async fn rule_high_discounts(
 async fn rule_negative_margin(pool: &SqlitePool) -> crate::errors::AppResult<Vec<NewAlert>> {
     let rows = sqlx::query(
         "SELECT p.name FROM products p
-         JOIN product_prices pp ON pp.product_id=p.product_id
-             AND pp.price_type='selling' AND pp.effective_to IS NULL
+         JOIN v_current_selling_price pp ON pp.product_id=p.product_id
          WHERE p.is_active=1 AND p.cost_minor IS NOT NULL
          AND p.cost_minor > pp.price_minor AND p.deleted_at IS NULL
          LIMIT 20",

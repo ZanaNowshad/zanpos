@@ -1,7 +1,9 @@
-#![allow(dead_code)]
 use crate::errors::AppResult;
 use sqlx::SqlitePool;
 
+// Retained: `sqlx::FromRow` populates every column so the row can be mapped
+// in one place; several fields are only ever serialised outward.
+#[allow(dead_code)]
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Run {
     pub run_id: String,

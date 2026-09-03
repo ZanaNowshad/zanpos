@@ -173,3 +173,93 @@ async fn every_advertised_intent_actually_executes() {
         broken.join("\n  ")
     );
 }
+
+/// The takings the assistant reports are the takings the till actually took.
+///
+/// Two separate ways this number was wrong. It filtered on `sold_at`, a full
+/// RFC3339 timestamp, against plain date bounds — so `'2026-09-01T09:00:00Z'`
+/// compared greater than `'2026-09-01'` as text and the whole closing day fell
+/// out of every range. And it counted voided sales, which every other report in
+/// the app excludes, so the figure was simultaneously missing a day and
+/// inflated by cancelled transactions.
+#[tokio::test]
+async fn the_sales_report_covers_the_closing_day_and_leaves_out_voids() {
+    let pool = migrated_pool().await;
+    let branch = "br_report";
+
+    sqlx::query(
+        "INSERT INTO branches (branch_id, branch_code, name, is_active, created_at, updated_at)
+         VALUES (?, 'RPT', 'Report Branch', 1, datetime('now'), datetime('now'))",
+    )
+    .bind(branch)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Three sales: one on the opening day, two on the closing day, one of which
+    // was voided. Only the first two should count.
+    let rows = [
+        (
+            "s_open",
+            "2026-08-31",
+            "2026-08-31T09:00:00Z",
+            1000,
+            100,
+            "completed",
+        ),
+        (
+            "s_close",
+            "2026-09-01",
+            "2026-09-01T09:00:00Z",
+            2000,
+            200,
+            "completed",
+        ),
+        (
+            "s_void",
+            "2026-09-01",
+            "2026-09-01T10:00:00Z",
+            5000,
+            500,
+            "voided",
+        ),
+    ];
+    for (id, date, at, net, tax, status) in rows {
+        sqlx::query(
+            "INSERT INTO sales
+               (sale_id, receipt_number, branch_id, device_id, shift_id, cashier_user_id,
+                business_date, sold_at, net_total_minor, tax_total_minor, gross_total_minor,
+                discount_total_minor, status, idempotency_key, created_at, updated_at)
+             VALUES (?, ?, ?, 'dev', 'shift', 'user', ?, ?, ?, ?, ?, 0, ?, ?,
+                     datetime('now'), datetime('now'))",
+        )
+        .bind(id)
+        .bind(id)
+        .bind(branch)
+        .bind(date)
+        .bind(at)
+        .bind(net)
+        .bind(tax)
+        .bind(net)
+        .bind(status)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let params = json!({"from_date": "2026-08-31", "to_date": "2026-09-01"});
+    let result = execute_intent(&pool, "get_sales_report", &params, branch)
+        .await
+        .expect("the sales report must run");
+
+    assert_eq!(
+        result.data["transactions"], 2,
+        "the closing day belongs in the range and the voided sale does not"
+    );
+    assert_eq!(
+        result.data["net_total"], "3.000",
+        "1.000 on the 31st plus 2.000 on the 1st, with the 5.000 void left out"
+    );
+    assert_eq!(result.data["tax"], "0.300");
+}

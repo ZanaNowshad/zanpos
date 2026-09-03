@@ -7,9 +7,20 @@
 //! rate-limited per signature, and later flushed by `telemetry_uploader`.
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, RwLock};
 
-static DEVICE_ID: OnceLock<String> = OnceLock::new();
+/// Which terminal these diagnostics come from, resolved once at startup and
+/// re-resolved when the terminal is re-keyed.
+///
+/// This was a `OnceLock`, which cannot be written twice. `device_rekey` exists
+/// for the case where a database was cloned onto a second machine and the two
+/// installs share one identity; it issues a fresh one and rewrites every table
+/// that names the terminal. It could not rewrite this. So the machine that had
+/// just been given a new identity carried on stamping every diagnostic and every
+/// telemetry batch with the retired one until the app was restarted — attributing
+/// them to precisely the identity it had been told to stop using, in the data an
+/// operator would consult to confirm the re-key worked.
+static DEVICE_ID: RwLock<Option<String>> = RwLock::new(None);
 static RATE_LIMIT: Mutex<Vec<(u64, std::time::Instant)>> = Mutex::new(Vec::new());
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -25,14 +36,21 @@ pub struct DiagnosticEvent {
     pub extra_json: Option<String>,
 }
 
+/// Record which terminal this is. Called at startup and again after a re-key.
 pub fn set_device_id(id: String) {
-    let _ = DEVICE_ID.set(id);
+    if let Ok(mut slot) = DEVICE_ID.write() {
+        *slot = Some(id);
+    }
 }
 
 /// Crate-visible so `telemetry_uploader` can stamp outgoing batches with the
-/// same device id resolved once at startup, without re-querying the DB.
+/// same device id, without re-querying the DB on every event.
 pub(crate) fn device_id() -> String {
-    DEVICE_ID.get().cloned().unwrap_or_else(|| "unknown".into())
+    DEVICE_ID
+        .read()
+        .ok()
+        .and_then(|slot| slot.clone())
+        .unwrap_or_else(|| "unknown".into())
 }
 
 fn fallback_path() -> std::path::PathBuf {
@@ -337,5 +355,25 @@ mod tests {
             .unwrap();
         assert_eq!(count, 1);
         assert!(!path.exists());
+    }
+
+    /// A re-keyed terminal must stop stamping its old identity on diagnostics.
+    ///
+    /// `DEVICE_ID` was a `OnceLock`, so the second write was silently dropped
+    /// and every event for the rest of the session named the retired terminal —
+    /// in the data an operator reads to confirm the re-key took effect. The
+    /// re-key exists for the cloned-database case, which is exactly when two
+    /// installs are already claiming one identity.
+    #[test]
+    fn the_device_id_can_be_reissued_after_a_rekey() {
+        set_device_id("BEFORE-REKEY".into());
+        assert_eq!(device_id(), "BEFORE-REKEY");
+
+        set_device_id("AFTER-REKEY".into());
+        assert_eq!(
+            device_id(),
+            "AFTER-REKEY",
+            "the re-keyed identity was ignored; diagnostics still name the retired terminal"
+        );
     }
 }

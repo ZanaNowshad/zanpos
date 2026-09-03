@@ -217,3 +217,62 @@ async fn a_customer_with_no_events_keeps_their_shown_balance() {
     assert_eq!(recompute(&pool, "cus_1").await.unwrap(), 42);
     assert_eq!(cached_points(&pool).await, 42);
 }
+
+/// Points earned after an over-redemption survive a recompute.
+///
+/// The ledger's whole promise is that a balance can be rebuilt from the events:
+/// anchor on the oldest surviving one's running total and add every later delta.
+/// That inversion only works if each row satisfies
+/// `points_after = previous.points_after + points_delta`.
+///
+/// It did not. A redemption larger than the balance was clamped — `points_after`
+/// went to 0, correctly — but the row stored the *requested* −50 rather than the
+/// −5 that was actually applied. Nothing looked wrong at the time; the cache and
+/// the last event agreed. The damage appeared later, on the next `recompute`
+/// that sync triggers: 5 + (−50) + 20 = −25, clamped to 0, and twenty points the
+/// customer had genuinely earned were gone with no record of where.
+#[tokio::test]
+async fn points_earned_after_an_over_redemption_are_not_lost_by_a_recompute() {
+    let pool = pool_with_customer().await;
+
+    record(&pool, award(5)).await.unwrap();
+    let overspend = AwardContext {
+        event: LoyaltyEvent::Redeem,
+        points_delta: -50,
+        ..award(0)
+    };
+    assert_eq!(
+        record(&pool, overspend).await.unwrap(),
+        0,
+        "clamped to zero"
+    );
+
+    // The customer shops again and earns twenty.
+    assert_eq!(record(&pool, award(20)).await.unwrap(), 20);
+
+    // Every row must account for itself: the deltas have to add up to the
+    // running totals, or the ledger cannot be replayed.
+    let rows: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT points_delta, points_after FROM loyalty_events
+                         WHERE customer_id = 'cus_1'
+                         ORDER BY datetime(created_at) ASC, rowid ASC",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let mut running = 0i64;
+    for (delta, after) in &rows {
+        running += delta;
+        assert_eq!(
+            running, *after,
+            "an event recorded a delta it did not apply: the ledger cannot be replayed"
+        );
+    }
+
+    // Which is what makes the recompute agree with the live balance.
+    assert_eq!(
+        ledger_balance(&pool, "cus_1").await.unwrap(),
+        Some(20),
+        "a recompute erased points the customer had earned"
+    );
+}

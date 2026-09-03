@@ -107,6 +107,49 @@ async fn app_config(pool: &SqlitePool, key: &str) -> Option<String> {
         .flatten()
 }
 
+/// The tail of a product's movement account, for a health finding to quote.
+///
+/// A discrepancy is only actionable if the operator can see what the ledger
+/// thinks happened. Without it the report says a number is wrong and offers
+/// nothing to check it against.
+async fn recent_movements(
+    pool: &sqlx::SqlitePool,
+    worst: &crate::inventory::reconcile::StockDiscrepancy,
+) -> String {
+    let Ok(account) =
+        crate::inventory::reconcile::explain(pool, &worst.product_id, &worst.branch_id).await
+    else {
+        return String::new();
+    };
+    let tail: Vec<String> = account
+        .iter()
+        .rev()
+        .take(5)
+        .map(|m| {
+            format!(
+                "{} {} → {} ({}{})",
+                m.created_at,
+                m.movement_type,
+                m.quantity_after,
+                m.reference_type.as_deref().unwrap_or("no source"),
+                m.reference_id
+                    .as_deref()
+                    .map(|id| format!(" {id}"))
+                    .unwrap_or_default(),
+            )
+        })
+        .collect();
+    if tail.is_empty() {
+        return String::new();
+    }
+    format!(
+        "
+
+Last movements: {}",
+        tail.join("; ")
+    )
+}
+
 pub async fn run_local_health_check(
     pool: &SqlitePool,
     sync_tables: &[&str],
@@ -128,6 +171,53 @@ pub async fn run_local_health_check(
             detail: db_integrity.clone(),
             fix_action: Some("backup_database".into()),
         });
+    }
+
+    // ── Stock: does the shelf count agree with the movements that made it ────
+    //
+    // `stock_levels` is a cache of the `stock_movements` ledger. When it drifts,
+    // the number every screen shows is one nobody can explain — the movements
+    // add up to one figure and the cache reports another, and only a physical
+    // count can say which is right. Surfaced rather than silently recomputed:
+    // overwriting the cache from the ledger would hide the fact that something
+    // wrote stock without recording why, which is the thing worth knowing.
+    match crate::inventory::reconcile::discrepancies(pool, None, 0.0001).await {
+        Ok(drifted) if !drifted.is_empty() => {
+            let worst = drifted
+                .iter()
+                .max_by(|a, b| {
+                    a.difference
+                        .abs()
+                        .partial_cmp(&b.difference.abs())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .expect("non-empty");
+            findings.push(HealthFinding {
+                code: "stock.ledger_mismatch".into(),
+                severity: HealthSeverity::Warning,
+                area: "Inventory".into(),
+                title: format!(
+                    "{} product(s) have a shelf count the movements do not explain",
+                    drifted.len()
+                ),
+                detail: format!(
+                    "Largest gap: '{}' shows {} on hand but its {} movement(s) add up to {} \
+                     (out by {}). A gap means something changed stock without recording why. \
+                     Count the shelf and post a stock take to correct it — that records the \
+                     correction as a movement instead of hiding it.",
+                    worst.product_name,
+                    worst.cached_quantity,
+                    worst.movement_count,
+                    worst.ledger_quantity,
+                    worst.difference,
+                ) + &recent_movements(pool, worst).await,
+                fix_action: None,
+            });
+        }
+        Ok(_) => {}
+        Err(error) => {
+            tracing::warn!("stock reconciliation could not run: {error}");
+        }
     }
 
     let migration_count = if table_exists(pool, "_sqlx_migrations").await {
@@ -267,8 +357,11 @@ pub async fn run_local_health_check(
 
     let stuck_ai_actions: i64 = if table_exists(pool, "ai_actions").await {
         sqlx::query_scalar(
+            // `prepared_at`, not `created_at` — this table has never had the
+            // latter. With `.unwrap_or(0)` below, the error read as "none stuck",
+            // so the detector reported healthy however many were wedged.
             "SELECT COUNT(*) FROM ai_actions
-             WHERE status='executing' AND created_at < datetime('now','-10 minutes')",
+             WHERE status='executing' AND prepared_at < datetime('now','-10 minutes')",
         )
         .fetch_one(pool)
         .await
@@ -465,11 +558,14 @@ pub async fn apply_health_fix(
         "clear_stuck_ai_actions" => {
             if table_exists(pool, "ai_actions").await {
                 rows_changed = sqlx::query(
+                    // `executed_at` / `prepared_at` are the real column names;
+                    // `completed_at` and `created_at` do not exist on this table,
+                    // so this fix action failed every time it was invoked.
                     "UPDATE ai_actions
                      SET status='failed',
                          error_message='Cleared by confirmed system health fix',
-                         completed_at=?
-                     WHERE status='executing' AND created_at < datetime('now','-10 minutes')",
+                         executed_at=?
+                     WHERE status='executing' AND prepared_at < datetime('now','-10 minutes')",
                 )
                 .bind(chrono::Utc::now().to_rfc3339())
                 .execute(pool)

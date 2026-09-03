@@ -122,7 +122,7 @@ async fn send_digest_now(state: &AppState, business_date: &str) -> Result<(), St
     let net_total_minor = net_sales_minor(pool, &branch_id, business_date).await?;
     let top_item = top_item_today(pool, &branch_id, business_date).await?;
     let low_stock = low_stock_count(pool, &branch_id).await?;
-    let currency_exponent = crate::commands::setup_commands::currency_exponent(&currency);
+    let currency_exponent = crate::domain::money::currency_exponent(&currency);
 
     let message = build_message(&DigestInputs {
         currency: &currency,

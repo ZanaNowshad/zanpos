@@ -124,13 +124,22 @@ pub fn seconds_since(
 /// against the terminal's own `sent_at` — so their difference is the skew plus
 /// LAN latency, which is milliseconds and irrelevant at warning scale. None
 /// when the terminal predates the `sent_at` field.
+///
+/// The subtraction is `sent_at - hub_at`, in that order, and the order is the
+/// whole meaning of the number. It was the other way round, which inverted every
+/// reading: a till running five minutes fast was reported as five minutes
+/// *behind*. That is not a cosmetic slip, because the sentence the roster prints
+/// alongside it — rows landing behind the sync watermark and never being offered
+/// again — is the consequence of a *slow* clock. So the message paired the wrong
+/// direction with the right consequence, and anyone who acted on it moved the
+/// clock further from the hub rather than towards it.
 pub fn clock_skew_secs(
     last_heartbeat_at: Option<&str>,
     heartbeat_sent_at: Option<&str>,
 ) -> Option<i64> {
     let hub_at = chrono::DateTime::parse_from_rfc3339(last_heartbeat_at?.trim()).ok()?;
     let sent_at = chrono::DateTime::parse_from_rfc3339(heartbeat_sent_at?.trim()).ok()?;
-    Some((hub_at - sent_at).num_seconds())
+    Some((sent_at - hub_at).num_seconds())
 }
 
 #[cfg(test)]
@@ -208,13 +217,25 @@ pub async fn roster(pool: &sqlx::SqlitePool) -> crate::errors::AppResult<Vec<Ter
             let state = device_state(paired, age);
             let sent_at: Option<String> = row.get("heartbeat_sent_at");
             let skew = clock_skew_secs(beat.as_deref(), sent_at.as_deref());
+            // Both directions lose rows, but not in the same way, and telling an
+            // operator the wrong one sends them to move the clock further from
+            // the hub. A slow terminal stamps its own writes into the past,
+            // behind a watermark the other nodes have already passed; a fast one
+            // drags every receiver's watermark into the future, so rows written
+            // between now and then are never offered again.
             let advice = if let Some(skew) = skew.filter(|s| s.abs() > CLOCK_SKEW_WARN_SECS) {
                 format!(
-                    "{} Its clock is {} seconds {} the hub's — its rows can land behind the \
-                     sync watermark and go missing. Fix the time on that terminal.",
+                    "{} Its clock is {} seconds {} the hub's — {}. Fix the time on that terminal.",
                     state.advice(),
                     skew.abs(),
-                    if skew > 0 { "ahead of" } else { "behind" }
+                    if skew > 0 { "ahead of" } else { "behind" },
+                    if skew > 0 {
+                        "rows it sends carry a future timestamp and push every other \
+                         terminal's sync watermark past work that has not arrived yet"
+                    } else {
+                        "rows it writes land behind the sync watermark and are never \
+                         offered again"
+                    }
                 )
             } else {
                 state.advice().to_string()

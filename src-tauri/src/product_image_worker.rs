@@ -167,6 +167,28 @@ impl ProductImageWorker {
         };
 
         match search_product_image(request).await {
+            // A search-engine guess is not good enough to apply unattended.
+            //
+            // Only the Open Food Facts path looks the barcode up directly and so
+            // knows it has *this* product. The Bing fallback returns whichever
+            // image ranked first for a text query, with nothing checking that it
+            // depicts the product — and this worker walks the whole catalogue
+            // without anyone watching, so a bad guess becomes a wrong picture on
+            // a shelf label, repeated across hundreds of products.
+            //
+            // Recorded as a failure so the existing backoff applies and the
+            // product is retried later: Open Food Facts gains entries over time,
+            // and a barcode absent today may resolve next month. The manual
+            // buttons still offer the fallback, because a person can look at the
+            // picture and judge it.
+            Ok(result) if !result.barcode_verified => {
+                self.record_failure(
+                    &candidate,
+                    "no barcode-verified image found (search-engine guesses are not applied automatically)",
+                )
+                .await?;
+                return Ok(Outcome::Failed);
+            }
             Ok(result) => {
                 /* persist_product_image is the same function the manual button
                 goes through, so an image found here is validated, audited

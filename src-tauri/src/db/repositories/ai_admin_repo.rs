@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use crate::domain::ai_admin::AiSession;
 use crate::errors::AppResult;
 use sqlx::{Row, SqlitePool};
@@ -7,8 +6,9 @@ use sqlx::{Row, SqlitePool};
 /// for file size, not for a change of interface, so their call sites keep
 /// reaching them through this module.
 pub use super::ai_admin_actions_repo::{
-    create_action, create_undo_record, expire_old_actions, get_action, get_undo_availability,
-    get_undo_record, list_actions, mark_cancelled, mark_executed, mark_undone,
+    claim_for_execution, create_action, create_undo_record, expire_old_actions, get_action,
+    get_undo_availability, get_undo_record, list_actions, mark_cancelled, mark_executed,
+    mark_undone, release_claim,
 };
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -139,6 +139,8 @@ pub async fn create_session(
     Ok(())
 }
 
+// Retained: no caller: sessions are resolved through auth_session.
+#[allow(dead_code)]
 pub async fn get_session(pool: &SqlitePool, session_id: &str) -> AppResult<Option<AiSession>> {
     let row = sqlx::query(
         "SELECT session_id, branch_id, user_id, provider, model, status,

@@ -1,10 +1,4 @@
-#![allow(dead_code)]
-use crate::ai::{
-    client::ToolDef,
-    config::load_ai_params,
-    provider::{ChatResult, Provider, ToolCallResult, ToolTurn},
-    tools,
-};
+use crate::ai::{client::ToolDef, config::load_ai_params, provider::Provider, tools};
 use crate::auth_session::AuthenticatedActor;
 use crate::commands::sync_commands;
 use crate::db::repositories::{ai_admin_repo, ai_chat_history_repo, ai_conversation_repo};
@@ -859,14 +853,29 @@ pub async fn ai_execute_action(
         branch_id: actor.branch_id.clone(),
     };
 
-    let mutation_result = crate::ai::tool_policy::execute_confirmed_mutation(
+    // Claim the action before running it, not after. The status check above is a
+    // read; without a claim the whole mutation sits in the window between that
+    // read and `mark_executed`, and two confirms of one action both pass the
+    // check and both commit.
+    ai_admin_repo::claim_for_execution(&state.db, &input.action_id).await?;
+
+    let mutation_result = match crate::ai::tool_policy::execute_confirmed_mutation(
         &state.db,
         &execution_context,
         &action.tool_name,
         &tool_input,
         input.currency_exponent,
     )
-    .await?;
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => {
+            // The mutation failed, so the action never happened. Hand the claim
+            // back rather than stranding it as `executing` forever.
+            let _ = ai_admin_repo::release_claim(&state.db, &input.action_id).await;
+            return Err(error);
+        }
+    };
     sync_commands::schedule_immediate_sync(&state);
 
     let result_json =
@@ -964,14 +973,32 @@ pub async fn ai_execute_batch_actions(
             actor_user_id: actor.user_id.clone(),
             branch_id: actor.branch_id.clone(),
         };
-        let mutation_result = crate::ai::tool_policy::execute_confirmed_mutation(
+        // Claim before executing, exactly as `ai_execute_action` does.
+        //
+        // The single-action path was fixed to take the claim first; this one —
+        // its sibling, reachable from the same UI — was not, so the whole race
+        // survived here. A double-click or a retry after a dropped response
+        // sends two batches containing the same action id, both read
+        // `prepared`, both run the mutation to completion, and only the second
+        // `mark_executed` fails, long after the stock or the points have been
+        // applied twice.
+        ai_admin_repo::claim_for_execution(&state.db, action_id).await?;
+
+        let mutation_result = match crate::ai::tool_policy::execute_confirmed_mutation(
             &state.db,
             &execution_context,
             &action.tool_name,
             &tool_input,
             input.currency_exponent,
         )
-        .await?;
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                let _ = ai_admin_repo::release_claim(&state.db, action_id).await;
+                return Err(error);
+            }
+        };
         sync_commands::schedule_immediate_sync(&state);
         let result_json =
             serde_json::json!({ "description": &mutation_result.description }).to_string();
@@ -1874,256 +1901,14 @@ mod prompt_prefix_tests {
     }
 }
 
-// ── Shared tool loop ───────────────────────────────────────────────────────────
-
-enum ToolLoopOutcome {
-    Done {
-        text: String,
-    },
-    PendingAction {
-        action_id: String,
-        tool_name: String,
-        preview: ToolPreview,
-        expires_at: String,
-        assistant_text: String,
-    },
-}
-
-/// Multi-turn tool loop shared by the blocking and streaming paths.
-/// Callers provide no-op or event-emitting callbacks for `on_tool_start`/`on_tool_done`.
-async fn run_tool_loop<F, G, H>(
-    db: &sqlx::SqlitePool,
-    provider: &Provider,
-    system: &str,
-    input: &AiChatInput,
-    tool_defs: &[ToolDef],
-    mut current: ChatResult,
-    max_turns: usize,
-    expiry_minutes: i64,
-    max_history_chars: usize,
-    on_tool_start: F,
-    on_tool_done: G,
-    on_navigate: H,
-) -> AppResult<ToolLoopOutcome>
-where
-    F: Fn(&str) + Send,
-    G: Fn(&str) + Send,
-    H: Fn(&str) + Send,
-{
-    // Accumulated tool turns so each API call receives the full context rather
-    // than only the most recent (tool, result) pair. Without this, the model sees
-    // the same single-turn context on every iteration and repeats the same call.
-    let mut accumulated: Vec<ToolTurn> = Vec::new();
-    let mut provenance = crate::ai::tool_policy::ProvenanceState::default();
-
-    for _turn in 0..max_turns {
-        if current.tool_calls.is_empty() {
-            return Ok(ToolLoopOutcome::Done { text: current.text });
-        };
-        let assistant_text = current.text.clone();
-        // Process ALL tool calls the model returned in this response (handles
-        // Anthropic parallel tool calls). Each one is executed and accumulated
-        // before a single continuation call is made.
-        let tool_calls = std::mem::take(&mut current.tool_calls);
-        if tool_calls
-            .iter()
-            .any(|call| crate::ai::tool_policy::is_external_content_tool(&call.name))
-        {
-            provenance.mark_external("external tool result in current request");
-        }
-        let prev_reasoning = current.reasoning_content.clone();
-        for tool_call in tool_calls {
-            let plan_decision = crate::ai::tool_policy::authorize_plan(
-                db,
-                &tool_call.name,
-                &tool_call.input,
-                &provenance,
-            )
-            .await?;
-            if plan_decision == crate::ai::tool_policy::PlanDecision::AutomaticEligible {
-                on_tool_start(&tool_call.name);
-                let execution_context = crate::ai::tool_policy::MutationExecutionContext {
-                    actor_user_id: input.user_id.clone(),
-                    branch_id: input.branch_id.clone(),
-                };
-                let automatic = crate::ai::tool_policy::execute_automatic_mutation(
-                    db,
-                    &execution_context,
-                    &tool_call.name,
-                    &tool_call.input,
-                    input.currency_exponent,
-                    &provenance,
-                )
-                .await?;
-                on_tool_done(&tool_call.name);
-                accumulated.push(ToolTurn {
-                    tool_call: ToolCallResult {
-                        id: tool_call.id,
-                        name: tool_call.name,
-                        input: tool_call.input,
-                    },
-                    tool_result: serde_json::json!({
-                        "status": "executed",
-                        "description": automatic.description,
-                        "undo_id": automatic.undo_id,
-                        "instruction": "Read back the completed change to the user."
-                    })
-                    .to_string(),
-                    reasoning_content: prev_reasoning.clone(),
-                });
-                continue;
-            }
-            if tools::is_mutation_tool(&tool_call.name) {
-                // Only mutations selected by the runtime policy reach the
-                // confirmation queue. Safe mutations execute in the branch above.
-                let execution_context = crate::ai::tool_policy::MutationExecutionContext {
-                    actor_user_id: input.user_id.clone(),
-                    branch_id: input.branch_id.clone(),
-                };
-                let preview = crate::ai::tool_policy::with_mutation_context(
-                    &execution_context,
-                    tools::dry_run_mutation(
-                        db,
-                        &tool_call.name,
-                        &tool_call.input,
-                        input.currency_exponent,
-                    ),
-                )
-                .await?;
-                let tool_input_json = tool_call.input.to_string();
-                let preview_text = format!(
-                    "{}: {}",
-                    preview.description,
-                    preview
-                        .fields
-                        .iter()
-                        .map(|f| format!("{} = {}", f.label, f.value))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-                let action = ai_admin_repo::create_action(
-                    db,
-                    &input.user_id,
-                    &input.branch_id,
-                    &tool_call.name,
-                    &tool_input_json,
-                    &hash_str(&tool_input_json),
-                    &preview_text,
-                    &Ulid::new().to_string(),
-                    expiry_minutes,
-                )
-                .await?;
-                return Ok(ToolLoopOutcome::PendingAction {
-                    action_id: action.action_id,
-                    tool_name: tool_call.name,
-                    preview,
-                    expires_at: action.expires_at,
-                    assistant_text,
-                });
-            }
-
-            // Hard loop guard: same tool called ≥ 3 times → model is truly stuck.
-            let same_count = accumulated
-                .iter()
-                .filter(|t| t.tool_call.name == tool_call.name)
-                .count();
-            if same_count >= 2 {
-                let text = if assistant_text.is_empty() {
-                    "I searched multiple times but couldn't find a clear result. \
-                     Try rephrasing your question or check the relevant section directly."
-                        .to_string()
-                } else {
-                    assistant_text.clone()
-                };
-                return Ok(ToolLoopOutcome::Done { text });
-            }
-
-            on_tool_start(&tool_call.name);
-            if tool_call.name == "open_tab" {
-                if let Some(tab) = tool_call.input.get("tab").and_then(|v| v.as_str()) {
-                    on_navigate(tab);
-                }
-            }
-            let (mut tool_result, read_ok) = match tools::execute_read_tool(
-                db,
-                &tool_call.name,
-                &tool_call.input,
-                &input.branch_id,
-                input.currency_exponent,
-            )
-            .await
-            {
-                Ok(result) => (result, true),
-                Err(e) => {
-                    let msg = format!("Tool '{}' failed: {e}", tool_call.name);
-                    tracing::error!("{msg}");
-                    (msg, false)
-                }
-            };
-            if read_ok && crate::ai::tool_policy::is_external_content_tool(&tool_call.name) {
-                tool_result = crate::ai::tool_policy::tag_external_result(tool_result);
-                let source = tool_call
-                    .input
-                    .get("url")
-                    .or_else(|| tool_call.input.get("query"))
-                    .and_then(|value| value.as_str())
-                    .unwrap_or(&tool_call.name);
-                provenance.mark_external(source);
-            }
-            on_tool_done(&tool_call.name);
-
-            if same_count >= 1 {
-                tool_result.push_str(
-                    "\n\n[You have already searched with this tool. \
-                     Please provide your final answer to the user based on what you've found. \
-                     Do not call any more search tools.]",
-                );
-            }
-
-            // P1-05: persist reasoning content for audit/explainability
-            if let Some(ref reasoning) = prev_reasoning {
-                let now = chrono::Utc::now().to_rfc3339();
-                let _ = sqlx::query(
-                    "INSERT INTO ai_reasoning_log (branch_id, user_id, turn, tool_name, reasoning, logged_at) \
-                     VALUES (?, ?, ?, ?, ?, ?)",
-                )
-                .bind(&input.branch_id)
-                .bind(&input.user_id)
-                .bind(_turn as i64)
-                .bind(&tool_call.name)
-                .bind(reasoning)
-                .bind(&now)
-                .execute(db)
-                .await;
-            }
-            accumulated.push(ToolTurn {
-                tool_call: ToolCallResult {
-                    id: tool_call.id,
-                    name: tool_call.name,
-                    input: tool_call.input,
-                },
-                tool_result,
-                reasoning_content: prev_reasoning.clone(),
-            });
-        }
-
-        // After processing all tool calls from this response, continue with
-        // the full accumulated context so the model can decide the next step.
-        let continuation_defs =
-            crate::ai::tool_policy::definitions_for_request(tool_defs, &provenance)?;
-        current = provider
-            .continue_with_tool_turns(
-                system,
-                &input.history,
-                &input.message,
-                &accumulated,
-                &continuation_defs,
-                max_history_chars,
-            )
-            .await?;
-    }
-    Ok(ToolLoopOutcome::Done { text: current.text })
-}
+// The non-streaming tool loop that used to live here has been removed.
+//
+// Its own documentation called it "shared by the blocking and streaming
+// paths". It was shared by neither: nothing called it, and the streaming
+// path has always run its own loop in `ai::streaming`. Two hundred and fifty
+// lines of tool-dispatch, confirmation and continuation logic sat here
+// looking authoritative — 250 lines the compiler could not warn about
+// while this file carried a blanket dead-code suppression.
 
 // ── Streaming chat command ─────────────────────────────────────────────────────
 

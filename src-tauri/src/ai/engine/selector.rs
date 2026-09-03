@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use crate::errors::{AppError, AppResult};
 use sqlx::SqlitePool;
 
@@ -132,6 +131,8 @@ impl Selector {
 
     /// Returns true if below_reorder or variance_threshold are set, meaning callers
     /// must add a stock_levels JOIN before executing the compiled WHERE fragment.
+    // Retained: no caller: the stock join is now always present.
+    #[allow(dead_code)]
     pub fn needs_stock_join(&self) -> bool {
         self.below_reorder.is_some() || self.variance_threshold.is_some()
     }
@@ -144,7 +145,7 @@ impl Selector {
         let sql = format!(
             "{} SELECT COUNT(*) FROM product_prices pp \
              JOIN products p ON p.product_id = pp.product_id \
-             WHERE pp.price_type = 'promotional' AND pp.effective_to > ? AND {}",
+             WHERE pp.price_type = 'promotional' AND datetime(pp.effective_to) > datetime(?) AND {}",
             c.cte, c.where_sql
         );
         let mut q = sqlx::query_scalar::<_, i64>(&sql);

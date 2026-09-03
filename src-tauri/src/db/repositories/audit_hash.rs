@@ -326,7 +326,27 @@ pub async fn verify_chain(pool: &SqlitePool, device_id: &str) -> AppResult<Chain
 
     let legacy_rows = total_rows - chain_rows.len() as i64;
 
-    let mut prev_hash = String::new(); // genesis
+    // The chain starts wherever the surviving rows start, not at genesis.
+    //
+    // This walk used to seed `prev_hash` with the empty string and require the
+    // oldest surviving row to be the first ever written. Retention pruning
+    // deletes audit rows once they age out, so on any install older than
+    // `retention_days_logs` the oldest survivor legitimately points at a row
+    // that no longer exists — and every one of them reported `broken_link`,
+    // permanently. A tamper-evidence check that cries tamper on every healthy
+    // shop is worse than none: it trains people to ignore the one time it
+    // means something.
+    //
+    // Seeding from the first survivor's own `previous_hash` verifies contiguity
+    // across everything that is still held, which is the strongest claim the
+    // evidence supports once older rows are gone. A row removed from the
+    // *middle* still breaks the link after the gap, so interior tampering is
+    // caught exactly as before. Only the floor is taken on trust, and it has to
+    // be: the rows that would prove it are not there.
+    let mut prev_hash = chain_rows
+        .first()
+        .and_then(|row| row.previous_hash.clone())
+        .unwrap_or_default();
 
     for row in &chain_rows {
         // Verify stored previous_hash matches our running prev_hash
@@ -370,76 +390,5 @@ pub async fn verify_chain(pool: &SqlitePool, device_id: &str) -> AppResult<Chain
     })
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn inp<'a>(
-        id: &'a str,
-        et: &'a str,
-        eid: &'a str,
-        aj: Option<&'a str>,
-        ph: &'a str,
-    ) -> AuditHashInput<'a> {
-        AuditHashInput {
-            audit_log_id: id,
-            event_type: et,
-            entity_type: "sale",
-            entity_id: eid,
-            actor_user_id: "U1",
-            actor_type: "user",
-            created_at: "t",
-            before_json: None,
-            after_json: aj,
-            reason: None,
-            previous_hash: ph,
-        }
-    }
-
-    #[test]
-    fn hash_is_deterministic() {
-        let i = AuditHashInput {
-            audit_log_id: "id1",
-            event_type: "sale.created",
-            entity_type: "sale",
-            entity_id: "S1",
-            actor_user_id: "U1",
-            actor_type: "user",
-            created_at: "2024-01-01T00:00:00Z",
-            before_json: None,
-            after_json: Some(r#"{"k":"v"}"#),
-            reason: None,
-            previous_hash: "",
-        };
-        let h1 = compute_audit_hash(&i);
-        let h2 = compute_audit_hash(&i);
-        assert_eq!(h1, h2);
-        assert_eq!(h1.len(), 64);
-    }
-
-    #[test]
-    fn hash_changes_with_previous_hash() {
-        let h1 = compute_audit_hash(&inp("id1", "sale.created", "S1", None, ""));
-        let h2 = compute_audit_hash(&inp("id1", "sale.created", "S1", None, &h1));
-        assert_ne!(h1, h2);
-    }
-
-    #[test]
-    fn hash_changes_with_any_field() {
-        let base = compute_audit_hash(&inp("id1", "sale.created", "S1", None, ""));
-        assert_ne!(
-            base,
-            compute_audit_hash(&inp("id2", "sale.created", "S1", None, ""))
-        );
-        assert_ne!(
-            base,
-            compute_audit_hash(&inp("id1", "sale.voided", "S1", None, ""))
-        );
-        assert_ne!(
-            base,
-            compute_audit_hash(&inp("id1", "sale.created", "S2", None, ""))
-        );
-    }
-}
+mod tests;

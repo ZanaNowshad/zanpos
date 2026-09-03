@@ -99,10 +99,18 @@ pub async fn margin_erosion(
            WHERE pp2.product_id = p.product_id
              AND (pp2.branch_id = ? OR pp2.branch_id IS NULL)
              AND pp2.price_type = 'selling'
-             AND pp2.effective_from <= datetime('now')
-             AND (pp2.effective_to IS NULL OR pp2.effective_to > datetime('now'))
+             -- Both sides normalised, as `sale_repo` does when it prices a
+             -- sale. `effective_from` holds two formats: every Rust writer binds
+             -- RFC3339 ('2026-08-31T09:00:00Z') while the legacy-POS importer
+             -- writes datetime('now') ('2026-08-31 09:00:00'). Compared raw, 'T'
+             -- sorts above a space, so a price set today read as not-yet-
+             -- effective and this insight quoted the superseded row instead —
+             -- reporting a margin against a price the till was not charging.
+             AND datetime(pp2.effective_from) <= datetime('now')
+             AND (pp2.effective_to IS NULL
+                  OR datetime(pp2.effective_to) > datetime('now'))
            ORDER BY CASE WHEN pp2.branch_id = ? THEN 0 ELSE 1 END,
-                    pp2.effective_from DESC, pp2.created_at DESC
+                    datetime(pp2.effective_from) DESC, pp2.created_at DESC
            LIMIT 1
          )
          WHERE p.is_active = 1 AND p.deleted_at IS NULL

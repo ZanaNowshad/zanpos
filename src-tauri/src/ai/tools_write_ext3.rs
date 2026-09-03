@@ -1,6 +1,30 @@
 //! Round-2 extension mutation tools: supplier delete, PO receive/delete,
 //! bulk_assign_supplier, force_close_shift.
 
+/// A stable key for a goods receipt, from what is being received.
+///
+/// Two calls describing the same lines at the same quantities against the same
+/// order are the same receipt, and `po_receipts.idempotency_key` is UNIQUE, so
+/// the second is refused rather than applied. A genuinely different partial —
+/// different quantities, or a later delivery of the remainder — hashes
+/// differently and goes through.
+fn receipt_key(
+    po_id: &str,
+    lines: &Option<Vec<crate::commands::purchasing_commands::ReceivePurchaseOrderLineInput>>,
+) -> String {
+    use std::collections::BTreeMap;
+    let ordered: BTreeMap<&str, &str> = lines
+        .iter()
+        .flatten()
+        .map(|l| (l.po_line_id.as_str(), l.received_qty.as_str()))
+        .collect();
+    let mut digest = format!("ai-receipt:{po_id}");
+    for (line_id, qty) in ordered {
+        digest.push_str(&format!("|{line_id}={qty}"));
+    }
+    digest
+}
+
 pub use crate::ai::tools::MutationResult;
 use crate::commands::purchasing_commands::{
     po_receive_inner, ReceivePurchaseOrderInput, ReceivePurchaseOrderLineInput,
@@ -8,7 +32,6 @@ use crate::commands::purchasing_commands::{
 use crate::domain::ai_admin::{ToolPreview, ToolPreviewField};
 use crate::errors::{AppError, AppResult};
 use sqlx::{Row, SqlitePool};
-use ulid::Ulid;
 
 fn prev(name: &str, desc: &str, fields: Vec<(&str, String)>) -> ToolPreview {
     ToolPreview {
@@ -292,19 +315,26 @@ pub async fn execute(
                     .collect::<Vec<_>>()
             });
             let (device_id, branch_id) = crate::ai::tools::active_device_branch(pool).await?;
+            let key = receipt_key(&po_id, &lines);
             let result = po_receive_inner(
                 pool,
                 ReceivePurchaseOrderInput {
                     po_id: po_id.clone(),
                     actor_user_id: actor_id.clone(),
                     lines,
-                    // A fresh key per execution. Replay protection for this
-                    // path lives one layer up: an `ai_actions` row carries the
-                    // operation identity and its status transitions from
-                    // prepared to executed, so a confirmed action cannot be
-                    // executed twice. The key here records the receipt; it is
-                    // not what prevents the replay.
-                    idempotency_key: Ulid::new().to_string(),
+                    // Derived from the request, never minted fresh.
+                    //
+                    // Migration 0045 exists because over-receipt protection
+                    // cannot catch "receive 3 of 10 twice" — 3+3=6 breaks no
+                    // rule. Only a key that is *the same* across retries can.
+                    // This used to be `Ulid::new()`, on the argument that the
+                    // `ai_actions` state machine prevented replays one layer up;
+                    // it did not, because the status check and the claim sat on
+                    // either side of the whole mutation. That window is closed
+                    // now, and this is the second line of defence: two receipts
+                    // describing the same quantities against the same order
+                    // collide on the key instead of both applying.
+                    idempotency_key: key,
                 },
                 &branch_id,
                 &device_id,
@@ -333,29 +363,56 @@ pub async fn execute(
 
         "delete_purchase_order" => {
             let po_id = rv(input, "po_id")?;
-            let status: Option<String> =
-                sqlx::query_scalar("SELECT status FROM purchase_orders WHERE po_id = ?")
+            let exists: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM purchase_orders WHERE po_id = ?)")
                     .bind(&po_id)
-                    .fetch_optional(pool)
-                    .await?
-                    .flatten();
-            match status.as_deref() {
-                None => return Err(AppError::NotFound(format!("PO {po_id} not found"))),
-                Some("received") | Some("partial") => {
-                    return Err(AppError::Validation(
-                        "Cannot delete a PO that has been received (full or partial). Cancel it instead via update_purchase_order.".into(),
-                    ))
-                }
-                _ => {}
+                    .fetch_one(pool)
+                    .await?;
+            if !exists {
+                return Err(AppError::NotFound(format!("PO {po_id} not found")));
             }
+
+            // Ask what was received, not what the status says.
+            //
+            // The guard used to read `purchase_orders.status`, which
+            // `update_purchase_order` could rewrite to anything — so receiving
+            // goods, resetting the status to 'ordered', then deleting was a way
+            // past it. `received_qty` and the receipt records are written only by
+            // the real receiving path and cannot be talked out of.
+            let received: f64 = sqlx::query_scalar(
+                "SELECT COALESCE(SUM(received_qty), 0) FROM purchase_order_lines WHERE po_id = ?",
+            )
+            .bind(&po_id)
+            .fetch_one(pool)
+            .await?;
+            let receipts: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM po_receipts WHERE po_id = ?")
+                    .bind(&po_id)
+                    .fetch_one(pool)
+                    .await?;
+            if received > 0.0 || receipts > 0 {
+                return Err(AppError::Validation(
+                    "This order has goods received against it, so deleting it would erase \
+                     the record of stock that is on the shelf. Cancel it instead."
+                        .into(),
+                ));
+            }
+
+            // One transaction. These were two statements against the pool, each
+            // committing on its own: with a `po_receipts` row present the second
+            // failed on its foreign key while the first had already gone through,
+            // leaving a header with no lines — the only record of what was
+            // ordered, and at what price, permanently gone.
+            let mut tx = pool.begin().await?;
             sqlx::query("DELETE FROM purchase_order_lines WHERE po_id = ?")
                 .bind(&po_id)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await?;
             sqlx::query("DELETE FROM purchase_orders WHERE po_id = ?")
                 .bind(&po_id)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await?;
+            tx.commit().await?;
             audit3(pool, "purchase_order_deleted", &po_id, "{}").await;
             ok_mut(
                 &format!("Purchase order {po_id} deleted."),
@@ -432,6 +489,7 @@ pub async fn execute(
                 &source_id,
                 &target_id,
                 transfer_history,
+                &crate::ai::tool_policy::current_actor_id().unwrap_or_else(|| "zanai".into()),
             )
             .await?;
 

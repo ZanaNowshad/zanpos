@@ -89,8 +89,8 @@ pub async fn resume_held_cart(
     let mut cart: Cart =
         serde_json::from_str(&cart_json).map_err(|e| AppError::Internal(e.to_string()))?;
 
+    let held_cart_key = std::mem::replace(&mut cart.cart_id, Ulid::new().to_string());
     cart.shift_id = shift_id.to_string();
-    cart.cart_id = Ulid::new().to_string();
 
     // P2-06: validate that all products in the held cart still exist
     for line in &cart.lines {
@@ -112,10 +112,34 @@ pub async fn resume_held_cart(
         }
     }
 
+    // Carry the manager's approvals onto the new cart id.
+    //
+    // A resumed cart is a new cart as far as the database is concerned, and both
+    // `pos_price_overrides` and `pos_discount_authorizations` are keyed by cart
+    // id — that is what makes them proof rather than a claim from the frontend.
+    // Left behind, the approvals go missing exactly when the cashier presses
+    // Charge: an overridden price silently reverts to the catalogue and fails the
+    // payment check, and a discount is refused outright. The manager approved
+    // this basket; parking it at the till and picking it up again does not
+    // withdraw that. Re-keying, deleting the held row and doing both in one
+    // transaction means a crash mid-resume cannot strand the approvals against a
+    // cart nobody holds.
+    let mut tx = pool.begin().await?;
+    sqlx::query("UPDATE pos_price_overrides SET cart_id = ? WHERE cart_id = ?")
+        .bind(&cart.cart_id)
+        .bind(&held_cart_key)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE pos_discount_authorizations SET cart_id = ? WHERE cart_id = ?")
+        .bind(&cart.cart_id)
+        .bind(&held_cart_key)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM held_carts WHERE held_cart_id = ?")
         .bind(held_cart_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
 
     Ok(cart)
 }

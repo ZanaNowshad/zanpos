@@ -32,14 +32,7 @@ pub struct AppConfig {
     pub owner_user_id: Option<String>,
 }
 
-/// Map currency code → decimal exponent (minor units).
-pub(crate) fn currency_exponent(currency: &str) -> i32 {
-    match currency {
-        "BHD" | "KWD" | "OMR" => 3,
-        "JPY" | "KRW" | "IDR" => 0,
-        _ => 2, // USD, EUR, GBP, SAR, AED, QAR, EGP, MAD, etc.
-    }
-}
+pub(crate) use crate::domain::money::currency_exponent;
 
 /// Load the active branch + device from the DB, plus setup_complete flag.
 #[tauri::command]

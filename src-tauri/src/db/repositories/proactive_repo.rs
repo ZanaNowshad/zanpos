@@ -1,20 +1,15 @@
-#![allow(dead_code)]
 use crate::errors::AppResult;
 use sqlx::{Row, SqlitePool};
 
-pub struct ProactiveAlert {
-    pub alert_id: String,
-    pub branch_id: String,
-    pub alert_type: String,
-    pub severity: String,
-    pub title: String,
-    pub description: String,
-    pub detail_json: Option<String>,
-    pub detected_at: String,
-    pub dismissed_at: Option<String>,
-    pub dismissed_by_user_id: Option<String>,
-    pub created_at: String,
-}
+/// The one alert type.
+///
+/// This module declared its own, field-for-field identical to
+/// `domain::ai_admin::ProactiveAlert`, and `ai::proactive` copied between them a
+/// field at a time. Two identical structs with a hand-written mapping is a field
+/// waiting to be added to one of them: the compiler is satisfied by a mapping
+/// that silently omits the new column, and the alert arrives at the UI with it
+/// missing. There is now one definition, and the mapping is gone with it.
+pub use crate::domain::ai_admin::ProactiveAlert;
 
 pub async fn insert_alert(pool: &SqlitePool, a: &ProactiveAlert) -> AppResult<()> {
     sqlx::query(
@@ -90,6 +85,8 @@ pub async fn dismiss(pool: &SqlitePool, alert_id: &str, user_id: &str, now: &str
     Ok(())
 }
 
+// Retained: never called — `proactive_watermark` is written by set_watermark and read by nothing. Either wire the throttle it was meant for or drop both halves.
+#[allow(dead_code)]
 pub async fn get_watermark(pool: &SqlitePool, rule: &str) -> AppResult<Option<String>> {
     Ok(
         sqlx::query_scalar("SELECT last_checked FROM proactive_watermark WHERE rule_name=?")

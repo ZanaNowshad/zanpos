@@ -2,7 +2,7 @@ use crate::domain::product::{Product, ProductWithPrice};
 use crate::errors::AppResult;
 use sqlx::{Row, SqlitePool};
 
-const PRODUCT_QUERY: &str = r#"
+const PRODUCT_QUERY_TEMPLATE: &str = r#"
     SELECT
         p.product_id,
         p.category_id,
@@ -29,15 +29,23 @@ const PRODUCT_QUERY: &str = r#"
         sl.quantity_on_hand AS quantity_on_hand
     FROM products p
     JOIN categories c ON c.category_id = p.category_id AND c.is_active = 1 AND c.deleted_at IS NULL
-    LEFT JOIN product_prices pp ON pp.product_id = p.product_id
-        AND pp.branch_id IS NULL
-        AND pp.price_type = 'selling'
-        AND datetime(pp.effective_from) <= datetime('now')
-        AND (pp.effective_to IS NULL OR datetime(pp.effective_to) > datetime('now'))
+    LEFT JOIN product_prices pp ON pp.product_id = p.product_id AND {price_in_force}
     LEFT JOIN tax_rules t ON t.tax_rule_id = p.tax_rule_id AND t.is_active = 1
     LEFT JOIN (SELECT product_id, quantity_on_hand FROM stock_levels WHERE branch_id = (SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1)) sl ON sl.product_id = p.product_id
     WHERE p.is_active = 1 AND p.deleted_at IS NULL
 "#;
+
+/// The catalogue query, with the one authoritative price predicate spliced in.
+///
+/// Built once. The predicate lives in [`super::pricing::PRICE_IN_FORCE`] so this
+/// query and `sale_repo::current_selling_prices` cannot drift apart — they did,
+/// and a cashier saw a price the till then refused to charge.
+fn product_query() -> &'static str {
+    static QUERY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    QUERY.get_or_init(|| {
+        PRODUCT_QUERY_TEMPLATE.replace("{price_in_force}", super::pricing::PRICE_IN_FORCE)
+    })
+}
 
 fn row_to_product(row: &sqlx::sqlite::SqliteRow) -> ProductWithPrice {
     let track: i64 = row.get("track_inventory");
@@ -105,7 +113,7 @@ pub async fn search_products_fts(
     };
     let sql = format!(
         "{} AND p.rowid IN (SELECT rowid FROM product_search WHERE product_search MATCH ?)          ORDER BY p.name LIMIT ?",
-        PRODUCT_QUERY
+        product_query()
     );
     let rows = sqlx::query(&sql)
         .bind(&match_query)
@@ -145,7 +153,7 @@ pub async fn search_products(
     let pattern = format!("%{}%", escaped);
     let sql = format!(
         "{} AND (p.name LIKE ? ESCAPE '\\' OR p.sku LIKE ? ESCAPE '\\' OR p.barcode LIKE ? ESCAPE '\\') ORDER BY p.name LIMIT ?",
-        PRODUCT_QUERY
+        product_query()
     );
     let rows = sqlx::query(&sql)
         .bind(&pattern)
@@ -168,6 +176,32 @@ pub async fn search_products_paginated(
     after_id: Option<&str>,
     page_size: u32,
 ) -> AppResult<Vec<ProductWithPrice>> {
+    // The first page goes through the index, as the assistant's search already
+    // did.
+    //
+    // Migration 0046 built the `product_search` FTS table for exactly this, and
+    // said so: product lookup ran `name LIKE '%term%'`, which is "the hot path
+    // for both the POS product picker and ZanAI's product read tools". Only the
+    // assistant was wired to it. The picker — the one that runs on every
+    // keystroke while a customer waits — kept the `LIKE`, which the planner can
+    // narrow to active products but must then evaluate against every one of
+    // them. That cost grows with the catalogue for as long as the shop trades.
+    //
+    // First page only: paging is by `product_id` cursor and the FTS path orders
+    // by name, so mixing them would skip or repeat rows. A cashier typing into
+    // the picker sees the first page; the deeper pages keep the old behaviour,
+    // which is correct and rarely reached.
+    //
+    // The fallback is what keeps a mid-word search working — the index is a
+    // prefix index and cannot serve "ssorted" — so nothing that used to be
+    // findable stops being findable.
+    if after_id.is_none() {
+        let hits = search_products_fts(pool, query, page_size as i64).await?;
+        if !hits.is_empty() {
+            return Ok(hits);
+        }
+    }
+
     let escaped = query
         .replace('\\', "\\\\")
         .replace('%', "\\%")
@@ -178,13 +212,13 @@ pub async fn search_products_paginated(
         format!(
             "{} AND (p.name LIKE ? ESCAPE '\\' OR p.sku LIKE ? ESCAPE '\\' OR p.barcode LIKE ? ESCAPE '\\') \
              AND p.product_id > ? ORDER BY p.product_id LIMIT ?",
-            PRODUCT_QUERY
+            product_query()
         )
     } else {
         format!(
             "{} AND (p.name LIKE ? ESCAPE '\\' OR p.sku LIKE ? ESCAPE '\\' OR p.barcode LIKE ? ESCAPE '\\') \
              ORDER BY p.product_id LIMIT ?",
-            PRODUCT_QUERY
+            product_query()
         )
     };
 
@@ -216,7 +250,7 @@ pub async fn get_product_by_barcode(
 ) -> AppResult<Option<ProductWithPrice>> {
     let sql = format!(
         "{} AND (p.barcode = ? OR p.product_id IN (SELECT product_id FROM product_barcodes WHERE barcode = ? AND deleted_at IS NULL)) LIMIT 1",
-        PRODUCT_QUERY
+        product_query()
     );
     let row = sqlx::query(&sql)
         .bind(barcode)
@@ -231,7 +265,7 @@ pub async fn get_product_by_id(
     pool: &SqlitePool,
     product_id: &str,
 ) -> AppResult<Option<ProductWithPrice>> {
-    let sql = format!("{} AND p.product_id = ?", PRODUCT_QUERY);
+    let sql = format!("{} AND p.product_id = ?", product_query());
     let row = sqlx::query(&sql)
         .bind(product_id)
         .fetch_optional(pool)
@@ -253,10 +287,10 @@ pub async fn list_all_active(
     let sql = if after_id.is_some() {
         format!(
             "{} AND p.product_id > ? ORDER BY p.product_id LIMIT ?",
-            PRODUCT_QUERY
+            product_query()
         )
     } else {
-        format!("{} ORDER BY p.product_id LIMIT ?", PRODUCT_QUERY)
+        format!("{} ORDER BY p.product_id LIMIT ?", product_query())
     };
 
     let rows = if let Some(cursor) = after_id {

@@ -139,17 +139,46 @@ async fn current_license_key(pool: &SqlitePool) -> Option<String> {
 /// first matters: without it the copy can miss committed transactions still
 /// living in the -wal file, producing a backup that restores to a stale store.
 async fn snapshot(pool: &SqlitePool, db_path: &std::path::Path) -> Result<Vec<u8>, String> {
-    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
-        .execute(pool)
-        .await
-        .map_err(|e| format!("WAL checkpoint failed: {e}"))?;
-    let size = std::fs::metadata(db_path)
-        .map_err(|e| format!("could not stat the database: {e}"))?
-        .len();
-    if size > MAX_SNAPSHOT_BYTES {
-        return Err(format!("database is {size} bytes, above the backup cap"));
+    // `VACUUM INTO` rather than checkpoint-then-copy.
+    //
+    // The old sequence was two steps — `PRAGMA wal_checkpoint(TRUNCATE)`, then
+    // read or copy the file — with a window between them in which a sale can
+    // commit. Nothing in SQLite promises that a plain read of a live database
+    // yields a valid one; what comes out can be a mixture of two states.
+    // `VACUUM INTO` holds a read transaction for the whole write, so the file it
+    // produces is the database as it stood at a single instant, and it does not
+    // need the WAL folded in first because it reads through it.
+    //
+    // It also writes a compacted copy, which is smaller to store and to send.
+    let staging = db_path.with_extension(format!("snapshot-{}.db", ulid::Ulid::new()));
+    // The path goes into SQL, so it must not be able to close the quote. It is
+    // derived from the application's own database path, never from user input,
+    // and this rejects the only shape that could.
+    let staging_sql = staging.display().to_string();
+    if staging_sql.contains('\'') {
+        return Err("the database path contains a quote".into());
     }
-    std::fs::read(db_path).map_err(|e| format!("could not read the database: {e}"))
+
+    let result = async {
+        sqlx::query(&format!("VACUUM INTO '{staging_sql}'"))
+            .execute(pool)
+            .await
+            .map_err(|e| format!("could not take a database snapshot: {e}"))?;
+
+        let size = std::fs::metadata(&staging)
+            .map_err(|e| format!("could not stat the snapshot: {e}"))?
+            .len();
+        if size > MAX_SNAPSHOT_BYTES {
+            return Err(format!("database is {size} bytes, above the backup cap"));
+        }
+        std::fs::read(&staging).map_err(|e| format!("could not read the snapshot: {e}"))
+    }
+    .await;
+
+    // The staging copy is a full second copy of the shop's data; it does not
+    // stay on disk whether or not the upload worked.
+    let _ = std::fs::remove_file(&staging);
+    result
 }
 
 /// Runs one backup cycle. Returns `Ok(false)` when backup is simply not
@@ -180,7 +209,23 @@ pub async fn run_once(pool: &SqlitePool, db_path: &std::path::Path) -> Result<bo
     );
 
     let url = format!("{}{}", base_url.trim_end_matches('/'), BACKUP_PATH);
-    let response = reqwest::Client::new()
+    // reqwest applies no timeout unless one is asked for, and this was the only
+    // outbound client in the codebase that did not ask. An endpoint that accepts
+    // the connection and then stalls parks this task for the life of the
+    // process: the daily loop never comes round again, and off-site backups stop
+    // without an error — on the one feature that exists for the store PC dying.
+    //
+    // The ceiling is generous rather than tight. A snapshot may be up to
+    // MAX_SNAPSHOT_BYTES over whatever connection the shop has, and killing a
+    // slow but progressing upload would be its own outage; fifteen minutes is
+    // past any real transfer and far short of for ever. The connect timeout is
+    // short because failing to reach the host at all is not a slow upload.
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(15 * 60))
+        .build()
+        .map_err(|e| format!("backup client: {e}"))?;
+    let response = client
         .post(&url)
         .header("content-type", "application/octet-stream")
         .header("x-zanpos-store", &branch_id)

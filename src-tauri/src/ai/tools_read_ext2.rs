@@ -120,7 +120,7 @@ async fn dead_stock(
     let rows = sqlx::query(
         "SELECT p.product_id, p.name, pp.price_minor
          FROM products p
-         JOIN product_prices pp ON pp.product_id = p.product_id AND pp.price_type = 'selling' AND pp.effective_to IS NULL
+         JOIN v_current_selling_price pp ON pp.product_id = p.product_id
          WHERE p.is_active = 1
          AND NOT EXISTS (
              SELECT 1 FROM sale_items si JOIN sales s ON s.sale_id = si.sale_id
@@ -255,6 +255,10 @@ async fn revenue_by_payment_method(
         "SELECT p.payment_method, SUM(p.amount_minor) AS total, COUNT(DISTINCT s.sale_id) AS tx
          FROM payments p JOIN sales s ON s.sale_id = p.sale_id
          WHERE s.business_date BETWEEN ? AND ? AND s.status != 'voided'
+           AND (s.is_delivery = 0 OR EXISTS (
+               SELECT 1 FROM delivery_orders d
+                WHERE d.sale_id = s.sale_id AND d.payment_status = 'paid'
+           ))
          GROUP BY p.payment_method ORDER BY total DESC",
     )
     .bind(from)
@@ -294,20 +298,34 @@ async fn profit_margin(
     let days = period_days(input, 30);
     let lim = limit_i(input, 20);
     let rows = sqlx::query(
-        "SELECT p.name,
+        // Cost from the sale's own snapshot, not from the catalogue.
+        //
+        // `p.cost_minor` is what the product costs *now*. Using it here
+        // re-priced every past sale's COGS every time a supplier changed their
+        // price — a cost rise next month retroactively shrank last month's
+        // margin, with no new data and no way to reconcile it against the
+        // Reports page, which reads the snapshot. `cost_minor_snapshot` is
+        // written at sale time for exactly this reason.
+        //
+        // The join to `products` is gone with it: the name lives on the line as
+        // a snapshot too, so a product deleted later no longer drops its own
+        // history out of this report.
+        "SELECT si.product_name_snapshot AS name,
                 SUM(si.quantity * si.unit_price_minor) AS revenue,
-                SUM(si.quantity * COALESCE(p.cost_minor, 0)) AS cost
+                SUM(si.quantity * COALESCE(si.cost_minor_snapshot, 0)) AS cost
          FROM sale_items si
-         JOIN products p ON p.product_id = si.product_id
          JOIN sales s ON s.sale_id = si.sale_id
-         WHERE s.sold_at >= date('now','-'||?||' days') AND s.status != 'voided'
-           AND p.cost_minor IS NOT NULL AND p.cost_minor > 0
-         GROUP BY si.product_id
-         ORDER BY (SUM(si.quantity * si.unit_price_minor) - SUM(si.quantity * COALESCE(p.cost_minor, 0))) DESC
+         WHERE s.business_date >= date('now','-'||?||' days') AND s.status != 'voided'
+           AND si.cost_minor_snapshot IS NOT NULL AND si.cost_minor_snapshot > 0
+         GROUP BY si.product_id, si.product_name_snapshot
+         ORDER BY (SUM(si.quantity * si.unit_price_minor)
+                   - SUM(si.quantity * COALESCE(si.cost_minor_snapshot, 0))) DESC
          LIMIT ?",
     )
-    .bind(days).bind(lim)
-    .fetch_all(pool).await?;
+    .bind(days)
+    .bind(lim)
+    .fetch_all(pool)
+    .await?;
     if rows.is_empty() {
         return Ok(
             "[DB] No margin data — set cost_minor on products to enable this report.".into(),
@@ -340,7 +358,7 @@ async fn shelf_label_gap(pool: &SqlitePool, fmt: &impl Fn(i64) -> String) -> App
     let rows = sqlx::query(
         "SELECT p.name, pp.price_minor, p.cost_minor
          FROM products p
-         JOIN product_prices pp ON pp.product_id = p.product_id AND pp.price_type = 'selling' AND pp.effective_to IS NULL
+         JOIN v_current_selling_price pp ON pp.product_id = p.product_id
          WHERE p.is_active = 1 AND p.cost_minor IS NOT NULL
            AND p.cost_minor > pp.price_minor
          ORDER BY (p.cost_minor - pp.price_minor) DESC LIMIT 50",
@@ -384,13 +402,20 @@ async fn product_sales_rank(
         .unwrap_or("revenue");
     let order_col = if sort == "units" { "units" } else { "revenue" };
     let rows = sqlx::query(&format!(
-        "SELECT p.name,
+        // Same formula as `report_top_products`: `line_total_minor` (what the
+        // receipt charged, discounts included), the snapshot name rather than a
+        // join to `products` that would drop deleted products' history, and
+        // `business_date` rather than `sold_at` — the latter is a UTC timestamp,
+        // so a Bahrain late-night sale landed in the wrong day's window.
+        "SELECT si.product_name_snapshot AS name,
                 CAST(SUM(si.quantity) AS INTEGER) AS units,
-                SUM(si.quantity * si.unit_price_minor) AS revenue
-         FROM sale_items si JOIN products p ON p.product_id = si.product_id
+                SUM(si.line_total_minor) AS revenue
+         FROM sale_items si
          JOIN sales s ON s.sale_id = si.sale_id
-         WHERE s.sold_at >= date('now','-'||?||' days') AND s.status != 'voided'
-         GROUP BY si.product_id ORDER BY {order_col} DESC LIMIT ?"
+         WHERE s.business_date >= date('now','-'||?||' days')
+           AND s.status != 'voided' AND si.voided = 0
+         GROUP BY si.product_id, si.product_name_snapshot
+         ORDER BY {order_col} DESC LIMIT ?"
     ))
     .bind(days)
     .bind(lim)
@@ -1574,15 +1599,13 @@ async fn product_versions(
     .bind(pid)
     .fetch_all(pool)
     .await?;
-    let current: i64 = sqlx::query_scalar(
-        "SELECT price_minor FROM product_prices
-          WHERE product_id = ? AND price_type = 'selling' AND effective_to IS NULL",
-    )
-    .bind(pid)
-    .fetch_optional(pool)
-    .await?
-    .flatten()
-    .unwrap_or(0);
+    let current: i64 =
+        sqlx::query_scalar("SELECT price_minor FROM v_current_selling_price WHERE product_id = ?")
+            .bind(pid)
+            .fetch_optional(pool)
+            .await?
+            .flatten()
+            .unwrap_or(0);
     let header = format!(
         "[DB] Price history for {} ({}):\n  Current price: BHD {}",
         name.as_deref().unwrap_or(pid),
@@ -1943,7 +1966,7 @@ async fn export_product_catalog(
                 p.is_active, p.sku
          FROM products p
          LEFT JOIN categories c ON c.category_id = p.category_id
-         JOIN product_prices pp ON pp.product_id = p.product_id AND pp.price_type = 'selling' AND pp.effective_to IS NULL
+         JOIN v_current_selling_price pp ON pp.product_id = p.product_id
          WHERE (? = 1 OR p.is_active = 1)
          ORDER BY cat, p.name LIMIT 500",
     )
@@ -2419,8 +2442,7 @@ async fn restock_priority(
              WHERE s.status = 'completed' AND s.sold_at >= datetime('now', '-' || ? || ' days')
              GROUP BY si.product_id
          ) v ON v.product_id = p.product_id
-         LEFT JOIN product_prices pp ON pp.product_id = p.product_id
-             AND pp.price_type = 'selling' AND pp.effective_to IS NULL
+         LEFT JOIN v_current_selling_price pp ON pp.product_id = p.product_id
          WHERE p.is_active = 1 AND p.track_inventory = 1 AND p.deleted_at IS NULL
          AND CAST(COALESCE(sl.quantity_on_hand,'0') AS REAL) <= COALESCE(p.reorder_point, 0.0)",
     )
@@ -2618,7 +2640,7 @@ async fn shift_performance(
          FROM shifts sh
          LEFT JOIN users u ON u.user_id = sh.cashier_user_id
          LEFT JOIN sales s ON s.shift_id = sh.shift_id AND s.status != 'voided'
-         WHERE date(sh.opened_at) BETWEEN ? AND ?
+         WHERE COALESCE(sh.business_date, DATE(sh.opened_at, '+3 hours')) BETWEEN ? AND ?
          GROUP BY sh.shift_id ORDER BY sh.opened_at DESC LIMIT ?",
     )
     .bind(from)

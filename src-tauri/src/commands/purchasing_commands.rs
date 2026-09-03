@@ -408,6 +408,36 @@ async fn po_create_inner(
             "Purchase order needs at least one line".into(),
         ));
     }
+    // The supplier has to still be trading.
+    //
+    // The foreign key only proves the supplier row exists, not that it is
+    // active, and the only place `is_active` was checked was the dropdown on the
+    // order form — a UI convenience, not a gate. The supplier list command
+    // returns inactive suppliers, and the assistant's own `list_suppliers`
+    // shows them labelled "inactive", so an order could still be raised against
+    // one that had been deactivated, including by a manager on another till
+    // moments earlier.
+    if let Some(supplier_id) = input.supplier_id.as_deref() {
+        let active: Option<bool> =
+            sqlx::query_scalar("SELECT is_active FROM suppliers WHERE supplier_id = ?")
+                .bind(supplier_id)
+                .fetch_optional(pool)
+                .await?;
+        match active {
+            None => {
+                return Err(AppError::Validation(
+                    "That supplier no longer exists.".into(),
+                ))
+            }
+            Some(false) => {
+                return Err(AppError::Validation(
+                    "That supplier is no longer active. Reactivate them before ordering.".into(),
+                ))
+            }
+            Some(true) => {}
+        }
+    }
+
     let now = chrono::Utc::now().to_rfc3339();
     let po_id = Ulid::new().to_string();
     let mut tx = pool.begin().await?;

@@ -108,6 +108,113 @@ impl CartLine {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_second_scan_finds_the_line_the_product_is_already_on() {
+        let mut cart = Cart::new("B".into(), "D".into(), "S".into(), "U".into());
+        cart.lines.push(CartLine::new(
+            Some("p1".into()),
+            "Cola".into(),
+            None,
+            None,
+            "1",
+            500,
+            "t".into(),
+            0,
+            false,
+        ));
+        cart.lines.push(CartLine::new(
+            Some("p2".into()),
+            "Water".into(),
+            None,
+            None,
+            "1",
+            300,
+            "t".into(),
+            0,
+            false,
+        ));
+
+        assert_eq!(cart.active_line_for_product("p1"), Some(0));
+        assert_eq!(cart.active_line_for_product("p2"), Some(1));
+        assert_eq!(
+            cart.active_line_for_product("p3"),
+            None,
+            "a product not in the basket opens a new line"
+        );
+    }
+
+    #[test]
+    fn a_voided_line_is_not_merged_back_into() {
+        // The cashier removed this item. Scanning it again must start a fresh
+        // line rather than resurrect the one they deliberately voided.
+        let mut cart = Cart::new("B".into(), "D".into(), "S".into(), "U".into());
+        let mut removed = CartLine::new(
+            Some("p1".into()),
+            "Cola".into(),
+            None,
+            None,
+            "1",
+            500,
+            "t".into(),
+            0,
+            false,
+        );
+        removed.voided = true;
+        cart.lines.push(removed);
+
+        assert_eq!(cart.active_line_for_product("p1"), None);
+
+        cart.lines.push(CartLine::new(
+            Some("p1".into()),
+            "Cola".into(),
+            None,
+            None,
+            "1",
+            500,
+            "t".into(),
+            0,
+            false,
+        ));
+        assert_eq!(
+            cart.active_line_for_product("p1"),
+            Some(1),
+            "the live line is the one that gets the merge, not the voided one"
+        );
+    }
+
+    #[test]
+    fn a_custom_item_never_merges_into_another() {
+        // Custom items carry no product_id. Two of them are two different
+        // things — matching them on a missing id would fold unrelated lines
+        // together.
+        let mut cart = Cart::new("B".into(), "D".into(), "S".into(), "U".into());
+        cart.lines.push(CartLine::new(
+            None,
+            "Repair charge".into(),
+            None,
+            None,
+            "1",
+            5000,
+            "t".into(),
+            0,
+            false,
+        ));
+        cart.lines.push(CartLine::new(
+            None,
+            "Delivery".into(),
+            None,
+            None,
+            "1",
+            1000,
+            "t".into(),
+            0,
+            false,
+        ));
+        assert_eq!(cart.lines.len(), 2);
+        assert_eq!(cart.active_line_for_product(""), None);
+    }
+
     use super::*;
 
     fn make_line(unit_price_minor: i64, qty: &str, tax_bp: i64, inclusive: bool) -> CartLine {
@@ -302,6 +409,19 @@ impl Cart {
     /// Satisfies: net_total == gross_total - discount_total + tax_total
     pub fn net_total(&self) -> i64 {
         (self.post_line_total() - self.bill_discount_minor).max(0)
+    }
+
+    /// The live line already holding this product, if the basket has one.
+    ///
+    /// Scanning an item twice, or tapping its tile twice, adds to that line
+    /// instead of opening a second one — a basket with "Cola x1" listed three
+    /// times is one a cashier cannot check at a glance. A voided line is not a
+    /// candidate: it was deliberately removed, and merging into it would bring
+    /// it back.
+    pub fn active_line_for_product(&self, product_id: &str) -> Option<usize> {
+        self.lines
+            .iter()
+            .position(|l| !l.voided && l.product_id.as_deref() == Some(product_id))
     }
 
     /// Validate all quantities and monetary totals are within safe ranges.

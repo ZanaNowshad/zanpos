@@ -9,10 +9,10 @@ import { detailTranslator } from "../i18n/detailStrings";
 
 interface Props {
   line: CartLine;
-  onUpdateQty: (id: string, qty: string) => void;
-  onApplyLineDiscount: (id: string, discount_minor: number, reason: string) => void;
-  onSetLineNote: (id: string, note: string | null) => void;
-  onRemove: (id: string) => void;
+  onUpdateQty: (id: string, qty: string) => void | Promise<unknown>;
+  onApplyLineDiscount: (id: string, discount_minor: number, reason: string) => void | Promise<unknown>;
+  onSetLineNote: (id: string, note: string | null) => void | Promise<unknown>;
+  onRemove: (id: string) => void | Promise<unknown>;
   onClose: () => void;
 }
 
@@ -65,24 +65,54 @@ export default function LineEditModal({
   const reasonTrimmed = discountReason.trim();
   const discountNeedsReason = discountPreview > 0 && reasonTrimmed.length === 0;
 
-  function handleApply() {
-    if (!qtyValid || discountNeedsReason) return;
-    if (qty !== line.quantity) {
-      onUpdateQty(line.cart_line_id, qty);
+  const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
+
+  /**
+   * Apply the edits one at a time, and close only if they all landed.
+   *
+   * These three calls used to be fired without awaiting, then the modal closed
+   * on the next line. Two problems. A rejected edit still closed the modal, so
+   * a refused change looked applied. And each call closed over the *same*
+   * pre-edit cart and each set the cart from its own response, so changing the
+   * quantity and the discount together meant whichever request finished last
+   * silently discarded the other — the cashier saw one of their two edits.
+   */
+  async function handleApply() {
+    if (!qtyValid || discountNeedsReason || applying) return;
+    setApplying(true);
+    setApplyError(null);
+    try {
+      if (qty !== line.quantity) {
+        await onUpdateQty(line.cart_line_id, qty);
+      }
+      if (discountPreview !== line.line_discount_minor) {
+        await onApplyLineDiscount(line.cart_line_id, discountPreview, reasonTrimmed);
+      }
+      const noteVal = note.trim() || null;
+      if (noteVal !== (line.note ?? null)) {
+        await onSetLineNote(line.cart_line_id, noteVal);
+      }
+      onClose();
+    } catch (e: unknown) {
+      setApplyError(typeof e === "string" ? e : "Could not apply the change");
+    } finally {
+      setApplying(false);
     }
-    if (discountPreview !== line.line_discount_minor) {
-      onApplyLineDiscount(line.cart_line_id, discountPreview, reasonTrimmed);
-    }
-    const noteVal = note.trim() || null;
-    if (noteVal !== (line.note ?? null)) {
-      onSetLineNote(line.cart_line_id, noteVal);
-    }
-    onClose();
   }
 
-  function handleRemove() {
-    onRemove(line.cart_line_id);
-    onClose();
+  async function handleRemove() {
+    if (applying) return;
+    setApplying(true);
+    setApplyError(null);
+    try {
+      await onRemove(line.cart_line_id);
+      onClose();
+    } catch (e: unknown) {
+      setApplyError(typeof e === "string" ? e : "Could not remove the line");
+    } finally {
+      setApplying(false);
+    }
   }
 
   return (
@@ -202,10 +232,11 @@ export default function LineEditModal({
           onChange={e => setNote(e.target.value)}
         />
 
+        {applyError && <div className="modal-error" role="alert">{applyError}</div>}
         <div className="modal-actions line-edit-actions">
-          <button className="btn-danger" onClick={handleRemove}>{t("remove")}</button>
-          <button className="btn-secondary" onClick={onClose}>{t("cancel")}</button>
-          <button className="btn-primary" onClick={handleApply} disabled={!qtyValid || discountNeedsReason}>
+          <button className="btn-danger" onClick={handleRemove} disabled={applying}>{t("remove")}</button>
+          <button className="btn-secondary" onClick={onClose} disabled={applying}>{t("cancel")}</button>
+          <button className="btn-primary" onClick={handleApply} disabled={!qtyValid || discountNeedsReason || applying}>
             Apply
           </button>
         </div>

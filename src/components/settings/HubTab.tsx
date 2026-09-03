@@ -288,7 +288,7 @@ export default function HubTab({ sessionUserId }: Props) {
             terminal that had never once contacted it — every state below is
             derived from heartbeat evidence instead. Two terminal lists giving
             different answers is worse than one. */}
-        <TerminalRosterPanel actorUserId={sessionUserId} canRepair />
+        <TerminalRosterPanel actorUserId={sessionUserId} canRepair isHub />
 
         {error && <div className="modal-error">{error}</div>}
       </div>

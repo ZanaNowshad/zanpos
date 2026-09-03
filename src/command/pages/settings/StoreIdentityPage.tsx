@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { DEVICE } from "../../../types";
 import {
   settingsGetBranch,
   settingsUpdateBranch,
   appConfigGetTimeout,
   appConfigSetTimeout,
+  appConfigLoad,
 } from "../../../tauri/commands";
 import StoreTab from "../../../components/settings/StoreTab";
 
@@ -57,6 +59,19 @@ export default function StoreIdentityPage({ sessionUserId, sessionRole }: Props)
         phone: phone.trim() || undefined, tax_number: taxNumber.trim() || undefined,
         cr_number: crNumber.trim() || undefined, actor_user_id: sessionUserId,
       });
+      // Pull the saved values back into the in-memory DEVICE singleton.
+      //
+      // It was populated once at startup and never again, so renaming the store
+      // mid-shift left the old name on the POS top bar, on every shift and
+      // cash-drawer receipt, and in outbound WhatsApp messages until the app was
+      // restarted — while Settings showed the new one and reported "Saved".
+      // `usePosReceipt` already documents this discipline for the sale receipt;
+      // this applies it to the rest.
+      try {
+        DEVICE.init(await appConfigLoad());
+      } catch {
+        // The save succeeded; a failed refresh is cosmetic until the next load.
+      }
       setSavedStore(true); registerTimer(setTimeout(() => setSavedStore(false), 3000));
     } catch (e: unknown) { setSaveError(typeof e === "string" ? e : "Failed to save"); }
     finally { setSaving(false); }

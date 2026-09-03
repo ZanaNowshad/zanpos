@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { CheckCircle2, FileSearch, ListChecks, RefreshCcw, X } from "lucide-react";
 import type { SaleForRefund, SaleItemForRefund, SaleListRow, RefundResult } from "../types";
 import { DEVICE } from "../types";
 import { refundGetSale, refundCreate, reportSalesList, authValidateManagerPin } from "../tauri/commands";
 import { formatMoney } from "../money";
+import { initQtyMap, lineRefundAmount, type QtyMap } from "../utils/refundMath";
 import { useLanguage } from "../hooks/useLanguage";
 import { modalTranslator, ownedModalLabel } from "../i18n/modalStrings";
 import { detailTranslator } from "../i18n/detailStrings";
@@ -20,17 +21,6 @@ interface Props {
   cashierUserId: string;
   onClose: () => void;
   onExchangeStarted?: (exchange: { refund: RefundResult; creditMinor: number; originalReceipt: string }) => void;
-}
-
-/** Quantity map: sale_item_id → how many units to refund (0 = skip). */
-type QtyMap = Map<string, number>;
-
-function initQtyMap(items: SaleItemForRefund[]): QtyMap {
-  const m = new Map<string, number>();
-  for (const item of items) {
-    m.set(item.sale_item_id, parseFloat(item.quantity) || 0);
-  }
-  return m;
 }
 
 type RefundMode = "receipt" | "browse";
@@ -65,6 +55,10 @@ export default function RefundModal({ cashierUserId, onClose, onExchangeStarted 
   const [pinError, setPinError]             = useState<string | null>(null);
   const [pinLoading, setPinLoading]         = useState(false);
   const [overrideToken, setOverrideToken]   = useState<string | null>(null);
+  // One key per refund attempt, kept across retries: the backend answers a
+  // repeat with the refund it already made. Matters most on the manager-PIN
+  // path, where the same refund is submitted twice by design.
+  const attemptKey = useRef<string | null>(null);
 
   const isCrossDevice = sale ? (sale.origin_device_id && sale.origin_device_id !== DEVICE.device_id) : false;
 
@@ -76,6 +70,7 @@ export default function RefundModal({ cashierUserId, onClose, onExchangeStarted 
     setRefundQtys(new Map());
     try {
       const found = await refundGetSale(receiptInput.trim().toUpperCase(), cashierUserId);
+      attemptKey.current = null;
       setSale(found);
       setRefundQtys(initQtyMap(found.items));
     } catch (e: unknown) {
@@ -156,14 +151,6 @@ export default function RefundModal({ cashierUserId, onClose, onExchangeStarted 
     ? sale.items.filter(i => (refundQtys.get(i.sale_item_id) ?? 0) > 0)
     : [];
 
-  // BUG-POS-4: use proportional line_total_minor share, not unit_price_minor,
-  // so line-level discounts are correctly reflected in the refund amount.
-  const lineRefundAmount = (item: SaleItemForRefund, qty: number): number => {
-    const origQty = parseFloat(item.quantity);
-    if (origQty <= 0) return 0;
-    return Math.round(qty * item.line_total_minor / origQty);
-  };
-
   const refundTotal = selectedItems.reduce((sum, item) => {
     const qty = refundQtys.get(item.sale_item_id) ?? 0;
     return sum + lineRefundAmount(item, qty);
@@ -171,6 +158,7 @@ export default function RefundModal({ cashierUserId, onClose, onExchangeStarted 
 
   const handleConfirm = async (immediateToken?: string, asExchange = false) => {
     if (!sale || selectedItems.length === 0) return;
+    if (!attemptKey.current) attemptKey.current = crypto.randomUUID();
     setSubmitting(true);
     setError(null);
     try {
@@ -193,13 +181,16 @@ export default function RefundModal({ cashierUserId, onClose, onExchangeStarted 
         // FIX: use immediateToken directly — React state (overrideToken) is not yet
         // updated when handleConfirm is called from handlePinSubmit in the same tick
         (immediateToken ?? overrideToken) ?? undefined,
+        attemptKey.current ?? undefined,
       );
       if (asExchange && onExchangeStarted) {
+        attemptKey.current = null;
         onExchangeStarted({ refund, creditMinor: refundTotal, originalReceipt: sale.receipt_number });
         return;
       }
       setResult(refund);
       setOverrideToken(null);
+      attemptKey.current = null;
     } catch (e: unknown) {
       const msg = typeof e === "string" ? e : dt("refundFailed");
       if (msg.toLowerCase().includes("manager override") || msg.toLowerCase().includes("manager pin")) {

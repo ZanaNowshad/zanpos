@@ -158,6 +158,11 @@ export function useCart(
       setCart(updated);
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to apply line discount");
+      // Rethrow, like `applyBillDiscount` three lines up. Callers await this and
+      // close their modal on the next line; swallowing the rejection made a
+      // refused discount look applied — the modal shut, the line kept its full
+      // price, and only a passive banner disagreed.
+      throw e;
     }
   }, [cart, session.cashier_user_id]);
 
@@ -171,6 +176,10 @@ export function useCart(
       setCart(updated);
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to add custom item");
+      // Same reason: the caller closes its modal and resets the keypad on the
+      // line after the await, so a rejected item left the cashier looking at a
+      // cart that never gained the line.
+      throw e;
     } finally {
       setLoading(false);
     }

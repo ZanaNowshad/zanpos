@@ -54,6 +54,12 @@ export function usePosRegisterActions({
       await cashNoSale(shift.shift_id, userId);
     } catch (cause) {
       setError(typeof cause === "string" ? cause : "No-sale open failed");
+      // Without this return the drawer opened anyway. A no-sale is the one
+      // drawer-open with no sale behind it, so its `no_sale_events` row and
+      // audit entry are the only record of who opened the till and why —
+      // popping it after that write failed leaves cash accessible with nothing
+      // recording it.
+      return;
     }
     openCashDrawer(userId)
       .catch((cause: unknown) => console.warn("Cash drawer open failed (no-sale):", cause));

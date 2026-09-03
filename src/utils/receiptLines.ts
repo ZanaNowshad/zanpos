@@ -3,6 +3,7 @@
  * the ESC/POS printer. Used by POS sale, reprint, and auto-print paths.
  */
 import type { BranchSettings, SaleResult } from "../types";
+import { loadReceiptDesign, type ReceiptDesign } from "../components/ReceiptDesignEditor";
 import { formatMoney } from "../money";
 import { DEVICE } from "../types";
 
@@ -57,6 +58,18 @@ export function buildReceiptLines(
   sale: SaleResult,
   settings: BranchSettings | null,
   isReprint = false,
+  /**
+   * What the owner chose to show on the receipt.
+   *
+   * Read fresh at print time rather than captured once, so a change in Settings
+   * takes effect on the next receipt without restarting the till — the same
+   * discipline `usePosReceipt` already applies to the branch settings.
+   *
+   * These toggles were saved to localStorage and never read: the editor showed
+   * a live preview that honoured every one of them, and the printer ignored all
+   * of them. Unchecking "Show Phone" appeared to work and changed nothing.
+   */
+  design: ReceiptDesign = loadReceiptDesign(),
 ): string[] {
   const fmt = (n: number) => formatMoney(n, DEVICE.currency_exponent);
   const lines: string[] = [];
@@ -67,12 +80,12 @@ export function buildReceiptLines(
     lines.push("*".repeat(W));
   }
 
-  if (settings?.name)           lines.push(settings.name);
-  if (settings?.address)        lines.push(settings.address);
-  if (settings?.phone)          lines.push(settings.phone);
-  if (settings?.tax_number)     lines.push(`TRN: ${settings.tax_number}`);
-  if (settings?.cr_number)      lines.push(`CR No: ${settings.cr_number}`);
-  if (settings?.receipt_header) lines.push(settings.receipt_header);
+  if (design.show_store_name && settings?.name)     lines.push(settings.name);
+  if (design.show_address    && settings?.address)  lines.push(settings.address);
+  if (design.show_phone      && settings?.phone)    lines.push(settings.phone);
+  if (design.show_tax_number && settings?.tax_number) lines.push(`TRN: ${settings.tax_number}`);
+  if (design.show_tax_number && settings?.cr_number)  lines.push(`CR No: ${settings.cr_number}`);
+  if (design.show_header     && settings?.receipt_header) lines.push(settings.receipt_header);
 
   lines.push(DIVIDER);
   lines.push(`Receipt: #${sale.receipt_number}`);
@@ -137,7 +150,7 @@ export function buildReceiptLines(
       lines.push(`Paid at:  ${new Date(d.paid_confirmed_at).toLocaleString()}`);
   }
 
-  if (settings?.receipt_footer) {
+  if (design.show_footer && settings?.receipt_footer) {
     lines.push(DIVIDER);
     lines.push(settings.receipt_footer);
   }

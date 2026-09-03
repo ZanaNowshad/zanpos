@@ -400,6 +400,7 @@ export const refundCreate = (
   created_by_user_id: string,
   return_reason_code?: string,
   manager_override_token?: string,
+  idempotency_key?: string,
 ): Promise<RefundResult> =>
   invoke("refund_create", {
     input: {
@@ -409,6 +410,7 @@ export const refundCreate = (
       return_reason_code: return_reason_code ?? null,
       created_by_user_id,
       manager_override_token: manager_override_token ?? null,
+      idempotency_key: idempotency_key ?? null,
     },
   });
 
@@ -1574,15 +1576,17 @@ export const migrationFindDbFiles = (
 
 export const migrationReadFile = (
   path: string,
-  maxChars?: number,
+  maxChars: number | undefined,
+  actorUserId: string,
 ): Promise<string> =>
-  invoke("migration_read_file", { path, maxChars });
+  invoke("migration_read_file", { path, maxChars, actorUserId });
 
 export const migrationDecompress = (
   archivePath: string,
-  destDir?: string,
+  destDir: string | undefined,
+  actorUserId: string,
 ): Promise<DecompressResult> =>
-  invoke("migration_decompress", { archivePath, destDir });
+  invoke("migration_decompress", { archivePath, destDir, actorUserId });
 
 export const migrationZanposStats = (): Promise<ZanposStats> =>
   invoke("migration_zanpos_stats");

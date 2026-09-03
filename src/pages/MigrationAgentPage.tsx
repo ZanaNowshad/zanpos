@@ -804,7 +804,7 @@ export default function MigrationAgentPage({ onDone, sessionUserId, sessionToken
       setQuickBusy("zip");
       const msgId = addMsg("assistant", `📦 Extracting ${archivePath.replace(/\\/g, "/").split("/").pop()}…`);
       try {
-        const r = await migrationDecompress(archivePath);
+        const r = await migrationDecompress(archivePath, undefined, sessionUserId);
         let text = `📦 Extracted **${r.extracted_files.length} files** to:\n\`${r.dest_dir}\``;
         if (r.db_files.length > 0) {
           text += `\n\n🗄 Found **${r.db_files.length} database file${r.db_files.length !== 1 ? "s" : ""}**:\n` +

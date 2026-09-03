@@ -33,8 +33,8 @@ function lastSeen(seconds: number | null): string {
 }
 
 export default function TerminalRosterPanel({
-  actorUserId, canRepair,
-}: { actorUserId: string; canRepair: boolean }) {
+  actorUserId, canRepair, isHub = false,
+}: { actorUserId: string; canRepair: boolean; isHub?: boolean }) {
   const [rows, setRows] = useState<TerminalRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ReconciliationPreview | null>(null);
@@ -107,23 +107,37 @@ export default function TerminalRosterPanel({
         ))}
       </div>
 
-      <h4>Compare with the hub</h4>
-      <p className="settings-hint">
-        Names the rows that differ, and says which can be repaired safely. Nothing
-        is changed until you ask for it.
-      </p>
-      <div className="terminal-actions">
-        {["products", "product_prices", "sales", "customers"].map(table => (
-          <button key={table} className="btn-secondary" disabled={busy}
-                  onClick={() => runPreview(table)}>
-            {table}
-          </button>
-        ))}
-      </div>
+      {/* Comparison runs against a hub over HTTP, and this device is the hub —
+          there is no remote copy to compare with. Offering the buttons here
+          produced "This terminal has no hub configured", which reads as a
+          misconfiguration on the one machine that is configured correctly. */}
+      {isHub ? (
+        <p className="settings-hint">
+          This device is the hub, so there is nothing to compare against — it
+          holds the copy the others are checked against. Run the comparison from
+          a terminal instead.
+        </p>
+      ) : (
+        <>
+          <h4>Compare with the hub</h4>
+          <p className="settings-hint">
+            Names the rows that differ, and says which can be repaired safely. Nothing
+            is changed until you ask for it.
+          </p>
+          <div className="terminal-actions">
+            {["products", "product_prices", "sales", "customers"].map(table => (
+              <button key={table} className="btn-secondary" disabled={busy}
+                      onClick={() => runPreview(table)}>
+                {table}
+              </button>
+            ))}
+          </div>
 
-      {preview && <PreviewResult preview={preview} canRepair={canRepair}
-                                 busy={busy} onRepair={runRepair} />}
-      {outcomes && <RepairResult outcomes={outcomes} />}
+          {preview && <PreviewResult preview={preview} canRepair={canRepair}
+                                     busy={busy} onRepair={runRepair} />}
+          {outcomes && <RepairResult outcomes={outcomes} />}
+        </>
+      )}
     </div>
   );
 }

@@ -25,9 +25,20 @@ EXPECTED = (
 
 FUNCTION_HASHES = {
     ("src-tauri/src/commands/delivery_commands.rs", "delivery_update_status"): "41266bafaeb9cc9f0ffa18e14cb22be296036c96c76646b58808a097b2bfe432",
-    ("src-tauri/src/commands/shift_commands.rs", "shift_close"): "d1b32cb313b7860bc9403c5459100bebcdde31481b15e6b18cf029bb4c34c99e",
-    (AI_PATH, "ai_execute_action"): "d087b9fca2bd6db0c3fcbd04fb3f804666aeb7d4243209675198b08aee3cb8b9",
-    (AI_PATH, "ai_execute_batch_actions"): "7e0cc918f02ed0c6cf78a1b6ce0eae53eabe1348cebeffc521e549d267e9da96",
+    # Re-reviewed 2026-09-03 with the correctness audit. In all three the
+    # declared sink call is byte-identical to what it was — SINK_SHAPE still
+    # passes — so what moved is the surrounding body, not the controlled call:
+    #   shift_close             the pending-COD-delivery guard filtered on
+    #                           delivery_orders.shift_id, a column that does not
+    #                           exist; unwrap_or(0) read the resulting SQL error
+    #                           as "nothing pending", so the guard had never
+    #                           fired. It now joins through sales.shift_id.
+    #   ai_execute_action       check-then-act race between reading an action's
+    #                           status and executing it, closed under one tx.
+    #   ai_execute_batch_actions same race on the batch path.
+    ("src-tauri/src/commands/shift_commands.rs", "shift_close"): "b4f2df61423fb116475a3e51d3c5f9ff94604cc32b30c412a6efb49e93ee5d52",
+    (AI_PATH, "ai_execute_action"): "58c07f4bc6bf050be1b73b2d84bcc0c685cea6a0b608dddb8bf5d8bc91de7937",
+    (AI_PATH, "ai_execute_batch_actions"): "7b601798a28a8387debaf0750dcc62aae1279f6df186fa41fc6498a3e3cb73b9",
     (AI_PATH, "ai_chat_stream"): "a591ffcae937a73bfd9f19dc5dc562b441f0e1f75efc50b99076d24996a5bb7c",
     ("src-tauri/src/commands/hub_commands.rs", "hub_connect_existing"): "d9ae75485d68938f5f6292bef7554d0fd020fb043e765837442bc6ea69c75e9c",
     ("src-tauri/src/commands/sync_commands.rs", "setup_pull_catalog"): "ad432e47cd3136fbbdf88ff4d5e348a7a7f79727de331835001f6fba619a8515",

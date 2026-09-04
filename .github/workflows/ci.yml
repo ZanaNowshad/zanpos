@@ -96,6 +96,15 @@ jobs:
         working-directory: src-tauri/sidecar/whatsapp-sidecar
         run: npm ci
 
+      # The other half of the same problem. tauri.conf.json bundles
+      # ../storefront/dist as `storefront-dist/`, so the build script needs the
+      # storefront actually built, not merely type-checked — the storefront job
+      # only runs tsc and produces no dist. Fixing the node_modules resource
+      # simply moved the build script on to the next missing one.
+      - name: Build the storefront (bundled as an app resource)
+        working-directory: storefront
+        run: npm ci && npm run build
+
       - name: Cargo check
         # Mirrors scripts/ship.mjs's Rust gate exactly (plain `cargo check`, no
         # extra flags) so CI fails on the same thing the local ship gate fails

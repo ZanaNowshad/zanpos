@@ -79,6 +79,23 @@ jobs:
         working-directory: src-tauri
         run: cargo audit --file Cargo.lock
 
+      # tauri.conf.json bundles the sidecar's node_modules as an application
+      # resource, so the Tauri build script aborts with "resource path
+      # sidecar\whatsapp-sidecar\node_modules doesn't exist" before a single
+      # line of Rust is checked. The frontend job has always installed it; this
+      # job never did. It went unnoticed because the cargo-deny and cargo-audit
+      # steps ahead of it were failing first — nothing had reached cargo check.
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: src-tauri/sidecar/whatsapp-sidecar/package-lock.json
+
+      - name: Install WhatsApp sidecar dependencies
+        working-directory: src-tauri/sidecar/whatsapp-sidecar
+        run: npm ci
+
       - name: Cargo check
         # Mirrors scripts/ship.mjs's Rust gate exactly (plain `cargo check`, no
         # extra flags) so CI fails on the same thing the local ship gate fails

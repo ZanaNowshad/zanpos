@@ -17,6 +17,38 @@
 # Owner: ZANPOS Maintainers.
 # Review/expiry: 2027-01-31, or earlier if sqlx decouples backend compilation
 # or a patched rsa release becomes available.
+#
+# Why this file and deny.toml do not carry identical lists: cargo-deny
+# evaluates the *resolved dependency graph* for the target being built, while
+# cargo-audit scans *Cargo.lock*, which records every platform's resolution.
+# A crate can therefore be absent from cargo-deny's view and still present
+# here. RUSTSEC-2023-0071 is exactly that case — it was removed from deny.toml
+# as advisory-not-detected, and must stay here because rsa is still a lockfile
+# entry.
+
+# RUSTSEC-2026-0258 — h2 unbounded empty DATA frames
+# Affected: h2@0.3.27. The lockfile carries two h2 majors; the one ZANPOS
+# actually builds was updated 0.4.15 -> 0.4.19, which carries the fix.
+# `cargo tree -i h2@0.3.27` matches no package for the Windows target, so
+# 0.3.27 is a lockfile-only entry that is never compiled into the shipped
+# application. Verified 2026-09-04.
+# Owner: ZANPOS Maintainers. Review/expiry: 2027-01-31.
+
+# RUSTSEC-2026-0235 — rkyv out-of-bounds reads on archives containing Rc/Arc
+# `cargo tree -i rkyv` prints nothing for the build target: rkyv reaches the
+# lockfile only through a non-Windows dependency path and is not compiled into
+# the shipped application. ZANPOS deserializes no rkyv archives.
+# Owner: ZANPOS Maintainers. Review/expiry: 2027-01-31.
+
+# RUSTSEC-2026-0253 — lru LruCache::pop() panic-safety use-after-free
+# Listed here to keep this policy consistent with deny.toml, which carries the
+# same exemption. lru reaches the graph only through mysql@28's connection
+# pool, used by the operator-initiated MySQL migration importer; no
+# semver-compatible fix exists (lru 0.16.4 is the newest mysql 28 accepts).
+# Owner: ZANPOS Maintainers. Review/expiry: 2027-01-31.
 ignore = [
     "RUSTSEC-2023-0071",
+    "RUSTSEC-2026-0258",
+    "RUSTSEC-2026-0235",
+    "RUSTSEC-2026-0253",
 ]

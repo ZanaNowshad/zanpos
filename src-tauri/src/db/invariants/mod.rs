@@ -184,6 +184,7 @@ async fn one_real_sale(pool: &SqlitePool, qty: &str, idem: &str) -> (String, Str
     (result.sale_id, shift.shift_id)
 }
 
+mod authorization;
 mod backup;
 mod catalog;
 mod drawer;

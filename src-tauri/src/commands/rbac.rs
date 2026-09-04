@@ -59,6 +59,71 @@ pub async fn require_any_role(pool: &SqlitePool, user_id: &str) -> Result<(), Ap
     .await
 }
 
+// ─── Session-derived authorization ───────────────────────────────────────────
+//
+// The functions above answer "does this user id hold an allowed role". That is
+// not the same question as "is the caller allowed to do this", and the gap
+// between them is the whole defect: every one of them is handed an id that
+// arrived in the command payload, so a caller who knows an owner's user id is
+// authorised as that owner. `auth_list_users` hands out those ids, with roles
+// attached, before anyone has logged in.
+//
+// The functions below close that gap by taking the session token instead. The
+// actor comes back from `SessionStore::resolve`, which reads the user id out of
+// a session this process issued at login and re-reads branch and role from the
+// database. A payload cannot reach any of it.
+//
+// Prefer these for anything privileged. A payload may still name the *target*
+// of an operation — which user to deactivate, whose loyalty to adjust — but it
+// must never be the source of who is asking.
+
+/// Roles accepted where any signed-in operator may act. Mirrors [`require_any_role`].
+pub const ANY_ROLE: &[&str] = &["owner", "manager", "cashier", "accountant"];
+/// Roles accepted for supervisory actions. Mirrors [`manager_or_owner`].
+pub const MANAGER_OR_OWNER: &[&str] = &["owner", "manager"];
+/// Roles accepted for ownership actions. Mirrors [`owner_only`].
+pub const OWNER_ONLY: &[&str] = &["owner"];
+
+/// Authenticate the caller from their session token and require one of
+/// `allowed_roles`.
+///
+/// Returns the trusted actor so the command can use `actor.user_id` and
+/// `actor.branch_id` for attribution instead of trusting the payload.
+pub async fn session_actor(
+    sessions: &crate::auth_session::SessionStore,
+    pool: &SqlitePool,
+    session_token: &str,
+    allowed_roles: &[&str],
+) -> Result<crate::auth_session::AuthenticatedActor, AppError> {
+    let actor = sessions.resolve(pool, session_token).await?;
+    if allowed_roles.contains(&actor.role_name.as_str()) {
+        Ok(actor)
+    } else {
+        Err(AppError::Permission(format!(
+            "Role '{}' is not permitted for this action. Required: {:?}",
+            actor.role_name, allowed_roles
+        )))
+    }
+}
+
+/// Confirm the authenticated caller may act on `branch_id`.
+///
+/// A branch id in a payload names which branch is being acted on; it does not
+/// establish which branch the caller belongs to. Only an owner may reach
+/// outside their own branch.
+pub fn require_branch(
+    actor: &crate::auth_session::AuthenticatedActor,
+    branch_id: &str,
+) -> Result<(), AppError> {
+    if actor.branch_id == branch_id || actor.role_name == "owner" {
+        Ok(())
+    } else {
+        Err(AppError::Permission(
+            "This account cannot act on another branch.".into(),
+        ))
+    }
+}
+
 /// Returns true if the user can override cross-device refund policy.
 /// Only manager and owner can authorise a cashier's cross-device refund.
 pub async fn can_override_refund(pool: &SqlitePool, user_id: &str) -> Result<bool, AppError> {

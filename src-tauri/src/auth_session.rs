@@ -104,6 +104,24 @@ impl SessionStore {
         }
     }
 
+    /// Resolve the authenticated caller from a session token, with no role
+    /// policy applied — the caller decides which roles it accepts.
+    ///
+    /// Every field of the returned actor is server-derived: the token indexes
+    /// an in-memory session this process issued at login, and the branch and
+    /// role are read from `users`/`roles` at resolve time. Nothing in a request
+    /// payload can influence any of them. This is the distinction that
+    /// `commands::rbac::require_role` cannot make — it is handed a user id and
+    /// looks up whatever it is given, so it answers "does this id hold the
+    /// role", never "is the caller that user".
+    pub async fn resolve(
+        &self,
+        pool: &SqlitePool,
+        token: &str,
+    ) -> AppResult<AuthenticatedActor> {
+        self.resolve_active_actor(pool, token).await
+    }
+
     async fn resolve_active_actor(
         &self,
         pool: &SqlitePool,

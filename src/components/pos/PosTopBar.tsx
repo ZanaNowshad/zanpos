@@ -14,7 +14,7 @@ interface Props {
   language: Language;
   clockTime: string;
   syncStatus: SyncStatus | null;
-  userId: string;
+  sessionToken: string;
   commerceEnabled: boolean;
   waConnected: boolean | null;
   waStale: boolean;
@@ -34,7 +34,7 @@ export default function PosTopBar({
   language,
   clockTime,
   syncStatus,
-  userId,
+  sessionToken,
   commerceEnabled,
   waConnected,
   waStale,
@@ -96,7 +96,7 @@ export default function PosTopBar({
       </div>
 
       <div className="top-bar-right" data-tauri-drag-region="true">
-        <SyncChip status={syncStatus} userId={userId} onOpenDetails={onOpenSyncDetails} />
+        <SyncChip status={syncStatus} sessionToken={sessionToken} onOpenDetails={onOpenSyncDetails} />
         {commerceEnabled && <WhatsAppPill connected={waConnected} stale={waStale} />}
         {lastReceiptNumber && (
           <button

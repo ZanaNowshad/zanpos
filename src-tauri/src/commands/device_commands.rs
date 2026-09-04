@@ -57,11 +57,12 @@ fn map_row(r: &sqlx::sqlite::SqliteRow) -> DeviceRow {
 /// List all devices for the active branch.
 #[tauri::command]
 pub async fn device_list(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<DeviceRow>, AppError> {
     // BUG-PRODUCTS-2: this endpoint was unauthenticated — device info is sensitive
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let branch_id = active_branch_id(&state).await?;
     let rows = sqlx::query(
         "SELECT device_id, device_code, name, is_active, created_at, last_seen_at
@@ -79,10 +80,11 @@ pub async fn device_list(
 #[tauri::command]
 pub async fn device_create(
     input: DeviceInput,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<DeviceRow, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     if input.device_code.trim().is_empty() {
         return Err(AppError::Validation("Device code is required".into()));
     }
@@ -143,10 +145,11 @@ pub async fn device_create(
 #[tauri::command]
 pub async fn device_delete(
     device_id: String,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
 
     let this_device: Option<String> = sqlx::query_scalar(
         "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1",
@@ -196,10 +199,11 @@ pub async fn device_delete(
 pub async fn device_toggle_active(
     device_id: String,
     is_active: bool,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let now = chrono::Utc::now().to_rfc3339();
     let affected = sqlx::query("UPDATE devices SET is_active = ?, updated_at = ?, sync_status = 'pending' WHERE device_id = ?")
         .bind(is_active as i64)
@@ -236,10 +240,16 @@ pub struct DeviceRekeyResult {
 /// origin across its whole history.
 #[tauri::command]
 pub async fn device_rekey(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<DeviceRekeyResult, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    // Bound rather than discarded: the audit row below is attributed to whoever
+    // actually re-issued this terminal's identity, which has to come from the
+    // session. Attributing an irreversible rewrite of a terminal's whole
+    // history to a name the caller supplied would make the record worthless.
+    let actor =
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+            .await?;
 
     let (old_device_id, device_id) = crate::device_identity::rekey_to_fresh(&state.db).await?;
 
@@ -255,7 +265,7 @@ pub async fn device_rekey(
         "DEVICE_REKEYED",
         "device",
         "devices",
-        &actor_user_id,
+        &actor.user_id,
         "user",
         &device_id,
         &branch_id,

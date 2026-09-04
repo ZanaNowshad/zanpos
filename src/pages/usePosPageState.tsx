@@ -100,7 +100,7 @@ export function usePosPageState({
   // PosPage previously ran a second independent idle timer that called onLogout
   // directly, bypassing the warning. Removed here — App's timer handles logout.
 
-  const syncStatus = useSyncStatus(15_000, sessionUser.user_id);
+  const syncStatus = useSyncStatus(15_000, sessionUser.session_token);
 
   // Till strings. `dir` is applied to <html> by the hook, so RTL flips at the
   // layout level rather than being re-implemented per component.
@@ -279,7 +279,7 @@ export function usePosPageState({
     syncStatus,
     lineCount,
     canOpenBackOffice,
-    userId: sessionUser.user_id,
+    sessionToken: sessionUser.session_token,
     cart,
     setCart: replaceCart,
     printSaleNow,

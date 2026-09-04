@@ -37,10 +37,11 @@ pub(crate) async fn read_cfg(pool: &sqlx::SqlitePool, key: &str) -> Option<Strin
 
 #[tauri::command]
 pub async fn hub_status(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<HubStatus, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     let hub_mode = read_cfg(&state.db, "hub_mode").await.as_deref() == Some("1");
     let hub_url = read_cfg(&state.db, "hub_url").await;
     let port = read_cfg(&state.db, "hub_port")
@@ -123,11 +124,12 @@ pub async fn hub_status(
 
 #[tauri::command]
 pub async fn hub_enable(
-    actor_user_id: String,
+    session_token: String,
     port: Option<u16>,
     state: State<'_, AppState>,
 ) -> Result<HubStatus, AppError> {
-    rbac::owner_only(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY)
+        .await?;
     if read_cfg(&state.db, "hub_url").await.is_some() {
         return Err(AppError::Validation(
             "This device is joined to another hub. A terminal cannot become a hub.".into(),
@@ -175,17 +177,18 @@ pub async fn hub_enable(
         }
     }
     drop(rt);
-    hub_status(actor_user_id, state).await
+    hub_status(session_token, state).await
 }
 
 #[tauri::command]
 pub async fn hub_regenerate_token(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<HubStatus, AppError> {
-    rbac::owner_only(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY)
+        .await?;
     crate::secure_store::delete_secret("hub_store_token");
-    hub_enable(actor_user_id, None, state).await
+    hub_enable(session_token, None, state).await
 }
 
 // ── mDNS LAN hub discovery ─────────────────────────────────────────

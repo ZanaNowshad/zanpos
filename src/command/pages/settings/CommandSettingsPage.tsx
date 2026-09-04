@@ -145,7 +145,7 @@ export default function CommandSettingsPage({
 
         {section === "data" && (
           <>
-            <HubTab sessionUserId={sessionUserId} />
+            <HubTab sessionToken={sessionToken} sessionUserId={sessionUserId} />
             <SystemTab
               appVersion={appVersion}
               backingUp={backingUp} backupMsg={backupMsg}

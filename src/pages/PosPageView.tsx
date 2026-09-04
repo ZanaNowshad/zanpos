@@ -79,7 +79,7 @@ export default function PosPageView({
         language={language}
         clockTime={clockTime}
         syncStatus={syncStatus}
-        userId={sessionUser.user_id}
+        sessionToken={sessionUser.session_token}
         commerceEnabled={commerceEnabled}
         waConnected={waConnected}
         waStale={waStale}

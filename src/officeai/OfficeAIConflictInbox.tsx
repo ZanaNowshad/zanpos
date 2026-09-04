@@ -34,10 +34,10 @@ const ACTION_LABEL_KEY: Record<ConflictAction, OfficeAiStringKey> = {
 };
 
 interface Props {
-  actorUserId: string;
+  sessionToken: string;
 }
 
-export default function OfficeAIConflictInbox({ actorUserId }: Props) {
+export default function OfficeAIConflictInbox({ sessionToken }: Props) {
   const { language } = useLanguage();
   const t = officeAiTranslator(language);
   const [conflicts, setConflicts] = useState<SyncConflictRow[]>([]);
@@ -57,8 +57,8 @@ export default function OfficeAIConflictInbox({ actorUserId }: Props) {
     setError(null);
     try {
       const [nextConflicts, nextDrift] = await Promise.all([
-        syncConflictsList(actorUserId),
-        syncStockDriftReport(actorUserId),
+        syncConflictsList(sessionToken),
+        syncStockDriftReport(sessionToken),
       ]);
       setConflicts(nextConflicts);
       setDrift(nextDrift);
@@ -67,7 +67,7 @@ export default function OfficeAIConflictInbox({ actorUserId }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [actorUserId]);
+  }, [sessionToken]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -81,7 +81,7 @@ export default function OfficeAIConflictInbox({ actorUserId }: Props) {
     setError(null);
     setMessage(null);
     try {
-      setMessage(await syncConflictResolve(actorUserId, conflict.conflict_id, action));
+      setMessage(await syncConflictResolve(sessionToken, conflict.conflict_id, action));
       await load();
     } catch (e) {
       setError(typeof e === "string" ? e : String(e));
@@ -94,7 +94,7 @@ export default function OfficeAIConflictInbox({ actorUserId }: Props) {
     setWorkingId("stock-drift");
     setError(null);
     try {
-      const count = await syncStockDriftReconcile(actorUserId);
+      const count = await syncStockDriftReconcile(sessionToken);
       setMessage(officeAiFormat(t("reconciledBalances"), { count }));
       await load();
     } catch (e) {

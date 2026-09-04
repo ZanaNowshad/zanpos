@@ -95,7 +95,7 @@ export default function PosSecondaryOverlays({
         showNotes={showNotes}
         showSyncDetails={showSyncDetails}
         syncStatus={syncStatus}
-        actorUserId={sessionUser.user_id}
+        sessionToken={sessionUser.session_token}
         restockAlerts={restockAlerts}
         onCloseNotes={onCloseNotes}
         onCloseSyncDetails={onCloseSyncDetails}

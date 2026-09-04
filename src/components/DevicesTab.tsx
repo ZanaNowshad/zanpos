@@ -9,7 +9,7 @@ import { deviceStatusText, operationsTranslator } from "../i18n/operationsString
 import ConfirmDialog from "./templates/ConfirmDialog";
 import { PageTemplate, DataTable, Drawer, EmptyState, LoadingSkeleton } from "./templates";
 
-interface Props { sessionUserId: string; }
+interface Props { sessionToken: string; }
 
 /**
  * The last back-office list still drawing its own table.
@@ -21,7 +21,7 @@ interface Props { sessionUserId: string; }
  * rows and the container queries every other list gets for free, and it was
  * the one page where registering something moved the thing you were reading.
  */
-export default function DevicesTab({ sessionUserId }: Props) {
+export default function DevicesTab({ sessionToken }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => operationsTranslator(language), [language]);
   const [devices, setDevices]   = useState<DeviceRow[]>([]);
@@ -39,14 +39,14 @@ export default function DevicesTab({ sessionUserId }: Props) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const rows = await cmd.deviceList(sessionUserId);
+      const rows = await cmd.deviceList(sessionToken);
       setDevices(rows);
     } catch {
       setError(t("devicesLoadFailed"));
     } finally {
       setLoading(false);
     }
-  }, [sessionUserId, t]);
+  }, [sessionToken, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -60,7 +60,7 @@ export default function DevicesTab({ sessionUserId }: Props) {
     }
     setSaving(true); setError(null);
     try {
-      const created = await cmd.deviceCreate(sessionUserId, { device_code: code.trim(), device_name: name.trim() });
+      const created = await cmd.deviceCreate(sessionToken, { device_code: code.trim(), device_name: name.trim() });
       setDevices(prev => [...prev, created]);
       setShowForm(false); setCode(""); setName("");
     } catch (e: unknown) {
@@ -76,7 +76,7 @@ export default function DevicesTab({ sessionUserId }: Props) {
   async function handleRemove(device: DeviceRow) {
     setPendingRemove(null);
     try {
-      await cmd.deviceDelete(sessionUserId, device.device_id);
+      await cmd.deviceDelete(sessionToken, device.device_id);
       setDevices(prev => prev.filter(d => d.device_id !== device.device_id));
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : t("deviceUpdateFailed"));
@@ -85,7 +85,7 @@ export default function DevicesTab({ sessionUserId }: Props) {
 
   async function handleToggle(device: DeviceRow) {
     try {
-      await cmd.deviceToggleActive(sessionUserId, device.device_id, !device.is_active);
+      await cmd.deviceToggleActive(sessionToken, device.device_id, !device.is_active);
       setDevices(prev => prev.map(d =>
         d.device_id === device.device_id ? { ...d, is_active: !d.is_active } : d
       ));
@@ -101,7 +101,7 @@ export default function DevicesTab({ sessionUserId }: Props) {
   async function handleRekey() {
     setPendingRekey(false);
     try {
-      await cmd.deviceRekey(sessionUserId);
+      await cmd.deviceRekey(sessionToken);
       setRekeyNotice(t("deviceRekeyDone"));
       setError(null);
       load();

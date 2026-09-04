@@ -325,7 +325,7 @@ export default function OfficeAIPage({
           sessionToken={sessionUser.session_token}
           actorUserId={sessionUser.user_id}
           canApprove={isManager}
-          conflictsSlot={<OfficeAIConflictInbox actorUserId={sessionUser.user_id} />}
+          conflictsSlot={<OfficeAIConflictInbox sessionToken={sessionUser.session_token} />}
           onConfirm={confirmPersistedAction}
           onCancelAction={cancelPersistedAction}
         />
@@ -335,7 +335,7 @@ export default function OfficeAIPage({
       return <OfficeAISystemHealth actorUserId={sessionUser.user_id} initialReport={overview.health} onReport={(health) => setOverview(prev => ({ ...prev, health }))} />;
     }
     if (tab === "conflicts") {
-      return <OfficeAIConflictInbox actorUserId={sessionUser.user_id} />;
+      return <OfficeAIConflictInbox sessionToken={sessionUser.session_token} />;
     }
     if (tab === "workflows") {
       return <OfficeAIWorkflowInbox actorUserId={sessionUser.user_id} sessionToken={sessionUser.session_token} onSendPrompt={sendPrompt} />;

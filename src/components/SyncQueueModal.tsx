@@ -7,7 +7,7 @@ import { detailTranslator } from "../i18n/detailStrings";
 
 interface Props {
   onClose: () => void;
-  sessionUserId: string;
+  sessionToken: string;
 }
 
 const STATUS_CLASS: Record<string, string> = {
@@ -16,7 +16,7 @@ const STATUS_CLASS: Record<string, string> = {
   conflict: "sq-badge-conflict",
 };
 
-export default function SyncQueueModal({ onClose, sessionUserId }: Props) {
+export default function SyncQueueModal({ onClose, sessionToken }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => modalTranslator(language), [language]);
   const dt = useMemo(() => detailTranslator(language), [language]);
@@ -30,19 +30,19 @@ export default function SyncQueueModal({ onClose, sessionUserId }: Props) {
   const load = () => {
     setLoading(true);
     cancelledRef.current = false;
-    syncQueueList(sessionUserId)
+    syncQueueList(sessionToken)
       .then(data => { if (!cancelledRef.current) setItems(data); })
       .catch(() => { if (!cancelledRef.current) setError(dt("failedLoadSyncQueue")); })
       .finally(() => { if (!cancelledRef.current) setLoading(false); });
   };
 
-  useEffect(load, [dt, sessionUserId]);
+  useEffect(load, [dt, sessionToken]);
 
   const handleRetry = async (id: string) => {
     setBusyId(id);
     setError(null);
     try {
-      await syncQueueRetry(sessionUserId, id);
+      await syncQueueRetry(sessionToken, id);
       load();
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : dt("retryFailed"));
@@ -55,7 +55,7 @@ export default function SyncQueueModal({ onClose, sessionUserId }: Props) {
     setBusyId(id);
     setError(null);
     try {
-      await syncQueueDismiss(sessionUserId, id);
+      await syncQueueDismiss(sessionToken, id);
       setItems(prev => prev.filter(i => i.sync_event_id !== id));
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : dt("failedDismiss"));
@@ -67,7 +67,7 @@ export default function SyncQueueModal({ onClose, sessionUserId }: Props) {
   const retryAll = async () => {
     const retryable = items.filter(i => i.status === "failed" || i.status === "conflict");
     for (const item of retryable) {
-      try { await syncQueueRetry(sessionUserId, item.sync_event_id); } catch { /* continue */ }
+      try { await syncQueueRetry(sessionToken, item.sync_event_id); } catch { /* continue */ }
     }
     load();
   };

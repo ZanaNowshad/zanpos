@@ -522,30 +522,30 @@ export const dbIntegrityCheck = (actorUserId: string): Promise<string> =>
 
 // ─── Sync commands ────────────────────────────────────────────────────────────
 
-export const syncStatus = (actorUserId: string): Promise<SyncStatus> => invoke("sync_status", { actorUserId });
-export const syncTriggerNow = (actorUserId: string): Promise<string> => invoke("sync_trigger_now", { actorUserId });
+export const syncStatus = (sessionToken: string): Promise<SyncStatus> => invoke("sync_status", { sessionToken });
+export const syncTriggerNow = (sessionToken: string): Promise<string> => invoke("sync_trigger_now", { sessionToken });
 
 /// Recovery: re-enqueue the full catalog and push immediately. For terminals whose
 /// data never reached the cloud (outbox looks empty but cloud is empty).
-export const syncForceFullResync = (actorUserId: string): Promise<string> =>
-  invoke("sync_force_full_resync", { actorUserId });
+export const syncForceFullResync = (sessionToken: string): Promise<string> =>
+  invoke("sync_force_full_resync", { sessionToken });
 
 // ─── Hub (LAN sync) ───────────────────────────────────────────────────────────
 
-export const hubStatus = (actorUserId: string): Promise<HubStatus> =>
-  invoke("hub_status", { actorUserId });
-export const hubEnable = (actorUserId: string, port?: number): Promise<HubStatus> =>
-  invoke("hub_enable", { actorUserId, port: port ?? null });
-export const hubRegenerateToken = (actorUserId: string): Promise<HubStatus> =>
-  invoke("hub_regenerate_token", { actorUserId });
+export const hubStatus = (sessionToken: string): Promise<HubStatus> =>
+  invoke("hub_status", { sessionToken });
+export const hubEnable = (sessionToken: string, port?: number): Promise<HubStatus> =>
+  invoke("hub_enable", { sessionToken, port: port ?? null });
+export const hubRegenerateToken = (sessionToken: string): Promise<HubStatus> =>
+  invoke("hub_regenerate_token", { sessionToken });
 export const hubTestConnection = (url: string, token: string): Promise<HubTestResult> =>
   invoke("hub_test_connection", { url, token });
 export const hubJoin = (input: { hub_url: string; token: string; device_name: string; device_code: string })
   : Promise<AppConfig> => invoke("hub_join", { input });
-export const hubConnectExisting = (actorUserId: string, hubUrl: string, token: string): Promise<HubStatus> =>
-  invoke("hub_connect_existing", { actorUserId, hubUrl, token });
-export const hubSetUrl = (actorUserId: string, hubUrl: string): Promise<HubStatus> =>
-  invoke("hub_set_url", { actorUserId, hubUrl });
+export const hubConnectExisting = (sessionToken: string, hubUrl: string, token: string): Promise<HubStatus> =>
+  invoke("hub_connect_existing", { sessionToken, hubUrl, token });
+export const hubSetUrl = (sessionToken: string, hubUrl: string): Promise<HubStatus> =>
+  invoke("hub_set_url", { sessionToken, hubUrl });
 
 // ─── AI Admin — provider management ──────────────────────────────────────────
 
@@ -1071,22 +1071,22 @@ export const customerAddLoyalty = (actorUserId: string, customerId: string, poin
 
 // ─── Phase 10b — Devices ──────────────────────────────────────────────────────
 
-export const deviceList = (actorUserId: string): Promise<DeviceRow[]> =>
-  invoke("device_list", { actorUserId });
+export const deviceList = (sessionToken: string): Promise<DeviceRow[]> =>
+  invoke("device_list", { sessionToken });
 
-export const deviceCreate = (actorUserId: string, input: {
+export const deviceCreate = (sessionToken: string, input: {
   device_code: string; device_name: string;
 }): Promise<DeviceRow> =>
-  invoke("device_create", { input, actorUserId });
+  invoke("device_create", { input, sessionToken });
 
-export const deviceToggleActive = (actorUserId: string, deviceId: string, isActive: boolean): Promise<void> =>
-  invoke("device_toggle_active", { deviceId, isActive, actorUserId });
+export const deviceToggleActive = (sessionToken: string, deviceId: string, isActive: boolean): Promise<void> =>
+  invoke("device_toggle_active", { deviceId, isActive, sessionToken });
 
 /** Soft delete — `device_id` is stamped on every sale and shift this terminal
  *  recorded, and receipt numbering is per-device. Refused for the terminal
  *  making the request and for any device with an open shift. */
-export const deviceDelete = (actorUserId: string, deviceId: string): Promise<void> =>
-  invoke("device_delete", { deviceId, actorUserId });
+export const deviceDelete = (sessionToken: string, deviceId: string): Promise<void> =>
+  invoke("device_delete", { deviceId, sessionToken });
 
 export interface DeviceRekeyResult {
   old_device_id: string;
@@ -1096,8 +1096,8 @@ export interface DeviceRekeyResult {
 /** Re-issue this terminal's device identity with a fresh ULID — the recovery
  *  path for a database cloned onto a second PC, which otherwise shares one
  *  device_id with its sibling forever. Irreversible and audited. */
-export const deviceRekey = (actorUserId: string): Promise<DeviceRekeyResult> =>
-  invoke("device_rekey", { actorUserId });
+export const deviceRekey = (sessionToken: string): Promise<DeviceRekeyResult> =>
+  invoke("device_rekey", { sessionToken });
 
 // ─── Phase 10b — Product image picker ────────────────────────────────────────
 
@@ -1219,47 +1219,47 @@ export const inventoryBulkStockTake = (
 ): Promise<BulkStockTakeResult> =>
   invoke("inventory_bulk_stock_take", { entries, actorUserId: actor_user_id });
 
-export const syncQueueList = (actorUserId: string): Promise<SyncQueueItem[]> =>
-  invoke("sync_queue_list", { actorUserId });
+export const syncQueueList = (sessionToken: string): Promise<SyncQueueItem[]> =>
+  invoke("sync_queue_list", { sessionToken });
 
-export const syncQueueRetry = (actorUserId: string, syncEventId: string): Promise<void> =>
-  invoke("sync_queue_retry", { id: syncEventId, actorUserId });
+export const syncQueueRetry = (sessionToken: string, syncEventId: string): Promise<void> =>
+  invoke("sync_queue_retry", { id: syncEventId, sessionToken });
 
-export const syncQueueDismiss = (actorUserId: string, syncEventId: string): Promise<void> =>
-  invoke("sync_queue_dismiss", { id: syncEventId, actorUserId });
+export const syncQueueDismiss = (sessionToken: string, syncEventId: string): Promise<void> =>
+  invoke("sync_queue_dismiss", { id: syncEventId, sessionToken });
 
-export const syncQueueStats = (actorUserId: string): Promise<SyncTableStats[]> =>
-  invoke("sync_queue_stats", { actorUserId });
+export const syncQueueStats = (sessionToken: string): Promise<SyncTableStats[]> =>
+  invoke("sync_queue_stats", { sessionToken });
 
-export const syncDiagnostics = (actorUserId: string): Promise<SyncDiagnostics> =>
-  invoke("sync_diagnostics", { actorUserId });
+export const syncDiagnostics = (sessionToken: string): Promise<SyncDiagnostics> =>
+  invoke("sync_diagnostics", { sessionToken });
 
-export const hubTruthCompare = (actorUserId: string): Promise<HubTruthCompareResult> =>
-  invoke("hub_truth_compare", { actorUserId });
+export const hubTruthCompare = (sessionToken: string): Promise<HubTruthCompareResult> =>
+  invoke("hub_truth_compare", { sessionToken });
 
-export const hubTruthPull = (actorUserId: string): Promise<HubTruthCompareResult> =>
-  invoke("hub_truth_pull", { actorUserId });
+export const hubTruthPull = (sessionToken: string): Promise<HubTruthCompareResult> =>
+  invoke("hub_truth_pull", { sessionToken });
 
-export const syncConflictsList = (actorUserId: string): Promise<SyncConflictRow[]> =>
-  invoke("sync_conflicts_list", { actorUserId });
+export const syncConflictsList = (sessionToken: string): Promise<SyncConflictRow[]> =>
+  invoke("sync_conflicts_list", { sessionToken });
 
 export const syncConflictResolve = (
-  actorUserId: string,
+  sessionToken: string,
   conflictId: string,
   resolution: "retry" | "pull_hub_truth" | "reconcile_stock" | "dismiss",
-): Promise<string> => invoke("sync_conflict_resolve", { actorUserId, conflictId, resolution });
+): Promise<string> => invoke("sync_conflict_resolve", { sessionToken, conflictId, resolution });
 
-export const syncStockDriftReport = (actorUserId: string): Promise<StockDriftRow[]> =>
-  invoke("sync_stock_drift_report", { actorUserId });
+export const syncStockDriftReport = (sessionToken: string): Promise<StockDriftRow[]> =>
+  invoke("sync_stock_drift_report", { sessionToken });
 
-export const syncStockDriftReconcile = (actorUserId: string): Promise<number> =>
-  invoke("sync_stock_drift_reconcile", { actorUserId });
+export const syncStockDriftReconcile = (sessionToken: string): Promise<number> =>
+  invoke("sync_stock_drift_reconcile", { sessionToken });
 
-export const syncResetStuck = (actorUserId: string): Promise<string> =>
-  invoke("sync_reset_stuck", { actorUserId });
+export const syncResetStuck = (sessionToken: string): Promise<string> =>
+  invoke("sync_reset_stuck", { sessionToken });
 
-export const syncBulkInitial = (actorUserId: string): Promise<string> =>
-  invoke("sync_bulk_initial", { actorUserId });
+export const syncBulkInitial = (sessionToken: string): Promise<string> =>
+  invoke("sync_bulk_initial", { sessionToken });
 
 // ─── Delivery commands ────────────────────────────────────────────────────────
 

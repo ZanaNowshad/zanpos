@@ -19,7 +19,7 @@ interface Options {
   syncStatus: ReturnType<typeof useSyncStatus>;
   lineCount: number;
   canOpenBackOffice: boolean;
-  userId: string;
+  sessionToken: string;
   cart: Cart | null;
   setCart: (cart: Cart) => void;
   printSaleNow: (result: SaleResult, reprint: boolean) => Promise<unknown>;
@@ -36,7 +36,7 @@ interface Options {
 
 export function usePosRecoveryActions({
   error, bannerResult, receiptStatus, syncStatus, lineCount, canOpenBackOffice,
-  userId, cart, setCart, printSaleNow, setReceiptStatus, setError, clearError,
+  sessionToken, cart, setCart, printSaleNow, setReceiptStatus, setError, clearError,
   focusBarcode, openHold, openSyncDetails, openWhatsAppQr, onAskOfficeAI,
   onOpenOfficeAI,
 }: Options) {
@@ -109,7 +109,7 @@ export function usePosRecoveryActions({
       return;
     }
     if (key === "retry-sync") {
-      void syncTriggerNow(userId).catch((cause: unknown) => {
+      void syncTriggerNow(sessionToken).catch((cause: unknown) => {
         setError(typeof cause === "string" ? cause : "Retry sync failed.");
       });
       openSyncDetails();
@@ -128,7 +128,7 @@ export function usePosRecoveryActions({
   }, [
     bannerResult, cart, clearError, focusBarcode, onAskOfficeAI, onOpenOfficeAI,
     openHold, openSyncDetails, openWhatsAppQr, printSaleNow, setCart, setError,
-    setReceiptStatus, userId,
+    setReceiptStatus, sessionToken,
   ]);
 
   return { recoveryActions: actions, handleRecoveryAction: handleAction } as const;

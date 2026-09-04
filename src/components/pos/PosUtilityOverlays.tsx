@@ -6,7 +6,7 @@ interface Props {
   showNotes: boolean;
   showSyncDetails: boolean;
   syncStatus: SyncStatus | null;
-  actorUserId: string;
+  sessionToken: string;
   restockAlerts: LowStockAlert[];
   onCloseNotes: () => void;
   onCloseSyncDetails: () => void;
@@ -17,7 +17,7 @@ export default function PosUtilityOverlays({
   showNotes,
   showSyncDetails,
   syncStatus,
-  actorUserId,
+  sessionToken,
   restockAlerts,
   onCloseNotes,
   onCloseSyncDetails,
@@ -30,7 +30,7 @@ export default function PosUtilityOverlays({
       <SyncConfidenceDrawer
         open={showSyncDetails}
         status={syncStatus}
-        actorUserId={actorUserId}
+        sessionToken={sessionToken}
         onClose={onCloseSyncDetails}
       />
 

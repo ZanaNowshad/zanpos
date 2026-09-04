@@ -6,7 +6,7 @@ import { syncQueueStats, syncTriggerNow } from "../tauri/commands";
 interface Props {
   open: boolean;
   status: SyncStatus | null;
-  actorUserId: string;
+  sessionToken: string;
   onClose: () => void;
 }
 
@@ -37,7 +37,7 @@ const formatTime = (value: string | null | undefined) => {
   return date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
 };
 
-export default function SyncConfidenceDrawer({ open, status, actorUserId, onClose }: Props) {
+export default function SyncConfidenceDrawer({ open, status, sessionToken, onClose }: Props) {
   const [stats, setStats] = useState<SyncTableStats[]>([]);
   const [loading, setLoading] = useState(false);
   const [retrying, setRetrying] = useState(false);
@@ -47,13 +47,13 @@ export default function SyncConfidenceDrawer({ open, status, actorUserId, onClos
     setLoading(true);
     setError(null);
     try {
-      setStats(await syncQueueStats(actorUserId));
+      setStats(await syncQueueStats(sessionToken));
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Could not load sync queue details.");
     } finally {
       setLoading(false);
     }
-  }, [actorUserId]);
+  }, [sessionToken]);
 
   useEffect(() => {
     if (open) void load();
@@ -67,7 +67,7 @@ export default function SyncConfidenceDrawer({ open, status, actorUserId, onClos
     setRetrying(true);
     setError(null);
     try {
-      await syncTriggerNow(actorUserId);
+      await syncTriggerNow(sessionToken);
       await load();
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Retry sync failed.");

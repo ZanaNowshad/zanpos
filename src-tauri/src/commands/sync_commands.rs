@@ -98,10 +98,11 @@ fn reported_online(is_hub: bool, worker_online: bool, _configured: bool) -> bool
 
 #[tauri::command]
 pub async fn sync_status(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<serde_json::Value, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     let worker_state = state.sync_worker.state.lock().await;
     let worker_online = worker_state.online;
     let last_error = worker_state.last_error.clone();
@@ -171,10 +172,11 @@ pub async fn sync_status(
 
 #[tauri::command]
 pub async fn sync_trigger_now(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     state.sync_worker.run_once().await;
     let worker_state = state.sync_worker.state.lock().await;
     if worker_state.online {
@@ -193,10 +195,11 @@ pub async fn sync_trigger_now(
 /// Called from setup_wizard_complete and hub_join.
 #[tauri::command]
 pub async fn sync_bulk_initial(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let client = match state.sync_worker.load_client().await {
         Some(c) => c,
         None => return Ok("Sync skipped — hub not configured".into()),
@@ -581,9 +584,10 @@ pub async fn setup_pull_catalog(state: State<'_, AppState>) -> Result<PullSummar
 #[tauri::command]
 pub async fn sync_force_full_resync(
     state: State<'_, AppState>,
-    actor_user_id: String,
+    session_token: String,
 ) -> Result<String, AppError> {
-    crate::commands::rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    crate::commands::rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
 
     // Reset all rows back to pending so they re-push on next cycle
     for table in SYNC_TABLES.iter() {
@@ -639,7 +643,7 @@ pub async fn sync_force_full_resync(
 #[tauri::command]
 pub async fn sync_reset_stuck(
     state: State<'_, AppState>,
-    actor_user_id: String,
+    session_token: String,
 ) -> Result<String, AppError> {
     // Any role. This sets `sync_attempts = 0` on rows that are already pending
     // and does nothing else — it cannot alter, delete or reveal a single piece
@@ -647,7 +651,8 @@ pub async fn sync_reset_stuck(
     // everything: when sync stalled on a cashier's shift the only control they
     // could reach was Retry, which does not clear a backed-off queue. Sales sat
     // on the till waiting for someone with a manager PIN to walk over.
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
 
     let mut total = 0u32;
     for table in SYNC_TABLES.iter() {
@@ -681,12 +686,13 @@ pub struct SyncQueueItem {
 
 #[tauri::command]
 pub async fn sync_queue_list(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<SyncQueueItem>, AppError> {
     // Any role: read-only, and it is the view that says *why* something is
     // stuck. A cashier who cannot see the reason cannot report it either.
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     let mut items = Vec::new();
 
     for table in SYNC_TABLES.iter() {
@@ -725,10 +731,11 @@ pub async fn sync_queue_list(
 #[tauri::command]
 pub async fn sync_queue_retry(
     id: String,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
 
     let (table, row_id) = id.split_once(':').ok_or_else(|| {
         AppError::Validation("Invalid sync item id format. Expected table:id".into())
@@ -762,10 +769,11 @@ pub async fn sync_queue_retry(
 #[tauri::command]
 pub async fn sync_queue_dismiss(
     id: String,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
 
     let (table, row_id) = id.split_once(':').ok_or_else(|| {
         AppError::Validation("Invalid sync item id format. Expected table:id".into())
@@ -798,12 +806,13 @@ pub struct SyncTableStats {
 
 #[tauri::command]
 pub async fn sync_queue_stats(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<SyncTableStats>, AppError> {
     // Any role: counts of this shop's own pending work. Whoever is standing at
     // the till is the person who needs to know how much has not left it.
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     let mut stats = Vec::new();
 
     for table in SYNC_TABLES.iter() {
@@ -995,10 +1004,11 @@ fn compare_consistency_snapshots(
 
 #[tauri::command]
 pub async fn sync_diagnostics(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<SyncDiagnostics, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let worker_state = state.sync_worker.state.lock().await;
     let online = worker_state.online;
     let last_error = worker_state.last_error.clone();
@@ -1125,7 +1135,7 @@ pub async fn sync_diagnostics(
             .await
             .unwrap_or(0);
 
-    let consistency_score = match hub_truth_compare(actor_user_id.clone(), state.clone()).await {
+    let consistency_score = match hub_truth_compare(session_token.clone(), state.clone()).await {
         Ok(r) => Some(r.score),
         Err(_) => None,
     };
@@ -1146,10 +1156,11 @@ pub async fn sync_diagnostics(
 
 #[tauri::command]
 pub async fn hub_truth_compare(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<HubTruthCompareResult, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let local = crate::sync_v2::consistency::snapshot(&state.db).await?;
     let hub = match state.sync_worker.load_client().await {
         Some(client) => client.hub_consistency().await?,
@@ -1191,11 +1202,12 @@ pub struct ParityTableReport {
 /// buckets disagreed.
 #[tauri::command]
 pub async fn sync_parity_report(
-    actor_user_id: String,
+    session_token: String,
     table: String,
     state: State<'_, AppState>,
 ) -> Result<ParityTableReport, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     if !crate::sync_v2::consistency::CONSISTENCY_TABLES.contains(&table.as_str()) {
         return Err(AppError::Validation(format!(
             "{table} is not a synced table"
@@ -1282,23 +1294,25 @@ pub async fn sync_parity_report(
 
 #[tauri::command]
 pub async fn hub_truth_pull(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<HubTruthCompareResult, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     sqlx::query("DELETE FROM app_config WHERE key LIKE 'sync_v2_watermark_%'")
         .execute(&state.db)
         .await?;
     state.sync_worker.run_once_wait().await;
-    hub_truth_compare(actor_user_id, state).await
+    hub_truth_compare(session_token, state).await
 }
 
 #[tauri::command]
 pub async fn sync_conflicts_list(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<SyncConflictRow>, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let rows = sqlx::query(
         "SELECT conflict_id, conflict_type, table_name, entity_id, severity,
                 title, detail, status, created_at
@@ -1327,12 +1341,13 @@ pub async fn sync_conflicts_list(
 
 #[tauri::command]
 pub async fn sync_conflict_resolve(
-    actor_user_id: String,
+    session_token: String,
     conflict_id: String,
     resolution: String,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     if !conflict_resolution_allowed(&resolution) {
         return Err(AppError::Validation(
             "Unsupported conflict resolution".into(),
@@ -1392,19 +1407,21 @@ pub async fn sync_conflict_resolve(
 
 #[tauri::command]
 pub async fn sync_stock_drift_report(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::inventory::movements::StockDriftRow>, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     crate::inventory::movements::stock_drift_report(&state.db).await
 }
 
 #[tauri::command]
 pub async fn sync_stock_drift_reconcile(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<u64, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let repaired = crate::inventory::movements::reconcile_stock_drift(&state.db).await?;
     if repaired > 0 {
         schedule_immediate_sync(&state);

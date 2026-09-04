@@ -233,12 +233,13 @@ pub async fn hub_join(
 
 #[tauri::command]
 pub async fn hub_connect_existing(
-    actor_user_id: String,
+    session_token: String,
     hub_url: String,
     token: String,
     state: State<'_, AppState>,
 ) -> Result<HubStatus, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     if read_cfg(&state.db, "hub_mode").await.as_deref() == Some("1") {
         return Err(AppError::Validation("This device IS the hub.".into()));
     }
@@ -294,16 +295,17 @@ pub async fn hub_connect_existing(
     tauri::async_runtime::spawn(async move {
         worker.run_once_wait().await;
     });
-    hub_status(actor_user_id, state).await
+    hub_status(session_token, state).await
 }
 
 #[tauri::command]
 pub async fn hub_set_url(
-    actor_user_id: String,
+    session_token: String,
     hub_url: String,
     state: State<'_, AppState>,
 ) -> Result<HubStatus, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let token = crate::secure_store::get_secret("hub_store_token")
         .ok_or_else(|| AppError::Validation("No store token on this terminal.".into()))?;
     let url = normalize_hub_url(&hub_url);
@@ -317,5 +319,5 @@ pub async fn hub_set_url(
     sqlx::query("INSERT INTO app_config(key,value,updated_at) VALUES ('hub_url',?,?)
                  ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at")
         .bind(&url).bind(&now).execute(&state.db).await?;
-    hub_status(actor_user_id, state).await
+    hub_status(session_token, state).await
 }

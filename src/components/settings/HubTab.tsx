@@ -17,9 +17,13 @@ import TerminalRosterPanel from "./TerminalRosterPanel";
 import { useLanguage } from "../../hooks/useLanguage";
 import { hubTruthStatusText, operationsTranslator } from "../../i18n/operationsStrings";
 
-interface Props { sessionUserId: string; }
+interface Props {
+  sessionToken: string;
+  /** Still a user id: TerminalRosterPanel's commands are not migrated yet. */
+  sessionUserId: string;
+}
 
-export default function HubTab({ sessionUserId }: Props) {
+export default function HubTab({ sessionToken, sessionUserId }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => operationsTranslator(language), [language]);
   const [status, setStatus] = useState<HubStatus | null>(null);
@@ -36,14 +40,14 @@ export default function HubTab({ sessionUserId }: Props) {
 
   const load = useCallback(async () => {
     try {
-      const s = await hubStatus(sessionUserId);
+      const s = await hubStatus(sessionToken);
       setStatus(s);
     } catch (e: unknown) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -54,22 +58,22 @@ export default function HubTab({ sessionUserId }: Props) {
     if (status?.mode !== "terminal") { return; }
     let cancelled = false;
     const poll = () => {
-      syncStatus(sessionUserId)
+      syncStatus(sessionToken)
         .then(s => { if (!cancelled) setSync(s); })
         .catch(() => { /* keep last known */ });
     };
     poll();
     const id = window.setInterval(poll, 15_000);
     return () => { cancelled = true; window.clearInterval(id); };
-  }, [sessionUserId, status?.mode]);
+  }, [sessionToken, status?.mode]);
 
   const loadTruth = useCallback(async () => {
     setTruthLoading(true);
     setError(null);
     try {
       const [compare, inbox] = await Promise.all([
-        hubTruthCompare(sessionUserId),
-        syncConflictsList(sessionUserId).catch(() => []),
+        hubTruthCompare(sessionToken),
+        syncConflictsList(sessionToken).catch(() => []),
       ]);
       setTruth(compare);
       setConflicts(inbox);
@@ -78,14 +82,14 @@ export default function HubTab({ sessionUserId }: Props) {
     } finally {
       setTruthLoading(false);
     }
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   const pullTruth = useCallback(async () => {
     setTruthLoading(true);
     setError(null);
     try {
-      const compare = await hubTruthPull(sessionUserId);
-      const inbox = await syncConflictsList(sessionUserId).catch(() => []);
+      const compare = await hubTruthPull(sessionToken);
+      const inbox = await syncConflictsList(sessionToken).catch(() => []);
       setTruth(compare);
       setConflicts(inbox);
       setMessage(t(compare.ok ? "hubTruthVerified" : "hubTruthReview"));
@@ -94,7 +98,7 @@ export default function HubTab({ sessionUserId }: Props) {
     } finally {
       setTruthLoading(false);
     }
-  }, [sessionUserId, t]);
+  }, [sessionToken, t]);
 
   const doAction = async (fn: () => Promise<unknown>) => {
     setActionLoading(true);
@@ -109,7 +113,7 @@ export default function HubTab({ sessionUserId }: Props) {
   const [port, setPort] = useState("8923");
 
   const handleEnableHub = () => doAction(async () => {
-    await hubEnable(sessionUserId, parseInt(port, 10) || 8923);
+    await hubEnable(sessionToken, parseInt(port, 10) || 8923);
   });
 
   const handleRegenerateToken = () => {
@@ -133,7 +137,7 @@ export default function HubTab({ sessionUserId }: Props) {
   };
 
   const handleConnect = () => doAction(async () => {
-    await hubConnectExisting(sessionUserId, connectUrl, connectToken);
+    await hubConnectExisting(sessionToken, connectUrl, connectToken);
     setConnectUrl(""); setConnectToken("");
   });
 
@@ -141,7 +145,7 @@ export default function HubTab({ sessionUserId }: Props) {
   const [newUrl, setNewUrl] = useState("");
 
   const handleSetUrl = () => doAction(async () => {
-    await hubSetUrl(sessionUserId, newUrl);
+    await hubSetUrl(sessionToken, newUrl);
     setNewUrl("");
   });
 
@@ -230,7 +234,7 @@ export default function HubTab({ sessionUserId }: Props) {
             onCancel={() => setConfirmRegenerate(false)}
             onConfirm={() => {
               setConfirmRegenerate(false);
-              void doAction(async () => { await hubRegenerateToken(sessionUserId); });
+              void doAction(async () => { await hubRegenerateToken(sessionToken); });
             }}
           />
         )}
@@ -347,7 +351,7 @@ export default function HubTab({ sessionUserId }: Props) {
           <button
             className="btn-primary"
             onClick={() => doAction(async () => {
-              await hubConnectExisting(sessionUserId, hub_url ?? "", connectToken);
+              await hubConnectExisting(sessionToken, hub_url ?? "", connectToken);
             })}
             disabled={actionLoading || !connectToken.trim()}
           >

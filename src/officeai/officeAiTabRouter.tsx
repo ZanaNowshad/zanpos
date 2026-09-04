@@ -79,7 +79,7 @@ export function renderDataTab(ctx: DataTabContext): ReactNode {
         />
       );
       case "audit": return isOwner ? <AuditLogTab key={tabKey} sessionUserId={sessionUser.user_id} /> : null;
-      case "devices": return isOwner ? <DevicesTab key={tabKey} sessionUserId={sessionUser.user_id} /> : null;
+      case "devices": return isOwner ? <DevicesTab key={tabKey} sessionToken={sessionUser.session_token} /> : null;
       case "deliveries": return <DeliveriesTab key={tabKey} sessionUser={sessionUser} />;
       case "purchasing": return (
         <OfficeAIPurchasingWorkspace

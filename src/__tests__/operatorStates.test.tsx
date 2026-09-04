@@ -31,7 +31,7 @@ describe("operator-facing POS states", () => {
       consecutive_failure_count: 0,
     };
 
-    const html = renderToStaticMarkup(<SyncChip status={status} userId="user-1" />);
+    const html = renderToStaticMarkup(<SyncChip status={status} sessionToken="tok-1" />);
 
     expect(html).toContain("Sales saved locally");
     expect(html).toContain("sync resumes automatically");

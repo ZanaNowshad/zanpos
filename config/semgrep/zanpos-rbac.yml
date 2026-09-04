@@ -166,6 +166,27 @@ rules:
                   let $AUTH = authorize_ai_chat(...).await.map_err(...)?;
                   ...
                   crate::db::repositories::$REPO::$METHOD(...)
+              # manager_approval consumes a single-use token that only
+              # auth_validate_manager_pin can mint, so a manager's PIN was
+              # entered at the till, and re-checks the role before returning
+              # the approver. It replaced `authorized_by_user_id`, which let a
+              # caller name any manager and have the audit row agree.
+              - pattern-not-inside: |
+                  let $AUTH = manager_approval(...).await?;
+                  ...
+                  $REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  let $AUTH = manager_approval(...).await?;
+                  ...
+                  crate::db::repositories::$REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  manager_approval(...).await?;
+                  ...
+                  $REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  manager_approval(...).await?;
+                  ...
+                  crate::db::repositories::$REPO::$METHOD(...)
               - pattern-not-inside: |
                   let $AUTH = authorize_office(...).await.map_err(...)?;
                   ...

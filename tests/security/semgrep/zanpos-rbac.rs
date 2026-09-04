@@ -293,3 +293,36 @@ async fn setup_pull_catalog(pool: &SqlitePool, allowed: bool) -> Result<(), sqlx
     clear_setup_pull_watermarks(pool).await?;
     Ok(())
 }
+
+// ── Manager approval proven by a consumed override token ─────────────────────
+//
+// These two pin the difference the rule has to be able to see. Both commands
+// end in the same repository mutation; only the way the approver is
+// established differs.
+
+/// UNSAFE: the approver is a string the caller chose. Naming a manager is not
+/// the same as one being present, and the audit row would record them anyway.
+#[tauri::command]
+async fn void_with_payload_approver(
+    pool: &SqlitePool,
+    authorized_by_user_id: &str,
+) -> Result<(), sqlx::Error> {
+    let _ = authorized_by_user_id;
+    // ruleid: zanpos-tauri-repository-mutation-requires-rbac
+    crate::db::repositories::sale_repo::approve(pool, "fixture").await;
+    Ok(())
+}
+
+/// SAFE: the approver comes back from a single-use token that only
+/// `auth_validate_manager_pin` can mint, so a manager's PIN was entered at the
+/// till. The role is re-checked inside `manager_approval`.
+#[tauri::command]
+async fn void_with_consumed_manager_approval(
+    pool: &SqlitePool,
+    manager_override_token: &str,
+) -> Result<(), sqlx::Error> {
+    let _approved_by = manager_approval(pool, Some(manager_override_token)).await?;
+    // ok: zanpos-tauri-repository-mutation-requires-rbac
+    crate::db::repositories::sale_repo::approve(pool, "fixture").await;
+    Ok(())
+}

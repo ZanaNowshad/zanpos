@@ -1,4 +1,4 @@
-import type { Dispatch, SetStateAction } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import { Trash2 } from "lucide-react";
 import type { Cart } from "../../types";
 import { DEVICE } from "../../types";
@@ -6,6 +6,7 @@ import { parseMoney } from "../../money";
 import CustomItemModal from "../CustomItemModal";
 import DiscountModal from "../DiscountModal";
 import PriceInputModal from "../PriceInputModal";
+import ManagerApprovalModal from "../ManagerApprovalModal";
 import type { ActiveModal } from "./posModalState";
 
 interface Props {
@@ -14,9 +15,9 @@ interface Props {
   cart: Cart;
   lineCount: number;
   addCustomItem: (name: string, priceMajor: string, quantity: string) => Promise<void>;
-  setLinePrice: (lineId: string, priceMinor: number) => Promise<unknown>;
-  applyBillDiscount: (discountMinor: number, reason: string) => Promise<unknown>;
-  applyLineDiscount: (lineId: string, discountMinor: number, reason: string) => Promise<unknown>;
+  setLinePrice: (lineId: string, priceMinor: number, managerOverrideToken: string) => Promise<unknown>;
+  applyBillDiscount: (discountMinor: number, reason: string, managerOverrideToken?: string) => Promise<unknown>;
+  applyLineDiscount: (lineId: string, discountMinor: number, reason: string, managerOverrideToken?: string) => Promise<unknown>;
   clearCart: () => void;
   refreshSuggestions: () => void;
   resetNumpad: () => void;
@@ -41,6 +42,25 @@ export default function PosCartModals({
     setActiveModal({ kind: "none" });
     focusBarcode();
   };
+
+  // Work held back because the till needs a manager's PIN before it can be
+  // sent. A price override always needs one. A discount only needs one when
+  // policy forbids cashiers from discounting, and the backend is the authority
+  // on that — so a discount is attempted first and only escalates here if it
+  // comes back asking for approval. That keeps the PIN prompt off the common
+  // path instead of guessing the policy in the UI.
+  const [pending, setPending] = useState<
+    | { kind: "price"; lineId: string; priceMinor: number }
+    | { kind: "bill"; discountMinor: number; reason: string }
+    | { kind: "line"; lineId: string; discountMinor: number; reason: string }
+    | null
+  >(null);
+
+  const needsApproval = (e: unknown) =>
+    (typeof e === "string" ? e : (e as Error)?.message ?? "").includes("manager");
+
+  const approvalLabel =
+    pending?.kind === "price" ? "Override this line's price" : "Apply this discount";
 
   return (
     <>
@@ -91,7 +111,9 @@ export default function PosCartModals({
           onConfirm={async priceMajor => {
             if (activeModal.mode === "setExisting") {
               const priceMinor = parseMoney(priceMajor, DEVICE.currency_exponent);
-              await setLinePrice(activeModal.lineId, priceMinor);
+              // Never applied on the cashier's say-so — a manager approves it.
+              setPending({ kind: "price", lineId: activeModal.lineId, priceMinor });
+              return;
             } else {
               await addCustomItem(activeModal.itemName, priceMajor, activeModal.quantity);
               resetNumpad();
@@ -109,14 +131,47 @@ export default function PosCartModals({
           lines={cart.lines.filter(line => !line.voided)}
           initialLineId={activeModal.lineId}
           onApplyBill={async (discountMinor, reason) => {
-            await applyBillDiscount(discountMinor, reason);
-            close();
+            try {
+              await applyBillDiscount(discountMinor, reason);
+              close();
+            } catch (e) {
+              if (!needsApproval(e)) throw e;
+              setPending({ kind: "bill", discountMinor, reason });
+            }
           }}
           onApplyLine={async (lineId, discountMinor, reason) => {
-            await applyLineDiscount(lineId, discountMinor, reason);
-            close();
+            try {
+              await applyLineDiscount(lineId, discountMinor, reason);
+              close();
+            } catch (e) {
+              if (!needsApproval(e)) throw e;
+              setPending({ kind: "line", lineId, discountMinor, reason });
+            }
           }}
           onCancel={close}
+        />
+      )}
+
+      {pending && (
+        <ManagerApprovalModal
+          action={approvalLabel}
+          onApproved={async token => {
+            if (pending.kind === "price") {
+              await setLinePrice(pending.lineId, pending.priceMinor, token);
+            } else if (pending.kind === "bill") {
+              await applyBillDiscount(pending.discountMinor, pending.reason, token);
+            } else {
+              await applyLineDiscount(
+                pending.lineId,
+                pending.discountMinor,
+                pending.reason,
+                token,
+              );
+            }
+            setPending(null);
+            close();
+          }}
+          onCancel={() => setPending(null)}
         />
       )}
     </>

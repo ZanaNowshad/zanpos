@@ -80,8 +80,14 @@ pub async fn require_any_role(pool: &SqlitePool, user_id: &str) -> Result<(), Ap
 /// Roles accepted where any signed-in operator may act. Mirrors [`require_any_role`].
 pub const ANY_ROLE: &[&str] = &["owner", "manager", "cashier", "accountant"];
 /// Roles accepted for supervisory actions. Mirrors [`manager_or_owner`].
+///
+/// Exercised by the authorization invariants today and by each command family
+/// as it migrates off payload-derived actors. The attribute goes when the
+/// supervisory families land; it is not a permanent exemption.
+#[allow(dead_code)]
 pub const MANAGER_OR_OWNER: &[&str] = &["owner", "manager"];
 /// Roles accepted for ownership actions. Mirrors [`owner_only`].
+#[allow(dead_code)]
 pub const OWNER_ONLY: &[&str] = &["owner"];
 
 /// Authenticate the caller from their session token and require one of
@@ -111,6 +117,7 @@ pub async fn session_actor(
 /// A branch id in a payload names which branch is being acted on; it does not
 /// establish which branch the caller belongs to. Only an owner may reach
 /// outside their own branch.
+#[allow(dead_code)] // Used by the authorization invariants; wired in as the branch-scoped families migrate.
 pub fn require_branch(
     actor: &crate::auth_session::AuthenticatedActor,
     branch_id: &str,

@@ -10,6 +10,9 @@ export interface CartSession {
   device_id: string;
   shift_id: string;
   cashier_user_id: string;
+  /** Proves who is operating this till. Authorisation is derived from this,
+   *  never from `cashier_user_id`, which the caller could set to anything. */
+  session_token: string;
 }
 
 function makeEmptyCart(session: CartSession): Cart {
@@ -141,20 +144,20 @@ export function useCart(
     }
   }, [cart]);
 
-  const applyBillDiscount = useCallback(async (discount_minor: number, reason: string) => {
+  const applyBillDiscount = useCallback(async (discount_minor: number, reason: string, managerOverrideToken?: string) => {
     try {
-      const updated = await cmd.posApplyBillDiscount(cart, discount_minor, reason, session.cashier_user_id);
+      const updated = await cmd.posApplyBillDiscount(cart, discount_minor, reason, session.session_token, managerOverrideToken);
       setCart(updated);
       return updated;
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to apply discount");
       throw e;
     }
-  }, [cart, session.cashier_user_id]);
+  }, [cart, session.session_token]);
 
-  const applyLineDiscount = useCallback(async (cart_line_id: string, discount_minor: number, reason: string) => {
+  const applyLineDiscount = useCallback(async (cart_line_id: string, discount_minor: number, reason: string, managerOverrideToken?: string) => {
     try {
-      const updated = await cmd.posApplyLineDiscount(cart, cart_line_id, discount_minor, reason, session.cashier_user_id);
+      const updated = await cmd.posApplyLineDiscount(cart, cart_line_id, discount_minor, reason, session.session_token, managerOverrideToken);
       setCart(updated);
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to apply line discount");
@@ -164,7 +167,7 @@ export function useCart(
       // price, and only a passive banner disagreed.
       throw e;
     }
-  }, [cart, session.cashier_user_id]);
+  }, [cart, session.session_token]);
 
   const addCustomItem = useCallback(async (name: string, priceMajor: string, quantity: string) => {
     setLoading(true);
@@ -185,15 +188,15 @@ export function useCart(
     }
   }, [cart]);
 
-  const setLinePrice = useCallback(async (cart_line_id: string, priceMinor: number) => {
+  const setLinePrice = useCallback(async (cart_line_id: string, priceMinor: number, managerOverrideToken: string) => {
     try {
-      const updated = await cmd.posSetLinePrice(cart, cart_line_id, priceMinor, session.cashier_user_id);
+      const updated = await cmd.posSetLinePrice(cart, cart_line_id, priceMinor, managerOverrideToken);
       setCart(updated);
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to set price");
       throw e;
     }
-  }, [cart, session.cashier_user_id]);
+  }, [cart]);
 
   const setLineNote = useCallback(async (cart_line_id: string, note: string | null) => {
     try {

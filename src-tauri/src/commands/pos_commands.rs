@@ -1,4 +1,4 @@
-use crate::commands::{rbac, sync_commands};
+use crate::commands::{override_token, rbac, sync_commands};
 use crate::db::helpers;
 use crate::db::repositories::{audit_hash, product_repo, sale_repo};
 use crate::domain::cart::{Cart, CartLine};
@@ -9,6 +9,36 @@ use crate::AppState;
 use sqlx::Row;
 use tauri::State;
 use ulid::Ulid;
+
+/// Resolve a manager's approval from a single-use override token.
+///
+/// These paths used to take `authorized_by_user_id` — a bare id chosen by the
+/// caller. Naming a manager is not the same as one standing at the till: any
+/// client could approve its own discount, and the row written to
+/// `pos_discount_authorizations` would record an innocent manager as having
+/// approved it. The audit trail was as forgeable as the decision.
+///
+/// A token is minted only by `auth_validate_manager_pin`, which verifies the
+/// PIN against active manager and owner accounts, and it is consumed here so
+/// the same approval cannot cover a second discount. The role is re-checked
+/// rather than inferred from a decision up to sixty seconds old.
+async fn manager_approval(
+    pool: &sqlx::SqlitePool,
+    token: Option<&str>,
+) -> Result<String, AppError> {
+    let token = token.map(str::trim).filter(|t| !t.is_empty()).ok_or_else(|| {
+        AppError::Permission("This action needs a manager's approval.".into())
+    })?;
+    let manager_id = override_token::consume_override_token(pool, token)
+        .await
+        .ok_or_else(|| {
+            AppError::Permission(
+                "Manager approval is invalid, already used, or expired.".into(),
+            )
+        })?;
+    rbac::manager_or_owner(pool, &manager_id).await?;
+    Ok(manager_id)
+}
 
 #[derive(serde::Deserialize)]
 pub struct StartCartInput {
@@ -358,8 +388,12 @@ pub struct SetLinePriceInput {
     pub cart: Cart,
     pub cart_line_id: String,
     pub price_minor: i64,
-    /// User authorizing the price override — must be manager or owner.
-    pub authorized_by_user_id: String,
+    /// Single-use manager approval from `auth_validate_manager_pin`.
+    ///
+    /// This replaced `authorized_by_user_id`, which only named a manager. The
+    /// override recorded against this cart line is now attributed to an
+    /// account whose PIN was actually entered.
+    pub manager_override_token: String,
 }
 
 #[tauri::command]
@@ -367,7 +401,8 @@ pub async fn pos_set_line_price(
     input: SetLinePriceInput,
     state: State<'_, AppState>,
 ) -> Result<Cart, AppError> {
-    rbac::manager_or_owner(&state.db, &input.authorized_by_user_id).await?;
+    let authorized_by =
+        manager_approval(&state.db, Some(input.manager_override_token.as_str())).await?;
     if input.price_minor <= 0 {
         return Err(AppError::Validation("Price must be positive".into()));
     }
@@ -401,7 +436,7 @@ pub async fn pos_set_line_price(
     .bind(&line.product_id)
     .bind(input.price_minor)
     .bind(&line.quantity)
-    .bind(&input.authorized_by_user_id)
+    .bind(&authorized_by)
     .bind(chrono::Utc::now().to_rfc3339())
     .execute(&state.db)
     .await?;
@@ -418,7 +453,7 @@ pub async fn pos_set_line_price(
         "POS_LINE_PRICE_OVERRIDDEN",
         "cart_line",
         &line.cart_line_id,
-        &input.authorized_by_user_id,
+        &authorized_by,
         "user",
         &cart.device_id,
         &cart.branch_id,
@@ -567,8 +602,13 @@ pub struct ApplyBillDiscountInput {
     pub discount_minor: i64,
     /// Non-empty reason required when discount_minor > 0 (goes to audit log).
     pub reason: String,
-    /// User authorizing the discount — must be manager or owner.
-    pub authorized_by_user_id: String,
+    /// The operator applying the discount, proven by their login session.
+    pub session_token: String,
+    /// Single-use manager approval from `auth_validate_manager_pin`. Required
+    /// only when policy forbids cashiers from discounting; absent otherwise,
+    /// because then the operator authorises their own discount.
+    #[serde(default)]
+    pub manager_override_token: Option<String>,
 }
 
 /// Load the two discount-policy flags in a single query to avoid 2 round-trips.
@@ -662,9 +702,22 @@ pub async fn pos_apply_bill_discount(
             "A reason is required when applying a bill discount".into(),
         ));
     }
-    if discount > 0 && !cashier_can_discount {
-        rbac::manager_or_owner(&state.db, &input.authorized_by_user_id).await?;
-    }
+    // Two principals, each from a trusted source. The operator is whoever holds
+    // this session — never an id from the payload. The approver is the operator
+    // when policy lets cashiers discount, and otherwise an account whose PIN was
+    // entered at the till within the last minute.
+    let operator = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &input.session_token,
+        rbac::ANY_ROLE,
+    )
+    .await?;
+    let authorized_by = if discount > 0 && !cashier_can_discount {
+        manager_approval(&state.db, input.manager_override_token.as_deref()).await?
+    } else {
+        operator.user_id.clone()
+    };
     let mut cart = input.cart;
     cart.bill_discount_minor = discount;
     cart.bill_discount_reason = if discount > 0 {
@@ -682,7 +735,7 @@ pub async fn pos_apply_bill_discount(
         "",
         discount,
         &input.reason,
-        &input.authorized_by_user_id,
+        &authorized_by,
     )
     .await?;
 
@@ -746,8 +799,11 @@ pub struct ApplyLineDiscountInput {
     pub discount_minor: i64,
     /// Non-empty reason required when discount_minor > 0 (goes to audit log).
     pub reason: String,
-    /// User authorizing the discount — must be manager or owner.
-    pub authorized_by_user_id: String,
+    /// The operator applying the discount, proven by their login session.
+    pub session_token: String,
+    /// Single-use manager approval; see [`ApplyBillDiscountInput`].
+    #[serde(default)]
+    pub manager_override_token: Option<String>,
 }
 
 #[tauri::command]
@@ -781,9 +837,20 @@ pub async fn pos_apply_line_discount(
             "A reason is required when applying a line discount".into(),
         ));
     }
-    if discount > 0 && !cashier_can_discount {
-        rbac::manager_or_owner(&state.db, &input.authorized_by_user_id).await?;
-    }
+    // Same two principals as the bill discount: session for who is operating,
+    // a consumed manager token for who approved when policy demands one.
+    let operator = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &input.session_token,
+        rbac::ANY_ROLE,
+    )
+    .await?;
+    let authorized_by = if discount > 0 && !cashier_can_discount {
+        manager_approval(&state.db, input.manager_override_token.as_deref()).await?
+    } else {
+        operator.user_id.clone()
+    };
     let mut cart = input.cart;
     if let Some(line) = cart
         .lines
@@ -803,7 +870,7 @@ pub async fn pos_apply_line_discount(
             &input.cart_line_id,
             discount,
             &input.reason,
-            &input.authorized_by_user_id,
+            &authorized_by,
         )
         .await?;
 
@@ -989,11 +1056,14 @@ pub struct VoidSaleResult {
 #[tauri::command]
 pub async fn pos_void_sale(
     sale_id: String,
-    voided_by_user_id: String,
+    manager_override_token: String,
     state: State<'_, AppState>,
 ) -> Result<VoidSaleResult, AppError> {
-    // Voiding a completed sale is a manager/owner operation — not a cashier action.
-    rbac::manager_or_owner(&state.db, &voided_by_user_id).await?;
+    // Voiding a completed sale reverses money and stock, so it is a manager or
+    // owner action. It used to take `voided_by_user_id` and check the role of
+    // whatever id arrived, which meant a till could void its own sales and name
+    // a manager in the audit record. The approval is now a consumed token.
+    let voided_by_user_id = manager_approval(&state.db, Some(&manager_override_token)).await?;
 
     // Status, stock and the audit entry are one transaction in `sale_repo`, and
     // the assistant's void goes through the same function.

@@ -53,8 +53,9 @@ export function usePosPageState({
     branch_id: DEVICE.branch_id,
     device_id: DEVICE.device_id,
     shift_id: shift.shift_id,
-    cashier_user_id: sessionUser.user_id
-  }), [shift.shift_id, sessionUser.user_id]);
+    cashier_user_id: sessionUser.user_id,
+    session_token: sessionUser.session_token
+  }), [shift.shift_id, sessionUser.user_id, sessionUser.session_token]);
 
   const [showSidebar, toggleSidebar] = usePersistedToggle("zanpos_sidebar");
 

@@ -281,8 +281,8 @@ export const posAddItemByBarcode = (cart: Cart, barcode: string): Promise<Cart> 
 export const posUpdateQuantity = (cart: Cart, cart_line_id: string, quantity: string): Promise<Cart> =>
   invoke("pos_update_quantity", { input: { cart, cart_line_id, quantity } });
 
-export const posSetLinePrice = (cart: Cart, cart_line_id: string, price_minor: number, authorized_by_user_id: string): Promise<Cart> =>
-  invoke("pos_set_line_price", { input: { cart, cart_line_id, price_minor, authorized_by_user_id } });
+export const posSetLinePrice = (cart: Cart, cart_line_id: string, price_minor: number, manager_override_token: string): Promise<Cart> =>
+  invoke("pos_set_line_price", { input: { cart, cart_line_id, price_minor, manager_override_token } });
 
 export interface RepricedLine {
   cart_line_id: string;
@@ -317,11 +317,11 @@ export const posFinalizeSale = (
   return invoke("pos_finalize_sale", { input: { cart, payments, idempotency_key, customer_id, delivery } });
 };
 
-export const posApplyBillDiscount = (cart: Cart, discount_minor: number, reason: string, authorized_by_user_id: string): Promise<Cart> =>
-  invoke("pos_apply_bill_discount", { input: { cart, discount_minor, reason, authorized_by_user_id } });
+export const posApplyBillDiscount = (cart: Cart, discount_minor: number, reason: string, session_token: string, manager_override_token?: string): Promise<Cart> =>
+  invoke("pos_apply_bill_discount", { input: { cart, discount_minor, reason, session_token, manager_override_token } });
 
-export const posApplyLineDiscount = (cart: Cart, cart_line_id: string, discount_minor: number, reason: string, authorized_by_user_id: string): Promise<Cart> =>
-  invoke("pos_apply_line_discount", { input: { cart, cart_line_id, discount_minor, reason, authorized_by_user_id } });
+export const posApplyLineDiscount = (cart: Cart, cart_line_id: string, discount_minor: number, reason: string, session_token: string, manager_override_token?: string): Promise<Cart> =>
+  invoke("pos_apply_line_discount", { input: { cart, cart_line_id, discount_minor, reason, session_token, manager_override_token } });
 
 export const posSetLineNote = (cart: Cart, cart_line_id: string, note: string | null): Promise<Cart> =>
   invoke("pos_set_line_note", { input: { cart, cart_line_id, note } });
@@ -353,8 +353,8 @@ export interface VoidSaleResult {
   stock_warning: string | null;
 }
 
-export const posVoidSale = (sale_id: string, voided_by_user_id: string): Promise<VoidSaleResult> =>
-  invoke("pos_void_sale", { saleId: sale_id, voidedByUserId: voided_by_user_id });
+export const posVoidSale = (sale_id: string, manager_override_token: string): Promise<VoidSaleResult> =>
+  invoke("pos_void_sale", { saleId: sale_id, managerOverrideToken: manager_override_token });
 
 export const posRecordVoid = (
   cart_id: string,

@@ -5,6 +5,7 @@ import type { RangeSummary, SaleListRow, SaleListPage, TopProduct } from "../typ
 import { DEVICE } from "../types";
 import { formatMoney } from "../money";
 import * as cmd from "../tauri/commands";
+import ManagerApprovalModal from "./ManagerApprovalModal";
 import { useLanguage } from "../hooks/useLanguage";
 import {
   backOfficeTranslator,
@@ -106,14 +107,18 @@ export default function ReportsTab({ sessionUserId }: Props) {
     setVoidConfirm(sale);
   };
 
-  const executeVoid = async () => {
+  // Voiding reverses money and stock, so it takes a manager's PIN rather than
+  // the id of whoever happens to be signed in.
+  const [voidPinOpen, setVoidPinOpen] = useState(false);
+
+  const executeVoid = async (managerOverrideToken: string) => {
     const sale = voidConfirm;
     if (!sale) return;
     setVoidConfirm(null);
     setStockWarning(null);
     setVoidingId(sale.sale_id);
     try {
-      const result = await cmd.posVoidSale(sale.sale_id, sessionUserId);
+      const result = await cmd.posVoidSale(sale.sale_id, managerOverrideToken);
       setSalesPage(prev => ({ ...prev, items: prev.items.map(s => s.sale_id === sale.sale_id ? { ...s, status: "voided" } : s) }));
       if (result.stock_warning) {
         setStockWarning(result.stock_warning);
@@ -455,13 +460,24 @@ export default function ReportsTab({ sessionUserId }: Props) {
               <br /><strong>{t("voidSalePrompt")}</strong>
             </p>
             <div className="settings-confirm-buttons">
-              <button className="btn-primary" style={{ background: "var(--error, #ef4444)" }} onClick={executeVoid} disabled={voidingId !== null}>
+              <button className="btn-primary" style={{ background: "var(--error, #ef4444)" }} onClick={() => setVoidPinOpen(true)} disabled={voidingId !== null}>
                 {voidingId ? t("voiding") : t("yesVoidSale")}
               </button>
               <button className="btn-secondary" onClick={() => setVoidConfirm(null)} disabled={voidingId !== null}>{t("cancel")}</button>
             </div>
           </div>
         </div>
+      )}
+
+      {voidConfirm && voidPinOpen && (
+        <ManagerApprovalModal
+          action={`Void sale #${voidConfirm.receipt_number}`}
+          onApproved={async token => {
+            setVoidPinOpen(false);
+            await executeVoid(token);
+          }}
+          onCancel={() => setVoidPinOpen(false)}
+        />
       )}
     </div>
   );

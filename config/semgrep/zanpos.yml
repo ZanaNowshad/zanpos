@@ -54,6 +54,15 @@ rules:
         - /src-tauri/src/**/*.rs
         - /tests/security/semgrep/**/*.rs
         - '**/semgrep/**/*.rs'
+      # `#[cfg(test)]` modules are not in the release build — the ship gate
+      # asserts that separately. A test that builds a query string from its own
+      # fixture is not an injection path, and leaving them in means the rule
+      # fires on correct work, which is how a security rule gets ignored.
+      exclude:
+        - '**/tests.rs'
+        - '**/*_tests.rs'
+        - '**/*_tests/**'
+        - '**/invariants/**'
     pattern-sources:
       - patterns:
           - pattern-inside: |
@@ -157,6 +166,24 @@ rules:
         from: $FROM
         to: $TO
     pattern-sanitizers:
+      # sync_v2 parity. `select_sql` interpolates only values that cannot carry
+      # an injection: `pk_for_table` is a match returning string literals, and
+      # the app_config key list is built from the ALLOWED_CONFIG_KEYS constant.
+      # The table name itself is rejected in sync_commands against
+      # consistency::CONSISTENCY_TABLES before either of these is reached, so a
+      # caller cannot name a table the registry does not already contain.
+      - patterns:
+          - pattern-inside: |
+              pub async fn bucket_digests(...) {
+                ...
+              }
+          - pattern: select_sql($TABLE)
+      - patterns:
+          - pattern-inside: |
+              pub async fn row_digests(...) {
+                ...
+              }
+          - pattern: select_sql($TABLE)
       - patterns:
           - pattern-inside: |
               async fn mark_rows_synced(&self, ...) {
@@ -431,6 +458,15 @@ rules:
         - /src-tauri/src/commands/**/*.rs
         - /tests/security/semgrep/**/*.rs
         - '**/semgrep/**/*.rs'
+      # See the note on zanpos-no-dynamic-sql-format. The smoke sweep in
+      # ai/tools_smoke_tests is `#[cfg(test)]` and calls execute_mutation_raw
+      # deliberately, to exercise every mutation against the real schema — it
+      # is not a command dispatching a mutation past the confirmation gate.
+      exclude:
+        - '**/tests.rs'
+        - '**/*_tests.rs'
+        - '**/*_tests/**'
+        - '**/invariants/**'
     patterns:
       - pattern-either:
           - pattern: crate::ai::tools::execute_mutation_raw(...)

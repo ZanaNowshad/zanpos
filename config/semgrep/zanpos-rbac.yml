@@ -128,6 +128,44 @@ rules:
                   authorize_office(...).await.map_err(...)?;
                   ...
                   crate::db::repositories::$REPO::$METHOD(...)
+              # authorize_ai_chat is the same kind of gate as authorize_office:
+              # it resolves a session token to an AuthenticatedActor and the
+              # command then uses actor.user_id / actor.branch_id rather than
+              # anything the caller supplied. That is a stronger guarantee than
+              # rbac::require_*, which trusts an actor id from the payload — so
+              # omitting it here flagged the commands that authenticate best.
+              - pattern-not-inside: |
+                  authorize_ai_chat(...).await?;
+                  ...
+                  $REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  authorize_ai_chat(...).await?;
+                  ...
+                  crate::db::repositories::$REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  let $AUTH = authorize_ai_chat(...).await?;
+                  ...
+                  $REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  let $AUTH = authorize_ai_chat(...).await?;
+                  ...
+                  crate::db::repositories::$REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  authorize_ai_chat(...).await.map_err(...)?;
+                  ...
+                  $REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  authorize_ai_chat(...).await.map_err(...)?;
+                  ...
+                  crate::db::repositories::$REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  let $AUTH = authorize_ai_chat(...).await.map_err(...)?;
+                  ...
+                  $REPO::$METHOD(...)
+              - pattern-not-inside: |
+                  let $AUTH = authorize_ai_chat(...).await.map_err(...)?;
+                  ...
+                  crate::db::repositories::$REPO::$METHOD(...)
               - pattern-not-inside: |
                   let $AUTH = authorize_office(...).await.map_err(...)?;
                   ...

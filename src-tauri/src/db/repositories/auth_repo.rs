@@ -78,7 +78,7 @@ pub async fn rehash_plain_pins(pool: &SqlitePool) -> AppResult<()> {
 
 pub async fn list_active_users(pool: &SqlitePool) -> AppResult<Vec<UserSummary>> {
     let rows = sqlx::query(
-        "SELECT u.user_id, u.display_name, u.username, r.name as role_name
+        "SELECT u.display_name, u.username, r.name as role_name
          FROM users u JOIN roles r ON r.role_id = u.role_id
          WHERE u.is_active = 1 ORDER BY u.display_name",
     )
@@ -88,7 +88,6 @@ pub async fn list_active_users(pool: &SqlitePool) -> AppResult<Vec<UserSummary>>
     Ok(rows
         .iter()
         .map(|row| UserSummary {
-            user_id: row.get("user_id"),
             display_name: row.get("display_name"),
             username: row.get("username"),
             role_name: row.get("role_name"),

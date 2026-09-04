@@ -299,32 +299,47 @@ async fn a_target_id_in_the_payload_is_not_the_caller() {
     );
 }
 
-/// `auth_list_users` is the enumeration half of RBAC-1.
+/// Pre-authentication login discovery gives out no account id.
 ///
-/// It takes no token and returns every active user's id with their role, which
-/// is what turns "guess an owner id" into "read one". The PIN screen genuinely
-/// needs a user list before anyone has logged in, so the repair is not simply
-/// to authenticate it — it is that knowing an id must stop being worth
-/// anything, which is what the session-derived path above achieves.
+/// This listing has to exist — a shared till shows who is on shift so they can
+/// pick themselves — and it runs before anyone has authenticated. It used to
+/// return each account's id alongside their role, which is what turned "guess
+/// an owner's id" into "read one" while a payload id could still establish the
+/// caller.
+///
+/// Two things changed. Knowing an id stopped being worth anything on migrated
+/// commands, and the id stopped being handed out here at all: login is by
+/// username, so nothing needed it. The names and roles that remain are already
+/// on the screen in front of whoever is standing at the till.
 #[tokio::test]
-async fn listing_users_hands_out_ids_and_roles_without_a_session() {
+async fn login_discovery_exposes_no_account_ids() {
     let pool = migrated_pool().await;
     with_active_users(&pool).await;
 
     let users = crate::db::repositories::auth_repo::list_active_users(&pool)
         .await
         .expect("the PIN screen lists users before login");
+    assert!(!users.is_empty(), "the PIN screen has nobody to show");
 
-    let owner = users
-        .iter()
-        .find(|u| u.user_id == OWNER)
-        .expect("the owner is listed");
-    assert_eq!(
-        owner.role_name, "owner",
-        "the listing names the role, so picking a privileged id needs no guessing"
+    // The type itself is the guarantee: if a `user_id` field is ever added back
+    // to `UserSummary`, this stops compiling rather than silently leaking.
+    let serialised = serde_json::to_string(&users).expect("serialise the listing");
+    assert!(
+        !serialised.contains(OWNER) && !serialised.contains(CASHIER),
+        "the pre-auth listing carries an account id: {serialised}"
     );
     assert!(
-        !owner.user_id.is_empty(),
-        "the listing includes the user id an attacker would need"
+        !serialised.contains("user_id"),
+        "the pre-auth listing has a user_id field again: {serialised}"
+    );
+
+    // Login still works from what remains.
+    let owner = users
+        .iter()
+        .find(|u| u.role_name == "owner")
+        .expect("the owner is still listed by name");
+    assert!(
+        !owner.username.is_empty(),
+        "login is by username, so the username must survive"
     );
 }

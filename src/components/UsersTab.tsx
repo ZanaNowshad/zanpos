@@ -11,13 +11,16 @@ const EMPTY_FORM = { display_name: "", username: "", pin: "", confirm_pin: "", r
 
 interface Props {
   sessionUserId: string;
+  /** Proof of who is administering. `sessionUserId` still identifies the
+   *  signed-in user for read filters, but authority comes from this. */
+  sessionToken: string;
   /** The actor's own role. Only an owner may grant the owner role — the
    *  backend enforces it; this keeps the form from offering a choice that
    *  would be refused on save. */
   sessionRole: string;
 }
 
-export default function UsersTab({ sessionUserId, sessionRole }: Props) {
+export default function UsersTab({ sessionUserId, sessionToken, sessionRole }: Props) {
   const { language } = useLanguage();
   const t = operationsTranslator(language);
   const [users, setUsers]       = useState<AdminUserRow[]>([]);
@@ -74,7 +77,7 @@ export default function UsersTab({ sessionUserId, sessionRole }: Props) {
           username: form.username.trim(),
           pin: form.pin,
           role_id: form.role_id,
-          actor_user_id: sessionUserId,
+          session_token: sessionToken,
         });
         setUsers(prev => [created, ...prev]);
       } else if (selected) {
@@ -84,7 +87,7 @@ export default function UsersTab({ sessionUserId, sessionRole }: Props) {
           pin: form.pin || undefined,
           role_id: form.role_id,
           is_active: form.is_active,
-          actor_user_id: sessionUserId,
+          session_token: sessionToken,
         });
         setUsers(prev => prev.map(u => u.user_id === updated.user_id ? updated : u));
       }

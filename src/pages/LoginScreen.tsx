@@ -173,7 +173,7 @@ export default function LoginScreen({ onLogin }: Props) {
               )}
               <div className="user-grid">
                 {users.map(u => (
-                  <button key={u.user_id} className="user-card" onClick={() => handleUserSelect(u)}>
+                  <button key={u.username} className="user-card" onClick={() => handleUserSelect(u)}>
                     <div className="user-avatar">{u.display_name.charAt(0).toUpperCase()}</div>
                     <div className="user-name">{u.display_name}</div>
                     <div className="user-role">{u.role_name}</div>

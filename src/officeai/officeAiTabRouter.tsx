@@ -54,7 +54,7 @@ export function renderDataTab(ctx: DataTabContext): ReactNode {
       case "products": return <ProductsTab key={tabKey} sessionUserId={sessionUser.user_id} prefill={productPrefill} onPrefillConsumed={() => ctx.onPrefillConsumed()} />;
       case "categories": return <CategoriesTab key={tabKey} sessionUserId={sessionUser.user_id} />;
       case "quickpos": return <QuickPosTab key={tabKey} sessionUserId={sessionUser.user_id} />;
-      case "users": return <UsersTab key={tabKey} sessionUserId={sessionUser.user_id} sessionRole={sessionUser.role_name} />;
+      case "users": return <UsersTab key={tabKey} sessionUserId={sessionUser.user_id} sessionToken={sessionUser.session_token} sessionRole={sessionUser.role_name} />;
       case "riders": return <RidersPage key={tabKey} actorUserId={sessionUser.user_id} />;
       case "reports": return <ReportsTab key={tabKey} sessionUserId={sessionUser.user_id} />;
       case "cashier": return <CashierReportTab key={tabKey} sessionUserId={sessionUser.user_id} />;

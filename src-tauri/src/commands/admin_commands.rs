@@ -1916,7 +1916,62 @@ pub struct CreateUserInput {
     pub username: String,
     pub pin: String,
     pub role_id: String,
-    pub actor_user_id: String,
+    /// Proves who is creating the account. Replaced `actor_user_id`, which only
+    /// named someone: a caller could put an owner's id here and mint an owner.
+    pub session_token: String,
+}
+
+/// Refuse anything that would leave the installation with no active owner.
+///
+/// Not an invented policy — `admin_update_user` already carried the comment
+/// "an owner who deactivates themselves locks out the system permanently", and
+/// Back Office is gated behind `auth_verify_owner_pin`. There is no recovery
+/// path in the product for a shop with zero owners; the database would have to
+/// be edited by hand.
+///
+/// The existing self-deactivation check did not cover this. It compared two
+/// payload fields, so naming a different owner walked straight past it, and it
+/// only looked at `is_active` — demoting the last owner to cashier reached the
+/// same dead end without any spoofing at all.
+async fn refuse_if_last_owner(
+    pool: &SqlitePool,
+    target_user_id: &str,
+    new_role_id: &str,
+    stays_active: bool,
+) -> Result<(), AppError> {
+    let target_is_owner: bool = sqlx::query_scalar(
+        "SELECT EXISTS(
+           SELECT 1 FROM users u JOIN roles r ON r.role_id = u.role_id
+            WHERE u.user_id = ? AND u.is_active = 1 AND r.name = 'owner')",
+    )
+    .bind(target_user_id)
+    .fetch_one(pool)
+    .await?;
+    if !target_is_owner {
+        return Ok(());
+    }
+
+    let stays_owner: bool = sqlx::query_scalar("SELECT name = 'owner' FROM roles WHERE role_id = ?")
+        .bind(new_role_id)
+        .fetch_optional(pool)
+        .await?
+        .unwrap_or(false);
+    if stays_active && stays_owner {
+        return Ok(());
+    }
+
+    let active_owners: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM users u JOIN roles r ON r.role_id = u.role_id
+          WHERE u.is_active = 1 AND r.name = 'owner'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if active_owners <= 1 {
+        return Err(AppError::Validation(
+            "This is the last owner account. Promote another owner first, or the shop cannot be administered.".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Guard for user-administration writes.
@@ -1936,14 +1991,24 @@ pub struct CreateUserInput {
 /// Everything else a manager could already do is unchanged.
 async fn authorize_user_admin(
     pool: &SqlitePool,
-    actor_user_id: &str,
+    actor: &crate::auth_session::AuthenticatedActor,
     target_user_id: Option<&str>,
     target_role_id: &str,
 ) -> Result<(), AppError> {
-    rbac::manager_or_owner(pool, actor_user_id).await?;
+    // The actor arrives already resolved from a session, so role and branch are
+    // read from the database against a token this process issued rather than
+    // looked up from an id the caller chose. The policy below is unchanged; it
+    // was always correct, and was only ever undermined by who it was told the
+    // caller was.
+    if !matches!(actor.role_name.as_str(), "owner" | "manager") {
+        return Err(AppError::Permission(format!(
+            "Role '{}' is not permitted for this action. Required: [\"owner\", \"manager\"]",
+            actor.role_name
+        )));
+    }
 
-    let actor_is_owner = rbac::owner_only(pool, actor_user_id).await.is_ok();
-    let actor_branch = rbac::actor_branch_id(pool, actor_user_id).await?;
+    let actor_is_owner = actor.role_name == "owner";
+    let actor_branch = actor.branch_id.clone();
 
     let target_role_is_owner: bool =
         sqlx::query_scalar("SELECT name = 'owner' FROM roles WHERE role_id = ?")
@@ -1988,7 +2053,14 @@ pub async fn admin_create_user(
     input: CreateUserInput,
     state: State<'_, AppState>,
 ) -> Result<AdminUserRow, AppError> {
-    authorize_user_admin(&state.db, &input.actor_user_id, None, &input.role_id).await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &input.session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
+    authorize_user_admin(&state.db, &actor, None, &input.role_id).await?;
     if input.pin.len() < 4 {
         return Err(AppError::Validation("PIN must be at least 4 digits".into()));
     }
@@ -2057,7 +2129,7 @@ pub async fn admin_create_user(
         "USER_CREATED",
         "user",
         &result.user_id,
-        &input.actor_user_id,
+        &actor.user_id,
         "user",
         &device_id,
         &branch_id,
@@ -2242,7 +2314,10 @@ pub struct UpdateUserInput {
     pub pin: Option<String>, // None = unchanged
     pub role_id: String,
     pub is_active: bool,
-    pub actor_user_id: String,
+    /// Proves who is making the change. `user_id` above is the target being
+    /// administered — the two are different things, and conflating them is what
+    /// let the self-deactivation guard be walked past.
+    pub session_token: String,
 }
 
 #[tauri::command]
@@ -2250,20 +2325,25 @@ pub async fn admin_update_user(
     input: UpdateUserInput,
     state: State<'_, AppState>,
 ) -> Result<AdminUserRow, AppError> {
-    authorize_user_admin(
+    let actor = rbac::session_actor(
+        &state.sessions,
         &state.db,
-        &input.actor_user_id,
-        Some(&input.user_id),
-        &input.role_id,
+        &input.session_token,
+        rbac::MANAGER_OR_OWNER,
     )
     .await?;
-    // FIX: prevent self-demotion or self-deactivation — an owner who deactivates
-    // themselves locks out the system permanently.
-    if input.user_id == input.actor_user_id && !input.is_active {
+    authorize_user_admin(&state.db, &actor, Some(&input.user_id), &input.role_id).await?;
+    // An administrator cannot switch their own account off. This compares the
+    // target against the *session's* user now; it used to compare two payload
+    // fields, so naming someone else as the actor stepped around it entirely.
+    if input.user_id == actor.user_id && !input.is_active {
         return Err(AppError::Validation(
             "You cannot deactivate your own account".into(),
         ));
     }
+    // And nobody — including an owner acting on another owner — may remove the
+    // last way back into Back Office.
+    refuse_if_last_owner(&state.db, &input.user_id, &input.role_id, input.is_active).await?;
     if let Some(pin) = &input.pin {
         if pin.len() < 4 {
             return Err(AppError::Validation("PIN must be at least 4 digits".into()));
@@ -2337,7 +2417,7 @@ pub async fn admin_update_user(
         "USER_UPDATED",
         "user",
         &result.user_id,
-        &input.actor_user_id,
+        &actor.user_id,
         "user",
         &device_id,
         &branch_id,
@@ -2460,6 +2540,7 @@ pub async fn admin_run_diagnostics(state: State<'_, AppState>) -> AppResult<Diag
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::rbac;
 
     // -- Team user administration (D1) ----------------------------------------
 
@@ -2468,6 +2549,25 @@ mod tests {
     const ROLE_CASHIER: &str = "01JROLES000000000000000003";
     const BRANCH_MAIN: &str = "01JBRANCH0000000000000001";
     const BRANCH_OTHER: &str = "01JBRANCH0000000000000009";
+
+    /// Build the trusted actor the policy now takes, from a seeded user id.
+    /// The tests keep naming people by id; what changed is that the id is
+    /// resolved to role and branch here rather than trusted from a payload.
+    async fn actor_of(pool: &SqlitePool, user_id: &str) -> crate::auth_session::AuthenticatedActor {
+        let (branch_id, role_name): (String, String) = sqlx::query_as(
+            "SELECT u.branch_id, r.name FROM users u JOIN roles r ON r.role_id = u.role_id
+              WHERE u.user_id = ?",
+        )
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+        .expect("seeded user");
+        crate::auth_session::AuthenticatedActor {
+            user_id: user_id.to_string(),
+            branch_id,
+            role_name,
+        }
+    }
 
     async fn team_pool() -> SqlitePool {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -2521,13 +2621,13 @@ mod tests {
     async fn a_manager_cannot_grant_the_owner_role() {
         let pool = team_pool().await;
         // Promoting a cashier to owner -- straightforward escalation.
-        let err = authorize_user_admin(&pool, "u_manager", Some("u_cashier"), ROLE_OWNER)
+        let err = authorize_user_admin(&pool, &actor_of(&pool, "u_manager").await, Some("u_cashier"), ROLE_OWNER)
             .await
             .expect_err("a manager must not mint owners");
         assert!(matches!(err, AppError::Permission(_)), "got {err:?}");
 
         // And promoting themselves, which is the same hole from the inside.
-        let err = authorize_user_admin(&pool, "u_manager", Some("u_manager"), ROLE_OWNER)
+        let err = authorize_user_admin(&pool, &actor_of(&pool, "u_manager").await, Some("u_manager"), ROLE_OWNER)
             .await
             .expect_err("a manager must not promote themselves");
         assert!(matches!(err, AppError::Permission(_)), "got {err:?}");
@@ -2538,7 +2638,7 @@ mod tests {
         let pool = team_pool().await;
         // Even demoting an owner to cashier -- the target's current role is
         // what matters, not the role being written.
-        let err = authorize_user_admin(&pool, "u_manager", Some("u_owner"), ROLE_CASHIER)
+        let err = authorize_user_admin(&pool, &actor_of(&pool, "u_manager").await, Some("u_owner"), ROLE_CASHIER)
             .await
             .expect_err("a manager must not modify an owner");
         assert!(matches!(err, AppError::Permission(_)), "got {err:?}");
@@ -2547,10 +2647,10 @@ mod tests {
     #[tokio::test]
     async fn an_owner_may_still_administer_everyone() {
         let pool = team_pool().await;
-        authorize_user_admin(&pool, "u_owner", Some("u_cashier"), ROLE_OWNER)
+        authorize_user_admin(&pool, &actor_of(&pool, "u_owner").await, Some("u_cashier"), ROLE_OWNER)
             .await
             .expect("an owner may grant the owner role");
-        authorize_user_admin(&pool, "u_owner", Some("u_manager"), ROLE_CASHIER)
+        authorize_user_admin(&pool, &actor_of(&pool, "u_owner").await, Some("u_manager"), ROLE_CASHIER)
             .await
             .expect("an owner may change any role");
     }
@@ -2559,10 +2659,10 @@ mod tests {
     async fn a_manager_may_still_do_ordinary_team_work() {
         let pool = team_pool().await;
         // The fix must not break what managers legitimately did before.
-        authorize_user_admin(&pool, "u_manager", Some("u_cashier"), ROLE_CASHIER)
+        authorize_user_admin(&pool, &actor_of(&pool, "u_manager").await, Some("u_cashier"), ROLE_CASHIER)
             .await
             .expect("a manager may edit a cashier");
-        authorize_user_admin(&pool, "u_manager", None, ROLE_MANAGER)
+        authorize_user_admin(&pool, &actor_of(&pool, "u_manager").await, None, ROLE_MANAGER)
             .await
             .expect("a manager may create a manager");
     }
@@ -2570,14 +2670,14 @@ mod tests {
     #[tokio::test]
     async fn user_administration_cannot_cross_a_branch() {
         let pool = team_pool().await;
-        let err = authorize_user_admin(&pool, "u_manager", Some("u_other_branch"), ROLE_CASHIER)
+        let err = authorize_user_admin(&pool, &actor_of(&pool, "u_manager").await, Some("u_other_branch"), ROLE_CASHIER)
             .await
             .expect_err("cross-branch mutation must be refused");
         // NotFound, not Permission -- confirming the account exists elsewhere
         // is itself a disclosure.
         assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
 
-        let err = authorize_user_admin(&pool, "u_owner", Some("u_other_branch"), ROLE_CASHIER)
+        let err = authorize_user_admin(&pool, &actor_of(&pool, "u_owner").await, Some("u_other_branch"), ROLE_CASHIER)
             .await
             .expect_err("even an owner is scoped to their own branch here");
         assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
@@ -2586,12 +2686,28 @@ mod tests {
     #[tokio::test]
     async fn a_cashier_or_forged_actor_is_refused_outright() {
         let pool = team_pool().await;
-        for actor in ["u_cashier", "nobody", "' OR 1=1 --", ""] {
+
+        // A real but unprivileged account is refused by the policy.
+        let cashier = actor_of(&pool, "u_cashier").await;
+        assert!(
+            authorize_user_admin(&pool, &cashier, Some("u_cashier"), ROLE_CASHIER)
+                .await
+                .is_err(),
+            "a cashier must not administer users"
+        );
+
+        // The forged identities this test used to pass in — "nobody",
+        // "' OR 1=1 --", "" — can no longer be expressed. An actor is not a
+        // string any more; it is produced by resolving a session. So the same
+        // property is asserted where it now lives: none of those can become
+        // one, and there is no other way in.
+        let sessions = crate::auth_session::SessionStore::default();
+        for forged in ["nobody", "' OR 1=1 --", "", &"A".repeat(43)] {
             assert!(
-                authorize_user_admin(&pool, actor, Some("u_cashier"), ROLE_CASHIER)
+                rbac::session_actor(&sessions, &pool, forged, rbac::MANAGER_OR_OWNER)
                     .await
                     .is_err(),
-                "{actor:?} must not administer users"
+                "{forged:?} resolved to an administering actor"
             );
         }
     }
@@ -2599,15 +2715,161 @@ mod tests {
     #[tokio::test]
     async fn a_deactivated_manager_loses_user_administration() {
         let pool = team_pool().await;
+        let sessions = crate::auth_session::SessionStore::default();
+        let token = sessions.issue("u_manager").await.token;
+
+        rbac::session_actor(&sessions, &pool, &token, rbac::MANAGER_OR_OWNER)
+            .await
+            .expect("an active manager administers");
+
         sqlx::query("UPDATE users SET is_active = 0 WHERE user_id = 'u_manager'")
             .execute(&pool)
             .await
             .unwrap();
+
+        // The active check moved from `authorize_user_admin` to session
+        // resolution when the actor stopped being a caller-supplied id. It is
+        // asserted here rather than dropped, and it is now stronger: the token
+        // stays valid in memory, so this only passes because role and active
+        // status are re-read from the database on every resolve.
         assert!(
-            authorize_user_admin(&pool, "u_manager", Some("u_cashier"), ROLE_CASHIER)
+            rbac::session_actor(&sessions, &pool, &token, rbac::MANAGER_OR_OWNER)
                 .await
                 .is_err(),
             "a deactivated account keeps no authority"
+        );
+    }
+    // ── Administrative authority comes from the session, not the payload ──────
+
+    /// A cashier holding a real session cannot administer users, and there is
+    /// nowhere left to claim otherwise. The old shape took an actor id from the
+    /// payload, so a cashier's client simply sent the owner's.
+    #[tokio::test]
+    async fn a_cashier_session_cannot_administer_users() {
+        let pool = team_pool().await;
+        let cashier = actor_of(&pool, "u_cashier").await;
+        for (label, target, role) in [
+            ("promote a cashier to owner", Some("u_cashier"), ROLE_OWNER),
+            ("promote themselves to owner", Some("u_cashier"), ROLE_OWNER),
+            ("create any account", None, ROLE_CASHIER),
+            ("edit a manager", Some("u_manager"), ROLE_CASHIER),
+        ] {
+            let err = authorize_user_admin(&pool, &cashier, target, role)
+                .await
+                .expect_err(&format!("a cashier was allowed to {label}"));
+            assert!(matches!(err, AppError::Permission(_)), "{label}: got {err:?}");
+        }
+    }
+
+    /// Naming another user does not change who the caller is. The actor is the
+    /// session's user; the target is just an argument.
+    #[tokio::test]
+    async fn a_target_never_becomes_the_administering_actor() {
+        let pool = team_pool().await;
+        // A cashier acting *on* the owner is still a cashier.
+        let cashier = actor_of(&pool, "u_cashier").await;
+        assert!(
+            authorize_user_admin(&pool, &cashier, Some("u_owner"), ROLE_CASHIER)
+                .await
+                .is_err(),
+            "naming the owner as the target promoted the caller"
+        );
+        // An owner acting on a cashier is authorised as the owner.
+        let owner = actor_of(&pool, "u_owner").await;
+        authorize_user_admin(&pool, &owner, Some("u_cashier"), ROLE_MANAGER)
+            .await
+            .expect("an owner administers their team");
+    }
+
+    /// A manager cannot reach a different branch by naming one, because the
+    /// branch is read from their account rather than sent with the request.
+    #[tokio::test]
+    async fn branch_scope_follows_the_session_not_the_request() {
+        let pool = team_pool().await;
+        let manager = actor_of(&pool, "u_manager").await;
+        assert_eq!(manager.branch_id, BRANCH_MAIN);
+        let err = authorize_user_admin(&pool, &manager, Some("u_other_branch"), ROLE_CASHIER)
+            .await
+            .expect_err("a manager administered another branch");
+        // NotFound, not Permission: confirming the account exists elsewhere is
+        // itself a disclosure.
+        assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
+    }
+
+    /// The last owner cannot be switched off or demoted away.
+    ///
+    /// Both directions matter. The old self-deactivation check compared two
+    /// payload fields, so naming a different owner stepped around it, and it
+    /// never looked at the role at all — demoting the last owner to cashier
+    /// reached the same locked-out shop with no spoofing needed.
+    #[tokio::test]
+    async fn the_last_owner_cannot_be_removed() {
+        let pool = team_pool().await;
+
+        refuse_if_last_owner(&pool, "u_owner", ROLE_CASHIER, true)
+            .await
+            .expect_err("the last owner was demoted to cashier");
+        refuse_if_last_owner(&pool, "u_owner", ROLE_OWNER, false)
+            .await
+            .expect_err("the last owner was deactivated");
+
+        // Ordinary edits to that same owner are untouched.
+        refuse_if_last_owner(&pool, "u_owner", ROLE_OWNER, true)
+            .await
+            .expect("renaming the last owner must still work");
+        // And other people are not the last owner.
+        refuse_if_last_owner(&pool, "u_manager", ROLE_CASHIER, false)
+            .await
+            .expect("demoting a manager is not a lockout");
+    }
+
+    /// With a second owner present the restriction lifts, so it is a real
+    /// last-owner rule rather than "owners are immutable".
+    #[tokio::test]
+    async fn a_second_owner_makes_the_first_removable() {
+        let pool = team_pool().await;
+        sqlx::query(
+            "INSERT INTO users (user_id, branch_id, display_name, username, pin_hash,
+                                role_id, is_active, created_at, updated_at, version)
+             VALUES ('u_owner2', ?, 'Owner Two', 'owner2', 'PLAIN:1234', ?, 1,
+                     datetime('now'), datetime('now'), 1)",
+        )
+        .bind(BRANCH_MAIN)
+        .bind(ROLE_OWNER)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        refuse_if_last_owner(&pool, "u_owner", ROLE_CASHIER, true)
+            .await
+            .expect("with two owners, demoting one is allowed");
+        refuse_if_last_owner(&pool, "u_owner", ROLE_OWNER, false)
+            .await
+            .expect("with two owners, deactivating one is allowed");
+    }
+
+    /// A demoted manager loses administrative authority without re-logging in.
+    #[tokio::test]
+    async fn a_demoted_administrator_loses_authority_mid_session() {
+        let pool = team_pool().await;
+        let sessions = crate::auth_session::SessionStore::default();
+        let token = sessions.issue("u_manager").await.token;
+
+        rbac::session_actor(&sessions, &pool, &token, rbac::MANAGER_OR_OWNER)
+            .await
+            .expect("a manager administers");
+
+        sqlx::query("UPDATE users SET role_id = ? WHERE user_id = 'u_manager'")
+            .bind(ROLE_CASHIER)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert!(
+            rbac::session_actor(&sessions, &pool, &token, rbac::MANAGER_OR_OWNER)
+                .await
+                .is_err(),
+            "a demoted manager kept administrative authority"
         );
     }
 }

@@ -182,13 +182,13 @@ export function installUiMock(): void {
       // than simulated.
       // ── POS register entry ───────────────────────────────────────────────
       // Shapes traced from source: auth_list_users -> Vec<UserSummary>
-      // (user_id, display_name, username, role_name) and auth_login_pin ->
+      // (display_name, username, role_name) and auth_login_pin ->
       // SessionUser. Without these the POS stopped at the register-handoff
       // screen and could never be captured for visual QA.
       if (cmd === "auth_list_users") {
         return Promise.resolve(structuredClone([
-          { user_id: "usr_renihal", display_name: "Renihal", username: "renihal", role_name: "owner" },
-          { user_id: "usr_ahmed",   display_name: "Ahmed",   username: "ahmed",   role_name: "cashier" },
+          { display_name: "Renihal", username: "renihal", role_name: "owner" },
+          { display_name: "Ahmed",   username: "ahmed",   role_name: "cashier" },
         ]));
       }
       if (cmd === "auth_login_pin") {

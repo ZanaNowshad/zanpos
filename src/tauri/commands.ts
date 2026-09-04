@@ -924,12 +924,12 @@ export const adminListRoles = (actor_user_id: string): Promise<RoleRow[]> =>
   invoke("admin_list_roles", { actorUserId: actor_user_id });
 
 export const adminCreateUser = (input: {
-  display_name: string; username: string; pin: string; role_id: string; actor_user_id: string;
+  display_name: string; username: string; pin: string; role_id: string; session_token: string;
 }): Promise<AdminUserRow> =>
   invoke("admin_create_user", { input });
 
 export const adminUpdateUser = (input: {
-  user_id: string; display_name: string; pin?: string; role_id: string; is_active: boolean; actor_user_id: string;
+  user_id: string; display_name: string; pin?: string; role_id: string; is_active: boolean; session_token: string;
 }): Promise<AdminUserRow> =>
   invoke("admin_update_user", { input });
 

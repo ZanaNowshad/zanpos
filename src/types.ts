@@ -164,8 +164,9 @@ export interface SyncStatus {
 
 // ─── Phase 1: Auth / Shift / Refund / Report types ───────────────────────────
 
+/** Pre-authentication login discovery. Carries no account id on purpose —
+ *  see the Rust `UserSummary` for why. Login is by username. */
 export interface UserSummary {
-  user_id: string;
   display_name: string;
   username: string;
   role_name: string;

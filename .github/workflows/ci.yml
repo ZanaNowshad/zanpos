@@ -92,15 +92,27 @@ jobs:
           cache: 'npm'
           cache-dependency-path: src-tauri/sidecar/whatsapp-sidecar/package-lock.json
 
+      # tauri.conf.json declares four bundled resources, and the Tauri build
+      # script refuses to run until each exists. `beforeBuildCommand` creates
+      # them — but it only runs on `tauri build`, never on `cargo check`, which
+      # still invokes that build script. So this job could never compile on a
+      # clean machine; it only ever passed locally, on developer checkouts where
+      # a previous `npm run ship` had left the files behind.
+      #
+      # These steps reproduce `beforeBuildCommand` exactly, in its order, so the
+      # gate depends on nothing left over from an earlier build.
       - name: Install WhatsApp sidecar dependencies
         working-directory: src-tauri/sidecar/whatsapp-sidecar
         run: npm ci
 
-      # The other half of the same problem. tauri.conf.json bundles
-      # ../storefront/dist as `storefront-dist/`, so the build script needs the
-      # storefront actually built, not merely type-checked — the storefront job
-      # only runs tsc and produces no dist. Fixing the node_modules resource
-      # simply moved the build script on to the next missing one.
+      # node.exe is gitignored (~92 MB) and no script in the repo fetched it,
+      # so a fresh clone had no way to produce it. This is the project's own
+      # provisioning command from beforeBuildCommand: the sidecar runs whatever
+      # Node is copied here, and setup-node above pins that to 20.
+      - name: Provision the sidecar Node runtime
+        working-directory: src-tauri/sidecar/whatsapp-sidecar
+        run: node -e "require('fs').copyFileSync(process.execPath,'node.exe')"
+
       - name: Build the storefront (bundled as an app resource)
         working-directory: storefront
         run: npm ci && npm run build

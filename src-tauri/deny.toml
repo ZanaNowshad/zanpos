@@ -6,10 +6,19 @@ unmaintained = "all"
 unsound = "all"
 yanked = "deny"
 ignore = [
-    # Rationale: rsa is pulled in through sqlx-macros-core's MySQL support, but
-    # ZANPOS uses SQLite only and performs no RSA operations. Owner: ZANPOS
-    # Maintainers. Review/expiry: 2027-01-31.
-    { id = "RUSTSEC-2023-0071", reason = "rsa@0.9.10 is resolved through sqlx-macros-core's MySQL-only code but is not used by ZANPOS's SQLite runtime; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
+    # RUSTSEC-2023-0071 (rsa) was removed: `cargo tree -i rsa` now resolves
+    # nothing, so the ignore matched no crate and cargo-deny reported it as
+    # advisory-not-detected. An ignore that matches nothing is not free — it
+    # hides the advisory if the crate ever returns.
+
+    # Rationale: lru reaches the graph only through mysql, which exists for the
+    # MySQL migration importer in migration_commands.rs — an operator-initiated
+    # one-off import, not a path any till exercises while trading. The advisory
+    # is a use-after-free that requires a Drop impl to panic inside
+    # LruCache::pop(); ZANPOS never calls lru directly, and 0.16.4 is the latest
+    # version compatible with mysql 28. Owner: ZANPOS Maintainers.
+    # Review/expiry: 2027-01-31 — revisit when mysql widens its lru range.
+    { id = "RUSTSEC-2026-0253", reason = "lru@0.16.4 is reached only through mysql@28's connection pool, used by the operator-initiated MySQL migration importer; no semver-compatible fix exists; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
 
     # Rationale: these crates are in Tauri/Wry's non-Windows GTK3 dependency
     # path and are not compiled into the Windows ZANPOS application. Owner:

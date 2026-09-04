@@ -13,16 +13,35 @@ from .contracts import (
 )
 
 
+def _ships(parsed) -> bool:
+    """True when this file is compiled into the shipped application.
+
+    The inventory audits production control flow. A `#![cfg(test)]` module is
+    not in the release build — the ship gate has its own check asserting that —
+    so counting its calls conflates test code with shipped code. It also makes
+    the control decay: every new test that exercises an audited repository
+    function trips the gate, and a gate that fires on correct work teaches
+    people to re-bless it without reading, which is the one failure this whole
+    file exists to prevent.
+    """
+    return "#![cfg(test)]" not in parsed.source
+
+
 def control_inventory(project: Project) -> tuple[Counter, str]:
     sink_counts: Counter = Counter()
     identifier_counts: Counter = Counter()
     controls = {item.control for item in EXPECTED}
+    shipped = {path for path, parsed in project.files.items() if _ships(parsed)}
     for fn in project.functions:
+        if fn.path not in shipped:
+            continue
         for control in controls:
             count = fn.body.count(control)
             if count:
                 sink_counts[(fn.path, fn.name, control)] += count
     for path, parsed in project.files.items():
+        if path not in shipped:
+            continue
         for token in parsed.tokens:
             if token.value not in CONTROL_METHODS:
                 continue

@@ -299,11 +299,31 @@ jobs:
           chmod +x gitleaks
           ./gitleaks version
 
+      # gitleaks `detect` takes a single --source; repeating the flag does not
+      # union the paths, the last one silently wins. This step used to pass
+      # seven, so it scanned only `scripts/` — 152 KB of a multi-megabyte
+      # repository — and reported "no leaks found" without ever reading src/,
+      # src-tauri/, storefront/, .github/, config/ or tests/. One scan per
+      # directory is what the original list was trying to express; `bash -e`
+      # stops the job on the first directory that reports a leak.
       - name: Run Gitleaks working-tree scan (uncommitted files)
         run: |
-          ./gitleaks detect --config config/gitleaks.toml --no-git --redact \
-            --source src --source src-tauri --source storefront \
-            --source .github --source config --source tests --source scripts
+          for dir in src src-tauri storefront .github config tests scripts; do
+            echo "--- scanning ${dir}"
+            ./gitleaks detect --config config/gitleaks.toml --no-git --redact --source "${dir}"
+          done
+
+      # The positive fixtures are allowlisted out of the scans above, so this
+      # asserts detection is still live rather than trusting that it is: scan
+      # them with gitleaks' own default rules and require a non-zero exit.
+      # A clean result here means the scanner has stopped detecting anything.
+      - name: Prove the scanner still detects planted secrets
+        run: |
+          if ./gitleaks detect --no-git --redact --source tests/security/gitleaks-fixtures; then
+            echo "::error::gitleaks reported no leaks in the positive fixtures — detection is broken"
+            exit 1
+          fi
+          echo "Positive fixtures still trigger detection."
 
       - name: Run Gitleaks commit-range scan (PR only)
         if: github.event_name == 'pull_request'

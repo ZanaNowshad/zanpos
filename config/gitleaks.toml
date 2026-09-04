@@ -44,11 +44,23 @@ paths = [
   # Owner: ZANPOS Maintainers. Review by: 2027-01-31.
   '''src-tauri[/\\]src[/\\]license[/\\]verify\.rs''',
 
-  # synthetic gitleaks test fixtures that must pass (NOT the positive fixtures)
-  # The positive fixtures (gitleaks-fixtures/) MUST still trigger detection.
+  # synthetic gitleaks test fixtures that must pass (the negative fixtures)
   # reason: RED/GREEN gitleaks test coverage for allowed patterns
   # Owner: ZANPOS Maintainers. Review by: 2027-01-31.
   '''tests[/\\]security[/\\]gitleaks[/\\]''',
+
+  # Positive fixtures: planted fake secrets whose whole purpose is to be
+  # detected. They are excluded from repository scans — otherwise every PR
+  # whose commit range includes the commit that added them fails on secrets
+  # that were never real, which is what happened once the scanner was first
+  # made to run (7 findings, all from this one file).
+  #
+  # Excluding them here would leave nothing proving detection still works, so
+  # the CI job now asserts the opposite directly: it scans this directory with
+  # gitleaks' default rules and FAILS if no leak is found. The guarantee moved
+  # from a comment to an executable check.
+  # Owner: ZANPOS Maintainers. Review by: 2027-01-31.
+  '''tests[/\\]security[/\\]gitleaks-fixtures[/\\]''',
 
   # bundle.cjs: compiled baileys WhatsApp Web library artifact (8.9 MB).
   # Contains embedded Firebase API-key constants (AIzaSy...) from

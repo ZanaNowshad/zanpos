@@ -172,6 +172,24 @@ export interface UserSummary {
   role_name: string;
 }
 
+/**
+ * A proven session token, distinct from every other string in the app.
+ *
+ * Migrating commands off payload-derived actors kept hitting the same hazard: a
+ * session token and a user id are both `string`, so a call site that passed the
+ * wrong one compiled silently and failed only at runtime. TypeScript could not
+ * help, and the sweep had to be done by eye. Branding the token makes it a
+ * compile error instead, which is what lets the remaining families migrate
+ * safely.
+ *
+ * `asSessionToken` is the one place a plain string becomes one. It exists so
+ * the conversion has to be written down rather than happening by accident.
+ */
+export type SessionToken = string & { readonly __sessionToken: unique symbol };
+
+/** Mark a string as a proven session token. Only login output should use this. */
+export const asSessionToken = (raw: string): SessionToken => raw as SessionToken;
+
 export interface SessionUser {
   user_id: string;
   branch_id: string;
@@ -179,7 +197,7 @@ export interface SessionUser {
   username: string;
   role_id: string;
   role_name: string;
-  session_token: string;
+  session_token: SessionToken;
   session_expires_at: string;
 }
 

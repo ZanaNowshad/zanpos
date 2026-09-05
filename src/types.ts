@@ -831,6 +831,9 @@ export interface AppConfig {
   cr_number: string | null;
   whatsapp_benefit_number: string | null;
   owner_user_id: string | null;
+  /** A real session for the owner setup just created. Only setup_wizard_complete
+   *  returns one; reading the config leaves it null. */
+  owner_session_token: string | null;
 }
 
 export interface BranchSettings {

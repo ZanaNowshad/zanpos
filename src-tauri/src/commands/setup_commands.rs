@@ -30,6 +30,18 @@ pub struct AppConfig {
     pub cr_number: Option<String>,
     pub whatsapp_benefit_number: Option<String>,
     pub owner_user_id: Option<String>,
+    /// A real session for the owner the wizard just created.
+    ///
+    /// Only ever set by `setup_wizard_complete`; `app_config_load` leaves it
+    /// `None`, so it cannot be obtained by asking for the configuration.
+    ///
+    /// The wizard finishes by calling privileged commands — enabling the hub,
+    /// importing a catalogue — at a moment when nobody has logged in. It used
+    /// to do that by passing `owner_user_id`, which is the same "name a
+    /// privileged user and be treated as them" shape being removed everywhere
+    /// else; it simply had a plausible excuse. Issuing a session here gives the
+    /// wizard genuine authority for those calls instead of a claim.
+    pub owner_session_token: Option<String>,
 }
 
 pub(crate) use crate::domain::money::currency_exponent;
@@ -134,6 +146,9 @@ pub async fn app_config_load(state: State<'_, AppState>) -> Result<AppConfig, Ap
         cr_number: branch_row.get("cr_number"),
         whatsapp_benefit_number: wa_benefit,
         owner_user_id,
+        // Never here: reading the configuration must not hand out authority.
+        // Only `setup_wizard_complete` issues one, for the owner it just made.
+        owner_session_token: None,
     })
 }
 
@@ -362,10 +377,14 @@ pub async fn setup_wizard_complete(
     }
     sync_commands::schedule_immediate_sync(&state);
 
-    // Return updated config with owner user_id so the frontend can
-    // call RBAC-gated commands (CSV import, etc.) as the new owner.
+    // The wizard's remaining steps — enabling the hub, importing a catalogue —
+    // are privileged, and nobody has logged in yet. Issue the new owner a real
+    // session so those calls carry authority rather than an assertion.
+    let issued = state.sessions.issue(&owner_user_id).await;
+
     let mut cfg = app_config_load(state).await?;
     cfg.owner_user_id = Some(owner_user_id);
+    cfg.owner_session_token = Some(issued.token);
     tracing::info!("setup_wizard_complete: done — POS ready");
     Ok(cfg)
 }

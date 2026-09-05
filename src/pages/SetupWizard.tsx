@@ -404,9 +404,9 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
     const cfg = await doSetupComplete(setFinishLoading);
     if (!cfg) return;
     // If hub was enabled in the wizard, activate it now
-    if (enableHub && cfg.owner_user_id) {
+    if (enableHub && cfg.owner_session_token) {
       try {
-        await hubEnable(cfg.owner_user_id, parseInt(hubPort, 10) || 8923);
+        await hubEnable(cfg.owner_session_token, parseInt(hubPort, 10) || 8923);
       } catch { /* non-blocking — hub can be enabled later in Settings */ }
     }
     onComplete(cfg);
@@ -415,8 +415,8 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
   const handleGoImportCSV = async () => {
     const cfg = await doSetupComplete(setCsvLoading);
     if (!cfg) return;
-    if (enableHub && cfg.owner_user_id) {
-      try { await hubEnable(cfg.owner_user_id, parseInt(hubPort, 10) || 8923); } catch { /* ignore */ }
+    if (enableHub && cfg.owner_session_token) {
+      try { await hubEnable(cfg.owner_session_token, parseInt(hubPort, 10) || 8923); } catch { /* ignore */ }
     }
     setOwnerUserId(cfg.owner_user_id ?? "");
     setStep(8);
@@ -693,8 +693,8 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
               <button className="setup-btn-migrate-inline" onClick={async () => {
                 const cfg = await doSetupComplete(setMigrateLoading);
                 if (!cfg) return;
-                if (enableHub && cfg.owner_user_id) {
-                  try { await hubEnable(cfg.owner_user_id, parseInt(hubPort, 10) || 8923); } catch { /* ignore */ }
+                if (enableHub && cfg.owner_session_token) {
+                  try { await hubEnable(cfg.owner_session_token, parseInt(hubPort, 10) || 8923); } catch { /* ignore */ }
                 }
                 onMigrate(cfg);
               }} disabled={anyLoading}>

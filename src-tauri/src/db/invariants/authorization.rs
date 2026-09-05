@@ -299,6 +299,46 @@ async fn a_target_id_in_the_payload_is_not_the_caller() {
     );
 }
 
+/// An owner created by the setup wizard can act immediately, without logging in.
+///
+/// The wizard finishes by doing privileged work — enabling the hub, importing a
+/// catalogue — at a moment when nobody has signed in. It used to carry that out
+/// by passing `owner_user_id`, and `setup_commands` said so plainly: *"so the
+/// frontend can call RBAC-gated commands (CSV import, etc.) as the new owner"*.
+/// That is the same "name a privileged user and be treated as them" shape being
+/// removed everywhere else, with a plausible excuse attached.
+///
+/// Migrating `hub_enable` to session authority broke that flow, and nothing
+/// caught it: the Rust compiled, the tests passed, and the frontend handed over
+/// a user id that a `String` parameter accepted without complaint. Setup now
+/// issues the new owner a real session, and this pins the property that makes
+/// that safe — the token works the moment it is minted.
+#[tokio::test]
+async fn a_freshly_created_owner_can_act_before_ever_logging_in() {
+    let pool = migrated_pool().await;
+    with_active_users(&pool).await;
+    let sessions = SessionStore::default();
+
+    // What `setup_wizard_complete` does after creating the owner.
+    let token = sessions.issue(OWNER).await.token;
+
+    let actor = rbac::session_actor(&sessions, &pool, &token, rbac::MANAGER_OR_OWNER)
+        .await
+        .expect("the wizard must be able to finish its privileged steps");
+    assert_eq!(actor.user_id, OWNER);
+    assert_eq!(actor.role_name, "owner");
+
+    // And it is a real session, not a bypass: a cashier minted the same way is
+    // still only a cashier.
+    let cashier_token = sessions.issue(CASHIER).await.token;
+    assert!(
+        rbac::session_actor(&sessions, &pool, &cashier_token, rbac::MANAGER_OR_OWNER)
+            .await
+            .is_err(),
+        "issuing a session must not confer authority the account does not have"
+    );
+}
+
 /// Pre-authentication login discovery gives out no account id.
 ///
 /// This listing has to exist — a shared till shows who is on shift so they can

@@ -57,7 +57,7 @@ export default function BulkStockTakeModal({ user, onClose }: Props) {
     setSaving(true);
     setError(null);
     try {
-      const result = await inventoryBulkStockTake(entries, user.user_id);
+      const result = await inventoryBulkStockTake(entries, user.session_token);
       setDone(result);
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to save stock-take");

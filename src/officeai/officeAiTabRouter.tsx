@@ -50,8 +50,8 @@ export interface DataTabContext {
 export function renderDataTab(ctx: DataTabContext): ReactNode {
   const { tab, tabKey, sessionUser, isOwner, isManager, productPrefill } = ctx;
   switch (tab) {
-      case "operations": return <ProductsTab key={tabKey} sessionUserId={sessionUser.user_id} prefill={productPrefill} onPrefillConsumed={() => ctx.onPrefillConsumed()} />;
-      case "products": return <ProductsTab key={tabKey} sessionUserId={sessionUser.user_id} prefill={productPrefill} onPrefillConsumed={() => ctx.onPrefillConsumed()} />;
+      case "operations": return <ProductsTab key={tabKey} sessionUserId={sessionUser.user_id} sessionToken={sessionUser.session_token} prefill={productPrefill} onPrefillConsumed={() => ctx.onPrefillConsumed()} />;
+      case "products": return <ProductsTab key={tabKey} sessionUserId={sessionUser.user_id} sessionToken={sessionUser.session_token} prefill={productPrefill} onPrefillConsumed={() => ctx.onPrefillConsumed()} />;
       case "categories": return <CategoriesTab key={tabKey} sessionUserId={sessionUser.user_id} />;
       case "quickpos": return <QuickPosTab key={tabKey} sessionUserId={sessionUser.user_id} />;
       case "users": return <UsersTab key={tabKey} sessionUserId={sessionUser.user_id} sessionToken={sessionUser.session_token} sessionRole={sessionUser.role_name} />;
@@ -59,7 +59,7 @@ export function renderDataTab(ctx: DataTabContext): ReactNode {
       case "reports": return <ReportsTab key={tabKey} sessionUserId={sessionUser.user_id} />;
       case "cashier": return <CashierReportTab key={tabKey} sessionUserId={sessionUser.user_id} />;
       case "eod": return <EodCashupTab key={tabKey} sessionUserId={sessionUser.user_id} />;
-      case "inventory": return <InventoryTab key={tabKey} sessionUserId={sessionUser.user_id} />;
+      case "inventory": return <InventoryTab key={tabKey} sessionToken={sessionUser.session_token} />;
       case "customers": return (
         <CustomersWorkspace
           key={tabKey}

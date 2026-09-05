@@ -13,10 +13,10 @@ interface Props {
   onHeld: () => void;
   onResume: (cart: Cart) => void;
   onClose: () => void;
-  actorUserId: string;
+  sessionToken: string;
 }
 
-export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume, onClose, actorUserId }: Props) {
+export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume, onClose, sessionToken }: Props) {
   const { language } = useLanguage();
   const t = operationsTranslator(language);
   const [note, setNote] = useState("");
@@ -28,9 +28,9 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
 
   useEffect(() => {
     let cancelled = false;
-    heldCartList(actorUserId, DEVICE.device_id).then(data => { if (!cancelled) setHeldCarts(data); }).catch(() => {});
+    heldCartList(sessionToken, DEVICE.device_id).then(data => { if (!cancelled) setHeldCarts(data); }).catch(() => {});
     return () => { cancelled = true; };
-  }, [actorUserId]);
+  }, [sessionToken]);
 
   /* Escape closes the dialog. Capture phase and propagation stopped, because
      the till binds Escape to "put the caret back in the barcode field" — a
@@ -52,7 +52,7 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
     setSaving(true);
     setError(null);
     try {
-      await heldCartSave(actorUserId, cart, note || undefined);
+      await heldCartSave(sessionToken, cart, note || undefined);
       onHeld();
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : t("holdCartFailed"));
@@ -66,9 +66,9 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
     if (resumingIds.has(held_cart_id)) return;
     setResumingIds(prev => new Set(prev).add(held_cart_id));
     try {
-      const resumed = await heldCartResume(actorUserId, held_cart_id, cart.shift_id);
+      const resumed = await heldCartResume(sessionToken, held_cart_id, cart.shift_id);
       // Await delete — fire-and-forget left the cart resumable again on failure
-      await heldCartDelete(actorUserId, held_cart_id).catch(() => {});
+      await heldCartDelete(sessionToken, held_cart_id).catch(() => {});
       setHeldCarts(prev => prev.filter(h => h.held_cart_id !== held_cart_id));
       onResume(resumed);
     } catch (e: unknown) {
@@ -79,7 +79,7 @@ export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume,
 
   const handleDelete = async (held_cart_id: string) => {
     try {
-      await heldCartDelete(actorUserId, held_cart_id);
+      await heldCartDelete(sessionToken, held_cart_id);
       setHeldCarts(prev => prev.filter(h => h.held_cart_id !== held_cart_id));
     } catch {
       // ignore

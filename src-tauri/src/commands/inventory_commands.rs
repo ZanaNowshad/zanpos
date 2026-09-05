@@ -40,10 +40,10 @@ fn parse_qty(s: &str) -> AppResult<Decimal> {
 
 #[tauri::command]
 pub async fn inventory_get_levels(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<StockLevel>, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     let branch_id = active_branch_id(&state).await?;
     stock_repo::get_all_levels(&state.db, &branch_id).await
 }
@@ -52,13 +52,13 @@ pub async fn inventory_get_levels(
 
 #[tauri::command]
 pub async fn inventory_get_levels_paged(
-    actor_user_id: String,
+    session_token: String,
     search: Option<String>,
     offset: Option<i64>,
     limit: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<StockLevelPage, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     let branch_id = active_branch_id(&state).await?;
     let limit = limit.unwrap_or(100).min(500);
     let offset = offset.unwrap_or(0).max(0);
@@ -69,10 +69,10 @@ pub async fn inventory_get_levels_paged(
 
 #[tauri::command]
 pub async fn inventory_get_low_stock(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<StockLevel>, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     let branch_id = active_branch_id(&state).await?;
     stock_repo::get_low_stock(&state.db, &branch_id).await
 }
@@ -81,11 +81,11 @@ pub async fn inventory_get_low_stock(
 
 #[tauri::command]
 pub async fn inventory_get_movements(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
     product_id: String,
 ) -> Result<Vec<StockMovementRow>, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     stock_repo::get_movements(&state.db, &product_id).await
 }
 
@@ -97,7 +97,6 @@ pub struct ReceiveStockInput {
     pub quantity: String, // decimal string
     pub expiry_date: Option<String>,
     pub notes: Option<String>,
-    pub received_by_user_id: String,
 }
 
 /// C-2 fix: read-modify-write is wrapped in a transaction to prevent races.
@@ -107,9 +106,19 @@ pub struct ReceiveStockInput {
 #[tauri::command]
 pub async fn inventory_receive_stock(
     input: ReceiveStockInput,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<StockLevel, AppError> {
-    rbac::manager_or_owner(&state.db, &input.received_by_user_id).await?;
+    // Written to the movement ledger below, so it has to be the authenticated
+    // caller. It used to be whatever id the payload named, which meant the
+    // record of who moved stock was chosen by whoever moved it.
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
 
     // Parse and validate quantity
     let qty = parse_qty(&input.quantity)?;
@@ -191,7 +200,7 @@ pub async fn inventory_receive_stock(
     .bind(&delta_str)
     .bind(&new_qty_str)
     .bind(&input.notes)
-    .bind(&input.received_by_user_id)
+    .bind(&actor.user_id)
     .bind(&now)
     .bind(expiry_date)
     .bind(&delta_str)
@@ -211,7 +220,7 @@ pub async fn inventory_receive_stock(
         "STOCK_RECEIVED",
         "stock_level",
         &input.product_id,
-        &input.received_by_user_id,
+        &actor.user_id,
         "user",
         &device_id,
         &branch_id,
@@ -239,7 +248,6 @@ pub struct AdjustStockInput {
     pub product_id: String,
     pub new_quantity: String, // absolute quantity (count correction)
     pub notes: Option<String>,
-    pub adjusted_by_user_id: String,
 }
 
 /// C-2 fix: transaction guards the read-modify-write.
@@ -249,9 +257,19 @@ pub struct AdjustStockInput {
 #[tauri::command]
 pub async fn inventory_adjust_stock(
     input: AdjustStockInput,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<StockLevel, AppError> {
-    rbac::manager_or_owner(&state.db, &input.adjusted_by_user_id).await?;
+    // Written to the movement ledger below, so it has to be the authenticated
+    // caller. It used to be whatever id the payload named, which meant the
+    // record of who moved stock was chosen by whoever moved it.
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
 
     // Parse target quantity
     let new_qty = parse_qty(&input.new_quantity)?;
@@ -329,7 +347,7 @@ pub async fn inventory_adjust_stock(
     .bind(&delta_str)
     .bind(&new_qty_str)
     .bind(&input.notes)
-    .bind(&input.adjusted_by_user_id)
+    .bind(&actor.user_id)
     .bind(&now)
     .execute(&mut *tx)
     .await?;
@@ -346,7 +364,7 @@ pub async fn inventory_adjust_stock(
         "STOCK_ADJUSTED",
         "stock_level",
         &input.product_id,
-        &input.adjusted_by_user_id,
+        &actor.user_id,
         "user",
         &device_id,
         &branch_id,
@@ -387,10 +405,16 @@ pub struct BulkStockTakeResult {
 #[tauri::command]
 pub async fn inventory_bulk_stock_take(
     entries: Vec<BulkStockTakeEntry>,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<BulkStockTakeResult, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
 
     if entries.is_empty() {
         return Ok(BulkStockTakeResult {
@@ -503,7 +527,7 @@ pub async fn inventory_bulk_stock_take(
         .bind(&delta_str)
         .bind(&new_qty_str)
         .bind(&entry.notes)
-        .bind(&actor_user_id)
+        .bind(&actor.user_id)
         .bind(&now)
         .execute(&mut *tx)
         .await
@@ -527,7 +551,7 @@ pub async fn inventory_bulk_stock_take(
             "STOCK_TAKE",
             "stock_level",
             &entry.product_id,
-            &actor_user_id,
+            &actor.user_id,
             "user",
             &device_id,
             &branch_id,

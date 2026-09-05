@@ -18,6 +18,8 @@ import { useProductImageFetch } from "./useProductImageFetch";
 
 interface Props {
   sessionUserId: string;
+  /** For inventory reads, which authenticate by session. */
+  sessionToken: string;
   /** Pre-fill data to open the create form with (e.g. from a POS notification). */
   prefill?: ProductPrefill | null;
   onPrefillConsumed?: () => void;
@@ -27,6 +29,7 @@ const PAGE_SIZE = 100;
 
 export default function ProductsTab({
   sessionUserId,
+  sessionToken,
   prefill,
   onPrefillConsumed,
 }: Props) {
@@ -105,14 +108,14 @@ export default function ProductsTab({
   // still fully usable — the column degrades to "—" rather than failing the page.
   useEffect(() => {
     let cancelled = false;
-    cmd.inventoryGetLevels(sessionUserId)
+    cmd.inventoryGetLevels(sessionToken)
       .then(levels => {
         if (cancelled) return;
         setStockByProduct(new Map(levels.map(l => [l.product_id, l])));
       })
       .catch(() => { if (!cancelled) setStockByProduct(null); });
     return () => { cancelled = true; };
-  }, [sessionUserId]);
+  }, [sessionUserId, sessionToken]);
 
   useEffect(() => {
     fetchProducts(search, offset, categoryFilter, view);

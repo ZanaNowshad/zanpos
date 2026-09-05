@@ -7,14 +7,14 @@ import { LoadingSkeleton, EmptyState } from "./templates";
 import { Boxes } from "lucide-react";
 
 interface Props {
-  sessionUserId: string;
+  sessionToken: string;
 }
 
 type Mode = "levels" | "receive" | "adjust" | "movements";
 
 const PAGE_SIZE = 100;
 
-export default function InventoryTab({ sessionUserId }: Props) {
+export default function InventoryTab({ sessionToken }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => backOfficeTranslator(language), [language]);
   // ── Paginated list state ──────────────────────────────────────────────────
@@ -55,14 +55,14 @@ export default function InventoryTab({ sessionUserId }: Props) {
   const fetchPage = useCallback(async (q: string, off: number) => {
     setLoading(true);
     try {
-      const page = await cmd.inventoryGetLevelsPaged(sessionUserId, q, off, PAGE_SIZE);
+      const page = await cmd.inventoryGetLevelsPaged(sessionToken, q, off, PAGE_SIZE);
       setLevels(page.items);
       setTotal(page.total);
       setOffset(off);
     } finally {
       setLoading(false);
     }
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   // Reload when search or offset changes
   useEffect(() => {
@@ -86,7 +86,7 @@ export default function InventoryTab({ sessionUserId }: Props) {
     setMode(mode === "movements" && selected?.product_id === level.product_id ? "levels" : "movements");
     if (mode !== "movements" || selected?.product_id !== level.product_id) {
       setMovLoading(true);
-      try { setMovements(await cmd.inventoryGetMovements(sessionUserId, level.product_id)); }
+      try { setMovements(await cmd.inventoryGetMovements(sessionToken, level.product_id)); }
       catch { setMovements([]); }
       finally { setMovLoading(false); }
     }
@@ -100,7 +100,7 @@ export default function InventoryTab({ sessionUserId }: Props) {
       const updated = await cmd.inventoryReceiveStock(
         selected.product_id, recvQty,
         recvExpiry || undefined,
-        recvNotes || undefined, sessionUserId
+        recvNotes || undefined, sessionToken
       );
       setLevels(prev => prev.map(l => l.product_id === updated.product_id ? updated : l));
       setMode("levels");
@@ -118,7 +118,7 @@ export default function InventoryTab({ sessionUserId }: Props) {
     try {
       const updated = await cmd.inventoryAdjustStock(
         selected.product_id, adjQty,
-        adjNotes || undefined, sessionUserId
+        adjNotes || undefined, sessionToken
       );
       setLevels(prev => prev.map(l => l.product_id === updated.product_id ? updated : l));
       setMode("levels");

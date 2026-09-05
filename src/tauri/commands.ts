@@ -376,17 +376,17 @@ export const posCartSummary = (cart: Cart): Promise<{
 
 // ─── Held cart commands ───────────────────────────────────────────────────────
 
-export const heldCartSave = (actorUserId: string, cart: Cart, note?: string): Promise<HeldCartSummary> =>
-  invoke("held_cart_save", { input: { cart, note, actor_user_id: actorUserId } });
+export const heldCartSave = (sessionToken: string, cart: Cart, note?: string): Promise<HeldCartSummary> =>
+  invoke("held_cart_save", { input: { cart, note }, sessionToken });
 
-export const heldCartList = (actorUserId: string, device_id: string): Promise<HeldCartSummary[]> =>
-  invoke("held_cart_list", { actorUserId, deviceId: device_id });
+export const heldCartList = (sessionToken: string, device_id: string): Promise<HeldCartSummary[]> =>
+  invoke("held_cart_list", { sessionToken, deviceId: device_id });
 
-export const heldCartResume = (actorUserId: string, held_cart_id: string, shift_id: string): Promise<Cart> =>
-  invoke("held_cart_resume", { input: { held_cart_id, shift_id, actor_user_id: actorUserId } });
+export const heldCartResume = (sessionToken: string, held_cart_id: string, shift_id: string): Promise<Cart> =>
+  invoke("held_cart_resume", { input: { held_cart_id, shift_id }, sessionToken });
 
-export const heldCartDelete = (actorUserId: string, held_cart_id: string): Promise<void> =>
-  invoke("held_cart_delete", { actorUserId, heldCartId: held_cart_id });
+export const heldCartDelete = (sessionToken: string, held_cart_id: string): Promise<void> =>
+  invoke("held_cart_delete", { sessionToken, heldCartId: held_cart_id });
 
 // ─── Refund commands ──────────────────────────────────────────────────────────
 
@@ -942,32 +942,33 @@ export interface StockLevelPage {
   limit: number;
 }
 
-export const inventoryGetLevels = (actor_user_id: string): Promise<StockLevel[]> =>
-  invoke("inventory_get_levels", { actorUserId: actor_user_id });
+export const inventoryGetLevels = (session_token: string): Promise<StockLevel[]> =>
+  invoke("inventory_get_levels", { sessionToken: session_token });
 
 export const inventoryGetLevelsPaged = (
-  actor_user_id: string,
+  session_token: string,
   search: string,
   offset: number,
   limit: number,
 ): Promise<StockLevelPage> =>
-  invoke("inventory_get_levels_paged", { actorUserId: actor_user_id, search: search || null, offset, limit });
+  invoke("inventory_get_levels_paged", { sessionToken: session_token, search: search || null, offset, limit });
 
-export const inventoryGetLowStock = (actor_user_id: string): Promise<StockLevel[]> =>
-  invoke("inventory_get_low_stock", { actorUserId: actor_user_id });
+export const inventoryGetLowStock = (session_token: string): Promise<StockLevel[]> =>
+  invoke("inventory_get_low_stock", { sessionToken: session_token });
 
-export const inventoryGetMovements = (actor_user_id: string, productId: string): Promise<StockMovementRow[]> =>
-  invoke("inventory_get_movements", { actorUserId: actor_user_id, productId });
+export const inventoryGetMovements = (session_token: string, productId: string): Promise<StockMovementRow[]> =>
+  invoke("inventory_get_movements", { sessionToken: session_token, productId });
 
 export const inventoryReceiveStock = (
   product_id: string,
   quantity: string,
   expiry_date: string | undefined,
   notes: string | undefined,
-  received_by_user_id: string,
+  session_token: string,
 ): Promise<StockLevel> =>
   invoke("inventory_receive_stock", {
-    input: { product_id, quantity, expiry_date, notes, received_by_user_id },
+    input: { product_id, quantity, expiry_date, notes },
+    sessionToken: session_token,
   });
 
 // ─── Phase 10a commands ───────────────────────────────────────────────────────
@@ -1022,10 +1023,11 @@ export const inventoryAdjustStock = (
   product_id: string,
   new_quantity: string,
   notes: string | undefined,
-  adjusted_by_user_id: string,
+  session_token: string,
 ): Promise<StockLevel> =>
   invoke("inventory_adjust_stock", {
-    input: { product_id, new_quantity, notes, adjusted_by_user_id },
+    input: { product_id, new_quantity, notes },
+    sessionToken: session_token,
   });
 
 // ─── Phase 10b — Customers ────────────────────────────────────────────────────
@@ -1215,9 +1217,9 @@ export const reportEodCashup = (
 export const inventoryBulkStockTake = (
   // FIX: string, not number — JS floats corrupt Decimal arithmetic in Rust backend
   entries: Array<{ product_id: string; new_quantity: string; notes?: string }>,
-  actor_user_id: string,
+  session_token: string,
 ): Promise<BulkStockTakeResult> =>
-  invoke("inventory_bulk_stock_take", { entries, actorUserId: actor_user_id });
+  invoke("inventory_bulk_stock_take", { entries, sessionToken: session_token });
 
 export const syncQueueList = (sessionToken: string): Promise<SyncQueueItem[]> =>
   invoke("sync_queue_list", { sessionToken });

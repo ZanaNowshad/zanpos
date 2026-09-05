@@ -68,7 +68,7 @@ export async function officeAiOverview(
     branchId
       ? capture(t("todayReport"), reportToday(actorUserId, branchId, businessDate()), errors)
       : Promise.resolve(null),
-    capture(t("inventory"), inventoryGetLevels(actorUserId), errors),
+    capture(t("inventory"), inventoryGetLevels(sessionToken), errors),
     capture(t("sync"), syncStatus(sessionToken), errors),
     capture(t("whatsapp"), whatsappStatus(actorUserId), errors),
     capture(t("whatsappInbox"), whatsappPollMessages(actorUserId), errors),

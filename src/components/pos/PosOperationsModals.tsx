@@ -78,7 +78,7 @@ export default function PosOperationsModals({
           cart={cart}
           lineCount={lineCount}
           netTotal={netTotal}
-          actorUserId={sessionUser.user_id}
+          sessionToken={sessionUser.session_token}
           onHeld={() => {
             setActiveModal({ kind: "none" });
             clearCart();

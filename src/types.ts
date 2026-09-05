@@ -1102,7 +1102,6 @@ export interface DeliveryListFilter {
 
 export interface ConfirmDeliveryPaymentInput {
   delivery_id: string;
-  confirmed_by_user_id: string;
   payment_reference?: string;
   payment_note?: string;
 }
@@ -1110,17 +1109,14 @@ export interface ConfirmDeliveryPaymentInput {
 export interface UpdateDeliveryStatusInput {
   delivery_id: string;
   delivery_status: string;
-  actor_user_id: string;
 }
 
 export interface CancelDeliveryInput {
   delivery_id: string;
-  actor_user_id: string;
 }
 
 export interface RevertPaymentInput {
   delivery_id: string;
-  actor_user_id: string;
   reason?: string;
 }
 

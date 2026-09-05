@@ -257,6 +257,7 @@ pub async fn list_deliveries(
 /// Cannot transition out of 'cancelled'. Cannot transition 'delivered' backwards.
 pub async fn update_delivery_status(
     pool: &SqlitePool,
+    actor_user_id: &str,
     input: &UpdateDeliveryStatusInput,
 ) -> AppResult<DeliveryRow> {
     let valid = [
@@ -313,7 +314,7 @@ pub async fn update_delivery_status(
         event_type: "delivery.status_changed",
         entity_type: "delivery_order",
         entity_id: &input.delivery_id,
-        actor_user_id: &input.actor_user_id,
+        actor_user_id,
         actor_type: "user",
         created_at: &now,
         before_json: Some(&before_json),
@@ -329,7 +330,7 @@ pub async fn update_delivery_status(
     )
     .bind(&audit_id)
     .bind(&input.delivery_id)
-    .bind(&input.actor_user_id)
+    .bind(actor_user_id)
     .bind(&existing.device_id)
     .bind(&existing.device_id)
     .bind(&existing.branch_id)
@@ -352,6 +353,7 @@ pub async fn update_delivery_status(
 /// Idempotent: if already paid, returns the existing row without error.
 pub async fn confirm_payment(
     pool: &SqlitePool,
+    actor_user_id: &str,
     input: &ConfirmPaymentInput,
 ) -> AppResult<DeliveryRow> {
     let existing = get_delivery(pool, &input.delivery_id).await?;
@@ -372,7 +374,7 @@ pub async fn confirm_payment(
     let before_json = serde_json::json!({ "payment_status": "unpaid" }).to_string();
     let after_json = serde_json::json!({
         "payment_status": "paid",
-        "paid_confirmed_by_user_id": &input.confirmed_by_user_id,
+        "paid_confirmed_by_user_id": actor_user_id,
         "payment_reference": &input.payment_reference,
     })
     .to_string();
@@ -389,7 +391,7 @@ pub async fn confirm_payment(
              sync_status = 'pending'
          WHERE delivery_id = ? AND payment_status = 'unpaid'",
     )
-    .bind(&input.confirmed_by_user_id)
+    .bind(actor_user_id)
     .bind(&now)
     .bind(&input.payment_reference)
     .bind(&input.payment_note)
@@ -408,7 +410,7 @@ pub async fn confirm_payment(
         event_type: "delivery.payment_confirmed",
         entity_type: "delivery_order",
         entity_id: &input.delivery_id,
-        actor_user_id: &input.confirmed_by_user_id,
+        actor_user_id,
         actor_type: "user",
         created_at: &now,
         before_json: Some(&before_json),
@@ -424,7 +426,7 @@ pub async fn confirm_payment(
     )
     .bind(&audit_id)
     .bind(&input.delivery_id)
-    .bind(&input.confirmed_by_user_id)
+    .bind(actor_user_id)
     .bind(&existing.device_id)
     .bind(&existing.device_id)
     .bind(&existing.branch_id)
@@ -446,6 +448,7 @@ pub async fn confirm_payment(
 /// Cancel a delivery. Manager/owner only (RBAC in command layer).
 pub async fn cancel_delivery(
     pool: &SqlitePool,
+    actor_user_id: &str,
     input: &CancelDeliveryInput,
 ) -> AppResult<DeliveryRow> {
     let existing = get_delivery(pool, &input.delivery_id).await?;
@@ -494,7 +497,7 @@ pub async fn cancel_delivery(
         event_type: "delivery.cancelled",
         entity_type: "delivery_order",
         entity_id: &input.delivery_id,
-        actor_user_id: &input.actor_user_id,
+        actor_user_id,
         actor_type: "user",
         created_at: &now,
         before_json: Some(&before_json),
@@ -510,7 +513,7 @@ pub async fn cancel_delivery(
     )
     .bind(&audit_id)
     .bind(&input.delivery_id)
-    .bind(&input.actor_user_id)
+    .bind(actor_user_id)
     .bind(&existing.device_id)
     .bind(&existing.device_id)
     .bind(&existing.branch_id)
@@ -533,6 +536,7 @@ pub async fn cancel_delivery(
 /// Clears payment confirmation fields and writes an audit log entry.
 pub async fn revert_payment(
     pool: &SqlitePool,
+    actor_user_id: &str,
     input: &RevertPaymentInput,
 ) -> AppResult<DeliveryRow> {
     let existing = get_delivery(pool, &input.delivery_id).await?;
@@ -553,7 +557,7 @@ pub async fn revert_payment(
     .to_string();
     let after_json = serde_json::json!({
         "payment_status": "unpaid",
-        "reverted_by_user_id": &input.actor_user_id,
+        "reverted_by_user_id": actor_user_id,
         "reason": &input.reason,
     })
     .to_string();
@@ -585,7 +589,7 @@ pub async fn revert_payment(
         event_type: "delivery.payment_reverted",
         entity_type: "delivery_order",
         entity_id: &input.delivery_id,
-        actor_user_id: &input.actor_user_id,
+        actor_user_id,
         actor_type: "user",
         created_at: &now,
         before_json: Some(&before_json),
@@ -601,7 +605,7 @@ pub async fn revert_payment(
     )
     .bind(&audit_id)
     .bind(&input.delivery_id)
-    .bind(&input.actor_user_id)
+    .bind(actor_user_id)
     .bind(&existing.device_id)
     .bind(&existing.device_id)
     .bind(&existing.branch_id)

@@ -529,9 +529,9 @@ pub async fn execute(
             let reason = str(input, "reason");
             let d = delivery_repo::revert_payment(
                 pool,
+                &actor_id,
                 &RevertPaymentInput {
                     delivery_id: delivery_id.clone(),
-                    actor_user_id: actor_id.clone(),
                     reason: if reason.is_empty() {
                         None
                     } else {

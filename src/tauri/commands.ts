@@ -1265,41 +1265,45 @@ export const syncBulkInitial = (sessionToken: string): Promise<string> =>
 
 export const deliveryList = (
   filter: DeliveryListFilter,
-  actor_user_id: string,
+  session_token: string,
 ): Promise<DeliveryRow[]> =>
-  invoke("delivery_list", { filter, actorUserId: actor_user_id });
+  invoke("delivery_list", { filter, sessionToken: session_token });
 
 export const deliveryGet = (
   delivery_id: string,
-  actor_user_id: string,
+  session_token: string,
 ): Promise<DeliveryRow> =>
-  invoke("delivery_get", { deliveryId: delivery_id, actorUserId: actor_user_id });
+  invoke("delivery_get", { deliveryId: delivery_id, sessionToken: session_token });
 
 export const deliveryUpdateStatus = (
   input: UpdateDeliveryStatusInput,
+  session_token: string,
 ): Promise<DeliveryRow> =>
-  invoke("delivery_update_status", { input });
+  invoke("delivery_update_status", { input, sessionToken: session_token });
 
 export const deliveryConfirmPayment = (
   input: ConfirmDeliveryPaymentInput,
+  session_token: string,
 ): Promise<DeliveryRow> =>
-  invoke("delivery_confirm_payment", { input });
+  invoke("delivery_confirm_payment", { input, sessionToken: session_token });
 
 export const deliveryCancel = (
   input: CancelDeliveryInput,
+  session_token: string,
 ): Promise<DeliveryRow> =>
-  invoke("delivery_cancel", { input });
+  invoke("delivery_cancel", { input, sessionToken: session_token });
 
 export const deliveryRevertPayment = (
   input: RevertPaymentInput,
+  session_token: string,
 ): Promise<DeliveryRow> =>
-  invoke("delivery_revert_payment", { input });
+  invoke("delivery_revert_payment", { input, sessionToken: session_token });
 
 export const deliveryRiderSuggestions = (
   branch_id: string,
-  actor_user_id: string,
+  session_token: string,
 ): Promise<string[]> =>
-  invoke("delivery_rider_suggestions", { branchId: branch_id, actorUserId: actor_user_id });
+  invoke("delivery_rider_suggestions", { branchId: branch_id, sessionToken: session_token });
 
 // ─── WhatsApp ─────────────────────────────────────────────────────────────────
 

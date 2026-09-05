@@ -140,9 +140,9 @@ async fn every_calculation_of_expected_cash_gives_the_same_answer() {
             .unwrap();
     delivery_repo::confirm_payment(
         &pool,
+        CASHIER,
         &crate::domain::delivery::ConfirmPaymentInput {
             delivery_id: settled_delivery,
-            confirmed_by_user_id: CASHIER.into(),
             payment_reference: Some("rider returned".into()),
             payment_note: None,
         },

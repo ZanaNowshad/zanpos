@@ -79,6 +79,10 @@ pub async fn require_any_role(pool: &SqlitePool, user_id: &str) -> Result<(), Ap
 
 /// Roles accepted where any signed-in operator may act. Mirrors [`require_any_role`].
 pub const ANY_ROLE: &[&str] = &["owner", "manager", "cashier", "accountant"];
+/// Roles that work the till. Mirrors the `["owner", "manager", "cashier"]`
+/// literal the delivery and till commands were passing to `require_role`;
+/// unlike [`ANY_ROLE`] it excludes accountants, who do not serve customers.
+pub const POS_ROLES: &[&str] = &["owner", "manager", "cashier"];
 /// Roles accepted for supervisory actions. Mirrors [`manager_or_owner`].
 ///
 /// Exercised by the authorization invariants today and by each command family

@@ -156,9 +156,9 @@ async fn settling_a_delivery_names_whoever_actually_settled_it() {
 
     crate::db::repositories::delivery_repo::confirm_payment(
         &pool,
+        CASHIER,
         &crate::domain::delivery::ConfirmPaymentInput {
             delivery_id: delivery.clone(),
-            confirmed_by_user_id: CASHIER.into(),
             payment_reference: Some("counted at the counter".into()),
             payment_note: None,
         },
@@ -190,9 +190,9 @@ async fn settling_a_delivery_names_whoever_actually_settled_it() {
     .unwrap();
     let _ = crate::db::repositories::delivery_repo::confirm_payment(
         &pool,
+        CASHIER,
         &crate::domain::delivery::ConfirmPaymentInput {
             delivery_id: delivery.clone(),
-            confirmed_by_user_id: "someone-else".into(),
             payment_reference: None,
             payment_note: None,
         },

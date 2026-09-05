@@ -158,11 +158,11 @@ export default function DeliveriesTab({ sessionUser }: Props) {
   // ── Load rider suggestions ──
   useEffect(() => {
     let cancelled = false;
-    cmd.deliveryRiderSuggestions(DEVICE.branch_id, sessionUser.user_id)
+    cmd.deliveryRiderSuggestions(DEVICE.branch_id, sessionUser.session_token)
       .then(data => { if (!cancelled) setRiderSuggestions(data); })
       .catch(() => { /* non-critical */ });
     return () => { cancelled = true; };
-  }, [sessionUser.user_id]);
+  }, [sessionUser.session_token]);
 
   // ── Build filter ──
   const buildFilter = useCallback((): DeliveryListFilter => {
@@ -193,7 +193,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
     setLoading(true);
     setError(null);
     try {
-      let data = await cmd.deliveryList(buildFilter(), sessionUser.user_id);
+      let data = await cmd.deliveryList(buildFilter(), sessionUser.session_token);
       // Client-side method filter (backend doesn't have it)
       if (filterMethod) {
         data = data.filter(r => r.expected_payment_method === filterMethod);
@@ -204,7 +204,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [buildFilter, sessionUser.user_id, filterMethod, t]);
+  }, [buildFilter, sessionUser.session_token, filterMethod, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -215,8 +215,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
       const updated = await cmd.deliveryUpdateStatus({
         delivery_id: row.delivery_id,
         delivery_status: newStatus,
-        actor_user_id: sessionUser.user_id,
-      });
+      }, sessionUser.session_token);
       setRows(prev => prev.map(r => r.delivery_id === updated.delivery_id ? updated : r));
     } catch (e: unknown) {
       setActionError(typeof e === "string" ? e : t("statusUpdateFailed"));
@@ -229,11 +228,10 @@ export default function DeliveriesTab({ sessionUser }: Props) {
     try {
       const input: ConfirmDeliveryPaymentInput = {
         delivery_id: deliveryId,
-        confirmed_by_user_id: sessionUser.user_id,
         payment_reference: confirmRef || undefined,
         payment_note: confirmNote || undefined,
       };
-      const updated = await cmd.deliveryConfirmPayment(input);
+      const updated = await cmd.deliveryConfirmPayment(input, sessionUser.session_token);
       setRows(prev => prev.map(r => r.delivery_id === updated.delivery_id ? updated : r));
       setConfirmingId(null);
       setConfirmRef("");
@@ -257,8 +255,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
     try {
       const updated = await cmd.deliveryCancel({
         delivery_id: row.delivery_id,
-        actor_user_id: sessionUser.user_id,
-      });
+      }, sessionUser.session_token);
       setRows(prev => prev.map(r => r.delivery_id === updated.delivery_id ? updated : r));
     } catch (e: unknown) {
       setActionError(typeof e === "string" ? e : t("deliveryCancelFailed"));
@@ -271,9 +268,8 @@ export default function DeliveriesTab({ sessionUser }: Props) {
     try {
       const input: RevertPaymentInput = {
         delivery_id: row.delivery_id,
-        actor_user_id: sessionUser.user_id,
       };
-      const updated = await cmd.deliveryRevertPayment(input);
+      const updated = await cmd.deliveryRevertPayment(input, sessionUser.session_token);
       setRows(prev => prev.map(r => r.delivery_id === updated.delivery_id ? updated : r));
     } catch (e: unknown) {
       setActionError(typeof e === "string" ? e : t("paymentRevertFailed"));

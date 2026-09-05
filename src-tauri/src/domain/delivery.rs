@@ -67,7 +67,6 @@ pub struct DeliveryListFilter {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfirmPaymentInput {
     pub delivery_id: String,
-    pub confirmed_by_user_id: String,
     pub payment_reference: Option<String>,
     pub payment_note: Option<String>,
 }
@@ -77,20 +76,17 @@ pub struct ConfirmPaymentInput {
 pub struct UpdateDeliveryStatusInput {
     pub delivery_id: String,
     pub delivery_status: String, // pending | dispatched | out_for_delivery | delivered | cancelled
-    pub actor_user_id: String,
 }
 
 /// Input for cancelling a delivery.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CancelDeliveryInput {
     pub delivery_id: String,
-    pub actor_user_id: String,
 }
 
 /// Input for admin reverting a paid delivery back to unpaid.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RevertPaymentInput {
     pub delivery_id: String,
-    pub actor_user_id: String,
     pub reason: Option<String>,
 }

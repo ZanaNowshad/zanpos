@@ -61,7 +61,6 @@ import type {
   UndoActionResult,
   StreamEvent,
   UserSummary,
-  SessionToken,
   ValidateProviderResult,
   NoSaleRow,
   DeliveryRow,
@@ -220,7 +219,7 @@ export const authListUsers = (): Promise<UserSummary[]> =>
 export const authLoginPin = (username: string, pin: string): Promise<SessionUser> =>
   invoke("auth_login_pin", { input: { username, pin } });
 
-export const authLogout = (sessionToken: SessionToken): Promise<void> =>
+export const authLogout = (sessionToken: string): Promise<void> =>
   invoke("auth_logout", { sessionToken });
 
 // ─── Shift commands ───────────────────────────────────────────────────────────
@@ -377,16 +376,16 @@ export const posCartSummary = (cart: Cart): Promise<{
 
 // ─── Held cart commands ───────────────────────────────────────────────────────
 
-export const heldCartSave = (sessionToken: SessionToken, cart: Cart, note?: string): Promise<HeldCartSummary> =>
+export const heldCartSave = (sessionToken: string, cart: Cart, note?: string): Promise<HeldCartSummary> =>
   invoke("held_cart_save", { input: { cart, note }, sessionToken });
 
-export const heldCartList = (sessionToken: SessionToken, device_id: string): Promise<HeldCartSummary[]> =>
+export const heldCartList = (sessionToken: string, device_id: string): Promise<HeldCartSummary[]> =>
   invoke("held_cart_list", { sessionToken, deviceId: device_id });
 
-export const heldCartResume = (sessionToken: SessionToken, held_cart_id: string, shift_id: string): Promise<Cart> =>
+export const heldCartResume = (sessionToken: string, held_cart_id: string, shift_id: string): Promise<Cart> =>
   invoke("held_cart_resume", { input: { held_cart_id, shift_id }, sessionToken });
 
-export const heldCartDelete = (sessionToken: SessionToken, held_cart_id: string): Promise<void> =>
+export const heldCartDelete = (sessionToken: string, held_cart_id: string): Promise<void> =>
   invoke("held_cart_delete", { sessionToken, heldCartId: held_cart_id });
 
 // ─── Refund commands ──────────────────────────────────────────────────────────
@@ -481,7 +480,7 @@ export const productCostHistoryList = (
  * cannot request another branch.
  */
 export const aiListActions = (
-  session_token: SessionToken,
+  session_token: string,
   statuses: string[],
   limit = 50,
   offset = 0,
@@ -490,7 +489,7 @@ export const aiListActions = (
 
 /** Undo availability for one executed action. Branch scope is server-side. */
 export const aiUndoAvailability = (
-  session_token: SessionToken,
+  session_token: string,
   action_id: string,
 ): Promise<UndoAvailability | null> =>
   invoke("ai_undo_availability", { sessionToken: session_token, actionId: action_id });
@@ -523,48 +522,48 @@ export const dbIntegrityCheck = (actorUserId: string): Promise<string> =>
 
 // ─── Sync commands ────────────────────────────────────────────────────────────
 
-export const syncStatus = (sessionToken: SessionToken): Promise<SyncStatus> => invoke("sync_status", { sessionToken });
-export const syncTriggerNow = (sessionToken: SessionToken): Promise<string> => invoke("sync_trigger_now", { sessionToken });
+export const syncStatus = (sessionToken: string): Promise<SyncStatus> => invoke("sync_status", { sessionToken });
+export const syncTriggerNow = (sessionToken: string): Promise<string> => invoke("sync_trigger_now", { sessionToken });
 
 /// Recovery: re-enqueue the full catalog and push immediately. For terminals whose
 /// data never reached the cloud (outbox looks empty but cloud is empty).
-export const syncForceFullResync = (sessionToken: SessionToken): Promise<string> =>
+export const syncForceFullResync = (sessionToken: string): Promise<string> =>
   invoke("sync_force_full_resync", { sessionToken });
 
 // ─── Hub (LAN sync) ───────────────────────────────────────────────────────────
 
-export const hubStatus = (sessionToken: SessionToken): Promise<HubStatus> =>
+export const hubStatus = (sessionToken: string): Promise<HubStatus> =>
   invoke("hub_status", { sessionToken });
-export const hubEnable = (sessionToken: SessionToken, port?: number): Promise<HubStatus> =>
+export const hubEnable = (sessionToken: string, port?: number): Promise<HubStatus> =>
   invoke("hub_enable", { sessionToken, port: port ?? null });
-export const hubRegenerateToken = (sessionToken: SessionToken): Promise<HubStatus> =>
+export const hubRegenerateToken = (sessionToken: string): Promise<HubStatus> =>
   invoke("hub_regenerate_token", { sessionToken });
 export const hubTestConnection = (url: string, token: string): Promise<HubTestResult> =>
   invoke("hub_test_connection", { url, token });
 export const hubJoin = (input: { hub_url: string; token: string; device_name: string; device_code: string })
   : Promise<AppConfig> => invoke("hub_join", { input });
-export const hubConnectExisting = (sessionToken: SessionToken, hubUrl: string, token: string): Promise<HubStatus> =>
+export const hubConnectExisting = (sessionToken: string, hubUrl: string, token: string): Promise<HubStatus> =>
   invoke("hub_connect_existing", { sessionToken, hubUrl, token });
-export const hubSetUrl = (sessionToken: SessionToken, hubUrl: string): Promise<HubStatus> =>
+export const hubSetUrl = (sessionToken: string, hubUrl: string): Promise<HubStatus> =>
   invoke("hub_set_url", { sessionToken, hubUrl });
 
 // ─── AI Admin — provider management ──────────────────────────────────────────
 
-export const adminGetProviderConfig = (sessionToken: SessionToken): Promise<ProviderConfig> =>
+export const adminGetProviderConfig = (sessionToken: string): Promise<ProviderConfig> =>
   invoke("admin_get_provider_config", { sessionToken });
 
-export const adminSetAnthropic = (sessionToken: SessionToken, apiKey: string): Promise<void> =>
+export const adminSetAnthropic = (sessionToken: string, apiKey: string): Promise<void> =>
   invoke("admin_set_anthropic", { sessionToken, apiKey });
 
 export const adminValidateOpenai = (
-  sessionToken: SessionToken,
+  sessionToken: string,
   baseUrl: string,
   apiKey: string
 ): Promise<ValidateProviderResult> =>
   invoke("admin_validate_openai", { sessionToken, baseUrl, apiKey });
 
 export const adminSetOpenai = (
-  sessionToken: SessionToken,
+  sessionToken: string,
   baseUrl: string,
   apiKey: string,
   model: string
@@ -572,57 +571,57 @@ export const adminSetOpenai = (
   invoke("admin_set_openai", { sessionToken, baseUrl, apiKey, model });
 
 // Google Gemini (OpenAI-compatible endpoint; base URL is fixed server-side)
-export const adminValidateGemini = (sessionToken: SessionToken, apiKey: string): Promise<ValidateProviderResult> =>
+export const adminValidateGemini = (sessionToken: string, apiKey: string): Promise<ValidateProviderResult> =>
   invoke("admin_validate_gemini", { sessionToken, apiKey });
 
 export const adminSetGemini = (
-  sessionToken: SessionToken,
+  sessionToken: string,
   apiKey: string,
   model: string
 ): Promise<void> =>
   invoke("admin_set_gemini", { sessionToken, apiKey, model });
 
-export const adminDeleteProvider = (sessionToken: SessionToken): Promise<void> =>
+export const adminDeleteProvider = (sessionToken: string): Promise<void> =>
   invoke("admin_delete_provider", { sessionToken });
 
-export const adminGetAiConfig = (sessionToken: SessionToken): Promise<import("../types").AiConfigPayload> =>
+export const adminGetAiConfig = (sessionToken: string): Promise<import("../types").AiConfigPayload> =>
   invoke("admin_get_ai_config", { sessionToken });
 
-export const adminSaveAiConfig = (sessionToken: SessionToken, config: import("../types").AiConfigPayload): Promise<void> =>
+export const adminSaveAiConfig = (sessionToken: string, config: import("../types").AiConfigPayload): Promise<void> =>
   invoke("admin_save_ai_config", { sessionToken, config });
 
-export const adminGetAiEnabled = (sessionToken: SessionToken): Promise<boolean> =>
+export const adminGetAiEnabled = (sessionToken: string): Promise<boolean> =>
   invoke("admin_get_ai_enabled", { sessionToken });
 
-export const adminSetAiEnabled = (sessionToken: SessionToken, enabled: boolean): Promise<void> =>
+export const adminSetAiEnabled = (sessionToken: string, enabled: boolean): Promise<void> =>
   invoke("admin_set_ai_enabled", { sessionToken, enabled });
 
-export const adminGetFeatureToggles = (sessionToken: SessionToken): Promise<import("../types").FeatureToggles> =>
+export const adminGetFeatureToggles = (sessionToken: string): Promise<import("../types").FeatureToggles> =>
   invoke("admin_get_feature_toggles", { sessionToken });
 
-export const adminSaveFeatureToggles = (sessionToken: SessionToken, toggles: import("../types").FeatureToggles): Promise<void> =>
+export const adminSaveFeatureToggles = (sessionToken: string, toggles: import("../types").FeatureToggles): Promise<void> =>
   invoke("admin_save_feature_toggles", { sessionToken, toggles });
 
-export const adminListAiTools = (sessionToken: SessionToken): Promise<import("../components/settings/ZanAiToolCentre").ZanAiToolCentreRow[]> =>
+export const adminListAiTools = (sessionToken: string): Promise<import("../components/settings/ZanAiToolCentre").ZanAiToolCentreRow[]> =>
   invoke("admin_list_ai_tools", { sessionToken });
 
-export const adminSetAiToolEnabled = (sessionToken: SessionToken, toolName: string, enabled: boolean): Promise<void> =>
+export const adminSetAiToolEnabled = (sessionToken: string, toolName: string, enabled: boolean): Promise<void> =>
   invoke("admin_set_ai_tool_enabled", { sessionToken, toolName, enabled });
 
-export const adminListAiToolMetrics = (sessionToken: SessionToken, limit = 100): Promise<import("../components/settings/ZanAiToolMetrics").ZanAiToolMetricRow[]> =>
+export const adminListAiToolMetrics = (sessionToken: string, limit = 100): Promise<import("../components/settings/ZanAiToolMetrics").ZanAiToolMetricRow[]> =>
   invoke("admin_list_ai_tool_metrics", { sessionToken, limit });
 
-export const adminSetAnthropicModel = (sessionToken: SessionToken, model: string): Promise<void> =>
+export const adminSetAnthropicModel = (sessionToken: string, model: string): Promise<void> =>
   invoke("admin_set_anthropic_model", { sessionToken, model });
 
 // Validate Anthropic API key by calling the models endpoint.
-export const adminValidateAnthropic = (sessionToken: SessionToken, apiKey: string): Promise<ValidateProviderResult> =>
+export const adminValidateAnthropic = (sessionToken: string, apiKey: string): Promise<ValidateProviderResult> =>
   invoke("admin_validate_anthropic", { sessionToken, apiKey });
 
-export const aiExecuteAction = (sessionToken: SessionToken, input: ExecuteActionInput): Promise<ExecuteActionResult> =>
+export const aiExecuteAction = (sessionToken: string, input: ExecuteActionInput): Promise<ExecuteActionResult> =>
   invoke("ai_execute_action", { sessionToken, input });
 
-export const aiExecuteBatchActions = (sessionToken: SessionToken, input: {
+export const aiExecuteBatchActions = (sessionToken: string, input: {
   action_ids: string[];
   history: ChatMessage[];
   assistant_text: string;
@@ -630,43 +629,43 @@ export const aiExecuteBatchActions = (sessionToken: SessionToken, input: {
 }): Promise<{ followup: string; undo_ids: string[] }> =>
   invoke("ai_execute_batch_actions", { sessionToken, input });
 
-export const aiCancelAction = (sessionToken: SessionToken, actionId: string): Promise<void> =>
+export const aiCancelAction = (sessionToken: string, actionId: string): Promise<void> =>
   invoke("ai_cancel_action", { sessionToken, actionId });
 
 export const aiUndoAction = (
-  sessionToken: SessionToken,
+  sessionToken: string,
   undoId: string,
   currencyExponent: number
 ): Promise<UndoActionResult> =>
   invoke("ai_undo_action", { sessionToken, undoId, currencyExponent });
 
 export const aiChatStream = (
-  sessionToken: SessionToken,
+  sessionToken: string,
   input: AiChatInput,
   onEvent: Channel<StreamEvent>
 ): Promise<void> => invoke("ai_chat_stream", { sessionToken, input, onEvent });
 
-export const aiCancelChat = (sessionToken: SessionToken, requestId: string): Promise<void> =>
+export const aiCancelChat = (sessionToken: string, requestId: string): Promise<void> =>
   invoke("ai_cancel_chat", { sessionToken, requestId });
 
 export const aiRunExecute = (
-  sessionToken: SessionToken,
+  sessionToken: string,
   runId: string,
   onEvent: Channel<StreamEvent>
 ): Promise<void> => invoke("ai_run_execute", { sessionToken, runId, onEvent });
 
 export const aiRunUndo = (
-  sessionToken: SessionToken,
+  sessionToken: string,
   runId: string,
 ): Promise<{ followup: string }> => invoke("ai_run_undo", { sessionToken, runId });
 
 export const aiRunCancel = (
-  sessionToken: SessionToken,
+  sessionToken: string,
   runId: string,
 ): Promise<void> => invoke("ai_run_cancel", { sessionToken, runId });
 
 export const aiSaveMessage = (
-  sessionToken: SessionToken,
+  sessionToken: string,
   sessionId: string,
   branchId: string,
   role: string,
@@ -677,19 +676,19 @@ export const aiSaveMessage = (
 
 /** Reopens the thread last spoken to, with its id so the next message joins it. */
 export const aiLoadHistory = (
-  sessionToken: SessionToken,
+  sessionToken: string,
   branchId: string,
 ): Promise<import("../types").AiConversationView> =>
   invoke("ai_load_history", { sessionToken, branchId });
 
 export const aiListConversations = (
-  sessionToken: SessionToken,
+  sessionToken: string,
   branchId: string,
 ): Promise<import("../types").AiConversation[]> =>
   invoke("ai_list_conversations", { sessionToken, branchId });
 
 export const aiOpenConversation = (
-  sessionToken: SessionToken,
+  sessionToken: string,
   branchId: string,
   conversationId: string,
 ): Promise<import("../types").AiConversationView> =>
@@ -698,14 +697,14 @@ export const aiOpenConversation = (
 /** Archives rather than destroys — the record of what the AI was asked to do
  *  outlives a tidy-up of the sidebar. */
 export const aiDeleteConversation = (
-  sessionToken: SessionToken,
+  sessionToken: string,
   branchId: string,
   conversationId: string,
 ): Promise<void> =>
   invoke("ai_delete_conversation", { sessionToken, branchId, conversationId });
 
 export const aiRenameConversation = (
-  sessionToken: SessionToken,
+  sessionToken: string,
   branchId: string,
   conversationId: string,
   title: string,
@@ -713,18 +712,18 @@ export const aiRenameConversation = (
   invoke("ai_rename_conversation", { sessionToken, branchId, conversationId, title });
 
 export const aiGetTaskLedgerResume = (
-  sessionToken: SessionToken,
+  sessionToken: string,
   branchId: string,
 ): Promise<import("../types").TaskLedgerResume | null> =>
   invoke("ai_get_task_ledger_resume", { sessionToken, branchId });
 
 export const aiClearHistory = (
-  sessionToken: SessionToken,
+  sessionToken: string,
   branchId: string,
 ): Promise<void> => invoke("ai_clear_history", { sessionToken, branchId });
 
 export const aiSubmitFeedback = (
-  sessionToken: SessionToken,
+  sessionToken: string,
   sessionId: string,
   messageId: string,
   rating: string,
@@ -734,18 +733,18 @@ export const aiSubmitFeedback = (
 // ─── Proactive alerts ──────────────────────────────────────────────────────
 
 export const adminGetAlerts = (
-  sessionToken: SessionToken,
+  sessionToken: string,
   branchId: string
 ): Promise<import("../types").ProactiveAlert[]> =>
   invoke("admin_get_alerts", { sessionToken, branchId });
 
 export const adminDismissAlert = (
-  sessionToken: SessionToken,
+  sessionToken: string,
   alertId: string
 ): Promise<void> =>
   invoke("admin_dismiss_alert", { sessionToken, alertId });
 
-export const aiGetUsageSummary = (sessionToken: SessionToken, days?: number): Promise<unknown> =>
+export const aiGetUsageSummary = (sessionToken: string, days?: number): Promise<unknown> =>
   invoke("ai_get_usage_summary", { sessionToken, days: days ?? null });
 
 // ─── Back-office admin commands ───────────────────────────────────────────────
@@ -943,21 +942,21 @@ export interface StockLevelPage {
   limit: number;
 }
 
-export const inventoryGetLevels = (session_token: SessionToken): Promise<StockLevel[]> =>
+export const inventoryGetLevels = (session_token: string): Promise<StockLevel[]> =>
   invoke("inventory_get_levels", { sessionToken: session_token });
 
 export const inventoryGetLevelsPaged = (
-  session_token: SessionToken,
+  session_token: string,
   search: string,
   offset: number,
   limit: number,
 ): Promise<StockLevelPage> =>
   invoke("inventory_get_levels_paged", { sessionToken: session_token, search: search || null, offset, limit });
 
-export const inventoryGetLowStock = (session_token: SessionToken): Promise<StockLevel[]> =>
+export const inventoryGetLowStock = (session_token: string): Promise<StockLevel[]> =>
   invoke("inventory_get_low_stock", { sessionToken: session_token });
 
-export const inventoryGetMovements = (session_token: SessionToken, productId: string): Promise<StockMovementRow[]> =>
+export const inventoryGetMovements = (session_token: string, productId: string): Promise<StockMovementRow[]> =>
   invoke("inventory_get_movements", { sessionToken: session_token, productId });
 
 export const inventoryReceiveStock = (
@@ -1074,21 +1073,21 @@ export const customerAddLoyalty = (actorUserId: string, customerId: string, poin
 
 // ─── Phase 10b — Devices ──────────────────────────────────────────────────────
 
-export const deviceList = (sessionToken: SessionToken): Promise<DeviceRow[]> =>
+export const deviceList = (sessionToken: string): Promise<DeviceRow[]> =>
   invoke("device_list", { sessionToken });
 
-export const deviceCreate = (sessionToken: SessionToken, input: {
+export const deviceCreate = (sessionToken: string, input: {
   device_code: string; device_name: string;
 }): Promise<DeviceRow> =>
   invoke("device_create", { input, sessionToken });
 
-export const deviceToggleActive = (sessionToken: SessionToken, deviceId: string, isActive: boolean): Promise<void> =>
+export const deviceToggleActive = (sessionToken: string, deviceId: string, isActive: boolean): Promise<void> =>
   invoke("device_toggle_active", { deviceId, isActive, sessionToken });
 
 /** Soft delete — `device_id` is stamped on every sale and shift this terminal
  *  recorded, and receipt numbering is per-device. Refused for the terminal
  *  making the request and for any device with an open shift. */
-export const deviceDelete = (sessionToken: SessionToken, deviceId: string): Promise<void> =>
+export const deviceDelete = (sessionToken: string, deviceId: string): Promise<void> =>
   invoke("device_delete", { deviceId, sessionToken });
 
 export interface DeviceRekeyResult {
@@ -1099,7 +1098,7 @@ export interface DeviceRekeyResult {
 /** Re-issue this terminal's device identity with a fresh ULID — the recovery
  *  path for a database cloned onto a second PC, which otherwise shares one
  *  device_id with its sibling forever. Irreversible and audited. */
-export const deviceRekey = (sessionToken: SessionToken): Promise<DeviceRekeyResult> =>
+export const deviceRekey = (sessionToken: string): Promise<DeviceRekeyResult> =>
   invoke("device_rekey", { sessionToken });
 
 // ─── Phase 10b — Product image picker ────────────────────────────────────────
@@ -1218,93 +1217,93 @@ export const reportEodCashup = (
 export const inventoryBulkStockTake = (
   // FIX: string, not number — JS floats corrupt Decimal arithmetic in Rust backend
   entries: Array<{ product_id: string; new_quantity: string; notes?: string }>,
-  session_token: SessionToken,
+  session_token: string,
 ): Promise<BulkStockTakeResult> =>
   invoke("inventory_bulk_stock_take", { entries, sessionToken: session_token });
 
-export const syncQueueList = (sessionToken: SessionToken): Promise<SyncQueueItem[]> =>
+export const syncQueueList = (sessionToken: string): Promise<SyncQueueItem[]> =>
   invoke("sync_queue_list", { sessionToken });
 
-export const syncQueueRetry = (sessionToken: SessionToken, syncEventId: string): Promise<void> =>
+export const syncQueueRetry = (sessionToken: string, syncEventId: string): Promise<void> =>
   invoke("sync_queue_retry", { id: syncEventId, sessionToken });
 
-export const syncQueueDismiss = (sessionToken: SessionToken, syncEventId: string): Promise<void> =>
+export const syncQueueDismiss = (sessionToken: string, syncEventId: string): Promise<void> =>
   invoke("sync_queue_dismiss", { id: syncEventId, sessionToken });
 
-export const syncQueueStats = (sessionToken: SessionToken): Promise<SyncTableStats[]> =>
+export const syncQueueStats = (sessionToken: string): Promise<SyncTableStats[]> =>
   invoke("sync_queue_stats", { sessionToken });
 
-export const syncDiagnostics = (sessionToken: SessionToken): Promise<SyncDiagnostics> =>
+export const syncDiagnostics = (sessionToken: string): Promise<SyncDiagnostics> =>
   invoke("sync_diagnostics", { sessionToken });
 
-export const hubTruthCompare = (sessionToken: SessionToken): Promise<HubTruthCompareResult> =>
+export const hubTruthCompare = (sessionToken: string): Promise<HubTruthCompareResult> =>
   invoke("hub_truth_compare", { sessionToken });
 
-export const hubTruthPull = (sessionToken: SessionToken): Promise<HubTruthCompareResult> =>
+export const hubTruthPull = (sessionToken: string): Promise<HubTruthCompareResult> =>
   invoke("hub_truth_pull", { sessionToken });
 
-export const syncConflictsList = (sessionToken: SessionToken): Promise<SyncConflictRow[]> =>
+export const syncConflictsList = (sessionToken: string): Promise<SyncConflictRow[]> =>
   invoke("sync_conflicts_list", { sessionToken });
 
 export const syncConflictResolve = (
-  sessionToken: SessionToken,
+  sessionToken: string,
   conflictId: string,
   resolution: "retry" | "pull_hub_truth" | "reconcile_stock" | "dismiss",
 ): Promise<string> => invoke("sync_conflict_resolve", { sessionToken, conflictId, resolution });
 
-export const syncStockDriftReport = (sessionToken: SessionToken): Promise<StockDriftRow[]> =>
+export const syncStockDriftReport = (sessionToken: string): Promise<StockDriftRow[]> =>
   invoke("sync_stock_drift_report", { sessionToken });
 
-export const syncStockDriftReconcile = (sessionToken: SessionToken): Promise<number> =>
+export const syncStockDriftReconcile = (sessionToken: string): Promise<number> =>
   invoke("sync_stock_drift_reconcile", { sessionToken });
 
-export const syncResetStuck = (sessionToken: SessionToken): Promise<string> =>
+export const syncResetStuck = (sessionToken: string): Promise<string> =>
   invoke("sync_reset_stuck", { sessionToken });
 
-export const syncBulkInitial = (sessionToken: SessionToken): Promise<string> =>
+export const syncBulkInitial = (sessionToken: string): Promise<string> =>
   invoke("sync_bulk_initial", { sessionToken });
 
 // ─── Delivery commands ────────────────────────────────────────────────────────
 
 export const deliveryList = (
   filter: DeliveryListFilter,
-  session_token: SessionToken,
+  session_token: string,
 ): Promise<DeliveryRow[]> =>
   invoke("delivery_list", { filter, sessionToken: session_token });
 
 export const deliveryGet = (
   delivery_id: string,
-  session_token: SessionToken,
+  session_token: string,
 ): Promise<DeliveryRow> =>
   invoke("delivery_get", { deliveryId: delivery_id, sessionToken: session_token });
 
 export const deliveryUpdateStatus = (
   input: UpdateDeliveryStatusInput,
-  session_token: SessionToken,
+  session_token: string,
 ): Promise<DeliveryRow> =>
   invoke("delivery_update_status", { input, sessionToken: session_token });
 
 export const deliveryConfirmPayment = (
   input: ConfirmDeliveryPaymentInput,
-  session_token: SessionToken,
+  session_token: string,
 ): Promise<DeliveryRow> =>
   invoke("delivery_confirm_payment", { input, sessionToken: session_token });
 
 export const deliveryCancel = (
   input: CancelDeliveryInput,
-  session_token: SessionToken,
+  session_token: string,
 ): Promise<DeliveryRow> =>
   invoke("delivery_cancel", { input, sessionToken: session_token });
 
 export const deliveryRevertPayment = (
   input: RevertPaymentInput,
-  session_token: SessionToken,
+  session_token: string,
 ): Promise<DeliveryRow> =>
   invoke("delivery_revert_payment", { input, sessionToken: session_token });
 
 export const deliveryRiderSuggestions = (
   branch_id: string,
-  session_token: SessionToken,
+  session_token: string,
 ): Promise<string[]> =>
   invoke("delivery_rider_suggestions", { branchId: branch_id, sessionToken: session_token });
 
@@ -1472,14 +1471,14 @@ export const paymentConfirmationOverride = (
 export const catalogImportExtract = (
   mediaId: string,
   currencyExponent: number,
-  sessionToken: SessionToken,
+  sessionToken: string,
 ): Promise<CatalogImportProposal> =>
   invoke("catalog_import_extract", { mediaId, currencyExponent, sessionToken });
 
 /** Apply the owner-approved catalog changes (price/cost/stock/create/supplier). */
 export const catalogImportApply = (
   input: CatalogApplyInput,
-  sessionToken: SessionToken,
+  sessionToken: string,
 ): Promise<CatalogApplyResult> => invoke("catalog_import_apply", { input, sessionToken });
 
 export interface ReceiptItemForPdf {

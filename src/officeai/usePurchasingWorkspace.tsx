@@ -7,6 +7,7 @@
  * JSX it renders is byte-for-byte what it was.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { SessionToken } from "../types";
 import {
   appConfigLoad,
   poCancel,
@@ -42,9 +43,10 @@ import {
 
 export function usePurchasingWorkspace(props: {
   actorUserId: string;
+  sessionToken: SessionToken;
   currencyExp: number;
 }) {
-  const { actorUserId, currencyExp } = props;
+  const { actorUserId, sessionToken, currencyExp } = props;
   const { language } = useLanguage();
   const t = useMemo(() => operationsTranslator(language), [language]);
   const [suppliers, setSuppliers] = useState<SupplierRow[]>([]);
@@ -106,8 +108,8 @@ export function usePurchasingWorkspace(props: {
     try {
       const config = await appConfigLoad();
       const [nextSuppliers, nextOrders, nextMargin, nextProductMargins] = await Promise.all([
-        supplierList(actorUserId),
-        poList(actorUserId),
+        supplierList(sessionToken),
+        poList(sessionToken),
         reportMargin(actorUserId, config.branch_id, range.from, range.to).catch(() => null),
         reportProductMargin(actorUserId, config.branch_id, range.from, range.to, 8).catch(() => []),
       ]);
@@ -120,7 +122,7 @@ export function usePurchasingWorkspace(props: {
     } finally {
       setLoading(false);
     }
-  }, [actorUserId, range.from, range.to, t]);
+  }, [actorUserId, sessionToken, range.from, range.to, t]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -233,7 +235,7 @@ export function usePurchasingWorkspace(props: {
     setError(null);
     setMessage(null);
     try {
-      await supplierUpsert(actorUserId, {
+      await supplierUpsert(sessionToken, {
         supplier_id: editingSupplier?.supplier_id,
         name,
         phone: supplierPhone.trim() || null,
@@ -260,7 +262,7 @@ export function usePurchasingWorkspace(props: {
         setError(null);
         setMessage(null);
         try {
-          await supplierDelete(actorUserId, supplierId);
+          await supplierDelete(sessionToken, supplierId);
           setMessage(t("supplierDeactivated"));
           await load();
         } catch (e) {
@@ -279,7 +281,7 @@ export function usePurchasingWorkspace(props: {
     setError(null);
     setMessage(null);
     try {
-      await poCreate(actorUserId, {
+      await poCreate(sessionToken, {
         supplier_id: poSupplierId || null,
         created_by: actorUserId,
         lines: [{
@@ -302,7 +304,7 @@ export function usePurchasingWorkspace(props: {
     setPoDetailLoading(true);
     setError(null);
     try {
-      const detail = await poGet(actorUserId, poId);
+      const detail = await poGet(sessionToken, poId);
       setPoDetail(detail);
     } catch (e) {
       setError(typeof e === "string" ? e : t("poDetailsLoadFailed"));
@@ -320,7 +322,7 @@ export function usePurchasingWorkspace(props: {
     setReceiveError(null);
     setError(null);
     try {
-      const detail = poDetail?.order.po_id === poId ? poDetail : await poGet(actorUserId, poId);
+      const detail = poDetail?.order.po_id === poId ? poDetail : await poGet(sessionToken, poId);
       setPoDetail(detail);
       receiveOpKey.current = crypto.randomUUID();
       setReceivingFor(detail);
@@ -342,15 +344,14 @@ export function usePurchasingWorkspace(props: {
     try {
       const result = await poReceive({
         po_id: receivingFor.order.po_id,
-        actor_user_id: actorUserId,
         idempotency_key: receiveOpKey.current,
         lines,
-      });
+      }, sessionToken);
       setMessage(
         `${t("po")} ${poStatusText(language, result.status)}: ${countText(language, "units", Number(result.units_received))} ${t("received")}, ${countText(language, "costUpdates", result.cost_updates)}.`,
       );
       // Reconcile every surface that shows this order.
-      const fresh = await poGet(actorUserId, receivingFor.order.po_id);
+      const fresh = await poGet(sessionToken, receivingFor.order.po_id);
       setPoDetail(fresh);
       await load();
       // Applied: the next receiving action is a new operation.
@@ -369,7 +370,7 @@ export function usePurchasingWorkspace(props: {
     setCostHistoryError(null);
     setCostHistory(null);
     try {
-      setCostHistory(await productCostHistoryList(actorUserId));
+      setCostHistory(await productCostHistoryList(sessionToken));
     } catch (e) {
       setCostHistoryError(typeof e === "string" ? e : t("costHistoryFailed"));
     }
@@ -385,7 +386,7 @@ export function usePurchasingWorkspace(props: {
         setError(null);
         setMessage(null);
         try {
-          await poCancel(actorUserId, poId);
+          await poCancel(sessionToken, poId);
           setMessage(t("poCancelled"));
           await load();
         } catch (e) {

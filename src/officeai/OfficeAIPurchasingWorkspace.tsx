@@ -1,4 +1,5 @@
 import { AlertTriangle, PackagePlus, Users } from "lucide-react";
+import type { SessionToken } from "../types";
 import AppConfirmModal from "../components/AppConfirmModal";
 import { poStatusText } from "../i18n/operationsStrings";
 import PurchasingCommandStrip from "./PurchasingCommandStrip";
@@ -14,11 +15,12 @@ export { buildPurchasingCommandModel } from "./purchasingPresentation";
 
 interface Props {
   actorUserId: string;
+  sessionToken: SessionToken;
   currencyExp: number;
   onSendPrompt: (prompt: string) => void;
 }
 
-export default function OfficeAIPurchasingWorkspace({ actorUserId, currencyExp, onSendPrompt }: Props) {
+export default function OfficeAIPurchasingWorkspace({ actorUserId, sessionToken, currencyExp, onSendPrompt }: Props) {
   const {
     language,
     t,
@@ -102,7 +104,7 @@ export default function OfficeAIPurchasingWorkspace({ actorUserId, currencyExp, 
     submitReceipt,
     openCostHistory,
     cancelPo,
-  } = usePurchasingWorkspace({ actorUserId, currencyExp });
+  } = usePurchasingWorkspace({ actorUserId, sessionToken, currencyExp });
 
   return (
     <div className="oa-purchasing">

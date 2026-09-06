@@ -639,7 +639,6 @@ export interface ProductCostChange {
 
 export interface ReceivePurchaseOrderInput {
   po_id: string;
-  actor_user_id: string;
   /** One user-intended submission, reused across retries of that submission.
    *  Enforced UNIQUE server-side, so a replay is refused rather than applied. */
   idempotency_key: string;

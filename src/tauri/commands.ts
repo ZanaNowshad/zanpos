@@ -444,36 +444,36 @@ export const reportProductMargin = (
 
 // ─── Purchasing commands ─────────────────────────────────────────────────────
 
-export const supplierList = (actorUserId: string): Promise<SupplierRow[]> =>
-  invoke("supplier_list", { actorUserId });
+export const supplierList = (sessionToken: SessionToken): Promise<SupplierRow[]> =>
+  invoke("supplier_list", { sessionToken });
 
-export const supplierUpsert = (actorUserId: string, input: SupplierUpsertInput): Promise<SupplierRow> =>
-  invoke("supplier_upsert", { actorUserId, input });
+export const supplierUpsert = (sessionToken: SessionToken, input: SupplierUpsertInput): Promise<SupplierRow> =>
+  invoke("supplier_upsert", { sessionToken, input });
 
-export const supplierDelete = (actorUserId: string, supplierId: string): Promise<void> =>
-  invoke("supplier_delete", { actorUserId, supplierId });
+export const supplierDelete = (sessionToken: SessionToken, supplierId: string): Promise<void> =>
+  invoke("supplier_delete", { sessionToken, supplierId });
 
-export const poList = (actorUserId: string, status?: string): Promise<PurchaseOrderRow[]> =>
-  invoke("po_list", { actorUserId, status: status ?? null });
+export const poList = (sessionToken: SessionToken, status?: string): Promise<PurchaseOrderRow[]> =>
+  invoke("po_list", { sessionToken, status: status ?? null });
 
-export const poGet = (actorUserId: string, poId: string): Promise<PurchaseOrderDetail> =>
-  invoke("po_get", { actorUserId, poId });
+export const poGet = (sessionToken: SessionToken, poId: string): Promise<PurchaseOrderDetail> =>
+  invoke("po_get", { sessionToken, poId });
 
-export const poCreate = (actorUserId: string, input: PurchaseOrderCreateInput): Promise<PurchaseOrderDetail> =>
-  invoke("po_create", { actorUserId, input });
+export const poCreate = (sessionToken: SessionToken, input: PurchaseOrderCreateInput): Promise<PurchaseOrderDetail> =>
+  invoke("po_create", { sessionToken, input });
 
-export const poReceive = (input: ReceivePurchaseOrderInput): Promise<ReceivePurchaseOrderResult> =>
-  invoke("po_receive", { input });
+export const poReceive = (input: ReceivePurchaseOrderInput, sessionToken: SessionToken): Promise<ReceivePurchaseOrderResult> =>
+  invoke("po_receive", { input, sessionToken });
 
 /**
  * Recent cost changes, newest first. Manager/owner only and bounded server-side.
  * Store-wide by nature — see ProductCostChange for why there is no branch here.
  */
 export const productCostHistoryList = (
-  actorUserId: string, productId?: string, limit?: number,
+  sessionToken: SessionToken, productId?: string, limit?: number,
 ): Promise<import("../types").ProductCostChange[]> =>
   invoke("product_cost_history_list", {
-    actorUserId, productId: productId ?? null, limit: limit ?? null,
+    sessionToken, productId: productId ?? null, limit: limit ?? null,
   });
 
 /**
@@ -496,8 +496,8 @@ export const aiUndoAvailability = (
 ): Promise<UndoAvailability | null> =>
   invoke("ai_undo_availability", { sessionToken: session_token, actionId: action_id });
 
-export const poCancel = (actorUserId: string, poId: string): Promise<void> =>
-  invoke("po_cancel", { actorUserId, poId });
+export const poCancel = (sessionToken: SessionToken, poId: string): Promise<void> =>
+  invoke("po_cancel", { sessionToken, poId });
 
 /** Fetch paginated sales list. Returns total count alongside items so callers
  *  can detect truncation and implement paging (F-BIZ-002 / F-INT-001).

@@ -86,6 +86,7 @@ export function renderDataTab(ctx: DataTabContext): ReactNode {
         <OfficeAIPurchasingWorkspace
           key={tabKey}
           actorUserId={sessionUser.user_id}
+          sessionToken={sessionUser.session_token}
           currencyExp={DEVICE.currency_exponent}
           onSendPrompt={ctx.onSendPrompt}
         />

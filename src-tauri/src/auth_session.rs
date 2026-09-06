@@ -114,11 +114,7 @@ impl SessionStore {
     /// `commands::rbac::require_role` cannot make — it is handed a user id and
     /// looks up whatever it is given, so it answers "does this id hold the
     /// role", never "is the caller that user".
-    pub async fn resolve(
-        &self,
-        pool: &SqlitePool,
-        token: &str,
-    ) -> AppResult<AuthenticatedActor> {
+    pub async fn resolve(&self, pool: &SqlitePool, token: &str) -> AppResult<AuthenticatedActor> {
         self.resolve_active_actor(pool, token).await
     }
 

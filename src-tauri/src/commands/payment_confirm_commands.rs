@@ -441,7 +441,9 @@ async fn mark_delivery_paid(
             payment_reference: Some("WhatsApp screenshot".into()),
             payment_note: Some(how.to_string()),
         };
-        if let Err(e) = crate::db::repositories::delivery_repo::confirm_payment(db, confirmed_by, &input).await {
+        if let Err(e) =
+            crate::db::repositories::delivery_repo::confirm_payment(db, confirmed_by, &input).await
+        {
             tracing::warn!("payment matched but delivery {did} mark-paid failed: {e}");
         }
         sqlx::query("UPDATE payment_confirmations SET delivery_id=? WHERE id=?")

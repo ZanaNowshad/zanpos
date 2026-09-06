@@ -238,12 +238,11 @@ async fn a_demotion_takes_effect_without_a_new_login() {
         .await
         .expect("owner before demotion");
 
-    let cashier_role: String =
-        sqlx::query_scalar("SELECT role_id FROM users WHERE user_id = ?")
-            .bind(CASHIER)
-            .fetch_one(&pool)
-            .await
-            .expect("cashier role id");
+    let cashier_role: String = sqlx::query_scalar("SELECT role_id FROM users WHERE user_id = ?")
+        .bind(CASHIER)
+        .fetch_one(&pool)
+        .await
+        .expect("cashier role id");
     sqlx::query("UPDATE users SET role_id = ? WHERE user_id = ?")
         .bind(&cashier_role)
         .bind(OWNER)

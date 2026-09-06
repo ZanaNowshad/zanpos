@@ -55,8 +55,7 @@ pub async fn delivery_update_status(
     } else {
         rbac::POS_ROLES
     };
-    let actor =
-        rbac::session_actor(&state.sessions, &state.db, &session_token, roles).await?;
+    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, roles).await?;
     let result = delivery_repo::update_delivery_status(&state.db, &actor.user_id, &input).await?;
     // WhatsApp messages are NEVER sent automatically on status change.
     // They are only sent when the cashier explicitly presses the dedicated

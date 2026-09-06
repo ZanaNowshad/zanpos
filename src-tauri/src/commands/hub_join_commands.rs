@@ -238,8 +238,13 @@ pub async fn hub_connect_existing(
     token: String,
     state: State<'_, AppState>,
 ) -> Result<HubStatus, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     if read_cfg(&state.db, "hub_mode").await.as_deref() == Some("1") {
         return Err(AppError::Validation("This device IS the hub.".into()));
     }
@@ -304,8 +309,13 @@ pub async fn hub_set_url(
     hub_url: String,
     state: State<'_, AppState>,
 ) -> Result<HubStatus, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let token = crate::secure_store::get_secret("hub_store_token")
         .ok_or_else(|| AppError::Validation("No store token on this terminal.".into()))?;
     let url = normalize_hub_url(&hub_url);

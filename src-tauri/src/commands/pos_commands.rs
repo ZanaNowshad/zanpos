@@ -26,15 +26,14 @@ async fn manager_approval(
     pool: &sqlx::SqlitePool,
     token: Option<&str>,
 ) -> Result<String, AppError> {
-    let token = token.map(str::trim).filter(|t| !t.is_empty()).ok_or_else(|| {
-        AppError::Permission("This action needs a manager's approval.".into())
-    })?;
+    let token = token
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| AppError::Permission("This action needs a manager's approval.".into()))?;
     let manager_id = override_token::consume_override_token(pool, token)
         .await
         .ok_or_else(|| {
-            AppError::Permission(
-                "Manager approval is invalid, already used, or expired.".into(),
-            )
+            AppError::Permission("Manager approval is invalid, already used, or expired.".into())
         })?;
     rbac::manager_or_owner(pool, &manager_id).await?;
     Ok(manager_id)

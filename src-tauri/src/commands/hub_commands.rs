@@ -40,8 +40,7 @@ pub async fn hub_status(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<HubStatus, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     let hub_mode = read_cfg(&state.db, "hub_mode").await.as_deref() == Some("1");
     let hub_url = read_cfg(&state.db, "hub_url").await;
     let port = read_cfg(&state.db, "hub_port")
@@ -128,8 +127,7 @@ pub async fn hub_enable(
     port: Option<u16>,
     state: State<'_, AppState>,
 ) -> Result<HubStatus, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY).await?;
     if read_cfg(&state.db, "hub_url").await.is_some() {
         return Err(AppError::Validation(
             "This device is joined to another hub. A terminal cannot become a hub.".into(),
@@ -185,8 +183,7 @@ pub async fn hub_regenerate_token(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<HubStatus, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY).await?;
     crate::secure_store::delete_secret("hub_store_token");
     hub_enable(session_token, None, state).await
 }

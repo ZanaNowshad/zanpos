@@ -1951,11 +1951,12 @@ async fn refuse_if_last_owner(
         return Ok(());
     }
 
-    let stays_owner: bool = sqlx::query_scalar("SELECT name = 'owner' FROM roles WHERE role_id = ?")
-        .bind(new_role_id)
-        .fetch_optional(pool)
-        .await?
-        .unwrap_or(false);
+    let stays_owner: bool =
+        sqlx::query_scalar("SELECT name = 'owner' FROM roles WHERE role_id = ?")
+            .bind(new_role_id)
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or(false);
     if stays_active && stays_owner {
         return Ok(());
     }
@@ -2621,15 +2622,25 @@ mod tests {
     async fn a_manager_cannot_grant_the_owner_role() {
         let pool = team_pool().await;
         // Promoting a cashier to owner -- straightforward escalation.
-        let err = authorize_user_admin(&pool, &actor_of(&pool, "u_manager").await, Some("u_cashier"), ROLE_OWNER)
-            .await
-            .expect_err("a manager must not mint owners");
+        let err = authorize_user_admin(
+            &pool,
+            &actor_of(&pool, "u_manager").await,
+            Some("u_cashier"),
+            ROLE_OWNER,
+        )
+        .await
+        .expect_err("a manager must not mint owners");
         assert!(matches!(err, AppError::Permission(_)), "got {err:?}");
 
         // And promoting themselves, which is the same hole from the inside.
-        let err = authorize_user_admin(&pool, &actor_of(&pool, "u_manager").await, Some("u_manager"), ROLE_OWNER)
-            .await
-            .expect_err("a manager must not promote themselves");
+        let err = authorize_user_admin(
+            &pool,
+            &actor_of(&pool, "u_manager").await,
+            Some("u_manager"),
+            ROLE_OWNER,
+        )
+        .await
+        .expect_err("a manager must not promote themselves");
         assert!(matches!(err, AppError::Permission(_)), "got {err:?}");
     }
 
@@ -2638,48 +2649,83 @@ mod tests {
         let pool = team_pool().await;
         // Even demoting an owner to cashier -- the target's current role is
         // what matters, not the role being written.
-        let err = authorize_user_admin(&pool, &actor_of(&pool, "u_manager").await, Some("u_owner"), ROLE_CASHIER)
-            .await
-            .expect_err("a manager must not modify an owner");
+        let err = authorize_user_admin(
+            &pool,
+            &actor_of(&pool, "u_manager").await,
+            Some("u_owner"),
+            ROLE_CASHIER,
+        )
+        .await
+        .expect_err("a manager must not modify an owner");
         assert!(matches!(err, AppError::Permission(_)), "got {err:?}");
     }
 
     #[tokio::test]
     async fn an_owner_may_still_administer_everyone() {
         let pool = team_pool().await;
-        authorize_user_admin(&pool, &actor_of(&pool, "u_owner").await, Some("u_cashier"), ROLE_OWNER)
-            .await
-            .expect("an owner may grant the owner role");
-        authorize_user_admin(&pool, &actor_of(&pool, "u_owner").await, Some("u_manager"), ROLE_CASHIER)
-            .await
-            .expect("an owner may change any role");
+        authorize_user_admin(
+            &pool,
+            &actor_of(&pool, "u_owner").await,
+            Some("u_cashier"),
+            ROLE_OWNER,
+        )
+        .await
+        .expect("an owner may grant the owner role");
+        authorize_user_admin(
+            &pool,
+            &actor_of(&pool, "u_owner").await,
+            Some("u_manager"),
+            ROLE_CASHIER,
+        )
+        .await
+        .expect("an owner may change any role");
     }
 
     #[tokio::test]
     async fn a_manager_may_still_do_ordinary_team_work() {
         let pool = team_pool().await;
         // The fix must not break what managers legitimately did before.
-        authorize_user_admin(&pool, &actor_of(&pool, "u_manager").await, Some("u_cashier"), ROLE_CASHIER)
-            .await
-            .expect("a manager may edit a cashier");
-        authorize_user_admin(&pool, &actor_of(&pool, "u_manager").await, None, ROLE_MANAGER)
-            .await
-            .expect("a manager may create a manager");
+        authorize_user_admin(
+            &pool,
+            &actor_of(&pool, "u_manager").await,
+            Some("u_cashier"),
+            ROLE_CASHIER,
+        )
+        .await
+        .expect("a manager may edit a cashier");
+        authorize_user_admin(
+            &pool,
+            &actor_of(&pool, "u_manager").await,
+            None,
+            ROLE_MANAGER,
+        )
+        .await
+        .expect("a manager may create a manager");
     }
 
     #[tokio::test]
     async fn user_administration_cannot_cross_a_branch() {
         let pool = team_pool().await;
-        let err = authorize_user_admin(&pool, &actor_of(&pool, "u_manager").await, Some("u_other_branch"), ROLE_CASHIER)
-            .await
-            .expect_err("cross-branch mutation must be refused");
+        let err = authorize_user_admin(
+            &pool,
+            &actor_of(&pool, "u_manager").await,
+            Some("u_other_branch"),
+            ROLE_CASHIER,
+        )
+        .await
+        .expect_err("cross-branch mutation must be refused");
         // NotFound, not Permission -- confirming the account exists elsewhere
         // is itself a disclosure.
         assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
 
-        let err = authorize_user_admin(&pool, &actor_of(&pool, "u_owner").await, Some("u_other_branch"), ROLE_CASHIER)
-            .await
-            .expect_err("even an owner is scoped to their own branch here");
+        let err = authorize_user_admin(
+            &pool,
+            &actor_of(&pool, "u_owner").await,
+            Some("u_other_branch"),
+            ROLE_CASHIER,
+        )
+        .await
+        .expect_err("even an owner is scoped to their own branch here");
         assert!(matches!(err, AppError::NotFound(_)), "got {err:?}");
     }
 
@@ -2757,7 +2803,10 @@ mod tests {
             let err = authorize_user_admin(&pool, &cashier, target, role)
                 .await
                 .expect_err(&format!("a cashier was allowed to {label}"));
-            assert!(matches!(err, AppError::Permission(_)), "{label}: got {err:?}");
+            assert!(
+                matches!(err, AppError::Permission(_)),
+                "{label}: got {err:?}"
+            );
         }
     }
 

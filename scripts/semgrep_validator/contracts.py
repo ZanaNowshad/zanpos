@@ -6,7 +6,7 @@ from .lexer import c
 AI_PATH = "src-tauri/src/commands/ai_admin_commands.rs"
 WATERMARK = c("sqlx::query(\"DELETE FROM app_config WHERE key LIKE 'sync_v2_watermark_%'\")")
 EXPECTED = (
-    Expected("delivery_update_status", "src-tauri/src/commands/delivery_commands.rs", "delivery_update_status", c("delivery_repo::update_delivery_status("), c("delivery_repo::update_delivery_status(&state.db, &input).await?")),
+    Expected("delivery_update_status", "src-tauri/src/commands/delivery_commands.rs", "delivery_update_status", c("delivery_repo::update_delivery_status("), c("delivery_repo::update_delivery_status(&state.db, &actor.user_id, &input).await?")),
     Expected("shift_close", "src-tauri/src/commands/shift_commands.rs", "shift_close", c("shift_repo::close_shift("), c("shift_repo::close_shift(&state.db, &input.shift_id, input.counted_cash_minor, input.notes,).await?")),
     Expected("ai_execute_action_undo", AI_PATH, "ai_execute_action", c("ai_admin_repo::create_undo_record("), c("ai_admin_repo::create_undo_record(&state.db, &input.action_id, &mutation_result.entity_type, &mutation_result.entity_id, &mutation_result.undo_snapshot_json, &mutation_result.rollback_tool, &mutation_result.rollback_input_json,).await?")),
     Expected("ai_execute_batch_undo", AI_PATH, "ai_execute_batch_actions", c("ai_admin_repo::create_undo_record("), c("ai_admin_repo::create_undo_record(&state.db, action_id, &mutation_result.entity_type, &mutation_result.entity_id, &mutation_result.undo_snapshot_json, &mutation_result.rollback_tool, &mutation_result.rollback_input_json,).await?")),
@@ -31,7 +31,14 @@ EXPECTED = (
 )
 
 FUNCTION_HASHES = {
-    ("src-tauri/src/commands/delivery_commands.rs", "delivery_update_status"): "41266bafaeb9cc9f0ffa18e14cb22be296036c96c76646b58808a097b2bfe432",
+    ("src-tauri/src/commands/delivery_commands.rs", "delivery_update_status"): "17a1aa80afb88fc5ba2ef0fb62d8984eaee48c2a3430fd2833d497b949f48084",
+    # Re-reviewed 2026-09-05 with the RBAC migration. delivery_update_status,
+    # hub_connect_existing, sync_force_full_resync and hub_truth_pull all moved
+    # off payload-derived actors onto rbac::session_actor. The controlled calls
+    # are unchanged except delivery_update_status, whose repository function now
+    # takes the trusted actor explicitly so the audit row records who actually
+    # changed the delivery rather than a name the caller sent.
+    #
     # Re-reviewed 2026-09-03 with the correctness audit. In all three the
     # declared sink call is byte-identical to what it was — SINK_SHAPE still
     # passes — so what moved is the surrounding body, not the controlled call:
@@ -47,11 +54,11 @@ FUNCTION_HASHES = {
     (AI_PATH, "ai_execute_action"): "58c07f4bc6bf050be1b73b2d84bcc0c685cea6a0b608dddb8bf5d8bc91de7937",
     (AI_PATH, "ai_execute_batch_actions"): "7b601798a28a8387debaf0750dcc62aae1279f6df186fa41fc6498a3e3cb73b9",
     (AI_PATH, "ai_chat_stream"): "d22b227c325e1c87fa9123216fa4d249e3558c7df5c213016a66d15fc0e7ffab",
-    ("src-tauri/src/commands/hub_join_commands.rs", "hub_connect_existing"): "c04307bfa57057ebbbce48f69f44dbd7b79e4fed748959efec0f627a5e9fce7e",
+    ("src-tauri/src/commands/hub_join_commands.rs", "hub_connect_existing"): "07e18e4fa51f22ecbb541b39a0d8a643caf549c37bdf862d53fec9c4b06cd8f7",
     ("src-tauri/src/commands/sync_commands.rs", "setup_pull_catalog"): "2d780065c54e6b0a1bead514152e8b4aee555d362a91068f2ac2f1f439ac945b",
     ("src-tauri/src/commands/sync_commands.rs", "clear_setup_pull_watermarks"): "fcc5837eaa21e52f9b17f086824d29e8d2b6b7644a764dca2272a85b6447db3c",
-    ("src-tauri/src/commands/sync_commands.rs", "sync_force_full_resync"): "108b4b6c0ef26e6dad190178658789ff8808e1aea9b7fed931789231e341c1fa",
-    ("src-tauri/src/commands/sync_commands.rs", "hub_truth_pull"): "e0c2302a383659b39e9b72ddc658f8daff2de7aaa4f453888abe2bdffe73176a",
+    ("src-tauri/src/commands/sync_commands.rs", "sync_force_full_resync"): "be1eec4cc966e6f2872d5eab60b54ceaad55eb08cd3e5d75cdb8d9490e1fa19b",
+    ("src-tauri/src/commands/sync_commands.rs", "hub_truth_pull"): "9121b18f182e4424e00cdcf408cb41404b9e764ba315e0d18f5b8c5f8a6506d1",
     ("src-tauri/src/ai/tool_policy.rs", "execute_automatic_mutation"): "970d9d96b112315efe197e6a60cfeb1f557d4f2cf0dbffffc5527bed53c91120",
 }
 CONTROL_METHODS = {"create_undo_record", "expire_old_actions", "create_session", "save_message", "end_session"}

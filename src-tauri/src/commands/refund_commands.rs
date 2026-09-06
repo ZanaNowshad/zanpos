@@ -108,7 +108,9 @@ pub struct CreateRefundInput {
     pub reason: String,
     /// Structured reason code: customer_return | defective | wrong_item | exchange | other
     pub return_reason_code: Option<String>,
-    pub created_by_user_id: String,
+    /// Proves who is issuing the refund. The refunding user and their role are
+    /// both derived from this; nothing in the payload names either.
+    pub session_token: String,
     /// Short-lived token from auth_validate_manager_pin. Required when a cashier
     /// attempts a cross-device refund. Manager/owner cross-device refunds do not
     /// need this token (their role is checked directly).
@@ -136,17 +138,30 @@ pub async fn refund_create(
     input: CreateRefundInput,
     state: State<'_, AppState>,
 ) -> Result<RefundResult, AppError> {
-    // Step 1 — Verify the caller exists and is active.
+    // Step 1 — Authenticate the caller from their session.
     // RBAC DECISION: cashiers ARE permitted to initiate refunds on the same device
     // (same-device refund is a standard POS workflow — cashier returns a just-sold item).
     // Cross-device refunds require a manager override token (enforced in Step 4 below).
-    // Manager/owner can refund cross-device without a token (their role is checked via
-    // can_override_refund). `require_any_role` is the correct minimum here — it rejects
-    // unauthenticated / inactive callers while allowing all active roles.
-    rbac::require_any_role(&state.db, &input.created_by_user_id).await?;
+    // Manager/owner can refund cross-device without a token (their role is checked
+    // directly). Every active role is accepted here; the policy that matters is in
+    // Step 4.
+    //
+    // The identity and the role must both come from the session. When the payload
+    // named the refunding user, Step 2 asked whether *that* id was a manager — so a
+    // cashier who put a manager's user id in the field was granted the manager path
+    // and could issue a cross-device refund with no override token, against an
+    // account that was not theirs.
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &input.session_token,
+        rbac::ANY_ROLE,
+    )
+    .await?;
+    let created_by_user_id = actor.user_id.clone();
 
-    // Step 2 — Check if the user is manager/owner.
-    let user_is_manager = rbac::can_override_refund(&state.db, &input.created_by_user_id).await?;
+    // Step 2 — Check if the *authenticated* user is manager/owner.
+    let user_is_manager = matches!(actor.role_name.as_str(), "owner" | "manager");
     let reason_code = input.return_reason_code.as_deref().unwrap_or("other");
 
     // Step 3 — Resolve the current device id and compare with the sale's origin.
@@ -192,7 +207,7 @@ pub async fn refund_create(
         input.items,
         &input.reason,
         reason_code,
-        &input.created_by_user_id,
+        &created_by_user_id,
         override_used,
         input.idempotency_key,
     )

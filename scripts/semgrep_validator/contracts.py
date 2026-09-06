@@ -50,7 +50,14 @@ FUNCTION_HASHES = {
     #   ai_execute_action       check-then-act race between reading an action's
     #                           status and executing it, closed under one tx.
     #   ai_execute_batch_actions same race on the batch path.
-    ("src-tauri/src/commands/shift_commands.rs", "shift_close"): "b4f2df61423fb116475a3e51d3c5f9ff94604cc32b30c412a6efb49e93ee5d52",
+    # Re-reviewed 2026-09-06 with the till-financial migration. shift_close now
+    # resolves the caller with rbac::session_actor and delegates the permission
+    # ladder to may_close_shift, because the old ladder compared the shift's
+    # owner against a payload id — naming the shift's own cashier skipped the
+    # manager check, and naming any owner skipped the cross-device check. The
+    # declared sink call is byte-identical, so SINK_SHAPE still passes: what
+    # moved is who is allowed to reach it, not what it does.
+    ("src-tauri/src/commands/shift_commands.rs", "shift_close"): "7e5efbf6a23d4aafc4cdbad33fda041c4630d222b63021d82f1d7e8dcb7b927c",
     (AI_PATH, "ai_execute_action"): "58c07f4bc6bf050be1b73b2d84bcc0c685cea6a0b608dddb8bf5d8bc91de7937",
     (AI_PATH, "ai_execute_batch_actions"): "7b601798a28a8387debaf0750dcc62aae1279f6df186fa41fc6498a3e3cb73b9",
     (AI_PATH, "ai_chat_stream"): "d22b227c325e1c87fa9123216fa4d249e3558c7df5c213016a66d15fc0e7ffab",

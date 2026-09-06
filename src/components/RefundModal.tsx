@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { CheckCircle2, FileSearch, ListChecks, RefreshCcw, X } from "lucide-react";
-import type { SaleForRefund, SaleItemForRefund, SaleListRow, RefundResult } from "../types";
+import type { SaleForRefund, SaleItemForRefund, SaleListRow, RefundResult, SessionToken } from "../types";
 import { DEVICE } from "../types";
 import { refundGetSale, refundCreate, reportSalesList, authValidateManagerPin } from "../tauri/commands";
 import { formatMoney } from "../money";
@@ -19,6 +19,9 @@ const REASON_CODE_LABELS: Record<string, string> = {
 
 interface Props {
   cashierUserId: string;
+  /** Authorises the refund. `cashierUserId` still scopes the sale lookups,
+   *  which have not moved to session auth yet. */
+  sessionToken: SessionToken;
   onClose: () => void;
   onExchangeStarted?: (exchange: { refund: RefundResult; creditMinor: number; originalReceipt: string }) => void;
 }
@@ -30,7 +33,7 @@ function todayStr() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" });
 }
 
-export default function RefundModal({ cashierUserId, onClose, onExchangeStarted }: Props) {
+export default function RefundModal({ cashierUserId, sessionToken, onClose, onExchangeStarted }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => modalTranslator(language), [language]);
   const dt = useMemo(() => detailTranslator(language), [language]);
@@ -176,7 +179,7 @@ export default function RefundModal({ cashierUserId, onClose, onExchangeStarted 
         sale.sale_id,
         items,
         reason || REASON_CODE_LABELS[asExchange ? "exchange" : reasonCode] || "Customer return",
-        cashierUserId,
+        sessionToken,
         asExchange ? "exchange" : reasonCode,
         // FIX: use immediateToken directly — React state (overrideToken) is not yet
         // updated when handleConfirm is called from handlePinSubmit in the same tick

@@ -222,7 +222,7 @@ export function useCart(
       // receipt still prints, so the rehearsal covers the whole till loop.
       const result = buildTrainingResult
         ? buildTrainingResult(targetCart, payments)
-        : await cmd.posFinalizeSale(targetCart, payments, targetCart.cart_id, customerId, deliveryInput);
+        : await cmd.posFinalizeSale(targetCart, payments, session.session_token, targetCart.cart_id, customerId, deliveryInput);
       setCart(makeEmptyCart(session));
       setRecentLineId(null);
       return result;
@@ -244,7 +244,7 @@ export function useCart(
       // F-HIGH-05: This void record is an audit-trail entry for an abandoned cart.
       // It's intentionally fire-and-forget (clearing the cart must never block on it),
       // but we surface the error so a persistent audit failure isn't silently hidden.
-      posRecordVoid(cart.cart_id, session.device_id, session.cashier_user_id, activeLines.length, total)
+      posRecordVoid(cart.cart_id, session.device_id, session.session_token, activeLines.length, total)
         .catch((e: unknown) => setError(typeof e === "string" ? e : "Cart void audit failed (cart cleared)"));
     }
     setCart(makeEmptyCart(session));

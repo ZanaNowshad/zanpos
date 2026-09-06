@@ -116,7 +116,7 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
     setAlreadyOpen(false);
     try {
       const cashMinor = openingCash ? parseMoney(openingCash, DEVICE.currency_exponent) : 0;
-      const opened = await shiftOpen(DEVICE.branch_id, DEVICE.device_id, user.user_id, cashMinor);
+      const opened = await shiftOpen(DEVICE.branch_id, DEVICE.device_id, user.session_token, cashMinor);
       onShiftOpened(opened);
     } catch (e: unknown) {
       const msg = typeof e === "string" ? e : t("failedOpenShift");
@@ -207,7 +207,7 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
     setError(null);
     try {
       const countedMinor = countedCash ? parseMoney(countedCash, DEVICE.currency_exponent) : undefined;
-      await shiftClose(shift.shift_id, user.user_id, countedMinor, notes || undefined);
+      await shiftClose(shift.shift_id, user.session_token, countedMinor, notes || undefined);
       onShiftClosed();
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : t("failedCloseShift"));

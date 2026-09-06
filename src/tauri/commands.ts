@@ -231,18 +231,18 @@ export const shiftGetActive = (device_id: string, actorUserId = ""): Promise<Shi
 export const shiftOpen = (
   branch_id: string,
   device_id: string,
-  cashier_user_id: string,
+  session_token: SessionToken,
   opening_cash_minor: number
 ): Promise<Shift> =>
-  invoke("shift_open", { input: { branch_id, device_id, cashier_user_id, opening_cash_minor } });
+  invoke("shift_open", { input: { branch_id, device_id, session_token, opening_cash_minor } });
 
 export const shiftClose = (
   shift_id: string,
-  actor_user_id: string,
+  session_token: SessionToken,
   counted_cash_minor?: number,
   notes?: string
 ): Promise<Shift> =>
-  invoke("shift_close", { input: { shift_id, actor_user_id, counted_cash_minor, notes } });
+  invoke("shift_close", { input: { shift_id, session_token, counted_cash_minor, notes } });
 
 // ─── Product commands ─────────────────────────────────────────────────────────
 
@@ -311,11 +311,12 @@ export const posRemoveLine = (cart: Cart, cart_line_id: string): Promise<Cart> =
 export const posFinalizeSale = (
   cart: Cart,
   payments: PaymentInput[],
+  session_token: SessionToken,
   idempotency_key: string = crypto.randomUUID(),
   customer_id?: string,
   delivery?: import("../types").DeliveryInput,
 ): Promise<SaleResult> => {
-  return invoke("pos_finalize_sale", { input: { cart, payments, idempotency_key, customer_id, delivery } });
+  return invoke("pos_finalize_sale", { input: { cart, payments, session_token, idempotency_key, customer_id, delivery } });
 };
 
 export const posApplyBillDiscount = (cart: Cart, discount_minor: number, reason: string, session_token: SessionToken, manager_override_token?: string): Promise<Cart> =>
@@ -360,11 +361,11 @@ export const posVoidSale = (sale_id: string, manager_override_token: string): Pr
 export const posRecordVoid = (
   cart_id: string,
   device_id: string,
-  cashier_user_id: string,
+  sessionToken: SessionToken,
   line_count: number,
   net_total_minor: number,
 ): Promise<void> =>
-  invoke("pos_record_void", { cartId: cart_id, deviceId: device_id, cashierUserId: cashier_user_id, lineCount: line_count, netTotalMinor: net_total_minor });
+  invoke("pos_record_void", { cartId: cart_id, deviceId: device_id, sessionToken, lineCount: line_count, netTotalMinor: net_total_minor });
 
 export const posCartSummary = (cart: Cart): Promise<{
   gross_total_minor: number;
@@ -398,7 +399,7 @@ export const refundCreate = (
   original_sale_id: string,
   items: RefundItemInput[],
   reason: string,
-  created_by_user_id: string,
+  session_token: SessionToken,
   return_reason_code?: string,
   manager_override_token?: string,
   idempotency_key?: string,
@@ -409,7 +410,7 @@ export const refundCreate = (
       items,
       reason,
       return_reason_code: return_reason_code ?? null,
-      created_by_user_id,
+      session_token,
       manager_override_token: manager_override_token ?? null,
       idempotency_key: idempotency_key ?? null,
     },

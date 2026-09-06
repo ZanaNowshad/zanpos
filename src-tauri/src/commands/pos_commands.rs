@@ -495,6 +495,9 @@ pub struct FinalizeSaleInput {
     pub idempotency_key: String,
     pub customer_id: Option<String>,
     pub delivery: Option<DeliveryInput>,
+    /// Proves who is ringing the sale. `cart.cashier_user_id` arrives in the
+    /// payload and cannot establish that on its own.
+    pub session_token: String,
 }
 
 fn require_idempotency_key(key: Option<String>) -> Result<String, AppError> {
@@ -537,9 +540,28 @@ pub async fn pos_finalize_sale(
         }
     }
 
-    // Guard: verify the cashier_user_id from the cart is an active user.
-    // Prevents a compromised frontend from attributing sales to any user.
-    crate::commands::rbac::require_any_role(&state.db, &input.cart.cashier_user_id).await?;
+    // Who is ringing this sale comes from the session, not from the cart.
+    //
+    // The previous check asked only whether `cart.cashier_user_id` named *an*
+    // active user, which any till could satisfy with any colleague's id — the
+    // sale would then be recorded against them, and the Z-report and cash
+    // accountability would follow the forged name. The session says who is
+    // actually at the till; a cart that disagrees is refused rather than
+    // silently re-attributed, so a frontend that sends the wrong identity
+    // fails loudly instead of quietly mis-filing money.
+    let actor = crate::commands::rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &input.session_token,
+        crate::commands::rbac::POS_ROLES,
+    )
+    .await?;
+    crate::commands::rbac::require_branch(&actor, &input.cart.branch_id)?;
+    if input.cart.cashier_user_id != actor.user_id {
+        return Err(AppError::Permission(
+            "This sale is attributed to a different cashier than the signed-in one.".into(),
+        ));
+    }
 
     // Load the allow_negative_stock business flag.
     let flag_val: Option<String> =
@@ -1107,12 +1129,23 @@ pub async fn pos_cart_summary(
 pub async fn pos_record_void(
     cart_id: String,
     device_id: String,
-    cashier_user_id: String,
+    session_token: String,
     line_count: usize,
     net_total_minor: i64,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    crate::commands::rbac::require_any_role(&state.db, &cashier_user_id).await?;
+    // The entry goes into the audit hash chain. The chain proves an entry was
+    // not altered afterwards; it cannot say who wrote it. Taking the author
+    // from the payload meant any caller could file a void against a colleague
+    // and have it verify as genuine — so the author comes from the session.
+    let actor = crate::commands::rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        crate::commands::rbac::POS_ROLES,
+    )
+    .await?;
+    let cashier_user_id = actor.user_id;
     if line_count == 0 {
         return Ok(());
     } // nothing to record for empty carts

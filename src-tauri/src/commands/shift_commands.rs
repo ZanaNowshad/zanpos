@@ -43,8 +43,9 @@ pub async fn shift_get_active(
 pub struct OpenShiftInput {
     pub branch_id: String,
     pub device_id: String,
-    pub cashier_user_id: String,
     pub opening_cash_minor: i64,
+    /// Whose shift this is. Derived here, never named by the caller.
+    pub session_token: String,
 }
 
 #[tauri::command]
@@ -52,8 +53,18 @@ pub async fn shift_open(
     input: OpenShiftInput,
     state: State<'_, AppState>,
 ) -> Result<Shift, AppError> {
-    // Any authenticated user (cashier and above) may open a shift for themselves.
-    rbac::require_any_role(&state.db, &input.cashier_user_id).await?;
+    // Any authenticated till user may open a shift, but only for themselves.
+    // The old code said as much in a comment and did not enforce it: the cashier
+    // was named in the payload, so a shift — and the cash float it makes someone
+    // answerable for — could be opened against any active colleague.
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &input.session_token,
+        rbac::POS_ROLES,
+    )
+    .await?;
+    rbac::require_branch(&actor, &input.branch_id)?;
     if input.opening_cash_minor < 0 {
         return Err(AppError::Validation(
             "Opening cash float cannot be negative".into(),
@@ -63,7 +74,7 @@ pub async fn shift_open(
         &state.db,
         &input.branch_id,
         &input.device_id,
-        &input.cashier_user_id,
+        &actor.user_id,
         input.opening_cash_minor,
     )
     .await
@@ -72,9 +83,43 @@ pub async fn shift_open(
 #[derive(serde::Deserialize)]
 pub struct CloseShiftInput {
     pub shift_id: String,
-    pub actor_user_id: String,
+    /// Who is closing the shift. Both "is this my own shift" and "am I senior
+    /// enough to close someone else's" are answered from this.
+    pub session_token: String,
     pub counted_cash_minor: Option<i64>,
     pub notes: Option<String>,
+}
+
+/// Who may close a given shift.
+///
+/// A cashier may close only their own shift, and only on the device it was
+/// opened on. A manager may close anyone's shift on this device. An owner may
+/// close any shift anywhere.
+///
+/// This is a pure decision so it can be tested directly. Every argument is
+/// server-derived: the first two come from the resolved session, the last three
+/// from the database.
+fn may_close_shift(
+    actor_user_id: &str,
+    actor_role: &str,
+    shift_owner_id: &str,
+    shift_device_id: &str,
+    active_device_id: &str,
+) -> Result<(), AppError> {
+    let is_own_shift = shift_owner_id == actor_user_id;
+    let is_supervisor = matches!(actor_role, "owner" | "manager");
+
+    if !is_own_shift && !is_supervisor {
+        return Err(AppError::Permission(
+            "Only a manager or owner can close another cashier's shift.".into(),
+        ));
+    }
+    if shift_device_id != active_device_id && actor_role != "owner" {
+        return Err(AppError::Permission(
+            "Only an owner can close a shift opened on another device.".into(),
+        ));
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -85,6 +130,21 @@ pub async fn shift_close(
     // A cashier may only close their own shift on their own device.
     // A manager may close any shift on the current device.
     // An owner may close any shift on any device.
+    //
+    // All three tests below compare against the caller, so the caller has to be
+    // established before any of them run. While it arrived in the payload the
+    // ladder inverted: naming the shift's own cashier made the first test false
+    // and skipped the manager check, and naming any owner satisfied the
+    // cross-device check — so any till could close any shift, on any device,
+    // and the cash count would be filed under someone else's name.
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &input.session_token,
+        rbac::ANY_ROLE,
+    )
+    .await?;
+
     let row = sqlx::query(
         "SELECT cashier_user_id, device_id FROM shifts WHERE shift_id = ? AND status = 'open'",
     )
@@ -105,15 +165,13 @@ pub async fn shift_close(
     .flatten()
     .unwrap_or_default();
 
-    if owner_id != input.actor_user_id {
-        // Not the owning cashier — must be manager or owner.
-        rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
-    }
-
-    if shift_device_id != active_device {
-        // Cross-device shift close requires owner-only permission.
-        rbac::owner_only(&state.db, &input.actor_user_id).await?;
-    }
+    may_close_shift(
+        &actor.user_id,
+        &actor.role_name,
+        &owner_id,
+        &shift_device_id,
+        &active_device,
+    )?;
 
     // BUG-POS-5: Block shift close if there are pending/dispatched deliveries
     // with unpaid COD. Cash payment on delivery requires an open shift.
@@ -164,4 +222,52 @@ pub async fn shift_close(
     crate::digest::maybe_send_evening_digest(&state, &input.shift_id).await;
 
     Ok(closed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::may_close_shift;
+
+    const TILL_1: &str = "device-till-1";
+    const TILL_2: &str = "device-till-2";
+    const CASHIER: &str = "user-cashier";
+    const OTHER_CASHIER: &str = "user-other-cashier";
+
+    #[test]
+    fn a_cashier_closes_their_own_shift_on_their_own_till() {
+        assert!(may_close_shift(CASHIER, "cashier", CASHIER, TILL_1, TILL_1).is_ok());
+    }
+
+    /// The defect this replaced. The old ladder compared the shift's owner
+    /// against an id supplied in the payload, so sending the shift's *own*
+    /// cashier id made "is this mine" true and skipped the manager check
+    /// entirely — any till could close any cashier's shift. The caller is now
+    /// the resolved session, which cannot be set to someone else.
+    #[test]
+    fn a_cashier_cannot_close_another_cashiers_shift() {
+        assert!(may_close_shift(CASHIER, "cashier", OTHER_CASHIER, TILL_1, TILL_1).is_err());
+    }
+
+    #[test]
+    fn a_manager_closes_another_cashiers_shift_on_this_till() {
+        assert!(may_close_shift("user-manager", "manager", OTHER_CASHIER, TILL_1, TILL_1).is_ok());
+    }
+
+    /// The second half of the same inversion: naming any owner satisfied the
+    /// cross-device check, so a shift opened on another till could be closed
+    /// from this one and its cash count filed here.
+    #[test]
+    fn only_an_owner_reaches_a_shift_opened_on_another_till() {
+        assert!(may_close_shift("user-manager", "manager", OTHER_CASHIER, TILL_2, TILL_1).is_err());
+        assert!(may_close_shift(CASHIER, "cashier", CASHIER, TILL_2, TILL_1).is_err());
+        assert!(may_close_shift("user-owner", "owner", OTHER_CASHIER, TILL_2, TILL_1).is_ok());
+    }
+
+    /// An accountant is an active account with no till duties. Being signed in
+    /// is not the same as being allowed to close someone's cash drawer.
+    #[test]
+    fn an_active_account_without_till_duties_closes_nothing_of_anyone_elses() {
+        assert!(may_close_shift("user-accountant", "accountant", OTHER_CASHIER, TILL_1, TILL_1)
+            .is_err());
+    }
 }

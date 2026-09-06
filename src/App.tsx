@@ -147,7 +147,7 @@ export default function App() {
         // T10: auto-open a 0-float shift so cashiers skip the ShiftModal step on cold start.
         // Fall back to ShiftModal if the auto-open fails (e.g. UNIQUE conflict — T11).
         try {
-          const opened = await shiftOpen(DEVICE.branch_id, DEVICE.device_id, user.user_id, 0);
+          const opened = await shiftOpen(DEVICE.branch_id, DEVICE.device_id, user.session_token, 0);
           setShift(opened);
           setView("pos");
         } catch {
@@ -165,7 +165,7 @@ export default function App() {
       // shiftGetActive itself threw — still try auto-open before giving up.
       if (!(await updatePrompt.prepareNewShift())) return;
       try {
-        const opened = await shiftOpen(DEVICE.branch_id, DEVICE.device_id, user.user_id, 0);
+        const opened = await shiftOpen(DEVICE.branch_id, DEVICE.device_id, user.session_token, 0);
         setShift(opened);
         setView("pos");
       } catch {

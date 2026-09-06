@@ -1,3 +1,4 @@
+import type { SessionToken } from "../types";
 import { useCallback } from "react";
 import { DEVICE } from "../types";
 import { aiCancelAction, aiExecuteAction } from "../tauri/commands";
@@ -11,7 +12,7 @@ import { aiCancelAction, aiExecuteAction } from "../tauri/commands";
  * reviewed. Keeping that property visible is why these two live together.
  */
 export function usePersistedAiActions(options: {
-  sessionToken: string;
+  sessionToken: SessionToken;
   /** Run after a successful execution so the caller can refresh what it shows. */
   onApplied: () => void;
 }) {

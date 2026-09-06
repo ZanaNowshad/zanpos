@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { AiConfigPayload, FeatureToggles, ProviderConfig, SystemHealthReport, ValidateProviderResult } from "../../types";
+import type { AiConfigPayload, FeatureToggles, ProviderConfig, SystemHealthReport, ValidateProviderResult, SessionToken } from "../../types";
 import {
   adminGetProviderConfig,
   adminSetAnthropic,
@@ -25,7 +25,7 @@ import { AiConfirmationPolicyToggle } from "./AiConfirmationPolicyToggle";
 import { ZanAiToolCentre, type ZanAiToolCentreRow } from "./ZanAiToolCentre";
 import { ZanAiToolMetrics, type ZanAiToolMetricRow } from "./ZanAiToolMetrics";
 
-interface Props { sessionUserId: string; sessionToken: string; }
+interface Props { sessionUserId: string; sessionToken: SessionToken; }
 
 type AiSetupStep = "summary" | "pick_provider" | "anthropic_key" | "anthropic_pick_model"
   | "openai_url_key" | "gemini_key" | "openai_pick_model" | "gemini_pick_model";

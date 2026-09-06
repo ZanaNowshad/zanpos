@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Monitor, Power, Trash2, RefreshCw } from "lucide-react";
 import { useAutoFocus } from "../hooks/useAutoFocus";
-import type { DeviceRow } from "../types";
+import type { DeviceRow, SessionToken } from "../types";
 import { DEVICE } from "../types";
 import * as cmd from "../tauri/commands";
 import { useLanguage } from "../hooks/useLanguage";
@@ -9,7 +9,7 @@ import { deviceStatusText, operationsTranslator } from "../i18n/operationsString
 import ConfirmDialog from "./templates/ConfirmDialog";
 import { PageTemplate, DataTable, Drawer, EmptyState, LoadingSkeleton } from "./templates";
 
-interface Props { sessionToken: string; }
+interface Props { sessionToken: SessionToken; }
 
 /**
  * The last back-office list still drawing its own table.

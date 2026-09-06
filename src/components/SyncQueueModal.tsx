@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { SyncQueueItem } from "../types";
+import type { SyncQueueItem, SessionToken } from "../types";
 import { syncQueueList, syncQueueRetry, syncQueueDismiss } from "../tauri/commands";
 import { useLanguage } from "../hooks/useLanguage";
 import { modalTranslator, ownedModalLabel } from "../i18n/modalStrings";
@@ -7,7 +7,7 @@ import { detailTranslator } from "../i18n/detailStrings";
 
 interface Props {
   onClose: () => void;
-  sessionToken: string;
+  sessionToken: SessionToken;
 }
 
 const STATUS_CLASS: Record<string, string> = {

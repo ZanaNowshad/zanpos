@@ -6,11 +6,12 @@ import { EmptyState } from "../../../components/templates";
 import { checkForUpdates, dbBackup } from "../../../tauri/commands";
 import { useLanguage } from "../../../hooks/useLanguage";
 import { commandTranslator, type CommandStringKey } from "../../../i18n/commandStrings";
+import type { SessionToken } from "../../../types";
 import "./settings.css";
 
 interface Props {
   sessionUserId: string;
-  sessionToken: string;
+  sessionToken: SessionToken;
   sessionRole: string;
   initialSection?: SettingsSection;
   /** Navigate to another domain, e.g. Team or Audit, instead of duplicating it. */

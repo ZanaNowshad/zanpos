@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { StockLevel, StockMovementRow } from "../types";
+import type { StockLevel, StockMovementRow, SessionToken } from "../types";
 import * as cmd from "../tauri/commands";
 import { useLanguage } from "../hooks/useLanguage";
 import { backOfficeTranslator, inventoryMovementTypeText } from "../i18n/backOfficeStrings";
@@ -7,7 +7,7 @@ import { LoadingSkeleton, EmptyState } from "./templates";
 import { Boxes } from "lucide-react";
 
 interface Props {
-  sessionToken: string;
+  sessionToken: SessionToken;
 }
 
 type Mode = "levels" | "receive" | "adjust" | "movements";

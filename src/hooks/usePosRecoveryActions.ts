@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import type { AiHandoff, Cart, SaleResult } from "../types";
+import type { AiHandoff, Cart, SaleResult, SessionToken } from "../types";
 import type { PosRecoveryAction } from "../components/PosRecoveryBanner";
 import type { ReceiptConfidenceStatus } from "../utils/posConfidence";
 import type { useSyncStatus } from "./useSyncStatus";
@@ -19,7 +19,7 @@ interface Options {
   syncStatus: ReturnType<typeof useSyncStatus>;
   lineCount: number;
   canOpenBackOffice: boolean;
-  sessionToken: string;
+  sessionToken: SessionToken;
   cart: Cart | null;
   setCart: (cart: Cart) => void;
   printSaleNow: (result: SaleResult, reprint: boolean) => Promise<unknown>;

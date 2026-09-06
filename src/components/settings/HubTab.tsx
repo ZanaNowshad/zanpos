@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { HubStatus, HubTruthCompareResult, SyncConflictRow, SyncStatus } from "../../types";
+import type { HubStatus, HubTruthCompareResult, SyncConflictRow, SyncStatus, SessionToken } from "../../types";
 import {
   hubStatus,
   hubEnable,
@@ -18,7 +18,7 @@ import { useLanguage } from "../../hooks/useLanguage";
 import { hubTruthStatusText, operationsTranslator } from "../../i18n/operationsStrings";
 
 interface Props {
-  sessionToken: string;
+  sessionToken: SessionToken;
   /** Still a user id: TerminalRosterPanel's commands are not migrated yet. */
   sessionUserId: string;
 }

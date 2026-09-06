@@ -1,3 +1,4 @@
+import { asSessionToken } from "../types";
 import { describe, expect, it } from "vitest";
 import type { Cart, CartLine, SessionUser, Shift, SyncStatus } from "../types";
 import { buildPosAiContext, summarizePosAiContext } from "../zanai/posContext";
@@ -54,7 +55,7 @@ const user: SessionUser = {
   username: "cashier",
   role_id: "cashier-role",
   role_name: "cashier",
-  session_token: "must-never-appear",
+  session_token: asSessionToken("must-never-appear"),
   session_expires_at: "2099-01-01T00:00:00Z",
 };
 

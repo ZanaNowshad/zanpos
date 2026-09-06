@@ -332,7 +332,7 @@ export default function OfficeAIPage({
       );
     }
     if (tab === "health") {
-      return <OfficeAISystemHealth actorUserId={sessionUser.user_id} initialReport={overview.health} onReport={(health) => setOverview(prev => ({ ...prev, health }))} />;
+      return <OfficeAISystemHealth actorUserId={sessionUser.user_id} sessionToken={sessionUser.session_token} initialReport={overview.health} onReport={(health) => setOverview(prev => ({ ...prev, health }))} />;
     }
     if (tab === "conflicts") {
       return <OfficeAIConflictInbox sessionToken={sessionUser.session_token} />;

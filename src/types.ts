@@ -172,6 +172,25 @@ export interface UserSummary {
   role_name: string;
 }
 
+/**
+ * A proven session token, distinct from every other string in the app.
+ *
+ * Migrating commands off payload-derived actors kept hitting one hazard: a
+ * session token and a user id are both `string`, so a call site passing the
+ * wrong one compiled silently and failed only at runtime. That is not
+ * hypothetical — it is how `hub_enable` came to be called with `owner_user_id`
+ * during first-run setup, which no test covered and the compiler could not see.
+ *
+ * Branding the token makes that a type error. `asSessionToken` is the one place
+ * a plain string becomes one, so the conversion has to be written down rather
+ * than happening by accident.
+ */
+export type SessionToken = string & { readonly __sessionToken: unique symbol };
+
+/** Mark a string as a proven session token. Only login output and test
+ *  fixtures should need this. */
+export const asSessionToken = (raw: string): SessionToken => raw as SessionToken;
+
 export interface SessionUser {
   user_id: string;
   branch_id: string;
@@ -179,7 +198,7 @@ export interface SessionUser {
   username: string;
   role_id: string;
   role_name: string;
-  session_token: string;
+  session_token: SessionToken;
   session_expires_at: string;
 }
 
@@ -833,7 +852,7 @@ export interface AppConfig {
   owner_user_id: string | null;
   /** A real session for the owner setup just created. Only setup_wizard_complete
    *  returns one; reading the config leaves it null. */
-  owner_session_token: string | null;
+  owner_session_token: SessionToken | null;
 }
 
 export interface BranchSettings {

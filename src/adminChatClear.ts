@@ -1,8 +1,10 @@
+import type { SessionToken } from "./types";
+
 export type ClearAdminChatOptions = {
-  sessionToken: string;
+  sessionToken: SessionToken;
   branchId: string;
   newSessionId: () => string;
-  clearHistory: (sessionToken: string, branchId: string) => Promise<unknown>;
+  clearHistory: (sessionToken: SessionToken, branchId: string) => Promise<unknown>;
   setMessages: () => void;
   setHistory: () => void;
   setSessionId: (value: string) => void;

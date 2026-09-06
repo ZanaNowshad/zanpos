@@ -1,3 +1,4 @@
+import { asSessionToken } from "../types";
 import { createElement, type ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -23,7 +24,7 @@ const user: SessionUser = {
   username: "reni",
   role_id: "owner-role",
   role_name: "owner",
-  session_token: "session",
+  session_token: asSessionToken("session"),
   session_expires_at: "2026-07-25T00:00:00Z",
 };
 

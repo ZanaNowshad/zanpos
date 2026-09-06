@@ -1,9 +1,9 @@
 import { type KeyboardEvent, type MouseEvent, memo, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, RefreshCw, WifiOff } from "lucide-react";
-import type { SyncStatus } from "../types";
+import type { SyncStatus, SessionToken } from "../types";
 import { syncTriggerNow } from "../tauri/commands";
 
-interface Props { status: SyncStatus | null; sessionToken?: string; onOpenDetails?: () => void }
+interface Props { status: SyncStatus | null; sessionToken: SessionToken; onOpenDetails?: () => void }
 
 /** Minutes since the last successful sync, or null if it has never succeeded. */
 export function syncAgeMinutes(lastSuccess: string | null): number | null {
@@ -27,7 +27,7 @@ export function formatSyncAge(minutes: number | null, fallbackDays = 0): string 
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-const SyncChip = memo(function SyncChip({ status, sessionToken = "", onOpenDetails }: Props) {
+const SyncChip = memo(function SyncChip({ status, sessionToken, onOpenDetails }: Props) {
   const [retrying, setRetrying] = useState(false);
   const openProps = useMemo(() => {
     if (!onOpenDetails) return {};

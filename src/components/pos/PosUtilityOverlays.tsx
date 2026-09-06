@@ -1,4 +1,4 @@
-import type { LowStockAlert, SyncStatus } from "../../types";
+import type { LowStockAlert, SessionToken, SyncStatus } from "../../types";
 import StickyNotesPanel from "../StickyNotesPanel";
 import SyncConfidenceDrawer from "../SyncConfidenceDrawer";
 
@@ -6,7 +6,7 @@ interface Props {
   showNotes: boolean;
   showSyncDetails: boolean;
   syncStatus: SyncStatus | null;
-  sessionToken: string;
+  sessionToken: SessionToken;
   restockAlerts: LowStockAlert[];
   onCloseNotes: () => void;
   onCloseSyncDetails: () => void;

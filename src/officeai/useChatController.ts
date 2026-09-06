@@ -283,7 +283,7 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
       .catch(error => { failures.push(`sales: ${String(error)}`); return null; });
     const levels = await inventoryGetLevels(sessionUser.session_token)
       .catch(error => { failures.push(`inventory: ${String(error)}`); return [] as StockLevel[]; });
-    const syncStat = await syncStatus(sessionUser.user_id)
+    const syncStat = await syncStatus(sessionUser.session_token)
       .catch(error => { failures.push(`sync: ${String(error)}`); return null; });
     const lowStockCount   = levels.filter(l => l.is_low_stock && !l.is_out_of_stock).length;
     const outOfStockCount = levels.filter(l => l.is_out_of_stock).length;

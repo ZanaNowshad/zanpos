@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Cart, HeldCartSummary } from "../types";
+import type { Cart, HeldCartSummary, SessionToken } from "../types";
 import { DEVICE } from "../types";
 import { heldCartSave, heldCartList, heldCartResume, heldCartDelete } from "../tauri/commands";
 import { useLanguage } from "../hooks/useLanguage";
@@ -13,7 +13,7 @@ interface Props {
   onHeld: () => void;
   onResume: (cart: Cart) => void;
   onClose: () => void;
-  sessionToken: string;
+  sessionToken: SessionToken;
 }
 
 export default function HoldModal({ cart, lineCount, netTotal, onHeld, onResume, onClose, sessionToken }: Props) {

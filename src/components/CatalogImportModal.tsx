@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { CatalogImportProposal, CatalogApplyLine, CatalogApplyResult } from "../types";
+import type { CatalogImportProposal, CatalogApplyLine, CatalogApplyResult, SessionToken } from "../types";
 import { DEVICE } from "../types";
 import { catalogImportApply } from "../tauri/commands";
 import { useLanguage } from "../hooks/useLanguage";
@@ -9,7 +9,7 @@ import { ModalActions, ModalError } from "./modal/ModalParts";
 
 interface Props {
   proposal: CatalogImportProposal;
-  sessionToken: string;
+  sessionToken: SessionToken;
   onClose: () => void;
   onApplied: () => void;
 }

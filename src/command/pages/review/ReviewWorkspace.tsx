@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { AlertTriangle, Check, CheckCircle2, Clock, CircleSlash, Loader2 } from "lucide-react";
-import type { AiActionSummary, UndoAvailability } from "../../../types";
+import type { AiActionSummary, UndoAvailability, SessionToken } from "../../../types";
 import { DEVICE } from "../../../types";
 import { aiListActions, aiUndoAction, aiUndoAvailability } from "../../../tauri/commands";
 import { useLanguage } from "../../../hooks/useLanguage";
@@ -23,7 +23,7 @@ const STATE_ICON: Record<ActionUiState, typeof CheckCircle2> = {
 };
 
 interface Props {
-  sessionToken: string;
+  sessionToken: SessionToken;
   actorUserId: string;
   canApprove: boolean;
   /** Rendered inside the Conflicts section — existing, source-backed component. */

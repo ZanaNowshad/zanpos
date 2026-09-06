@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { clearAdminChat } from "../adminChatClear";
+import { asSessionToken } from "../types";
+
+const TOKEN = asSessionToken("session-secret");
 
 describe("clearAdminChat", () => {
   it("clears local chat state, rotates the session, and clears persisted history", async () => {
@@ -7,7 +10,7 @@ describe("clearAdminChat", () => {
     const clearHistory = vi.fn(() => Promise.resolve());
 
     clearAdminChat({
-      sessionToken: "session-secret",
+      sessionToken: TOKEN,
       branchId: "branch-1",
       newSessionId: () => "next-session",
       clearHistory,
@@ -30,7 +33,7 @@ describe("clearAdminChat", () => {
     const clearHistory = vi.fn(() => Promise.reject(new Error("offline")));
 
     clearAdminChat({
-      sessionToken: "session-secret",
+      sessionToken: TOKEN,
       branchId: "branch-1",
       newSessionId: () => "next-session",
       clearHistory,

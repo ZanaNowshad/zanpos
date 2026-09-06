@@ -1,6 +1,6 @@
 import { AlertTriangle, CheckCircle2, Database, Monitor, RefreshCw, Server, ShieldAlert } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { HealthFinding, SyncDiagnostics, SystemHealthReport } from "../types";
+import type { HealthFinding, SessionToken, SyncDiagnostics, SystemHealthReport } from "../types";
 import {
   syncDiagnostics,
   syncResetStuck,
@@ -15,6 +15,9 @@ import { officeAiFormat, officeAiTranslator, type OfficeAiTranslator } from "../
 
 interface Props {
   actorUserId: string;
+  /** The sync commands authenticate the caller; the health commands still take a
+   *  bare id. Both are passed until those migrate too. */
+  sessionToken: SessionToken;
   initialReport: SystemHealthReport | null;
   onReport: (report: SystemHealthReport) => void;
 }
@@ -56,7 +59,7 @@ export function buildSystemCommandCenterModel(
   };
 }
 
-export default function OfficeAISystemHealth({ actorUserId, initialReport, onReport }: Props) {
+export default function OfficeAISystemHealth({ actorUserId, sessionToken, initialReport, onReport }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => officeAiTranslator(language), [language]);
   const [report, setReport] = useState<SystemHealthReport | null>(initialReport);
@@ -97,11 +100,11 @@ export default function OfficeAISystemHealth({ actorUserId, initialReport, onRep
 
   const loadSyncDiagnostics = useCallback(async () => {
     try {
-      setSyncDiag(await syncDiagnostics(actorUserId));
+      setSyncDiag(await syncDiagnostics(sessionToken));
     } catch {
       setSyncDiag(null);
     }
-  }, [actorUserId]);
+  }, [sessionToken]);
 
   useEffect(() => { void loadSyncDiagnostics(); }, [loadSyncDiagnostics]);
 
@@ -137,7 +140,7 @@ export default function OfficeAISystemHealth({ actorUserId, initialReport, onRep
     setError(null);
     setMessage(null);
     try {
-      setMessage(await syncTriggerNow(actorUserId));
+      setMessage(await syncTriggerNow(sessionToken));
       await Promise.all([run(), loadSyncDiagnostics()]);
     } catch (e) {
       setError(typeof e === "string" ? e : String(e));
@@ -157,7 +160,7 @@ export default function OfficeAISystemHealth({ actorUserId, initialReport, onRep
         setError(null);
         setMessage(null);
         try {
-          setMessage(await syncResetStuck(actorUserId));
+          setMessage(await syncResetStuck(sessionToken));
           await Promise.all([run(), loadSyncDiagnostics()]);
         } catch (e) {
           setError(typeof e === "string" ? e : String(e));

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { AdminProduct, CategoryRow, ProductPrefill, StockLevel, TaxRuleRow } from "../types";
+import type { AdminProduct, CategoryRow, ProductPrefill, StockLevel, TaxRuleRow, SessionToken } from "../types";
 import { DEVICE } from "../types";
 import * as cmd from "../tauri/commands";
 import type { ProductView } from "../tauri/commands";
@@ -19,7 +19,7 @@ import { useProductImageFetch } from "./useProductImageFetch";
 interface Props {
   sessionUserId: string;
   /** For inventory reads, which authenticate by session. */
-  sessionToken: string;
+  sessionToken: SessionToken;
   /** Pre-fill data to open the create form with (e.g. from a POS notification). */
   prefill?: ProductPrefill | null;
   onPrefillConsumed?: () => void;

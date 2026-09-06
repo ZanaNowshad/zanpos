@@ -1,3 +1,4 @@
+import type { SessionToken } from "../types";
 import type {
   OfficeAiActionQueueItem,
   OfficeAiAuditTimelineItem,
@@ -41,7 +42,7 @@ async function capture<T>(label: string, task: Promise<T>, errors: string[]): Pr
 
 export async function officeAiOverview(
   actorUserId: string,
-  sessionToken: string,
+  sessionToken: SessionToken,
   branchId: string,
   t: OfficeAiTranslator,
 ): Promise<OfficeAiOverviewSnapshot> {

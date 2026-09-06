@@ -1,6 +1,6 @@
 import { Bot, CheckCircle2, Eye, Inbox, ReceiptText, RefreshCw, SearchCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { CatalogImportProposal, PaymentConfirmation, WaMessage } from "../types";
+import type { CatalogImportProposal, PaymentConfirmation, WaMessage, SessionToken } from "../types";
 import { DEVICE } from "../types";
 import { catalogImportExtract, paymentConfirmationOverride } from "../tauri/commands";
 import CatalogImportModal from "../components/CatalogImportModal";
@@ -11,7 +11,7 @@ import { officeAiTranslator, type OfficeAiStringKey } from "../i18n/officeAiStri
 
 interface Props {
   actorUserId: string;
-  sessionToken: string;
+  sessionToken: SessionToken;
   onSendPrompt: (prompt: string) => void;
 }
 

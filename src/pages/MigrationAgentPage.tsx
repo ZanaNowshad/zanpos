@@ -21,8 +21,7 @@ import type {
   MappingConfig,
   MigrationProgress,
   ModelInfo,
-  ChatMessage,
-} from "../types";
+  ChatMessage, SessionToken } from "../types";
 import { Channel } from "@tauri-apps/api/core";
 import { open as openFilePicker } from "@tauri-apps/plugin-dialog";
 
@@ -62,7 +61,7 @@ interface ChatMsg {
 interface Props {
   onDone: () => void;
   sessionUserId: string;
-  sessionToken: string;
+  sessionToken: SessionToken;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -97,7 +96,7 @@ function SimpleMarkdown({ text }: { text: string }) {
 
 // ─── AI Config Setup Panel ────────────────────────────────────────────────────
 
-function AiSetupPanel({ onConfigured, sessionToken }: { onConfigured: () => void; sessionToken: string }) {
+function AiSetupPanel({ onConfigured, sessionToken }: { onConfigured: () => void; sessionToken: SessionToken }) {
   const [provider, setProvider]     = useState<AiProvider>("anthropic");
   const [anthropicKey, setAnthropicKey] = useState("");
   const [baseUrl, setBaseUrl]       = useState("https://api.openai.com/v1");
@@ -216,7 +215,7 @@ function AiSetupPanel({ onConfigured, sessionToken }: { onConfigured: () => void
 
 // ─── AI Settings Drawer ───────────────────────────────────────────────────────
 
-function AiSettingsDrawer({ onClose, onSaved, sessionToken }: { onClose: () => void; onSaved: (label: string) => void; sessionToken: string }) {
+function AiSettingsDrawer({ onClose, onSaved, sessionToken }: { onClose: () => void; onSaved: (label: string) => void; sessionToken: SessionToken }) {
   const [provider, setProvider]     = useState<AiProvider>("anthropic");
   const [anthropicKey, setAnthropicKey] = useState("");
   const [baseUrl, setBaseUrl]       = useState("https://api.openai.com/v1");

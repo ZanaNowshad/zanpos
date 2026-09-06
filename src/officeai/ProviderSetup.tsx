@@ -1,11 +1,11 @@
-import type { ProviderConfig } from "../types";
+import type { ProviderConfig, SessionToken } from "../types";
 import { useLanguage } from "../hooks/useLanguage";
 import { officeAiTranslator } from "../i18n/officeAiStrings";
 import type { SetupStep } from "./officeAiTypes";
 import { useState } from "react";
 import { adminSetAnthropic, adminSetOpenai, adminSetGemini, adminValidateOpenai, adminValidateGemini } from "../tauri/commands";
 
-interface Props { sessionToken: string; onDone: (cfg: ProviderConfig) => void; onBack: () => void; }
+interface Props { sessionToken: SessionToken; onDone: (cfg: ProviderConfig) => void; onBack: () => void; }
 
 function PickProvider({ onPick, onBack }: { onPick: (s: SetupStep) => void; onBack: () => void }) {
   const { language } = useLanguage();

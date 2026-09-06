@@ -5,6 +5,7 @@ import SyncChip from "../components/SyncChip";
 import { buildJoinSyncChecklist } from "../pages/SetupWizard";
 import type { PullSummary } from "../tauri/commands";
 import type { SyncStatus } from "../types";
+import { asSessionToken } from "../types";
 
 describe("operator-facing POS states", () => {
   it("guides managers from an empty product grid", () => {
@@ -31,7 +32,7 @@ describe("operator-facing POS states", () => {
       consecutive_failure_count: 0,
     };
 
-    const html = renderToStaticMarkup(<SyncChip status={status} sessionToken="tok-1" />);
+    const html = renderToStaticMarkup(<SyncChip status={status} sessionToken={asSessionToken("tok-1")} />);
 
     expect(html).toContain("Sales saved locally");
     expect(html).toContain("sync resumes automatically");

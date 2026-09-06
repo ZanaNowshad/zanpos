@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Bell, CheckCircle2, Image, MessageCircle, UsersRound } from "lucide-react";
-import type { AiHandoff, CatalogImportProposal, GhostBarcode, PaymentConfirmation, ProductPrefill, WaMessage } from "../types";
+import type { AiHandoff, CatalogImportProposal, GhostBarcode, PaymentConfirmation, ProductPrefill, WaMessage, SessionToken } from "../types";
 import { DEVICE } from "../types";
 import {
   ghostList, ghostResolve, ghostDismiss, ghostPrefill,
@@ -19,7 +19,7 @@ import { canImportCatalogFromMessage, relativeMessageTime } from "./notification
 export { canImportCatalogFromMessage } from "./notificationPresentation";
 interface Props {
   sessionUserId: string;
-  sessionToken: string;
+  sessionToken: SessionToken;
   onClose: () => void;
   /** Hand a resolved barcode off to OfficeAI's product create form. */
   onCreateProduct: (prefill: ProductPrefill) => void;

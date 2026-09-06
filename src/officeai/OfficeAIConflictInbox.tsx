@@ -7,7 +7,7 @@ import {
   syncStockDriftReconcile,
   syncStockDriftReport,
 } from "../tauri/commands";
-import type { StockDriftRow, SyncConflictRow } from "../types";
+import type { StockDriftRow, SyncConflictRow, SessionToken } from "../types";
 import { useLanguage } from "../hooks/useLanguage";
 import {
   officeAiFormat,
@@ -34,7 +34,7 @@ const ACTION_LABEL_KEY: Record<ConflictAction, OfficeAiStringKey> = {
 };
 
 interface Props {
-  sessionToken: string;
+  sessionToken: SessionToken;
 }
 
 export default function OfficeAIConflictInbox({ sessionToken }: Props) {

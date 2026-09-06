@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { RefreshCw, Wifi, X } from "lucide-react";
-import type { SyncStatus, SyncTableStats } from "../types";
+import type { SyncStatus, SyncTableStats, SessionToken } from "../types";
 import { syncQueueStats, syncTriggerNow } from "../tauri/commands";
 
 interface Props {
   open: boolean;
   status: SyncStatus | null;
-  sessionToken: string;
+  sessionToken: SessionToken;
   onClose: () => void;
 }
 

@@ -1,4 +1,4 @@
-import type { SyncStatus } from "../../types";
+import type { SessionToken, SyncStatus } from "../../types";
 import type { Theme } from "../../hooks/useTheme";
 import { THEMES } from "../../hooks/useTheme";
 import type { Language } from "../../hooks/useLanguage";
@@ -14,7 +14,7 @@ interface Props {
   language: Language;
   clockTime: string;
   syncStatus: SyncStatus | null;
-  sessionToken: string;
+  sessionToken: SessionToken;
   commerceEnabled: boolean;
   waConnected: boolean | null;
   waStale: boolean;

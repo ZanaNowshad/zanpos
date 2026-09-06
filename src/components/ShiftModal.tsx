@@ -103,12 +103,12 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
       .then(data => { if (!cancelled) setTodaySummary(data); })
       .catch((e: unknown) => { console.warn("Failed to load today's report for Z-report:", e); });
     if (shift) {
-      cashDrawerSummary(user.user_id, shift.shift_id)
+      cashDrawerSummary(user.session_token, shift.shift_id)
         .then(data => { if (!cancelled) setDrawerSummary(data); })
         .catch((e: unknown) => { console.warn("Failed to load cash drawer summary:", e); });
     }
     return () => { cancelled = true; };
-  }, [mode, shift, user.user_id]);
+  }, [mode, shift, user.user_id, user.session_token]);
 
   const handleOpen = async () => {
     setLoading(true);

@@ -419,10 +419,10 @@ describe("operator-first workflow hierarchy", () => {
   });
 
   it("presents sales and drawer reconciliation in one POS report view", () => {
-    const props: ComponentProps<typeof TodayReportModal> & { shiftId: string; actorUserId: string } = {
+    const props: ComponentProps<typeof TodayReportModal> = {
       sessionUserId: "u-1",
       shiftId: "shift-1",
-      actorUserId: "u-1",
+      sessionToken: asSessionToken("session-1"),
       onClose: vi.fn(),
     };
     const html = renderToStaticMarkup(createElement(TodayReportModal, props));

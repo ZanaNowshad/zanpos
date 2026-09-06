@@ -52,6 +52,7 @@ export default function PosOperationsModals({
       {activeModal.kind === "cashEvent" && (
         <CashEventModal
           shiftId={shift.shift_id}
+          sessionToken={sessionUser.session_token}
           userId={sessionUser.user_id}
           cashierName={sessionUser.display_name}
           onDone={close}
@@ -116,7 +117,7 @@ export default function PosOperationsModals({
         <TodayReportModal
           sessionUserId={sessionUser.user_id}
           shiftId={shift.shift_id}
-          actorUserId={sessionUser.user_id}
+          sessionToken={sessionUser.session_token}
           includeCashDrawer={sessionUser.role_name === "owner" || sessionUser.role_name === "manager"}
           onClose={close}
         />

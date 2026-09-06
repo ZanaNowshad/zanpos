@@ -84,11 +84,6 @@ pub const ANY_ROLE: &[&str] = &["owner", "manager", "cashier", "accountant"];
 /// unlike [`ANY_ROLE`] it excludes accountants, who do not serve customers.
 pub const POS_ROLES: &[&str] = &["owner", "manager", "cashier"];
 /// Roles accepted for supervisory actions. Mirrors [`manager_or_owner`].
-///
-/// Exercised by the authorization invariants today and by each command family
-/// as it migrates off payload-derived actors. The attribute goes when the
-/// supervisory families land; it is not a permanent exemption.
-#[allow(dead_code)]
 pub const MANAGER_OR_OWNER: &[&str] = &["owner", "manager"];
 /// Roles accepted for ownership actions. Mirrors [`owner_only`].
 #[allow(dead_code)]

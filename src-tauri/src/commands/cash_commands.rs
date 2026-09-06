@@ -73,7 +73,7 @@ pub async fn cash_event_create(
     event_type: String,
     amount_minor: i64,
     note: Option<String>,
-    created_by_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<CashEventRow> {
     // Validate event_type
@@ -95,9 +95,19 @@ pub async fn cash_event_create(
         ));
     }
 
-    // Cash drawer adjustments (paid_in/paid_out/safe_drop) are manager-level operations.
-    // The created_by_user_id is verified against the DB role.
-    rbac::manager_or_owner(&state.db, &created_by_user_id).await?;
+    // Cash drawer adjustments (paid_in/paid_out/safe_drop) are manager-level
+    // operations. The role has to belong to the caller, not to a name they
+    // chose: while the id arrived in the payload, a cashier could send a
+    // manager's user id, take money out of the drawer as a paid-out, and have
+    // it recorded and audited against that manager.
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
+    let created_by_user_id = actor.user_id;
 
     let (branch_id, device_id) = resolve_branch_device(&state).await?;
     let cash_event_id = Ulid::new().to_string();
@@ -212,11 +222,11 @@ pub async fn cash_event_create(
 
 #[tauri::command]
 pub async fn cash_events_list(
-    actor_user_id: String,
+    session_token: String,
     shift_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<CashEventRow>> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     let rows = sqlx::query(
         "SELECT cash_event_id, shift_id, event_type, amount_minor, note,
                 created_by_user_id, created_at
@@ -394,11 +404,11 @@ pub(crate) async fn drawer_summary_inner(
 
 #[tauri::command]
 pub async fn cash_drawer_summary(
-    actor_user_id: String,
+    session_token: String,
     shift_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<CashDrawerSummary> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     drawer_summary_inner(&state.db, &shift_id).await
 }
 
@@ -407,13 +417,16 @@ pub async fn cash_drawer_summary(
 #[tauri::command]
 pub async fn cash_no_sale(
     shift_id: String,
-    actor_user_id: String,
+    session_token: String,
     note: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<NoSaleRow> {
-    // Any active user may trigger a no-sale (it is audited), but anonymous callers
-    // (empty string, unknown user) must be rejected to prevent forged audit entries.
-    crate::commands::rbac::require_any_role(&state.db, &actor_user_id).await?;
+    // A no-sale pops the drawer and is only defensible because it is audited.
+    // The audit entry is worth nothing if the caller picks the name on it, so
+    // the actor comes from the session.
+    let actor =
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::POS_ROLES).await?;
+    let actor_user_id = actor.user_id;
     let (branch_id, device_id) = resolve_branch_device(&state).await?;
     let no_sale_id = Ulid::new().to_string();
     let now = chrono::Utc::now().to_rfc3339();
@@ -578,10 +591,17 @@ mod tests {
 #[tauri::command]
 pub async fn cash_x_report(
     shift_id: String,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<CashDrawerSummary> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
+    let actor_user_id = actor.user_id;
 
     let summary = drawer_summary_inner(&state.db, &shift_id).await?;
 

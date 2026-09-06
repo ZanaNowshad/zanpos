@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Banknote, BarChart3, Printer, X } from "lucide-react";
-import type { CashDrawerSummary, TodaySummary } from "../types";
+import type { CashDrawerSummary, SessionToken, TodaySummary } from "../types";
 import { DEVICE } from "../types";
 import { cashXReport, reportToday } from "../tauri/commands";
 import { formatMoney } from "../money";
@@ -11,11 +11,11 @@ interface Props {
   onClose: () => void;
   sessionUserId: string;
   shiftId: string;
-  actorUserId: string;
+  sessionToken: SessionToken;
   includeCashDrawer?: boolean;
 }
 
-export default function TodayReportModal({ onClose, sessionUserId, shiftId, actorUserId, includeCashDrawer = true }: Props) {
+export default function TodayReportModal({ onClose, sessionUserId, shiftId, sessionToken, includeCashDrawer = true }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => backOfficeTranslator(language), [language]);
   const [sales, setSales] = useState<TodaySummary | null>(null);
@@ -31,12 +31,12 @@ export default function TodayReportModal({ onClose, sessionUserId, shiftId, acto
       .then(value => { if (!cancelled) setSales(value); })
       .catch(() => { if (!cancelled) setSalesError(t("failedLoadReport")); });
     if (includeCashDrawer) {
-      cashXReport(shiftId, actorUserId)
+      cashXReport(shiftId, sessionToken)
         .then(value => { if (!cancelled) setDrawer(value); })
         .catch(error => { if (!cancelled) setDrawerError(typeof error === "string" ? error : t("failedLoadReport")); });
     }
     return () => { cancelled = true; };
-  }, [actorUserId, includeCashDrawer, sessionUserId, shiftId, t, today]);
+  }, [sessionToken, includeCashDrawer, sessionUserId, shiftId, t, today]);
 
   const fmt = (minor: number) => `${DEVICE.currency} ${formatMoney(minor, DEVICE.currency_exponent)}`;
 

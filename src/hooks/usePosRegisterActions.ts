@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import type { SaleListRow, Shift } from "../types";
+import type { SaleListRow, SessionToken, Shift } from "../types";
 import type { ActiveModal } from "../components/pos/posModalState";
 import type { ReceiptConfidenceStatus } from "../utils/posConfidence";
 import type { useCart } from "./useCart";
@@ -15,6 +15,10 @@ import { DEVICE } from "../types";
 
 interface Options {
   shift: Shift;
+  /** Authorises the no-sale drawer open. */
+  sessionToken: SessionToken;
+  /** Still identifies the operator to reprint, drawer and edit-sale, which
+   *  have not moved to session auth yet. */
   userId: string;
   lineCount: number;
   lastReceiptNumber: string | null;
@@ -29,7 +33,7 @@ interface Options {
 }
 
 export function usePosRegisterActions({
-  shift, userId, lineCount, lastReceiptNumber, printSaleNow, clearCart,
+  shift, sessionToken, userId, lineCount, lastReceiptNumber, printSaleNow, clearCart,
   replaceCart, setError, setReceiptStatus, setLastReceiptNumber,
   setActiveModal, focusBarcode,
 }: Options) {
@@ -51,7 +55,7 @@ export function usePosRegisterActions({
 
   const handleNoSale = useCallback(async () => {
     try {
-      await cashNoSale(shift.shift_id, userId);
+      await cashNoSale(shift.shift_id, sessionToken);
     } catch (cause) {
       setError(typeof cause === "string" ? cause : "No-sale open failed");
       // Without this return the drawer opened anyway. A no-sale is the one
@@ -63,7 +67,7 @@ export function usePosRegisterActions({
     }
     openCashDrawer(userId)
       .catch((cause: unknown) => console.warn("Cash drawer open failed (no-sale):", cause));
-  }, [setError, shift.shift_id, userId]);
+  }, [setError, sessionToken, shift.shift_id, userId]);
 
   const handleEditSale = useCallback(async (sale: SaleListRow) => {
     try {

@@ -218,6 +218,7 @@ export function usePosPageState({
     handleClearCartRequest
   } = usePosRegisterActions({
     shift,
+    sessionToken: sessionUser.session_token,
     userId: sessionUser.user_id,
     lineCount,
     lastReceiptNumber,

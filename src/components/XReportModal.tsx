@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { CashDrawerSummary } from "../types";
+import type { CashDrawerSummary, SessionToken } from "../types";
 import { DEVICE } from "../types";
 import { cashXReport } from "../tauri/commands";
 import { formatMoney } from "../money";
@@ -8,11 +8,11 @@ import { backOfficeTranslator, cashEventTypeText } from "../i18n/backOfficeStrin
 
 interface Props {
   shiftId:       string;
-  actorUserId:   string;
+  sessionToken:  SessionToken;
   onClose:       () => void;
 }
 
-export default function XReportModal({ shiftId, actorUserId, onClose }: Props) {
+export default function XReportModal({ shiftId, sessionToken, onClose }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => backOfficeTranslator(language), [language]);
   const [summary, setSummary] = useState<CashDrawerSummary | null>(null);
@@ -22,12 +22,12 @@ export default function XReportModal({ shiftId, actorUserId, onClose }: Props) {
 
   useEffect(() => {
     let cancelled = false;
-    cashXReport(shiftId, actorUserId)
+    cashXReport(shiftId, sessionToken)
       .then(data => { if (!cancelled) setSummary(data); })
       .catch(e => { if (!cancelled) setError(typeof e === "string" ? e : t("failedLoadReport")); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [shiftId, actorUserId, t]);
+  }, [shiftId, sessionToken, t]);
 
   const fmt = (n: number) => `${DEVICE.currency} ${formatMoney(n, DEVICE.currency_exponent)}`;
 

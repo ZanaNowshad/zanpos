@@ -1168,25 +1168,25 @@ export const cashEventCreate = (
   event_type: "paid_in" | "paid_out" | "safe_drop",
   amount_minor: number,
   note: string | undefined,
-  created_by_user_id: string,
+  sessionToken: SessionToken,
 ): Promise<CashEventRow> =>
-  invoke("cash_event_create", { shiftId: shift_id, eventType: event_type, amountMinor: amount_minor, note, createdByUserId: created_by_user_id });
+  invoke("cash_event_create", { shiftId: shift_id, eventType: event_type, amountMinor: amount_minor, note, sessionToken });
 
-export const cashEventsList = (actor_user_id: string, shift_id: string): Promise<CashEventRow[]> =>
-  invoke("cash_events_list", { actorUserId: actor_user_id, shiftId: shift_id });
+export const cashEventsList = (sessionToken: SessionToken, shift_id: string): Promise<CashEventRow[]> =>
+  invoke("cash_events_list", { sessionToken, shiftId: shift_id });
 
-export const cashDrawerSummary = (actor_user_id: string, shift_id: string): Promise<CashDrawerSummary> =>
-  invoke("cash_drawer_summary", { actorUserId: actor_user_id, shiftId: shift_id });
+export const cashDrawerSummary = (sessionToken: SessionToken, shift_id: string): Promise<CashDrawerSummary> =>
+  invoke("cash_drawer_summary", { sessionToken, shiftId: shift_id });
 
-export const cashXReport = (shift_id: string, actor_user_id: string): Promise<CashDrawerSummary> =>
-  invoke("cash_x_report", { shiftId: shift_id, actorUserId: actor_user_id });
+export const cashXReport = (shift_id: string, sessionToken: SessionToken): Promise<CashDrawerSummary> =>
+  invoke("cash_x_report", { shiftId: shift_id, sessionToken });
 
 export const cashNoSale = (
-  shift_id:      string,
-  actor_user_id: string,
-  note?:         string,
+  shift_id:     string,
+  sessionToken: SessionToken,
+  note?:        string,
 ): Promise<NoSaleRow> =>
-  invoke("cash_no_sale", { shiftId: shift_id, actorUserId: actor_user_id, note: note ?? null });
+  invoke("cash_no_sale", { shiftId: shift_id, sessionToken, note: note ?? null });
 
 // ─── Product barcodes ─────────────────────────────────────────────────────────
 

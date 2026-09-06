@@ -13,13 +13,14 @@ import {
 import { useLanguage } from "../hooks/useLanguage";
 import { modalTranslator } from "../i18n/modalStrings";
 import { detailTranslator } from "../i18n/detailStrings";
+import type { SessionToken } from "../types";
 
 /** Groups shown at once. Each holds 2-3 product rows, so this is ~50 rows a
  *  page — enough to work through without the panel becoming unscrollable. */
 const GROUPS_PER_PAGE = 15;
 
 interface Props {
-  sessionUserId: string;
+  sessionToken: SessionToken;
   onClose: () => void;
   /** Notify parent (ProductsTab) to refresh its product list after a change. */
   onResolved: () => void;
@@ -35,7 +36,7 @@ type Pending =
 
 const gidOf = (g: DuplicateGroup, i: number) => `${i}|${g.match_type}|${g.match_key}`;
 
-export default function DuplicateProductsModal({ sessionUserId, onClose, onResolved }: Props) {
+export default function DuplicateProductsModal({ sessionToken, onClose, onResolved }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => modalTranslator(language), [language]);
   const dt = useMemo(() => detailTranslator(language), [language]);
@@ -55,7 +56,7 @@ export default function DuplicateProductsModal({ sessionUserId, onClose, onResol
     setLoading(true);
     setError(null);
     try {
-      const g = await adminFindDuplicateProducts(sessionUserId, includeInactive);
+      const g = await adminFindDuplicateProducts(sessionToken, includeInactive);
       setGroups(g);
       // Default keeper per group: most stock, then highest price, then first listed.
       const def: Record<string, string> = {};
@@ -71,7 +72,7 @@ export default function DuplicateProductsModal({ sessionUserId, onClose, onResol
     } finally {
       setLoading(false);
     }
-  }, [dt, sessionUserId, includeInactive]);
+  }, [dt, sessionToken, includeInactive]);
 
   useEffect(() => { scan(); }, [scan]);
 
@@ -92,11 +93,11 @@ export default function DuplicateProductsModal({ sessionUserId, onClose, onResol
     try {
       if (pending.kind === "merge-group") {
         for (const sid of pending.sources) {
-          await adminMergeProducts(sessionUserId, sid, pending.keeperId, transferHistory);
+          await adminMergeProducts(sessionToken, sid, pending.keeperId, transferHistory);
         }
       } else if (pending.kind === "delete-others" || pending.kind === "delete-one") {
         const ids = pending.kind === "delete-one" ? [pending.productId] : pending.sources;
-        for (const id of ids) await adminDeleteProduct(sessionUserId, id);
+        for (const id of ids) await adminDeleteProduct(sessionToken, id);
       } else if (pending.kind === "merge-all") {
         // Best-effort across groups — a product caught in two groups may already
         // be archived by an earlier merge, so tolerate per-call failures.
@@ -106,7 +107,7 @@ export default function DuplicateProductsModal({ sessionUserId, onClose, onResol
           for (const sid of p.sources) {
             if (archived.has(sid) || sid === p.keeperId) continue;
             try {
-              await adminMergeProducts(sessionUserId, sid, p.keeperId, transferHistory);
+              await adminMergeProducts(sessionToken, sid, p.keeperId, transferHistory);
               archived.add(sid);
             } catch {
               failed += 1;

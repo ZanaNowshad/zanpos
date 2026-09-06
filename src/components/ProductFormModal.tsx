@@ -17,6 +17,7 @@ import {
 } from "./modal/ModalParts";
 import { ProductBarcodesSection, ProductImageSection } from "./ProductFormSections";
 import MarketPricePanel from "./MarketPricePanel";
+import type { SessionToken } from "../types";
 
 interface Props {
   mode: "create" | "edit";
@@ -25,7 +26,7 @@ interface Props {
   prefilledBarcode?: string;
   categories: CategoryRow[];
   taxRules: TaxRuleRow[];
-  sessionUserId: string;
+  sessionToken: SessionToken;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -34,7 +35,7 @@ type PendingBarcode = { tempId: string; barcode: string };
 
 export default function ProductFormModal({
   mode, product, prefilledName, prefilledBarcode,
-  categories, taxRules, sessionUserId, onClose, onSaved,
+  categories, taxRules, sessionToken, onClose, onSaved,
 }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => modalTranslator(language), [language]);
@@ -71,9 +72,9 @@ export default function ProductFormModal({
 
   useEffect(() => {
     if (mode === "edit" && product) {
-      cmd.productBarcodesList(sessionUserId, product.product_id).then(setExtraBarcodes).catch(() => {});
+      cmd.productBarcodesList(sessionToken, product.product_id).then(setExtraBarcodes).catch(() => {});
     }
-  }, [mode, product, sessionUserId]);
+  }, [mode, product, sessionToken]);
 
   async function pickImage() {
     try {
@@ -105,7 +106,7 @@ export default function ProductFormModal({
     setImageSearchError(null);
     try {
       const categoryName = categories.find(c => c.category_id === categoryId)?.name;
-      const result = await cmd.adminSearchProductImage(sessionUserId, {
+      const result = await cmd.adminSearchProductImage(sessionToken, {
         productName: name.trim(),
         barcode: barcode.trim() || undefined,
         sku: sku.trim() || undefined,
@@ -144,7 +145,7 @@ export default function ProductFormModal({
     if (!bc || !product) return;
     setBarcodeErr(null);
     try {
-      const row = await cmd.productBarcodeAdd(sessionUserId, product.product_id, bc);
+      const row = await cmd.productBarcodeAdd(sessionToken, product.product_id, bc);
       setExtraBarcodes(p => [...p, row]);
       setNewBarcodeInput("");
       newBarcodeRef.current?.focus();
@@ -153,7 +154,7 @@ export default function ProductFormModal({
 
   async function removeBarcodeForEdit(id: string) {
     try {
-      await cmd.productBarcodeRemove(sessionUserId, id);
+      await cmd.productBarcodeRemove(sessionToken, id);
       setExtraBarcodes(p => p.filter(b => b.barcode_id !== id));
     } catch (e: unknown) { setBarcodeErr(typeof e === "string" ? e : t("failed")); }
   }
@@ -187,11 +188,11 @@ export default function ProductFormModal({
           sku: sku.trim() || undefined, barcode: barcode.trim() || undefined,
           tax_rule_id: taxRuleId || undefined, price_minor: priceMinor,
           track_inventory: trackInventory, allow_decimal_quantity: allowDecimal,
-          reorder_point: reorderPoint, created_by_user_id: sessionUserId,
+          reorder_point: reorderPoint,
           image_path: resolvedImage.value || undefined,
-        });
+        }, sessionToken);
         for (const pb of pendingBarcodes) {
-          try { await cmd.productBarcodeAdd(sessionUserId, created.product_id, pb.barcode); } catch { /* best-effort — extra-barcode failures must not block the save */ }
+          try { await cmd.productBarcodeAdd(sessionToken, created.product_id, pb.barcode); } catch { /* best-effort — extra-barcode failures must not block the save */ }
         }
       } else if (product) {
         await cmd.adminUpdateProduct({
@@ -200,8 +201,8 @@ export default function ProductFormModal({
           tax_rule_id: taxRuleId || undefined, price_minor: priceMinor,
           track_inventory: trackInventory, allow_decimal_quantity: allowDecimal,
           reorder_point: reorderPoint, is_active: isActive,
-          updated_by_user_id: sessionUserId, image_path: resolvedImage.value || undefined,
-        });
+          image_path: resolvedImage.value || undefined,
+        }, sessionToken);
       }
       onSaved();
     } catch (e: unknown) { setError(typeof e === "string" ? e : t("saveFailed")); }
@@ -342,7 +343,7 @@ export default function ProductFormModal({
         >
           <MarketPricePanel
             productId={product.product_id}
-            sessionUserId={sessionUserId}
+            sessionToken={sessionToken}
             onUsePrice={minor => setPrice(formatMoney(minor, exp))}
           />
         </ModalSection>

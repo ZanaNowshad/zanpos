@@ -110,7 +110,7 @@ export default function CommandSettingsPage({
         {section === "sales" && (
           <>
             <ReceiptsPage sessionUserId={sessionUserId} />
-            <BusinessRulesPage sessionUserId={sessionUserId} onStartPractice={onStartPractice} />
+            <BusinessRulesPage sessionUserId={sessionUserId} sessionToken={sessionToken} onStartPractice={onStartPractice} />
           </>
         )}
 

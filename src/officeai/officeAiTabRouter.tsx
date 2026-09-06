@@ -50,11 +50,11 @@ export interface DataTabContext {
 export function renderDataTab(ctx: DataTabContext): ReactNode {
   const { tab, tabKey, sessionUser, isOwner, isManager, productPrefill } = ctx;
   switch (tab) {
-      case "operations": return <ProductsTab key={tabKey} sessionUserId={sessionUser.user_id} sessionToken={sessionUser.session_token} prefill={productPrefill} onPrefillConsumed={() => ctx.onPrefillConsumed()} />;
-      case "products": return <ProductsTab key={tabKey} sessionUserId={sessionUser.user_id} sessionToken={sessionUser.session_token} prefill={productPrefill} onPrefillConsumed={() => ctx.onPrefillConsumed()} />;
-      case "categories": return <CategoriesTab key={tabKey} sessionUserId={sessionUser.user_id} />;
-      case "quickpos": return <QuickPosTab key={tabKey} sessionUserId={sessionUser.user_id} />;
-      case "users": return <UsersTab key={tabKey} sessionUserId={sessionUser.user_id} sessionToken={sessionUser.session_token} sessionRole={sessionUser.role_name} />;
+      case "operations": return <ProductsTab key={tabKey} sessionToken={sessionUser.session_token} prefill={productPrefill} onPrefillConsumed={() => ctx.onPrefillConsumed()} />;
+      case "products": return <ProductsTab key={tabKey} sessionToken={sessionUser.session_token} prefill={productPrefill} onPrefillConsumed={() => ctx.onPrefillConsumed()} />;
+      case "categories": return <CategoriesTab key={tabKey} sessionToken={sessionUser.session_token} />;
+      case "quickpos": return <QuickPosTab key={tabKey} sessionUserId={sessionUser.user_id} sessionToken={sessionUser.session_token} />;
+      case "users": return <UsersTab key={tabKey} sessionToken={sessionUser.session_token} sessionRole={sessionUser.role_name} />;
       case "riders": return <RidersPage key={tabKey} actorUserId={sessionUser.user_id} />;
       case "reports": return <ReportsTab key={tabKey} sessionUserId={sessionUser.user_id} />;
       case "cashier": return <CashierReportTab key={tabKey} sessionUserId={sessionUser.user_id} />;

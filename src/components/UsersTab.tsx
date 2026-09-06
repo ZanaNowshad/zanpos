@@ -10,9 +10,8 @@ import { Users, Pencil } from "lucide-react";
 const EMPTY_FORM = { display_name: "", username: "", pin: "", confirm_pin: "", role_id: "", is_active: true };
 
 interface Props {
-  sessionUserId: string;
-  /** Proof of who is administering. `sessionUserId` still identifies the
-   *  signed-in user for read filters, but authority comes from this. */
+  /** Proof of who is administering. Both the roster read and every write
+   *  derive the acting user from this. */
   sessionToken: SessionToken;
   /** The actor's own role. Only an owner may grant the owner role — the
    *  backend enforces it; this keeps the form from offering a choice that
@@ -20,7 +19,7 @@ interface Props {
   sessionRole: string;
 }
 
-export default function UsersTab({ sessionUserId, sessionToken, sessionRole }: Props) {
+export default function UsersTab({ sessionToken, sessionRole }: Props) {
   const { language } = useLanguage();
   const t = operationsTranslator(language);
   const [users, setUsers]       = useState<AdminUserRow[]>([]);
@@ -37,10 +36,10 @@ export default function UsersTab({ sessionUserId, sessionToken, sessionRole }: P
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    Promise.all([cmd.adminListUsersAll(sessionUserId), cmd.adminListRoles(sessionUserId)])
+    Promise.all([cmd.adminListUsersAll(sessionToken), cmd.adminListRoles(sessionToken)])
       .then(([u, r]) => { if (!cancelled) { setUsers(u); setRoles(r); setLoading(false); } });
     return () => { cancelled = true; };
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   function startCreate() {
     setSelected(null); setCreating(true);

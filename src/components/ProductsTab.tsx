@@ -17,7 +17,6 @@ import { productCatalogueColumns } from "./productCatalogueColumns";
 import { useProductImageFetch } from "./useProductImageFetch";
 
 interface Props {
-  sessionUserId: string;
   /** For inventory reads, which authenticate by session. */
   sessionToken: SessionToken;
   /** Pre-fill data to open the create form with (e.g. from a POS notification). */
@@ -28,7 +27,6 @@ interface Props {
 const PAGE_SIZE = 100;
 
 export default function ProductsTab({
-  sessionUserId,
   sessionToken,
   prefill,
   onPrefillConsumed,
@@ -65,7 +63,7 @@ export default function ProductsTab({
 
   const { imageSearchState, bulkImages, fetchProductImage, fetchMissingImages, stopBulk } =
     useProductImageFetch({
-      sessionUserId,
+      sessionToken,
       products,
       failureLabel: t("imageSearchFailed"),
       onImageSaved: (productId, imageUrl) => setProducts(current =>
@@ -85,7 +83,7 @@ export default function ProductsTab({
     setLoading(true);
     setLoadError(null);
     try {
-      const page = await cmd.adminListProducts(sessionUserId, {
+      const page = await cmd.adminListProducts(sessionToken, {
         search: q,
         categoryId: categoryId || undefined,
         view: v === "all" ? undefined : v,
@@ -102,7 +100,7 @@ export default function ProductsTab({
     } finally {
       setLoading(false);
     }
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   // Stock lives behind its own command. If it is unavailable the catalogue is
   // still fully usable — the column degrades to "—" rather than failing the page.
@@ -115,28 +113,28 @@ export default function ProductsTab({
       })
       .catch(() => { if (!cancelled) setStockByProduct(null); });
     return () => { cancelled = true; };
-  }, [sessionUserId, sessionToken]);
+  }, [sessionToken]);
 
   useEffect(() => {
     fetchProducts(search, offset, categoryFilter, view);
   }, [search, offset, categoryFilter, view, fetchProducts]);
 
   useEffect(() => {
-    Promise.all([cmd.adminListCategories(sessionUserId), cmd.adminListTaxRules(sessionUserId)])
+    Promise.all([cmd.adminListCategories(sessionToken), cmd.adminListTaxRules(sessionToken)])
       .then(([cats, taxes]) => {
         setCategories(cats.filter(c => c.is_active));
         setTaxRules(taxes);
       });
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   const scanDuplicateCount = useCallback(async () => {
     try {
-      const groups = await cmd.adminFindDuplicateProducts(sessionUserId, false);
+      const groups = await cmd.adminFindDuplicateProducts(sessionToken, false);
       setDuplicateCount(groups.reduce((n, g) => n + Math.max(0, g.products.length - 1), 0));
     } catch {
       setDuplicateCount(null);
     }
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   useEffect(() => {
     scanDuplicateCount();
@@ -201,7 +199,7 @@ export default function ProductsTab({
     setExportError(null);
     try {
       await exportProductCatalogue({
-        sessionUserId, search, categoryFilter, view,
+        sessionToken, search, categoryFilter, view,
         currencyExponent: exp, pageSize: PAGE_SIZE,
       });
     } catch (e) {
@@ -209,7 +207,7 @@ export default function ProductsTab({
     } finally {
       setExporting(false);
     }
-  }, [sessionUserId, search, categoryFilter, view, exp]);
+  }, [sessionToken, search, categoryFilter, view, exp]);
 
   /**
    * Catalogue counts.
@@ -252,7 +250,7 @@ export default function ProductsTab({
   return (
     <>
     {printProducts && <BarcodesPrintModal products={printProducts} onClose={() => setPrintProducts(null)} />}
-    {showBulkImport && <BulkImportModal mode="products" sessionUserId={sessionUserId} onClose={() => setShowBulkImport(false)} onDone={refreshProducts} />}
+    {showBulkImport && <BulkImportModal mode="products" sessionToken={sessionToken} onClose={() => setShowBulkImport(false)} onDone={refreshProducts} />}
 
     {showingForm && (
       <ProductFormModal
@@ -262,7 +260,7 @@ export default function ProductsTab({
         prefilledBarcode={localPrefill?.barcode}
         categories={categories}
         taxRules={taxRules}
-        sessionUserId={sessionUserId}
+        sessionToken={sessionToken}
         onClose={cancelEdit}
         onSaved={() => { cancelEdit(); refreshProducts(); }}
       />
@@ -270,7 +268,7 @@ export default function ProductsTab({
 
     {showDupModal && (
       <DuplicateProductsModal
-        sessionUserId={sessionUserId}
+        sessionToken={sessionToken}
         onClose={() => setShowDupModal(false)}
         onResolved={() => { refreshProducts(); scanDuplicateCount(); }}
       />

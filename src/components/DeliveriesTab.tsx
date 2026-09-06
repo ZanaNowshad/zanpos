@@ -148,12 +148,12 @@ export default function DeliveriesTab({ sessionUser }: Props) {
   // ── Load user map on mount (admins only) ──
   useEffect(() => {
     if (!isManager) return;
-    cmd.adminListUsersAll(sessionUser.user_id).then((users: AdminUserRow[]) => {
+    cmd.adminListUsersAll(sessionUser.session_token).then((users: AdminUserRow[]) => {
       const map = new Map<string, string>();
       users.forEach(u => map.set(u.user_id, u.display_name));
       setUserMap(map);
     }).catch(() => { /* non-critical */ });
-  }, [isManager, sessionUser.user_id]);
+  }, [isManager, sessionUser.session_token]);
 
   // ── Load rider suggestions ──
   useEffect(() => {

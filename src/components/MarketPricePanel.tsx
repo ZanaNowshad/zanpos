@@ -6,6 +6,7 @@ import {
 } from "../tauri/commands";
 import { formatMoney } from "../money";
 import { DEVICE } from "../types";
+import type { SessionToken } from "../types";
 
 /**
  * What other shops charge for this product, next to the box where its price is
@@ -40,10 +41,10 @@ function age(iso: string | null): string | null {
 }
 
 export default function MarketPricePanel({
-  productId, sessionUserId, onUsePrice,
+  productId, sessionToken, onUsePrice,
 }: {
   productId: string;
-  sessionUserId: string;
+  sessionToken: SessionToken;
   onUsePrice: (minor: number) => void;
 }) {
   const [report, setReport] = useState<MarketPriceReport | null>(null);
@@ -61,18 +62,18 @@ export default function MarketPricePanel({
 
   const load = useCallback(() => {
     setBusy("loading");
-    marketPriceCached(sessionUserId, productId)
+    marketPriceCached(sessionToken, productId)
       .then(receive)
       .catch(fail)
       .finally(() => setBusy("idle"));
-  }, [sessionUserId, productId]);
+  }, [sessionToken, productId]);
 
   useEffect(load, [load]);
 
   const search = () => {
     setBusy("searching");
     setError(null);
-    marketPriceSearch(sessionUserId, productId)
+    marketPriceSearch(sessionToken, productId)
       .then(receive)
       .catch(fail)
       .finally(() => setBusy("idle"));
@@ -80,7 +81,7 @@ export default function MarketPricePanel({
 
   const confirm = (candidate: MarketCandidate) => {
     setBusy("saving");
-    marketPriceConfirmMatch(sessionUserId, productId, candidate)
+    marketPriceConfirmMatch(sessionToken, productId, candidate)
       .then(receive)
       .catch(fail)
       .finally(() => setBusy("idle"));
@@ -88,7 +89,7 @@ export default function MarketPricePanel({
 
   const reject = (matchId: string) => {
     setBusy("saving");
-    marketPriceRejectMatch(sessionUserId, matchId)
+    marketPriceRejectMatch(sessionToken, matchId)
       .then(load)
       .catch(fail)
       .finally(() => setBusy("idle"));
@@ -96,7 +97,7 @@ export default function MarketPricePanel({
 
   const toggleWatch = (next: boolean) => {
     setTracked(next);
-    marketWatchlistSet(sessionUserId, productId, next).catch(cause => {
+    marketWatchlistSet(sessionToken, productId, next).catch(cause => {
       setTracked(!next);
       fail(cause);
     });

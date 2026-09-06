@@ -130,21 +130,6 @@ pub fn require_branch(
     }
 }
 
-/// Returns true if the user can override cross-device refund policy.
-/// Only manager and owner can authorise a cashier's cross-device refund.
-pub async fn can_override_refund(pool: &SqlitePool, user_id: &str) -> Result<bool, AppError> {
-    manager_or_owner(pool, user_id)
-        .await
-        .map(|_| true)
-        .or_else(|e| {
-            if matches!(e, AppError::Permission(_)) {
-                Ok(false)
-            } else {
-                Err(e)
-            }
-        })
-}
-
 // ─── Tests ───────────────────────────────────────────────────────────────────
 #[cfg(test)]
 mod tests {

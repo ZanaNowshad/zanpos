@@ -9,6 +9,7 @@ import StepProducts from "./StepProducts";
 import StepPrinter from "./StepPrinter";
 import StepGoLive from "./StepGoLive";
 import StepRestore from "./StepRestore";
+import type { SessionToken } from "../../types";
 
 interface Props {
   /** Called once every step is resolved, with the config the app should adopt.
@@ -23,6 +24,9 @@ interface Props {
 interface OwnerSession {
   userId: string;
   username: string;
+  /** The owner's live session. Steps that call session-authenticated
+   *  commands need this, not the id. */
+  token: SessionToken;
 }
 
 /**
@@ -34,7 +38,7 @@ interface OwnerSession {
  * "standard" is left alone deliberately — setup already seeds the default rule,
  * and writing a second one would leave two competing standard rates.
  */
-async function applyVatChoice(identity: IdentityDraft, ownerUserId: string) {
+async function applyVatChoice(identity: IdentityDraft, sessionToken: SessionToken) {
   if (identity.vatChoice === "standard") return;
   const ratePercent = identity.vatChoice === "none"
     ? 0
@@ -47,8 +51,7 @@ async function applyVatChoice(identity: IdentityDraft, ownerUserId: string) {
     rate_basis_points: Math.round(ratePercent * 100),
     inclusive: true,
     is_active: true,
-    actor_user_id: ownerUserId,
-  });
+  }, sessionToken);
 }
 
 /**
@@ -142,9 +145,13 @@ export default function OnboardingWizard({ onComplete }: Props) {
         owner_pin: draft.ownerPin,
       });
       const session = await authLoginPin(draft.ownerUsername, draft.ownerPin);
-      const next: OwnerSession = { userId: session.user_id, username: draft.ownerUsername };
+      const next: OwnerSession = {
+        userId: session.user_id,
+        username: draft.ownerUsername,
+        token: session.session_token,
+      };
       setOwner(next);
-      await applyVatChoice(identity, next.userId);
+      await applyVatChoice(identity, next.token);
       await markDone("identity", next.userId);
       await advance("owner_pin", next.userId);
     } catch (e) {
@@ -161,7 +168,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
     setError(null);
     try {
       const session = await authLoginPin(username, pin);
-      setOwner({ userId: session.user_id, username });
+      setOwner({ userId: session.user_id, username, token: session.session_token });
     } catch (e) {
       setError(String(e));
     } finally {
@@ -248,8 +255,8 @@ export default function OnboardingWizard({ onComplete }: Props) {
           <StepWhatsApp ownerUserId={owner!.userId} onDone={() => void advance("whatsapp", owner!.userId)} />
         ) : activeKey === "products" ? (
           <StepProducts
-            ownerUserId={owner!.userId}
             ownerUsername={owner!.username}
+            sessionToken={owner!.token}
             onDone={() => void advance("products", owner!.userId)}
           />
         ) : activeKey === "printer" ? (

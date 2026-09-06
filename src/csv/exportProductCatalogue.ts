@@ -1,6 +1,7 @@
 import type { AdminProduct } from "../types";
 import * as cmd from "../tauri/commands";
 import { downloadCsv, productsToCsv } from "./productsCsv";
+import type { SessionToken } from "../types";
 
 /**
  * Export every product the current filters select — not the visible page.
@@ -15,7 +16,7 @@ import { downloadCsv, productsToCsv } from "./productsCsv";
  * one: nothing here touches React state, and the caller owns the busy flag.
  */
 export async function exportProductCatalogue(options: {
-  sessionUserId: string;
+  sessionToken: SessionToken;
   search: string;
   categoryFilter: string;
   /** The saved view on screen. Sent with the query rather than applied to the
@@ -27,7 +28,7 @@ export async function exportProductCatalogue(options: {
 }): Promise<void> {
   const all: AdminProduct[] = [];
   for (let off = 0; ; off += options.pageSize) {
-    const page = await cmd.adminListProducts(options.sessionUserId, {
+    const page = await cmd.adminListProducts(options.sessionToken, {
       search: options.search,
       categoryId: options.categoryFilter || undefined,
       view: options.view === "all" ? undefined : options.view,

@@ -21,11 +21,17 @@ use tauri::State;
 /// What is already known, without touching the network.
 #[tauri::command]
 pub async fn market_price_cached(
-    actor_user_id: String,
+    session_token: String,
     product_id: String,
     state: State<'_, AppState>,
 ) -> Result<MarketPriceReport, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     service::cached_report(&state.db, &product_id).await
 }
 
@@ -33,11 +39,17 @@ pub async fn market_price_cached(
 /// this shop's time, not because the answer is sensitive.
 #[tauri::command]
 pub async fn market_price_search(
-    actor_user_id: String,
+    session_token: String,
     product_id: String,
     state: State<'_, AppState>,
 ) -> Result<MarketPriceReport, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     service::search(&state.db, &product_id).await
 }
 
@@ -48,12 +60,19 @@ pub async fn market_price_search(
 /// rather than one re-fetched in between and possibly changed.
 #[tauri::command]
 pub async fn market_price_confirm_match(
-    actor_user_id: String,
+    session_token: String,
     product_id: String,
     candidate: Candidate,
     state: State<'_, AppState>,
 ) -> Result<MarketPriceReport, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let actor_user_id = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?
+    .user_id;
     let branch_id = crate::db::helpers::active_branch_id(&state.db).await?;
     service::confirm_match(
         &state.db,
@@ -68,23 +87,35 @@ pub async fn market_price_confirm_match(
 /// Mark a stored pairing as wrong so it stops being offered.
 #[tauri::command]
 pub async fn market_price_reject_match(
-    actor_user_id: String,
+    session_token: String,
     match_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     matching::reject(&state.db, &match_id).await
 }
 
 /// Observations over time, trusted matches only.
 #[tauri::command]
 pub async fn market_price_history(
-    actor_user_id: String,
+    session_token: String,
     product_id: String,
     limit: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<Vec<Observation>, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     observe::history(&state.db, &product_id, limit.unwrap_or(100)).await
 }
 
@@ -95,22 +126,35 @@ pub async fn market_price_history(
 /// is the opposite of what it means.
 #[tauri::command]
 pub async fn market_source_status(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<SourceStatus>, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     service::source_statuses(&state.db).await
 }
 
 /// Add or remove a product from the refresh watchlist.
 #[tauri::command]
 pub async fn market_watchlist_set(
-    actor_user_id: String,
+    session_token: String,
     product_id: String,
     tracked: bool,
     state: State<'_, AppState>,
 ) -> Result<bool, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let actor_user_id = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?
+    .user_id;
     let branch_id = crate::db::helpers::active_branch_id(&state.db).await?;
     set_watchlist(&state.db, &product_id, &branch_id, &actor_user_id, tracked).await
 }

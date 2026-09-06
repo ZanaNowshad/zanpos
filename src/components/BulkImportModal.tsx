@@ -10,6 +10,7 @@ import {
 } from "../csv/productsCsv";
 import ModalShell from "./modal/ModalShell";
 import { ModalActions, ModalError, ModalSteps } from "./modal/ModalParts";
+import type { SessionToken } from "../types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -17,14 +18,14 @@ type Mode = "products" | "categories";
 
 interface Props {
   mode: Mode;
-  sessionUserId: string;
+  sessionToken: SessionToken;
   onClose: () => void;
   onDone: () => void; // refresh parent list after import
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }: Props) {
+export default function BulkImportModal({ mode, sessionToken, onClose, onDone }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => modalTranslator(language), [language]);
   const dt = useMemo(() => detailTranslator(language), [language]);
@@ -69,9 +70,9 @@ export default function BulkImportModal({ mode, sessionUserId, onClose, onDone }
     try {
       let res: BulkImportResult;
       if (isProducts) {
-        res = await cmd.adminBulkImportProducts(previewRows as BulkProductRow[], sessionUserId);
+        res = await cmd.adminBulkImportProducts(previewRows as BulkProductRow[], sessionToken);
       } else {
-        res = await cmd.adminBulkImportCategories(previewRows as BulkCategoryRow[], sessionUserId);
+        res = await cmd.adminBulkImportCategories(previewRows as BulkCategoryRow[], sessionToken);
       }
       setResult(res);
       setStep("result");

@@ -247,7 +247,7 @@ fn product_view_predicate(view: &str) -> Option<&'static str> {
 
 #[tauri::command]
 pub async fn admin_list_products(
-    actor_user_id: String,
+    session_token: String,
     search: Option<String>,
     category_id: Option<String>,
     view: Option<String>,
@@ -255,7 +255,7 @@ pub async fn admin_list_products(
     limit: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<AdminProductPage, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     let limit = limit.unwrap_or(100).min(500);
     let offset = offset.unwrap_or(0).max(0);
 
@@ -344,11 +344,11 @@ pub async fn admin_list_products(
 /// to the WebView.
 #[tauri::command]
 pub async fn admin_search_product_image(
-    actor_user_id: String,
+    session_token: String,
     request: ProductImageSearchRequest,
     state: State<'_, AppState>,
 ) -> Result<ProductImageSearchResult, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER).await?;
     search_product_image(request).await
 }
 
@@ -391,12 +391,14 @@ pub(crate) async fn persist_product_image(
 
 #[tauri::command]
 pub async fn admin_set_product_image(
-    actor_user_id: String,
+    session_token: String,
     product_id: String,
     image_url: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let actor_user_id = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?
+        .user_id;
     let previous = persist_product_image(&state.db, &product_id, &image_url).await?;
     sync_commands::schedule_immediate_sync(&state);
 
@@ -435,6 +437,9 @@ pub struct CreateProductInput {
     pub track_inventory: bool,
     pub allow_decimal_quantity: bool,
     pub reorder_point: i64,
+    /// Set from the caller's session before use. Anything sent here is
+    /// overwritten; it stays on the struct because the row records it.
+    #[serde(default)]
     pub created_by_user_id: String,
     pub image_path: Option<String>,
     pub cost_minor: Option<i64>,
@@ -444,10 +449,21 @@ pub struct CreateProductInput {
 
 #[tauri::command]
 pub async fn admin_create_product(
-    input: CreateProductInput,
+    mut input: CreateProductInput,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<AdminProduct, AppError> {
-    rbac::manager_or_owner(&state.db, &input.created_by_user_id).await?;
+    // The actor is written into the row and into the history that follows it, so
+    // it comes from the session; anything the payload carried in this field is
+    // overwritten.
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
+    input.created_by_user_id = actor.user_id;
 
     // IPC input validation — enforce bounds before any DB write
     let name_trimmed = input.name.trim();
@@ -614,6 +630,9 @@ pub struct UpdateProductInput {
     pub allow_decimal_quantity: bool,
     pub reorder_point: i64,
     pub is_active: bool,
+    /// Set from the caller's session before use. Anything sent here is
+    /// overwritten; it stays on the struct because the row records it.
+    #[serde(default)]
     pub updated_by_user_id: String,
     pub image_path: Option<String>,
     pub cost_minor: Option<i64>,
@@ -623,10 +642,21 @@ pub struct UpdateProductInput {
 
 #[tauri::command]
 pub async fn admin_update_product(
-    input: UpdateProductInput,
+    mut input: UpdateProductInput,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<AdminProduct, AppError> {
-    rbac::manager_or_owner(&state.db, &input.updated_by_user_id).await?;
+    // The actor is written into the row and into the history that follows it, so
+    // it comes from the session; anything the payload carried in this field is
+    // overwritten.
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
+    input.updated_by_user_id = actor.user_id;
 
     // IPC input validation — enforce bounds before any DB write
     let name_trimmed = input.name.trim();
@@ -853,11 +883,11 @@ pub async fn admin_update_product(
 /// for the back-office "Duplicate Products" triage screen. Manager/owner only.
 #[tauri::command]
 pub async fn admin_find_duplicate_products(
-    actor_user_id: String,
+    session_token: String,
     include_inactive: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<Vec<product_dedup_repo::DuplicateGroup>, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER).await?;
     product_dedup_repo::find_duplicate_groups(&state.db, include_inactive.unwrap_or(false)).await
 }
 
@@ -865,13 +895,15 @@ pub async fn admin_find_duplicate_products(
 /// optionally reassign sale history, then archive the source. Manager/owner only.
 #[tauri::command]
 pub async fn admin_merge_products(
-    actor_user_id: String,
+    session_token: String,
     source_product_id: String,
     target_product_id: String,
     transfer_history: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let actor_user_id = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?
+        .user_id;
     let transfer = transfer_history.unwrap_or(false);
     let outcome = product_dedup_repo::merge_products(
         &state.db,
@@ -917,11 +949,13 @@ pub async fn admin_merge_products(
 /// dropping the redundant entry rather than merging. Manager/owner only.
 #[tauri::command]
 pub async fn admin_delete_product(
-    actor_user_id: String,
+    session_token: String,
     product_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let actor_user_id = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?
+        .user_id;
     let name = product_dedup_repo::soft_delete_product(&state.db, &product_id).await?;
 
     let device_id = active_device_id(&state).await;
@@ -952,10 +986,10 @@ pub async fn admin_delete_product(
 
 #[tauri::command]
 pub async fn admin_list_categories(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<CategoryRow>, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     // Returns ALL categories (active + inactive) for the back-office admin view
     // so managers can re-activate archived categories. Product-grid and POS
     // code paths use a separate query filtered to is_active=1.
@@ -987,10 +1021,10 @@ pub async fn admin_list_categories(
 
 #[tauri::command]
 pub async fn admin_list_tax_rules(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<TaxRuleRow>, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     let rows = sqlx::query(
         "SELECT tax_rule_id, name, rate_basis_points, inclusive, is_active
          FROM tax_rules ORDER BY name",
@@ -1024,15 +1058,29 @@ pub struct SaveTaxRuleInput {
     pub rate_basis_points: i64,
     pub inclusive: bool,
     pub is_active: bool,
+    /// Set from the caller's session before use. Anything sent here is
+    /// overwritten; it stays on the struct because the row records it.
+    #[serde(default)]
     pub actor_user_id: String,
 }
 
 #[tauri::command]
 pub async fn admin_save_tax_rule(
-    input: SaveTaxRuleInput,
+    mut input: SaveTaxRuleInput,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<TaxRuleRow, AppError> {
-    rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
+    // The actor is written into the row and into the history that follows it, so
+    // it comes from the session; anything the payload carried in this field is
+    // overwritten.
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
+    input.actor_user_id = actor.user_id;
 
     let name = input.name.trim().to_string();
     if name.is_empty() {
@@ -1148,15 +1196,29 @@ pub async fn admin_save_tax_rule(
 #[derive(Deserialize)]
 pub struct DeleteTaxRuleInput {
     pub tax_rule_id: String,
+    /// Set from the caller's session before use. Anything sent here is
+    /// overwritten; it stays on the struct because the row records it.
+    #[serde(default)]
     pub actor_user_id: String,
 }
 
 #[tauri::command]
 pub async fn admin_delete_tax_rule(
-    input: DeleteTaxRuleInput,
+    mut input: DeleteTaxRuleInput,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
+    // The actor is written into the row and into the history that follows it, so
+    // it comes from the session; anything the payload carried in this field is
+    // overwritten.
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
+    input.actor_user_id = actor.user_id;
 
     let now = chrono::Utc::now().to_rfc3339();
     let affected = sqlx::query(
@@ -1212,15 +1274,29 @@ pub struct SaveCategoryInput {
     pub sort_order: i64,
     pub is_active: bool,
     pub parent_category_id: Option<String>,
+    /// Set from the caller's session before use. Anything sent here is
+    /// overwritten; it stays on the struct because the row records it.
+    #[serde(default)]
     pub actor_user_id: String,
 }
 
 #[tauri::command]
 pub async fn admin_save_category(
-    input: SaveCategoryInput,
+    mut input: SaveCategoryInput,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<CategoryRow, AppError> {
-    rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
+    // The actor is written into the row and into the history that follows it, so
+    // it comes from the session; anything the payload carried in this field is
+    // overwritten.
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
+    input.actor_user_id = actor.user_id;
     let now = chrono::Utc::now().to_rfc3339();
     // Determine audit event type before consuming input.category_id
     let is_update = input.category_id.is_some();
@@ -1431,10 +1507,10 @@ pub struct BulkImportResult {
 #[tauri::command]
 pub async fn admin_bulk_import_categories(
     rows: Vec<BulkCategoryRow>,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<BulkImportResult> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER).await?;
 
     // Determine the current max sort_order so auto-assigned ones don't collide.
     let max_order: i64 =
@@ -1523,10 +1599,12 @@ pub async fn admin_bulk_import_categories(
 #[tauri::command]
 pub async fn admin_bulk_import_products(
     rows: Vec<BulkProductRow>,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<BulkImportResult> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let actor_user_id = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?
+        .user_id;
 
     let now = chrono::Utc::now().to_rfc3339();
     let branch_id = active_branch_id(&state).await?;
@@ -1862,10 +1940,10 @@ pub async fn admin_bulk_import_products(
 
 #[tauri::command]
 pub async fn admin_list_users_all(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<AdminUserRow>, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     let rows = sqlx::query(
         "SELECT u.user_id, u.display_name, u.username, u.role_id, u.is_active, u.last_login_at,
                 r.name AS role_name
@@ -1894,10 +1972,10 @@ pub async fn admin_list_users_all(
 
 #[tauri::command]
 pub async fn admin_list_roles(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<RoleRow>, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     let rows = sqlx::query("SELECT role_id, name FROM roles ORDER BY name")
         .fetch_all(&state.db)
         .await?;
@@ -2150,12 +2228,14 @@ pub async fn admin_create_user(
 
 #[tauri::command]
 pub async fn product_barcode_add(
-    actor_user_id: String,
+    session_token: String,
     product_id: String,
     barcode: String,
     state: State<'_, AppState>,
 ) -> AppResult<ProductBarcodeRow> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let actor_user_id = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?
+        .user_id;
     let barcode = barcode.trim().to_string();
     if barcode.is_empty() {
         return Err(AppError::Validation("Barcode is required".into()));
@@ -2225,11 +2305,13 @@ pub async fn product_barcode_add(
 
 #[tauri::command]
 pub async fn product_barcode_remove(
-    actor_user_id: String,
+    session_token: String,
     barcode_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let actor_user_id = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?
+        .user_id;
 
     // Fetch the barcode record before deleting so we can audit it
     let record =
@@ -2284,11 +2366,11 @@ pub async fn product_barcode_remove(
 
 #[tauri::command]
 pub async fn product_barcodes_list(
-    actor_user_id: String,
+    session_token: String,
     product_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ProductBarcodeRow>> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     let rows = sqlx::query(
         "SELECT barcode_id, product_id, barcode, created_at
          FROM product_barcodes WHERE product_id = ? AND deleted_at IS NULL ORDER BY created_at",

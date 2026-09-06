@@ -1,9 +1,10 @@
 import { useState } from "react";
 import BulkImportModal from "../BulkImportModal";
 import ProductsZanAiPanel from "./ProductsZanAiPanel";
+import type { SessionToken } from "../../types";
 
 interface Props {
-  ownerUserId: string;
+  sessionToken: SessionToken;
   ownerUsername: string;
   onDone: () => void;
 }
@@ -14,7 +15,7 @@ type Choice = "menu" | "paste" | "csv";
  * import (BulkImportModal — already reports skipped rows in detail, never
  * silently swallowed), or start empty. All three are equally valid and this
  * step is fully skippable via "start empty". */
-export default function StepProducts({ ownerUserId, ownerUsername, onDone }: Props) {
+export default function StepProducts({ ownerUsername, sessionToken, onDone }: Props) {
   const [choice, setChoice] = useState<Choice>("menu");
   const [addedCount, setAddedCount] = useState(0);
 
@@ -61,7 +62,7 @@ export default function StepProducts({ ownerUserId, ownerUsername, onDone }: Pro
       {choice === "csv" && (
         <BulkImportModal
           mode="products"
-          sessionUserId={ownerUserId}
+          sessionToken={sessionToken}
           onClose={() => setChoice("menu")}
           onDone={() => setAddedCount(n => n + 1)}
         />

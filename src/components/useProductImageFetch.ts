@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import type { AdminProduct } from "../types";
 import * as cmd from "../tauri/commands";
+import type { SessionToken } from "../types";
 
 export interface BulkImageProgress { done: number; total: number; failed: number }
 
@@ -13,7 +14,7 @@ export interface BulkImageProgress { done: number; total: number; failed: number
  * only needs to render them.
  */
 export function useProductImageFetch(options: {
-  sessionUserId: string;
+  sessionToken: SessionToken;
   /** The page the bulk run works over. */
   products: AdminProduct[];
   failureLabel: string;
@@ -66,7 +67,7 @@ export function useProductImageFetch(options: {
     [product.product_id]: { loading: true },
   }));
   try {
-    const result = await cmd.adminSearchProductImage(options.sessionUserId, {
+    const result = await cmd.adminSearchProductImage(options.sessionToken, {
       productName: product.name,
       barcode: product.barcode ?? undefined,
       sku: product.sku ?? undefined,
@@ -74,7 +75,7 @@ export function useProductImageFetch(options: {
       currentImageUrl: product.image_path ?? undefined,
       mode: product.image_path ? "change" : "fetch",
     });
-    await cmd.adminSetProductImage(options.sessionUserId, product.product_id, result.imageUrl);
+    await cmd.adminSetProductImage(options.sessionToken, product.product_id, result.imageUrl);
       options.onImageSaved(product.product_id, result.imageUrl);
     setImageSearchState(current => ({ ...current, [product.product_id]: { loading: false } }));
     return true;

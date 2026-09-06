@@ -5,10 +5,11 @@ import BulkImportModal from "./BulkImportModal";
 import CategoryFormModal from "./CategoryFormModal";
 import { PageTemplate, EmptyState, LoadingSkeleton, DataTable } from "./templates";
 import { Pencil, Tag } from "lucide-react";
+import type { SessionToken } from "../types";
 
-interface Props { sessionUserId: string; }
+interface Props { sessionToken: SessionToken; }
 
-export default function CategoriesTab({ sessionUserId }: Props) {
+export default function CategoriesTab({ sessionToken }: Props) {
   const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [loading, setLoading]       = useState(true);
   const [selected, setSelected]     = useState<CategoryRow | null>(null);
@@ -18,11 +19,11 @@ export default function CategoriesTab({ sessionUserId }: Props) {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    cmd.adminListCategories(sessionUserId).then(data => {
+    cmd.adminListCategories(sessionToken).then(data => {
       if (!cancelled) { setCategories(data); setLoading(false); }
     });
     return () => { cancelled = true; };
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   function startCreate() { setSelected(null); setCreating(true); }
   function startEdit(c: CategoryRow) { setCreating(false); setSelected(c); }
@@ -32,14 +33,14 @@ export default function CategoriesTab({ sessionUserId }: Props) {
 
   async function refreshCategories() {
     setLoading(true);
-    const cats = await cmd.adminListCategories(sessionUserId);
+    const cats = await cmd.adminListCategories(sessionToken);
     setCategories(cats);
     setLoading(false);
   }
 
   return (
     <>
-    {showBulkImport && <BulkImportModal mode="categories" sessionUserId={sessionUserId} onClose={() => setShowBulkImport(false)} onDone={refreshCategories} />}
+    {showBulkImport && <BulkImportModal mode="categories" sessionToken={sessionToken} onClose={() => setShowBulkImport(false)} onDone={refreshCategories} />}
 
     {showingForm && (
       <CategoryFormModal
@@ -47,7 +48,7 @@ export default function CategoriesTab({ sessionUserId }: Props) {
         category={selected}
         nextOrder={Math.max(0, ...categories.map(c => c.sort_order)) + 1}
         categories={categories}
-        sessionUserId={sessionUserId}
+        sessionToken={sessionToken}
         onClose={cancelEdit}
         onSaved={() => { cancelEdit(); refreshCategories(); }}
       />

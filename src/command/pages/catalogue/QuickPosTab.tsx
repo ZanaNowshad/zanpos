@@ -8,9 +8,11 @@ import { DEVICE } from "../../../types";
 import { formatMoney } from "../../../money";
 import ProductThumb from "../../../components/ProductThumb";
 import "./quickpos.css";
+import type { SessionToken } from "../../../types";
 
 interface Props {
   sessionUserId: string;
+  sessionToken: SessionToken;
 }
 
 /** Rows per page in the picker. Sized so a page fills the dialog without the
@@ -29,7 +31,7 @@ const PICKER_PAGE = 8;
  * product that is later deactivated shows here as an empty slot rather than a
  * tile the cashier cannot sell.
  */
-export default function QuickPosTab({ sessionUserId }: Props) {
+export default function QuickPosTab({ sessionUserId, sessionToken }: Props) {
   const [slots, setSlots] = useState<QuickPosSlot[]>([]);
   const [picking, setPicking] = useState<number | null>(null);
   const [query, setQuery] = useState("");
@@ -60,7 +62,7 @@ export default function QuickPosTab({ sessionUserId }: Props) {
     let cancelled = false;
     const id = setTimeout(async () => {
       try {
-        const page = await adminListProducts(sessionUserId, {
+        const page = await adminListProducts(sessionToken, {
           search: query.trim() || undefined, limit: PICKER_PAGE, offset,
         });
         if (cancelled) return;
@@ -71,7 +73,7 @@ export default function QuickPosTab({ sessionUserId }: Props) {
       }
     }, 220);
     return () => { cancelled = true; clearTimeout(id); };
-  }, [picking, query, offset, sessionUserId]);
+  }, [picking, query, offset, sessionToken]);
 
   const productIds = useMemo(() => slots.map(slot => slot.product_id), [slots]);
 

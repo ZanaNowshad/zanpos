@@ -768,11 +768,11 @@ export type ProductView =
   | "no_barcode" | "no_image";
 
 export const adminListProducts = (
-  actor_user_id: string,
+  sessionToken: SessionToken,
   opts?: { search?: string; categoryId?: string; view?: ProductView; offset?: number; limit?: number }
 ): Promise<AdminProductPage> =>
   invoke("admin_list_products", {
-    actorUserId: actor_user_id,
+    sessionToken,
     search: opts?.search ?? null,
     categoryId: opts?.categoryId ?? null,
     view: opts?.view ?? null,
@@ -822,66 +822,66 @@ export interface ProductImageSearchResult {
 }
 
 export const adminSearchProductImage = (
-  actor_user_id: string,
+  sessionToken: SessionToken,
   request: ProductImageSearchRequest,
 ): Promise<ProductImageSearchResult> =>
-  invoke("admin_search_product_image", { actorUserId: actor_user_id, request });
+  invoke("admin_search_product_image", { sessionToken, request });
 
 export const adminSetProductImage = (
-  actor_user_id: string,
+  sessionToken: SessionToken,
   productId: string,
   imageUrl: string,
 ): Promise<void> =>
-  invoke("admin_set_product_image", { actorUserId: actor_user_id, productId, imageUrl });
+  invoke("admin_set_product_image", { sessionToken, productId, imageUrl });
 
 export const adminCreateProduct = (input: {
   category_id: string; name: string; sku?: string; barcode?: string;
   tax_rule_id?: string; price_minor: number;
   track_inventory: boolean; allow_decimal_quantity: boolean;
-  reorder_point: number; created_by_user_id: string;
+  reorder_point: number;
   image_path?: string;
-}): Promise<AdminProduct> =>
-  invoke("admin_create_product", { input });
+}, sessionToken: SessionToken): Promise<AdminProduct> =>
+  invoke("admin_create_product", { input, sessionToken });
 
 export const adminUpdateProduct = (input: {
   product_id: string; category_id: string; name: string; sku?: string; barcode?: string;
   tax_rule_id?: string; price_minor: number;
   track_inventory: boolean; allow_decimal_quantity: boolean;
-  reorder_point: number; is_active: boolean; updated_by_user_id: string;
+  reorder_point: number; is_active: boolean;
   image_path?: string;
-}): Promise<AdminProduct> =>
-  invoke("admin_update_product", { input });
+}, sessionToken: SessionToken): Promise<AdminProduct> =>
+  invoke("admin_update_product", { input, sessionToken });
 
 /** Scan the whole catalog for duplicate products (by name, barcode, SKU). Manager+ only. */
 export const adminFindDuplicateProducts = (
-  actor_user_id: string,
+  sessionToken: SessionToken,
   includeInactive = false,
 ): Promise<DuplicateGroup[]> =>
-  invoke("admin_find_duplicate_products", { actorUserId: actor_user_id, includeInactive });
+  invoke("admin_find_duplicate_products", { sessionToken, includeInactive });
 
 /** Merge a duplicate product into another — combines stock, archives the source. Manager+ only. */
 export const adminMergeProducts = (
-  actor_user_id: string,
+  sessionToken: SessionToken,
   sourceProductId: string,
   targetProductId: string,
   transferHistory = false,
 ): Promise<void> =>
   invoke("admin_merge_products", {
-    actorUserId: actor_user_id,
+    sessionToken,
     sourceProductId,
     targetProductId,
     transferHistory,
   });
 
 /** Soft-delete (archive) a single product. Manager+ only. */
-export const adminDeleteProduct = (actor_user_id: string, productId: string): Promise<void> =>
-  invoke("admin_delete_product", { actorUserId: actor_user_id, productId });
+export const adminDeleteProduct = (sessionToken: SessionToken, productId: string): Promise<void> =>
+  invoke("admin_delete_product", { sessionToken, productId });
 
-export const adminListCategories = (actor_user_id: string): Promise<CategoryRow[]> =>
-  invoke("admin_list_categories", { actorUserId: actor_user_id });
+export const adminListCategories = (sessionToken: SessionToken): Promise<CategoryRow[]> =>
+  invoke("admin_list_categories", { sessionToken });
 
-export const adminListTaxRules = (actor_user_id: string): Promise<TaxRuleRow[]> =>
-  invoke("admin_list_tax_rules", { actorUserId: actor_user_id });
+export const adminListTaxRules = (sessionToken: SessionToken): Promise<TaxRuleRow[]> =>
+  invoke("admin_list_tax_rules", { sessionToken });
 
 export const adminSaveTaxRule = (input: {
   tax_rule_id?: string;
@@ -889,17 +889,16 @@ export const adminSaveTaxRule = (input: {
   rate_basis_points: number;
   inclusive: boolean;
   is_active: boolean;
-  actor_user_id: string;
-}): Promise<TaxRuleRow> =>
-  invoke("admin_save_tax_rule", { input });
+}, sessionToken: SessionToken): Promise<TaxRuleRow> =>
+  invoke("admin_save_tax_rule", { input, sessionToken });
 
-export const adminDeleteTaxRule = (tax_rule_id: string, actor_user_id: string): Promise<void> =>
-  invoke("admin_delete_tax_rule", { input: { tax_rule_id, actor_user_id } });
+export const adminDeleteTaxRule = (tax_rule_id: string, sessionToken: SessionToken): Promise<void> =>
+  invoke("admin_delete_tax_rule", { input: { tax_rule_id }, sessionToken });
 
 export const adminSaveCategory = (input: {
-  category_id?: string; name: string; sort_order: number; is_active: boolean; parent_category_id?: string; actor_user_id: string;
-}): Promise<CategoryRow> =>
-  invoke("admin_save_category", { input });
+  category_id?: string; name: string; sort_order: number; is_active: boolean; parent_category_id?: string;
+}, sessionToken: SessionToken): Promise<CategoryRow> =>
+  invoke("admin_save_category", { input, sessionToken });
 
 // Bulk CSV import
 export interface BulkCategoryRow { name: string; sort_order?: number; }
@@ -913,17 +912,17 @@ export interface BulkProductRow {
 export interface BulkRowError { row: number; name: string; reason: string; }
 export interface BulkImportResult { inserted: number; skipped: number; errors: BulkRowError[]; }
 
-export const adminBulkImportCategories = (rows: BulkCategoryRow[], actorUserId: string): Promise<BulkImportResult> =>
-  invoke("admin_bulk_import_categories", { rows, actorUserId });
+export const adminBulkImportCategories = (rows: BulkCategoryRow[], sessionToken: SessionToken): Promise<BulkImportResult> =>
+  invoke("admin_bulk_import_categories", { rows, sessionToken });
 
-export const adminBulkImportProducts = (rows: BulkProductRow[], actorUserId: string): Promise<BulkImportResult> =>
-  invoke("admin_bulk_import_products", { rows, actorUserId });
+export const adminBulkImportProducts = (rows: BulkProductRow[], sessionToken: SessionToken): Promise<BulkImportResult> =>
+  invoke("admin_bulk_import_products", { rows, sessionToken });
 
-export const adminListUsersAll = (actor_user_id: string): Promise<AdminUserRow[]> =>
-  invoke("admin_list_users_all", { actorUserId: actor_user_id });
+export const adminListUsersAll = (sessionToken: SessionToken): Promise<AdminUserRow[]> =>
+  invoke("admin_list_users_all", { sessionToken });
 
-export const adminListRoles = (actor_user_id: string): Promise<RoleRow[]> =>
-  invoke("admin_list_roles", { actorUserId: actor_user_id });
+export const adminListRoles = (sessionToken: SessionToken): Promise<RoleRow[]> =>
+  invoke("admin_list_roles", { sessionToken });
 
 export const adminCreateUser = (input: {
   display_name: string; username: string; pin: string; role_id: string; session_token: SessionToken;
@@ -1190,14 +1189,14 @@ export const cashNoSale = (
 
 // ─── Product barcodes ─────────────────────────────────────────────────────────
 
-export const productBarcodeAdd = (actorUserId: string, product_id: string, barcode: string): Promise<ProductBarcodeRow> =>
-  invoke("product_barcode_add", { actorUserId, productId: product_id, barcode });
+export const productBarcodeAdd = (sessionToken: SessionToken, product_id: string, barcode: string): Promise<ProductBarcodeRow> =>
+  invoke("product_barcode_add", { sessionToken, productId: product_id, barcode });
 
-export const productBarcodeRemove = (actorUserId: string, barcode_id: string): Promise<void> =>
-  invoke("product_barcode_remove", { actorUserId, barcodeId: barcode_id });
+export const productBarcodeRemove = (sessionToken: SessionToken, barcode_id: string): Promise<void> =>
+  invoke("product_barcode_remove", { sessionToken, barcodeId: barcode_id });
 
-export const productBarcodesList = (actor_user_id: string, product_id: string): Promise<ProductBarcodeRow[]> =>
-  invoke("product_barcodes_list", { actorUserId: actor_user_id, productId: product_id });
+export const productBarcodesList = (sessionToken: SessionToken, product_id: string): Promise<ProductBarcodeRow[]> =>
+  invoke("product_barcodes_list", { sessionToken, productId: product_id });
 
 // ─── New pilot-hardening commands ─────────────────────────────────────────────
 
@@ -1846,45 +1845,45 @@ export interface MarketPriceReport {
 
 /** What is already known, without touching the network. */
 export const marketPriceCached = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   productId: string,
 ): Promise<MarketPriceReport> =>
-  invoke("market_price_cached", { actorUserId, productId });
+  invoke("market_price_cached", { sessionToken, productId });
 
 /** Go and look. Slow by nature — it is fetching from other retailers. */
 export const marketPriceSearch = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   productId: string,
 ): Promise<MarketPriceReport> =>
-  invoke("market_price_search", { actorUserId, productId });
+  invoke("market_price_search", { sessionToken, productId });
 
 /** Record that a candidate really is this product. The candidate is passed back
  *  verbatim so the pairing is stored against the listing that was looked at. */
 export const marketPriceConfirmMatch = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   productId: string,
   candidate: MarketCandidate,
 ): Promise<MarketPriceReport> =>
-  invoke("market_price_confirm_match", { actorUserId, productId, candidate });
+  invoke("market_price_confirm_match", { sessionToken, productId, candidate });
 
 export const marketPriceRejectMatch = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   matchId: string,
-): Promise<void> => invoke("market_price_reject_match", { actorUserId, matchId });
+): Promise<void> => invoke("market_price_reject_match", { sessionToken, matchId });
 
 export const marketPriceHistory = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   productId: string,
   limit?: number,
 ): Promise<MarketObservation[]> =>
-  invoke("market_price_history", { actorUserId, productId, limit: limit ?? null });
+  invoke("market_price_history", { sessionToken, productId, limit: limit ?? null });
 
 export const marketSourceStatus = (
-  actorUserId: string,
-): Promise<MarketSourceStatus[]> => invoke("market_source_status", { actorUserId });
+  sessionToken: SessionToken,
+): Promise<MarketSourceStatus[]> => invoke("market_source_status", { sessionToken });
 
 export const marketWatchlistSet = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   productId: string,
   tracked: boolean,
-): Promise<boolean> => invoke("market_watchlist_set", { actorUserId, productId, tracked });
+): Promise<boolean> => invoke("market_watchlist_set", { sessionToken, productId, tracked });

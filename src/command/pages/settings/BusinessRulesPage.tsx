@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import type { BusinessFlags, TaxRuleRow } from "../../../types";
 import { businessFlagsLoad, businessFlagsSave, adminListTaxRules, adminSaveTaxRule, adminDeleteTaxRule } from "../../../tauri/commands";
 import BusinessTab from "../../../components/settings/BusinessTab";
+import type { SessionToken } from "../../../types";
 
-interface Props { sessionUserId: string; onStartPractice?: () => void; }
+interface Props { sessionUserId: string; sessionToken: SessionToken; onStartPractice?: () => void; }
 
-export default function BusinessRulesPage({ sessionUserId, onStartPractice }: Props) {
+export default function BusinessRulesPage({ sessionUserId, sessionToken, onStartPractice }: Props) {
   const [flags, setFlags] = useState<BusinessFlags>({ allow_negative_stock: false, require_discount_reason: true, cashier_can_discount: false, auto_print_receipt: false });
   const [taxRules, setTaxRules] = useState<TaxRuleRow[]>([]);
   const [editingRule, setEditingRule] = useState<Partial<TaxRuleRow> & { rate_basis_points?: number } | null>(null);
@@ -18,11 +19,11 @@ export default function BusinessRulesPage({ sessionUserId, onStartPractice }: Pr
   useEffect(() => {
     Promise.all([
       businessFlagsLoad().catch(() => ({ allow_negative_stock: false, require_discount_reason: true, cashier_can_discount: false, auto_print_receipt: false }) as BusinessFlags),
-      adminListTaxRules(sessionUserId).catch(() => [] as TaxRuleRow[]),
+      adminListTaxRules(sessionToken).catch(() => [] as TaxRuleRow[]),
     ])
       .then(([f, rules]) => { setFlags(f); setTaxRules(rules); })
       .finally(() => setLoading(false));
-  }, [sessionUserId]);
+  }, [sessionUserId, sessionToken]);
 
   const handleSaveFlags = async () => {
     setSavingFlags(true); setFlagsError(null);
@@ -39,8 +40,7 @@ export default function BusinessRulesPage({ sessionUserId, onStartPractice }: Pr
         tax_rule_id: editingRule.tax_rule_id, name: (editingRule.name ?? "").trim(),
         rate_basis_points: editingRule.rate_basis_points ?? 0,
         inclusive: editingRule.inclusive ?? false, is_active: editingRule.is_active ?? true,
-        actor_user_id: sessionUserId,
-      });
+      }, sessionToken);
       setTaxRules(prev => { const i = prev.findIndex(r => r.tax_rule_id === saved.tax_rule_id); if (i >= 0) { const n = [...prev]; n[i] = saved; return n; } return [...prev, saved]; });
       setEditingRule(null);
     } catch (e: unknown) { setTaxRuleError(typeof e === "string" ? e : "Failed to save"); }
@@ -49,7 +49,7 @@ export default function BusinessRulesPage({ sessionUserId, onStartPractice }: Pr
 
   const handleDeleteTaxRule = async (id: string) => {
     setSavingRule(true);
-    try { await adminDeleteTaxRule(id, sessionUserId); setTaxRules(prev => prev.filter(r => r.tax_rule_id !== id)); setEditingRule(null); }
+    try { await adminDeleteTaxRule(id, sessionToken); setTaxRules(prev => prev.filter(r => r.tax_rule_id !== id)); setEditingRule(null); }
     finally { setSavingRule(false); }
   };
 

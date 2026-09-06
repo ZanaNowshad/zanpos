@@ -14,6 +14,7 @@ import type { BulkCategoryRow, BulkProductRow, BulkImportResult } from "../tauri
 import type { PullSummary } from "../tauri/commands";
 import WhatsAppQRModal from "../components/WhatsAppQRModal";
 import OnboardingWizard from "../components/onboarding/OnboardingWizard";
+import type { SessionToken } from "../types";
 
 interface Props {
   initialConfig: AppConfig;
@@ -199,11 +200,11 @@ function downloadWizardTemplate(mode: "categories" | "products") {
 interface CsvSectionProps {
   title: string;
   mode: "categories" | "products";
-  userId: string;
+  sessionToken: SessionToken;
   onImported: () => void;
 }
 
-function CsvSection({ title, mode, userId, onImported }: CsvSectionProps) {
+function CsvSection({ title, mode, sessionToken, onImported }: CsvSectionProps) {
   const [parsed, setParsed]     = useState<string[][]>([]);
   const [result, setResult]     = useState<BulkImportResult | null>(null);
   const [importing, setImporting] = useState(false);
@@ -226,8 +227,8 @@ function CsvSection({ title, mode, userId, onImported }: CsvSectionProps) {
     setImporting(true); setErr(null);
     try {
       const res = mode === "categories"
-        ? await adminBulkImportCategories(rows as BulkCategoryRow[], userId)
-        : await adminBulkImportProducts(rows as BulkProductRow[], userId);
+        ? await adminBulkImportCategories(rows as BulkCategoryRow[], sessionToken)
+        : await adminBulkImportProducts(rows as BulkProductRow[], sessionToken);
       setResult(res);
       if (res.inserted > 0) onImported();
     } catch (e: unknown) {
@@ -313,7 +314,10 @@ function CsvSection({ title, mode, userId, onImported }: CsvSectionProps) {
 function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig) => void; onMigrate: (cfg: AppConfig) => void }) {
   const [step, setStep] = useState<NewStep>(2); // skip path-selector inside sub-wizard
   const [completedConfig, setCompletedConfig] = useState<AppConfig | null>(null); // set when step 8 is reached
-  const [ownerUserId, setOwnerUserId] = useState(""); // resolved after setup completes
+  // Both resolved after setup completes. The CSV import on step 8 is
+  // session-authenticated, so it needs the token the wizard was handed, not
+  // the owner id.
+  const [ownerSessionToken, setOwnerSessionToken] = useState<SessionToken | null>(null);
 
   // Step 2 — Hub (multi-terminal)
   const [enableHub, setEnableHub] = useState(true);
@@ -418,7 +422,7 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
     if (enableHub && cfg.owner_session_token) {
       try { await hubEnable(cfg.owner_session_token, parseInt(hubPort, 10) || 8923); } catch { /* ignore */ }
     }
-    setOwnerUserId(cfg.owner_user_id ?? "");
+    setOwnerSessionToken(cfg.owner_session_token);
     setStep(8);
   };
 
@@ -720,14 +724,14 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
           <CsvSection
             title="1. Categories"
             mode="categories"
-            userId={ownerUserId}
+            sessionToken={ownerSessionToken!}
             onImported={() => {}}
           />
 
           <CsvSection
             title="2. Products"
             mode="products"
-            userId={ownerUserId}
+            sessionToken={ownerSessionToken!}
             onImported={() => {}}
           />
 

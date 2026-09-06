@@ -6,6 +6,7 @@ import { useLanguage } from "../hooks/useLanguage";
 import { modalTranslator } from "../i18n/modalStrings";
 import ModalShell from "./modal/ModalShell";
 import { Field, ModalActions, ModalError, ModalSection, ModalToggle } from "./modal/ModalParts";
+import type { SessionToken } from "../types";
 
 interface Props {
   mode: "create" | "edit";
@@ -13,13 +14,13 @@ interface Props {
   nextOrder: number;
   /** The rest of the tree, so the parent field can be a choice rather than an id. */
   categories: CategoryRow[];
-  sessionUserId: string;
+  sessionToken: SessionToken;
   onClose: () => void;
   onSaved: () => void;
 }
 
 export default function CategoryFormModal({
-  mode, category, nextOrder, categories, sessionUserId, onClose, onSaved,
+  mode, category, nextOrder, categories, sessionToken, onClose, onSaved,
 }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => modalTranslator(language), [language]);
@@ -48,8 +49,7 @@ export default function CategoryFormModal({
         sort_order: sortOrder,
         is_active: isActive,
         parent_category_id: parentId.trim() || undefined,
-        actor_user_id: sessionUserId,
-      });
+      }, sessionToken);
       onSaved();
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : t("saveFailed"));

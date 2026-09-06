@@ -5,13 +5,14 @@ import {
   selectSendContext,
   serializeSurfaceContext,
 } from "../zanai/zanAiState";
+import { asSessionToken } from "../types";
 
 describe("shared ZanAI runtime identity", () => {
   it("keeps one runtime only for the same token, user, and branch", () => {
-    const identity = { sessionToken: "t1", userId: "u1", branchId: "b1" };
+    const identity = { sessionToken: asSessionToken("t1"), userId: "u1", branchId: "b1" };
 
     expect(sameRuntimeIdentity(identity, { ...identity })).toBe(true);
-    expect(sameRuntimeIdentity(identity, { ...identity, sessionToken: "t2" })).toBe(false);
+    expect(sameRuntimeIdentity(identity, { ...identity, sessionToken: asSessionToken("t2") })).toBe(false);
     expect(sameRuntimeIdentity(identity, { ...identity, userId: "u2" })).toBe(false);
     expect(sameRuntimeIdentity(identity, { ...identity, branchId: "b2" })).toBe(false);
   });

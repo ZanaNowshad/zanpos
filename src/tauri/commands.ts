@@ -318,10 +318,10 @@ export const posFinalizeSale = (
   return invoke("pos_finalize_sale", { input: { cart, payments, idempotency_key, customer_id, delivery } });
 };
 
-export const posApplyBillDiscount = (cart: Cart, discount_minor: number, reason: string, session_token: string, manager_override_token?: string): Promise<Cart> =>
+export const posApplyBillDiscount = (cart: Cart, discount_minor: number, reason: string, session_token: SessionToken, manager_override_token?: string): Promise<Cart> =>
   invoke("pos_apply_bill_discount", { input: { cart, discount_minor, reason, session_token, manager_override_token } });
 
-export const posApplyLineDiscount = (cart: Cart, cart_line_id: string, discount_minor: number, reason: string, session_token: string, manager_override_token?: string): Promise<Cart> =>
+export const posApplyLineDiscount = (cart: Cart, cart_line_id: string, discount_minor: number, reason: string, session_token: SessionToken, manager_override_token?: string): Promise<Cart> =>
   invoke("pos_apply_line_discount", { input: { cart, cart_line_id, discount_minor, reason, session_token, manager_override_token } });
 
 export const posSetLineNote = (cart: Cart, cart_line_id: string, note: string | null): Promise<Cart> =>
@@ -925,12 +925,12 @@ export const adminListRoles = (actor_user_id: string): Promise<RoleRow[]> =>
   invoke("admin_list_roles", { actorUserId: actor_user_id });
 
 export const adminCreateUser = (input: {
-  display_name: string; username: string; pin: string; role_id: string; session_token: string;
+  display_name: string; username: string; pin: string; role_id: string; session_token: SessionToken;
 }): Promise<AdminUserRow> =>
   invoke("admin_create_user", { input });
 
 export const adminUpdateUser = (input: {
-  user_id: string; display_name: string; pin?: string; role_id: string; is_active: boolean; session_token: string;
+  user_id: string; display_name: string; pin?: string; role_id: string; is_active: boolean; session_token: SessionToken;
 }): Promise<AdminUserRow> =>
   invoke("admin_update_user", { input });
 
@@ -965,7 +965,7 @@ export const inventoryReceiveStock = (
   quantity: string,
   expiry_date: string | undefined,
   notes: string | undefined,
-  session_token: string,
+  session_token: SessionToken,
 ): Promise<StockLevel> =>
   invoke("inventory_receive_stock", {
     input: { product_id, quantity, expiry_date, notes },
@@ -1024,7 +1024,7 @@ export const inventoryAdjustStock = (
   product_id: string,
   new_quantity: string,
   notes: string | undefined,
-  session_token: string,
+  session_token: SessionToken,
 ): Promise<StockLevel> =>
   invoke("inventory_adjust_stock", {
     input: { product_id, new_quantity, notes },

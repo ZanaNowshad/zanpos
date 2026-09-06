@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import type { Cart, CartLine, PaymentInput, ProductWithPrice, SaleResult } from "../types";
+import type { Cart, CartLine, PaymentInput, ProductWithPrice, SaleResult, SessionToken } from "../types";
 import { DEVICE } from "../types";
 import * as cmd from "../tauri/commands";
 import { posRecordVoid } from "../tauri/commands";
@@ -12,7 +12,7 @@ export interface CartSession {
   cashier_user_id: string;
   /** Proves who is operating this till. Authorisation is derived from this,
    *  never from `cashier_user_id`, which the caller could set to anything. */
-  session_token: string;
+  session_token: SessionToken;
 }
 
 function makeEmptyCart(session: CartSession): Cart {

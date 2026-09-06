@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAutoFocus } from "../hooks/useAutoFocus";
-import type { AdminUserRow, RoleRow } from "../types";
+import type { AdminUserRow, RoleRow, SessionToken } from "../types";
 import * as cmd from "../tauri/commands";
 import { useLanguage } from "../hooks/useLanguage";
 import { operationsTranslator, roleText } from "../i18n/operationsStrings";
@@ -13,7 +13,7 @@ interface Props {
   sessionUserId: string;
   /** Proof of who is administering. `sessionUserId` still identifies the
    *  signed-in user for read filters, but authority comes from this. */
-  sessionToken: string;
+  sessionToken: SessionToken;
   /** The actor's own role. Only an owner may grant the owner role — the
    *  backend enforces it; this keeps the form from offering a choice that
    *  would be refused on save. */

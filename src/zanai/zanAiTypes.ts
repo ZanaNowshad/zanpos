@@ -1,7 +1,9 @@
+import type { SessionToken } from "../types";
+
 export type ZanAiSurface = "pos" | "office";
 
 export interface ZanAiRuntimeIdentity {
-  sessionToken: string;
+  sessionToken: SessionToken;
   userId: string;
   branchId: string;
 }

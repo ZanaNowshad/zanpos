@@ -15,6 +15,7 @@ import {
 import ReportSummaryCard from "./ReportSummaryCard";
 import { reportCsvExports } from "./reportCsvExports";
 import { EmptyState } from "./templates";
+import type { SessionToken } from "../types";
 
 const BRANCH_ID = DEVICE.branch_id;
 const TAB_ICON  = { size: 14, strokeWidth: 1.75, "aria-hidden": true } as const;
@@ -41,10 +42,10 @@ interface TaxRow {
 }
 
 interface Props {
-  sessionUserId: string;
+  sessionToken: SessionToken;
 }
 
-export default function ReportsTab({ sessionUserId }: Props) {
+export default function ReportsTab({ sessionToken }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => backOfficeTranslator(language), [language]);
   const [preset, setPreset]         = useState<Preset>("month");
@@ -86,10 +87,10 @@ export default function ReportsTab({ sessionUserId }: Props) {
     setLoadError(null);
     try {
       const [s, tp, sl, tx] = await Promise.all([
-        cmd.reportDateRange(sessionUserId, BRANCH_ID, from, to),
-        cmd.reportTopProducts(sessionUserId, BRANCH_ID, from, to),
-        cmd.reportSalesList(sessionUserId, BRANCH_ID, from, to),
-        cmd.reportTaxByDay(sessionUserId, BRANCH_ID, from, to),
+        cmd.reportDateRange(sessionToken, BRANCH_ID, from, to),
+        cmd.reportTopProducts(sessionToken, BRANCH_ID, from, to),
+        cmd.reportSalesList(sessionToken, BRANCH_ID, from, to),
+        cmd.reportTaxByDay(sessionToken, BRANCH_ID, from, to),
       ]);
       setSummary(s); setTopProducts(tp); setSalesPage(sl); setTaxRows(tx as TaxRow[]);
     } catch (e: unknown) {
@@ -97,7 +98,7 @@ export default function ReportsTab({ sessionUserId }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [from, to, sessionUserId, t]);
+  }, [from, to, sessionToken, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -154,7 +155,7 @@ export default function ReportsTab({ sessionUserId }: Props) {
     setExportingSales(true);
     setLoadError(null);
     try {
-      await cmd.reportSalesExportCsv(sessionUserId, BRANCH_ID, from, to, dest);
+      await cmd.reportSalesExportCsv(sessionToken, BRANCH_ID, from, to, dest);
     } catch (error: unknown) {
       setLoadError(typeof error === "string" ? error : t("failedLoadReport"));
     } finally {
@@ -391,7 +392,7 @@ export default function ReportsTab({ sessionUserId }: Props) {
                   onClick={async () => {
                     const newOff = Math.max(0, salesOffset - 100);
                     setSalesOffset(newOff);
-                    const pg = await cmd.reportSalesList(sessionUserId, BRANCH_ID, from, to, newOff, 100);
+                    const pg = await cmd.reportSalesList(sessionToken, BRANCH_ID, from, to, newOff, 100);
                     setSalesPage(pg as SaleListPage);
                   }}><span className="icon-directional" aria-hidden="true">←</span> {t("previous")}</button>
                 <span className="bo-pagination-info">
@@ -401,7 +402,7 @@ export default function ReportsTab({ sessionUserId }: Props) {
                   onClick={async () => {
                     const newOff = salesOffset + 100;
                     setSalesOffset(newOff);
-                    const pg = await cmd.reportSalesList(sessionUserId, BRANCH_ID, from, to, newOff, 100);
+                    const pg = await cmd.reportSalesList(sessionToken, BRANCH_ID, from, to, newOff, 100);
                     setSalesPage(pg as SaleListPage);
                   }}>{t("next")} <span className="icon-directional" aria-hidden="true">→</span></button>
               </div>

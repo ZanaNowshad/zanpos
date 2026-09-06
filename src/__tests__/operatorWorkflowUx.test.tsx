@@ -437,7 +437,8 @@ describe("operator-first workflow hierarchy", () => {
       setFlags: vi.fn(), taxRules: [], editingRule: null, setEditingRule: vi.fn(),
       taxRuleError: null, setTaxRuleError: vi.fn(), savingFlags: false, savedFlags: false,
       flagsError: null, savingRule: false, handleSaveFlags: vi.fn(), handleSaveTaxRule: vi.fn(),
-      handleDeleteTaxRule: vi.fn(), sessionUserId: "u-1", onStartPractice: vi.fn(),
+      handleDeleteTaxRule: vi.fn(), sessionUserId: "u-1",
+      sessionToken: asSessionToken("session-1"), onStartPractice: vi.fn(),
     };
     const html = renderToStaticMarkup(createElement(BusinessTab, props));
     expect(html).toContain("Practice mode");

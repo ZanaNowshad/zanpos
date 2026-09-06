@@ -86,7 +86,6 @@ pub const POS_ROLES: &[&str] = &["owner", "manager", "cashier"];
 /// Roles accepted for supervisory actions. Mirrors [`manager_or_owner`].
 pub const MANAGER_OR_OWNER: &[&str] = &["owner", "manager"];
 /// Roles accepted for ownership actions. Mirrors [`owner_only`].
-#[allow(dead_code)]
 pub const OWNER_ONLY: &[&str] = &["owner"];
 
 /// Authenticate the caller from their session token and require one of
@@ -389,56 +388,5 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn actor_branch_id_resolves_from_the_database_only() {
-        let pool = make_pool().await;
 
-        // A real, active user resolves to the branch stored on their record.
-        let branch = actor_branch_id(&pool, "01JUSER000000000000ADMIN1")
-            .await
-            .expect("seed admin has a branch");
-        assert!(!branch.is_empty());
-
-        // Nothing the caller can send stands in for a real identity. This is the
-        // guarantee the report commands rely on when they discard their own
-        // `branch_id` argument.
-        for forged in ["", "' OR 1=1 --", "01JBRANCH0000000000000001", "unknown"] {
-            assert!(
-                actor_branch_id(&pool, forged).await.is_err(),
-                "{forged:?} must not resolve to a branch"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn a_deactivated_user_loses_branch_scope() {
-        let pool = make_pool().await;
-        sqlx::query("UPDATE users SET is_active = 0 WHERE user_id = '01JUSER000000000000ADMIN1'")
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert!(actor_branch_id(&pool, "01JUSER000000000000ADMIN1")
-            .await
-            .is_err());
-    }
-}
-
-/// The branch an actor belongs to, resolved from the database.
-///
-/// Commands that take a `branch_id` parameter must not scope their queries with
-/// it: the frontend can send any value, so trusting it turns a role check into
-/// no protection at all for branch-scoped data. Resolve the scope here instead
-/// and ignore what arrived.
-///
-/// `users.branch_id` is NOT NULL and is populated from the active branch when a
-/// user is created, so this returns the same value the client would have sent
-/// on a single-branch install — it closes the hole without changing behaviour.
-pub async fn actor_branch_id(pool: &SqlitePool, actor_user_id: &str) -> Result<String, AppError> {
-    let row = sqlx::query("SELECT branch_id FROM users WHERE user_id = ? AND is_active = 1")
-        .bind(actor_user_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("Branch lookup failed: {e}")))?
-        .ok_or_else(|| AppError::Permission("User not found or inactive".into()))?;
-    Ok(row.get("branch_id"))
 }

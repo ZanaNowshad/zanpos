@@ -24,7 +24,6 @@ const STATE_ICON: Record<ActionUiState, typeof CheckCircle2> = {
 
 interface Props {
   sessionToken: SessionToken;
-  actorUserId: string;
   canApprove: boolean;
   /** Rendered inside the Conflicts section — existing, source-backed component. */
   conflictsSlot: ReactNode;
@@ -41,7 +40,7 @@ interface Props {
  * session-local state could never show.
  */
 export default function ReviewWorkspace({
-  sessionToken, actorUserId, canApprove, conflictsSlot, onConfirm, onCancelAction,
+  sessionToken, canApprove, conflictsSlot, onConfirm, onCancelAction,
 }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => operationsTranslator(language), [language]);
@@ -208,7 +207,7 @@ export default function ReviewWorkspace({
     >
       {section === "conflicts" && conflictsSlot}
 
-      {section === "history" && <HistoryPanel actorUserId={actorUserId} />}
+      {section === "history" && <HistoryPanel sessionToken={sessionToken} />}
 
       {section === "actions" && (
         <>

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { EodCashupReport } from "../types";
+import type { EodCashupReport, SessionToken } from "../types";
 import { DEVICE } from "../types";
 import { formatMoney } from "../money";
 import { reportEodCashup } from "../tauri/commands";
@@ -15,7 +15,7 @@ function fmtOpt(n: number | null | undefined) { return n != null ? fmt(n) : "—
 
 function isoDate(d: Date) { return d.toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" }); }
 
-export default function EodCashupTab({ sessionUserId }: { sessionUserId: string }) {
+export default function EodCashupTab({ sessionToken }: { sessionToken: SessionToken }) {
   const { language } = useLanguage();
   const t = useMemo(() => backOfficeTranslator(language), [language]);
   const locale = language === "ar" ? "ar-BH" : "en-BH";
@@ -28,7 +28,7 @@ export default function EodCashupTab({ sessionUserId }: { sessionUserId: string 
     setLoading(true);
     setError(null);
     try {
-      const data = await reportEodCashup(sessionUserId, DEVICE.branch_id, date);
+      const data = await reportEodCashup(sessionToken, DEVICE.branch_id, date);
       setReport(data);
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : t("failedLoadReport"));

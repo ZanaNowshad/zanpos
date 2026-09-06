@@ -99,7 +99,7 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
     if (mode !== "close") return;
     let cancelled = false;
     const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" });
-    reportToday(user.user_id, DEVICE.branch_id, today)
+    reportToday(user.session_token, DEVICE.branch_id, today)
       .then(data => { if (!cancelled) setTodaySummary(data); })
       .catch((e: unknown) => { console.warn("Failed to load today's report for Z-report:", e); });
     if (shift) {

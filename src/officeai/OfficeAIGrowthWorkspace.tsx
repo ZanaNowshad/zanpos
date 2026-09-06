@@ -2,7 +2,7 @@ import { BarChart3, RefreshCw, Sparkles, TrendingUp } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatMoney } from "../money";
 import { appConfigLoad, reportDateRange, reportTopProducts } from "../tauri/commands";
-import type { RangeSummary, TopProduct } from "../types";
+import type { RangeSummary, SessionToken, TopProduct } from "../types";
 import type { OfficeAiOverviewSnapshot, OfficeTab } from "./officeAiTypes";
 import { useLanguage } from "../hooks/useLanguage";
 import {
@@ -25,7 +25,7 @@ const OPERATING_PROMPTS = [
 interface Props {
   /** Retained so the call site reads explicitly; only "insights" remains. */
   mode: "insights";
-  actorUserId: string;
+  sessionToken: SessionToken;
   snapshot: OfficeAiOverviewSnapshot;
   currencyExp: number;
   onOpenTab: (tab: OfficeTab) => void;
@@ -48,7 +48,7 @@ function money(minor: number, exp: number): string {
 }
 
 export default function OfficeAIGrowthWorkspace({
-  actorUserId,
+  sessionToken,
   snapshot,
   currencyExp,
   onOpenTab,
@@ -69,8 +69,8 @@ export default function OfficeAIGrowthWorkspace({
       const appConfig = await appConfigLoad();
       const branchId = appConfig.branch_id;
       const [nextSummary, nextTopProducts] = await Promise.all([
-        reportDateRange(actorUserId, branchId, range.from, range.to),
-        reportTopProducts(actorUserId, branchId, range.from, range.to),
+        reportDateRange(sessionToken, branchId, range.from, range.to),
+        reportTopProducts(sessionToken, branchId, range.from, range.to),
       ]);
       setSummary(nextSummary);
       setTopProducts(nextTopProducts);
@@ -79,7 +79,7 @@ export default function OfficeAIGrowthWorkspace({
     } finally {
       setLoading(false);
     }
-  }, [actorUserId, range.from, range.to, t]);
+  }, [sessionToken, range.from, range.to, t]);
 
   useEffect(() => { void load(); }, [load]);
 

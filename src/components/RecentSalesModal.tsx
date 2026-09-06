@@ -5,19 +5,20 @@ import { formatMoney } from "../money";
 import * as cmd from "../tauri/commands";
 import { useLanguage } from "../hooks/useLanguage";
 import { modalTranslator, ownedModalLabel } from "../i18n/modalStrings";
+import type { SessionToken } from "../types";
 
 interface Props {
   onReprint: (receiptNumber: string) => Promise<void>;
   onEdit: (sale: SaleListRow) => Promise<void>;
   onClose: () => void;
-  sessionUserId: string;
+  sessionToken: SessionToken;
 }
 
 function todayStr() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" });
 }
 
-export default function RecentSalesModal({ onReprint, onEdit, onClose, sessionUserId }: Props) {
+export default function RecentSalesModal({ onReprint, onEdit, onClose, sessionToken }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => modalTranslator(language), [language]);
   const [date, setDate]         = useState(todayStr());
@@ -36,14 +37,14 @@ export default function RecentSalesModal({ onReprint, onEdit, onClose, sessionUs
     setError(null);
     setSales([]);
     setSelected(null);
-    cmd.reportSalesList(sessionUserId, DEVICE.branch_id, date, date)
+    cmd.reportSalesList(sessionToken, DEVICE.branch_id, date, date)
       .then(page => { if (!cancelled) setSales(page.items); })
       .catch((e: unknown) => {
         if (!cancelled) setError(typeof e === "string" ? e : t("failed"));
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [date, sessionUserId, t]);
+  }, [date, sessionToken, t]);
 
   async function handleReprint() {
     if (!selected || working) return;

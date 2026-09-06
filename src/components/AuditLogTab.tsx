@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { auditLogList } from "../tauri/commands";
+import type { SessionToken } from "../types";
 
 interface AuditRow {
   audit_log_id: string;
@@ -19,9 +20,9 @@ function defaultDates() {
   return { today, weekAgo };
 }
 
-interface Props { sessionUserId: string; }
+interface Props { sessionToken: SessionToken; }
 
-export default function AuditLogTab({ sessionUserId }: Props) {
+export default function AuditLogTab({ sessionToken }: Props) {
   const { today, weekAgo } = defaultDates();
 
   const [from, setFrom]     = useState(weekAgo);
@@ -37,7 +38,7 @@ export default function AuditLogTab({ sessionUserId }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const result = await auditLogList(from, to, p, sessionUserId);
+      const result = await auditLogList(from, to, p, sessionToken);
       setRows(result as AuditRow[]);
       setPage(p);
       setLoaded(true);
@@ -46,7 +47,7 @@ export default function AuditLogTab({ sessionUserId }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [from, to, sessionUserId]);
+  }, [from, to, sessionToken]);
 
   return (
     <div className="audit-layout">

@@ -56,9 +56,9 @@ export function renderDataTab(ctx: DataTabContext): ReactNode {
       case "quickpos": return <QuickPosTab key={tabKey} sessionUserId={sessionUser.user_id} sessionToken={sessionUser.session_token} />;
       case "users": return <UsersTab key={tabKey} sessionToken={sessionUser.session_token} sessionRole={sessionUser.role_name} />;
       case "riders": return <RidersPage key={tabKey} actorUserId={sessionUser.user_id} />;
-      case "reports": return <ReportsTab key={tabKey} sessionUserId={sessionUser.user_id} />;
+      case "reports": return <ReportsTab key={tabKey} sessionToken={sessionUser.session_token} />;
       case "cashier": return <CashierReportTab key={tabKey} sessionUserId={sessionUser.user_id} />;
-      case "eod": return <EodCashupTab key={tabKey} sessionUserId={sessionUser.user_id} />;
+      case "eod": return <EodCashupTab key={tabKey} sessionToken={sessionUser.session_token} />;
       case "inventory": return <InventoryTab key={tabKey} sessionToken={sessionUser.session_token} />;
       case "customers": return (
         <CustomersWorkspace
@@ -79,7 +79,7 @@ export function renderDataTab(ctx: DataTabContext): ReactNode {
           onStartPractice={ctx.onStartPractice}
         />
       );
-      case "audit": return isOwner ? <AuditLogTab key={tabKey} sessionUserId={sessionUser.user_id} /> : null;
+      case "audit": return isOwner ? <AuditLogTab key={tabKey} sessionToken={sessionUser.session_token} /> : null;
       case "devices": return isOwner ? <DevicesTab key={tabKey} sessionToken={sessionUser.session_token} /> : null;
       case "deliveries": return <DeliveriesTab key={tabKey} sessionUser={sessionUser} />;
       case "purchasing": return (

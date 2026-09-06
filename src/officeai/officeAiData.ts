@@ -67,7 +67,7 @@ export async function officeAiOverview(
     capture(t("aiConfig"), adminGetAiConfig(sessionToken), errors),
     capture(t("aiFeatures"), adminGetFeatureToggles(sessionToken), errors),
     branchId
-      ? capture(t("todayReport"), reportToday(actorUserId, branchId, businessDate()), errors)
+      ? capture(t("todayReport"), reportToday(sessionToken, branchId, businessDate()), errors)
       : Promise.resolve(null),
     capture(t("inventory"), inventoryGetLevels(sessionToken), errors),
     capture(t("sync"), syncStatus(sessionToken), errors),

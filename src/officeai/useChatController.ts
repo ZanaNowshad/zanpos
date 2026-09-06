@@ -279,7 +279,7 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
     setKpi(prev => ({ ...prev, loading: true, error: null }));
     const failures: string[] = [];
     const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" });
-    const todaySummary = await reportToday(sessionUser.user_id, sessionUser.branch_id, today)
+    const todaySummary = await reportToday(sessionUser.session_token, sessionUser.branch_id, today)
       .catch(error => { failures.push(`sales: ${String(error)}`); return null; });
     const levels = await inventoryGetLevels(sessionUser.session_token)
       .catch(error => { failures.push(`inventory: ${String(error)}`); return [] as StockLevel[]; });
@@ -304,7 +304,7 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
       if (lowStockCount > 0)   parts.push(`**${lowStockCount}** running low`);
       addMessage({ role: "system", text: `⚠️ Stock alert: ${parts.join(" · ")}. Ask me to review or create a purchase order.` });
     }
-  }, [sessionUser.branch_id, sessionUser.user_id, sessionUser.session_token, addMessage]);
+  }, [sessionUser.branch_id, sessionUser.session_token, addMessage]);
 
   useEffect(() => {
     // Fetch KPI after a short delay to avoid spiking memory on page open.

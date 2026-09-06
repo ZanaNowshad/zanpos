@@ -323,7 +323,6 @@ export default function OfficeAIPage({
       return (
         <ReviewWorkspace
           sessionToken={sessionUser.session_token}
-          actorUserId={sessionUser.user_id}
           canApprove={isManager}
           conflictsSlot={<OfficeAIConflictInbox sessionToken={sessionUser.session_token} />}
           onConfirm={confirmPersistedAction}
@@ -354,7 +353,7 @@ export default function OfficeAIPage({
       return (
         <OfficeAIGrowthWorkspace
           mode="insights"
-          actorUserId={sessionUser.user_id}
+          sessionToken={sessionUser.session_token}
           snapshot={overview}
           currencyExp={DEVICE.currency_exponent}
           onOpenTab={openVisibleTab}

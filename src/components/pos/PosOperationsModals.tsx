@@ -127,7 +127,7 @@ export default function PosOperationsModals({
 
       {activeModal.kind === "recent" && (
         <RecentSalesModal
-          sessionUserId={sessionUser.user_id}
+          sessionToken={sessionUser.session_token}
           onReprint={onReprintReceipt}
           onEdit={onEditSale}
           onClose={close}

@@ -61,6 +61,6 @@ export default function BusinessRulesPage({ sessionUserId, sessionToken, onStart
       savingFlags={savingFlags} savedFlags={savedFlags} flagsError={flagsError}
       savingRule={savingRule}
       handleSaveFlags={handleSaveFlags} handleSaveTaxRule={handleSaveTaxRule}
-      handleDeleteTaxRule={handleDeleteTaxRule} sessionUserId={sessionUserId} onStartPractice={onStartPractice} />
+      handleDeleteTaxRule={handleDeleteTaxRule} sessionUserId={sessionUserId} sessionToken={sessionToken} onStartPractice={onStartPractice} />
   );
 }

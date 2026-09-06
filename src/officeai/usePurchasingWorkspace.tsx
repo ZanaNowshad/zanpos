@@ -110,8 +110,8 @@ export function usePurchasingWorkspace(props: {
       const [nextSuppliers, nextOrders, nextMargin, nextProductMargins] = await Promise.all([
         supplierList(sessionToken),
         poList(sessionToken),
-        reportMargin(actorUserId, config.branch_id, range.from, range.to).catch(() => null),
-        reportProductMargin(actorUserId, config.branch_id, range.from, range.to, 8).catch(() => []),
+        reportMargin(sessionToken, config.branch_id, range.from, range.to).catch(() => null),
+        reportProductMargin(sessionToken, config.branch_id, range.from, range.to, 8).catch(() => []),
       ]);
       setSuppliers(nextSuppliers);
       setOrders(nextOrders);
@@ -122,7 +122,7 @@ export function usePurchasingWorkspace(props: {
     } finally {
       setLoading(false);
     }
-  }, [actorUserId, sessionToken, range.from, range.to, t]);
+  }, [sessionToken, range.from, range.to, t]);
 
   useEffect(() => { void load(); }, [load]);
 

@@ -27,10 +27,11 @@ pub async fn app_config_get_timeout(state: State<'_, AppState>) -> Result<i64, A
 #[tauri::command]
 pub async fn app_config_set_timeout(
     minutes: i64,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     if !(0..=60).contains(&minutes) {
         return Err(AppError::Validation(
             "Timeout must be between 0 and 60 minutes (0 = never lock)".into(),
@@ -57,11 +58,12 @@ pub async fn app_config_set_timeout(
 #[tauri::command]
 pub async fn db_backup(
     dest_path: String,
-    actor_user_id: String,
+    session_token: String,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    rbac::owner_only(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY)
+        .await?;
     let app_data = app
         .path()
         .app_data_dir()
@@ -121,15 +123,16 @@ pub async fn report_tax_by_day(
     branch_id: String,
     from_date: String,
     to_date: String,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<TaxDayRow>, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     // Caller-supplied `branch_id` is not trusted for branch-scoped data;
     // the scope comes from the actor's own record. The parameter remains
     // only to preserve the existing invoke contract.
     let _ = branch_id;
-    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
+    let branch_id = actor.branch_id.clone();
     let (scope, origin_device_id) = report_scope(&state.db).await;
     let scope_str = scope.as_str();
     let rows = sqlx::query(
@@ -188,10 +191,11 @@ pub async fn audit_log_list(
     from: String,
     to: String,
     page: i64,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<AuditLogRow>, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let limit: i64 = 50;
     let offset = page * limit;
 
@@ -234,10 +238,11 @@ pub async fn audit_log_list(
 /// Requires manager or owner role.
 #[tauri::command]
 pub async fn audit_verify_chain(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<audit_hash::ChainVerifyResult> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
 
     let device_id: Option<String> = sqlx::query_scalar(
         "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1",

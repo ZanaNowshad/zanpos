@@ -27,7 +27,7 @@ export default function TodayReportModal({ onClose, sessionUserId, shiftId, sess
 
   useEffect(() => {
     let cancelled = false;
-    reportToday(sessionUserId, DEVICE.branch_id, today)
+    reportToday(sessionToken, DEVICE.branch_id, today)
       .then(value => { if (!cancelled) setSales(value); })
       .catch(() => { if (!cancelled) setSalesError(t("failedLoadReport")); });
     if (includeCashDrawer) {

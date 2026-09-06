@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import type { BusinessFlags, OperationalSettings, TaxRuleRow } from "../../types";
+import type { BusinessFlags, OperationalSettings, SessionToken, TaxRuleRow } from "../../types";
 import type { ReportsConfig } from "../../tauri/commands";
 import { reportsConfigLoad, reportsConfigSave, operationalSettingsLoad, operationalSettingsSave } from "../../tauri/commands";
 
@@ -15,6 +15,7 @@ interface BusinessTabProps {
   handleSaveFlags: () => void; handleSaveTaxRule: () => void;
   handleDeleteTaxRule: (tax_rule_id: string) => void;
   sessionUserId: string;
+  sessionToken: SessionToken;
   onStartPractice?: () => void;
 }
 
@@ -23,7 +24,7 @@ export default function BusinessTab(props: BusinessTabProps) {
     flags, setFlags, taxRules,
     editingRule, setEditingRule, taxRuleError, setTaxRuleError,
     savingFlags, savedFlags, flagsError, savingRule,
-    handleSaveFlags, handleSaveTaxRule, handleDeleteTaxRule, sessionUserId, onStartPractice,
+    handleSaveFlags, handleSaveTaxRule, handleDeleteTaxRule, sessionUserId, sessionToken, onStartPractice,
   } = props;
 
   const [reportsCfg, setReportsCfg]       = useState<ReportsConfig | null>(null);
@@ -32,10 +33,10 @@ export default function BusinessTab(props: BusinessTabProps) {
   const [scopeError, setScopeError]       = useState<string | null>(null);
 
   useEffect(() => {
-    reportsConfigLoad(sessionUserId)
+    reportsConfigLoad(sessionToken)
       .then(setReportsCfg)
       .catch(() => setReportsCfg({ device_scope: "origin", device_count: 1, local_device_id: "" }));
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   const [opSettings, setOpSettings] = useState<OperationalSettings | null>(null);
   const [opSaving, setOpSaving] = useState(false);
@@ -65,7 +66,7 @@ export default function BusinessTab(props: BusinessTabProps) {
     setScopeError(null);
     setSavedScope(false);
     try {
-      await reportsConfigSave(reportsCfg.device_scope, sessionUserId);
+      await reportsConfigSave(reportsCfg.device_scope, sessionToken);
       setSavedScope(true);
       setTimeout(() => setSavedScope(false), 3000);
     } catch (e: unknown) {

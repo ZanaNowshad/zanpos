@@ -6,6 +6,7 @@ import { operationsTranslator } from "../../../i18n/operationsStrings";
 import { DataTable, EmptyState } from "../../../components/templates";
 import type { Column } from "../../../components/templates";
 import "./review.css";
+import type { SessionToken } from "../../../types";
 
 /** Row shape returned by `audit_log_list`. Only these fields exist. */
 interface AuditRow {
@@ -30,12 +31,12 @@ function isoDaysAgo(days: number): string {
  * fabricated when only a user id exists.
  */
 interface Props {
-  actorUserId: string;
+  sessionToken: SessionToken;
   /** Days of history to request. */
   rangeDays?: number;
 }
 
-export default function HistoryPanel({ actorUserId, rangeDays = 30 }: Props) {
+export default function HistoryPanel({ sessionToken, rangeDays = 30 }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => operationsTranslator(language), [language]);
 
@@ -49,7 +50,7 @@ export default function HistoryPanel({ actorUserId, rangeDays = 30 }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const result = await auditLogList(isoDaysAgo(rangeDays), isoDaysAgo(0), 1, actorUserId);
+      const result = await auditLogList(isoDaysAgo(rangeDays), isoDaysAgo(0), 1, sessionToken);
       setRows(result);
     } catch (e) {
       setError(typeof e === "string" ? e : t("historyLoadFailed"));
@@ -57,7 +58,7 @@ export default function HistoryPanel({ actorUserId, rangeDays = 30 }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [actorUserId, rangeDays, t]);
+  }, [sessionToken, rangeDays, t]);
 
   useEffect(() => { void load(); }, [load]);
 

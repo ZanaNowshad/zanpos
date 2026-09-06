@@ -421,26 +421,26 @@ export const receiptReprint = (receipt_number: string, requesting_user_id: strin
 
 // ─── Report commands ──────────────────────────────────────────────────────────
 
-export const reportToday = (actor_user_id: string, branch_id: string, business_date: string): Promise<TodaySummary> =>
-  invoke("report_today", { actorUserId: actor_user_id, branchId: branch_id, businessDate: business_date });
+export const reportToday = (sessionToken: SessionToken, branch_id: string, business_date: string): Promise<TodaySummary> =>
+  invoke("report_today", { sessionToken, branchId: branch_id, businessDate: business_date });
 
-export const reportDateRange = (actor_user_id: string, branch_id: string, from_date: string, to_date: string): Promise<RangeSummary> =>
-  invoke("report_date_range", { actorUserId: actor_user_id, branchId: branch_id, fromDate: from_date, toDate: to_date });
+export const reportDateRange = (sessionToken: SessionToken, branch_id: string, from_date: string, to_date: string): Promise<RangeSummary> =>
+  invoke("report_date_range", { sessionToken, branchId: branch_id, fromDate: from_date, toDate: to_date });
 
-export const reportTopProducts = (actor_user_id: string, branch_id: string, from_date: string, to_date: string): Promise<TopProduct[]> =>
-  invoke("report_top_products", { actorUserId: actor_user_id, branchId: branch_id, fromDate: from_date, toDate: to_date });
+export const reportTopProducts = (sessionToken: SessionToken, branch_id: string, from_date: string, to_date: string): Promise<TopProduct[]> =>
+  invoke("report_top_products", { sessionToken, branchId: branch_id, fromDate: from_date, toDate: to_date });
 
-export const reportMargin = (actor_user_id: string, branch_id: string, from_date: string, to_date: string): Promise<MarginSummary> =>
-  invoke("report_margin", { actorUserId: actor_user_id, branchId: branch_id, fromDate: from_date, toDate: to_date });
+export const reportMargin = (sessionToken: SessionToken, branch_id: string, from_date: string, to_date: string): Promise<MarginSummary> =>
+  invoke("report_margin", { sessionToken, branchId: branch_id, fromDate: from_date, toDate: to_date });
 
 export const reportProductMargin = (
-  actor_user_id: string,
+  sessionToken: SessionToken,
   branch_id: string,
   from_date: string,
   to_date: string,
   limit = 50,
 ): Promise<ProductMarginRow[]> =>
-  invoke("report_product_margin", { actorUserId: actor_user_id, branchId: branch_id, fromDate: from_date, toDate: to_date, limit });
+  invoke("report_product_margin", { sessionToken, branchId: branch_id, fromDate: from_date, toDate: to_date, limit });
 
 // ─── Purchasing commands ─────────────────────────────────────────────────────
 
@@ -503,7 +503,7 @@ export const poCancel = (sessionToken: SessionToken, poId: string): Promise<void
  *  can detect truncation and implement paging (F-BIZ-002 / F-INT-001).
  *  Defaults: limit=200, offset=0 (backwards-compatible). */
 export const reportSalesList = (
-  actor_user_id: string,
+  sessionToken: SessionToken,
   branch_id: string,
   from_date: string,
   to_date: string,
@@ -511,7 +511,7 @@ export const reportSalesList = (
   limit?: number,
 ): Promise<SaleListPage> =>
   invoke("report_sales_list", {
-    actorUserId: actor_user_id,
+    sessionToken,
     branchId: branch_id,
     fromDate: from_date,
     toDate: to_date,
@@ -519,8 +519,8 @@ export const reportSalesList = (
     limit: limit ?? 200,
   });
 
-export const dbIntegrityCheck = (actorUserId: string): Promise<string> =>
-  invoke("db_integrity_check", { actorUserId });
+export const dbIntegrityCheck = (sessionToken: SessionToken): Promise<string> =>
+  invoke("db_integrity_check", { sessionToken });
 
 // ─── Sync commands ────────────────────────────────────────────────────────────
 
@@ -797,13 +797,13 @@ export const reportSalesCursor = (
   invoke("report_sales_cursor", { actorUserId, branchId, fromDate, toDate, cursor: cursor ?? null, limit });
 
 export const reportSalesExportCsv = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   branchId: string,
   fromDate: string,
   toDate: string,
   destPath: string,
 ): Promise<number> =>
-  invoke("report_sales_export_csv", { actorUserId, branchId, fromDate, toDate, destPath });
+  invoke("report_sales_export_csv", { sessionToken, branchId, fromDate, toDate, destPath });
 
 export interface ProductImageSearchRequest {
   productName: string;
@@ -987,38 +987,38 @@ export type ReportsConfig = {
   local_device_id: string;
 };
 
-export const reportsConfigLoad = (actorUserId: string): Promise<ReportsConfig> =>
-  invoke("reports_config_load", { actorUserId });
+export const reportsConfigLoad = (sessionToken: SessionToken): Promise<ReportsConfig> =>
+  invoke("reports_config_load", { sessionToken });
 
 export const reportsConfigSave = (
   device_scope: "origin" | "all",
-  actor_user_id: string
+  sessionToken: SessionToken
 ): Promise<void> =>
-  invoke("reports_config_save", { input: { device_scope, actor_user_id } });
+  invoke("reports_config_save", { input: { device_scope }, sessionToken });
 
 export const dbBackup = (destPath: string, actorUserId: string): Promise<string> =>
   invoke("db_backup", { destPath, actorUserId });
 
 export const reportTaxByDay = (
-  actor_user_id: string,
+  sessionToken: SessionToken,
   branch_id: string,
   from_date: string,
   to_date: string,
 ): Promise<Array<{ day: string; transaction_count: number; tax_minor: number; cumulative_minor: number }>> =>
-  invoke("report_tax_by_day", { actorUserId: actor_user_id, branchId: branch_id, fromDate: from_date, toDate: to_date });
+  invoke("report_tax_by_day", { sessionToken, branchId: branch_id, fromDate: from_date, toDate: to_date });
 
 export const auditLogList = (
   from: string,
   to: string,
   page: number,
-  actorUserId: string,
+  sessionToken: SessionToken,
 ): Promise<Array<{ audit_log_id: string; event_type: string; entity_type: string; entity_id: string | null; actor_user_id: string | null; created_at: string }>> =>
-  invoke("audit_log_list", { from, to, page, actorUserId });
+  invoke("audit_log_list", { from, to, page, sessionToken });
 
-export const auditVerifyChain = (actorUserId: string): Promise<{
+export const auditVerifyChain = (sessionToken: SessionToken): Promise<{
   total_rows: number; legacy_rows: number; verified: number;
   broken_hash: number; broken_link: number; ok: boolean;
-}> => invoke("audit_verify_chain", { actorUserId });
+}> => invoke("audit_verify_chain", { sessionToken });
 
 export const inventoryAdjustStock = (
   product_id: string,
@@ -1209,11 +1209,11 @@ export const reportByCashier = (
   invoke("report_by_cashier", { actorUserId: actor_user_id, branchId: branch_id, fromDate: from_date, toDate: to_date });
 
 export const reportEodCashup = (
-  actor_user_id: string,
+  sessionToken: SessionToken,
   branch_id: string,
   business_date: string,
 ): Promise<EodCashupReport> =>
-  invoke("report_eod_cashup", { actorUserId: actor_user_id, branchId: branch_id, date: business_date });
+  invoke("report_eod_cashup", { sessionToken, branchId: branch_id, date: business_date });
 
 export const inventoryBulkStockTake = (
   // FIX: string, not number — JS floats corrupt Decimal arithmetic in Rust backend

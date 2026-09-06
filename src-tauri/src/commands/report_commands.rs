@@ -126,18 +126,19 @@ fn csv_cell(value: &str) -> String {
 
 #[tauri::command]
 pub async fn report_today(
-    actor_user_id: String,
+    session_token: String,
     branch_id: String,
     business_date: String,
     state: State<'_, AppState>,
 ) -> Result<TodaySummary, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     // The `branch_id` argument is caller-supplied and therefore not trusted:
     // reports expose financial data, so the scope is resolved from the actor's
     // own record and the incoming value is discarded. The parameter stays in
     // the signature only to keep the existing invoke contract.
     let _ = branch_id;
-    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
+    let branch_id = actor.branch_id.clone();
     report_repo::today_summary(&state.db, &branch_id, &business_date).await
 }
 
@@ -145,19 +146,20 @@ pub async fn report_today(
 
 #[tauri::command]
 pub async fn report_date_range(
-    actor_user_id: String,
+    session_token: String,
     branch_id: String,
     from_date: String,
     to_date: String,
     state: State<'_, AppState>,
 ) -> Result<RangeSummary, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     // The `branch_id` argument is caller-supplied and therefore not trusted:
     // reports expose financial data, so the scope is resolved from the actor's
     // own record and the incoming value is discarded. The parameter stays in
     // the signature only to keep the existing invoke contract.
     let _ = branch_id;
-    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
+    let branch_id = actor.branch_id.clone();
     // M6: Run the 5 independent range aggregation queries concurrently.
     // E: apply the device-scope filter uniformly: scope='all' short-circuits
     // the OR; scope='origin' requires origin_device_id to match this device.
@@ -255,19 +257,20 @@ pub async fn report_date_range(
 
 #[tauri::command]
 pub async fn report_top_products(
-    actor_user_id: String,
+    session_token: String,
     branch_id: String,
     from_date: String,
     to_date: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<TopProduct>, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     // The `branch_id` argument is caller-supplied and therefore not trusted:
     // reports expose financial data, so the scope is resolved from the actor's
     // own record and the incoming value is discarded. The parameter stays in
     // the signature only to keep the existing invoke contract.
     let _ = branch_id;
-    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
+    let branch_id = actor.branch_id.clone();
     let pool = &state.db;
     let (scope, origin_device_id) = report_scope(pool).await;
     let rows = sqlx::query(
@@ -305,38 +308,40 @@ pub async fn report_top_products(
 
 #[tauri::command]
 pub async fn report_margin(
-    actor_user_id: String,
+    session_token: String,
     branch_id: String,
     from_date: String,
     to_date: String,
     state: State<'_, AppState>,
 ) -> Result<MarginSummary, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     // The `branch_id` argument is caller-supplied and therefore not trusted:
     // reports expose financial data, so the scope is resolved from the actor's
     // own record and the incoming value is discarded. The parameter stays in
     // the signature only to keep the existing invoke contract.
     let _ = branch_id;
-    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
+    let branch_id = actor.branch_id.clone();
     report_margin_inner(&state.db, &branch_id, &from_date, &to_date).await
 }
 
 #[tauri::command]
 pub async fn report_product_margin(
-    actor_user_id: String,
+    session_token: String,
     branch_id: String,
     from_date: String,
     to_date: String,
     limit: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ProductMarginRow>, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     // The `branch_id` argument is caller-supplied and therefore not trusted:
     // reports expose financial data, so the scope is resolved from the actor's
     // own record and the incoming value is discarded. The parameter stays in
     // the signature only to keep the existing invoke contract.
     let _ = branch_id;
-    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
+    let branch_id = actor.branch_id.clone();
     report_product_margin_inner(
         &state.db,
         &branch_id,
@@ -465,7 +470,7 @@ fn margin_basis_points(revenue_minor: i64, cogs_minor: i64) -> Option<i64> {
 
 #[tauri::command]
 pub async fn report_sales_list(
-    actor_user_id: String,
+    session_token: String,
     branch_id: String,
     from_date: String,
     to_date: String,
@@ -473,13 +478,14 @@ pub async fn report_sales_list(
     limit: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<SaleListPage, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     // The `branch_id` argument is caller-supplied and therefore not trusted:
     // reports expose financial data, so the scope is resolved from the actor's
     // own record and the incoming value is discarded. The parameter stays in
     // the signature only to keep the existing invoke contract.
     let _ = branch_id;
-    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
+    let branch_id = actor.branch_id.clone();
     let limit = limit.unwrap_or(200).clamp(1, 500);
     let offset = offset.unwrap_or(0).max(0);
 
@@ -658,7 +664,7 @@ async fn fetch_sales_cursor_page(
 /// Keyset pagination stays O(page size) even deep into million-row reports.
 #[tauri::command]
 pub async fn report_sales_cursor(
-    actor_user_id: String,
+    session_token: String,
     branch_id: String,
     from_date: String,
     to_date: String,
@@ -666,9 +672,10 @@ pub async fn report_sales_cursor(
     limit: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<SaleCursorPage, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     let _ = branch_id;
-    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
+    let branch_id = actor.branch_id.clone();
     let decoded = cursor.as_deref().map(decode_sale_cursor).transpose()?;
     let (scope, origin_device_id) = report_scope(&state.db).await;
     fetch_sales_cursor_page(
@@ -688,16 +695,17 @@ pub async fn report_sales_cursor(
 /// never materialized in the webview or Rust heap.
 #[tauri::command]
 pub async fn report_sales_export_csv(
-    actor_user_id: String,
+    session_token: String,
     branch_id: String,
     from_date: String,
     to_date: String,
     dest_path: String,
     state: State<'_, AppState>,
 ) -> Result<i64, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     let _ = branch_id;
-    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
+    let branch_id = actor.branch_id.clone();
     let path = std::path::Path::new(&dest_path);
     if !path.is_absolute()
         || path
@@ -782,19 +790,20 @@ pub struct CashierSummaryRow {
 /// Single CTE query — avoids the prior N+1 (4 queries per cashier).
 #[tauri::command]
 pub async fn report_by_cashier(
-    actor_user_id: String,
+    session_token: String,
     branch_id: String,
     from_date: String,
     to_date: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<CashierSummaryRow>, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     // The `branch_id` argument is caller-supplied and therefore not trusted:
     // reports expose financial data, so the scope is resolved from the actor's
     // own record and the incoming value is discarded. The parameter stays in
     // the signature only to keep the existing invoke contract.
     let _ = branch_id;
-    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
+    let branch_id = actor.branch_id.clone();
     let pool = &state.db;
     let (scope, origin_device_id) = report_scope(pool).await;
     let scope_str = scope.as_str();
@@ -1195,18 +1204,19 @@ pub(crate) async fn report_eod_cashup_inner(
 /// End-of-day cash-up: Tauri command wrapper around `report_eod_cashup_inner`.
 #[tauri::command]
 pub async fn report_eod_cashup(
-    actor_user_id: String,
+    session_token: String,
     branch_id: String,
     date: String,
     state: State<'_, AppState>,
 ) -> Result<EodCashupReport, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     // The `branch_id` argument is caller-supplied and therefore not trusted:
     // reports expose financial data, so the scope is resolved from the actor's
     // own record and the incoming value is discarded. The parameter stays in
     // the signature only to keep the existing invoke contract.
     let _ = branch_id;
-    let branch_id = rbac::actor_branch_id(&state.db, &actor_user_id).await?;
+    let branch_id = actor.branch_id.clone();
     report_eod_cashup_inner(&state.db, &branch_id, &date, &date).await
 }
 
@@ -1217,10 +1227,11 @@ pub async fn report_eod_cashup(
 #[tauri::command]
 pub async fn report_z_report(
     date: String,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<EodCashupReport, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     // Resolve active branch — Z-report always targets the current store.
     let branch_id: String = sqlx::query_scalar(
         "SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1",
@@ -1242,7 +1253,7 @@ pub async fn report_z_report(
     .unwrap_or_default();
 
     // Record Z-report issuance in the audit hash-chain.
-    record_z_report_issued(&state.db, &date, &actor_user_id, &device_id, &branch_id).await?;
+    record_z_report_issued(&state.db, &date, &actor.user_id, &device_id, &branch_id).await?;
 
     Ok(report)
 }
@@ -1274,10 +1285,11 @@ async fn record_z_report_issued(
 
 #[tauri::command]
 pub async fn db_integrity_check(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let result: String = sqlx::query_scalar("PRAGMA integrity_check")
         .fetch_one(&state.db)
         .await?;
@@ -1299,10 +1311,11 @@ pub struct ReportsConfig {
 
 #[tauri::command]
 pub async fn reports_config_load(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<ReportsConfig, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     let (scope, local_device_id) = report_scope(&state.db).await;
     let device_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE is_active = 1")
         .fetch_one(&state.db)
@@ -1319,17 +1332,23 @@ pub async fn reports_config_load(
 pub struct SaveReportsConfigInput {
     /// 'origin' or 'all' — anything else is coerced to 'origin'.
     pub device_scope: String,
-    pub actor_user_id: String,
 }
 
 #[tauri::command]
 pub async fn reports_config_save(
     input: SaveReportsConfigInput,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     // Only managers and owners can change report scope — it determines
     // whether cashiers see the whole store's takings or just their own.
-    crate::commands::rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
 
     let normalized = match input.device_scope.to_ascii_lowercase().as_str() {
         "all" => "all",

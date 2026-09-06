@@ -63,7 +63,7 @@ export default function NotificationModal({
       const [ghosts, msgs, confs] = await Promise.all([
         ghostList(sessionUserId),
         whatsappListMessages(sessionUserId).catch(() => [] as WaMessage[]),
-        paymentConfirmationsList(sessionUserId).catch(() => [] as PaymentConfirmation[]),
+        paymentConfirmationsList(sessionToken).catch(() => [] as PaymentConfirmation[]),
       ]);
       setItems(ghosts);
       setWaMsgs(msgs);
@@ -73,7 +73,7 @@ export default function NotificationModal({
     } finally {
       setLoading(false);
     }
-  }, [language, sessionUserId]);
+  }, [language, sessionUserId, sessionToken]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -84,14 +84,14 @@ export default function NotificationModal({
       whatsappMarkAllRead(sessionUserId).then(onCountChange).catch(() => {});
     }
     if (payConfs.some(c => !c.seen)) {
-      paymentConfirmationsMarkAllSeen(sessionUserId).then(onCountChange).catch(() => {});
+      paymentConfirmationsMarkAllSeen(sessionToken).then(onCountChange).catch(() => {});
     }
     onClose();
-  }, [waMsgs, payConfs, sessionUserId, onCountChange, onClose]);
+  }, [waMsgs, payConfs, sessionUserId, sessionToken, onCountChange, onClose]);
 
   const overridePay = async (id: string, confirm: boolean) => {
     try {
-      await paymentConfirmationOverride(id, confirm, sessionUserId);
+      await paymentConfirmationOverride(id, confirm, sessionToken);
       setPayConfs(prev => prev.map(c => (c.id === id
         ? { ...c, status: confirm ? "confirmed" : "failed", seen: true } : c)));
       onCountChange();

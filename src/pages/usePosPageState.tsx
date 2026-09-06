@@ -92,6 +92,7 @@ export function usePosPageState({
   // Sidebar badges: alerts bell + unfulfilled orders, one shared 8s poll.
   const { notifCount, orderCount, refreshNotifications } = usePosAlerts({
     userId: sessionUser.user_id,
+    sessionToken: sessionUser.session_token,
     canOpenBackOffice,
     commerceEnabled
   });

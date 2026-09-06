@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Award, ExternalLink } from "lucide-react";
-import type { CustomerRow } from "../../../types";
+import type { CustomerRow, SessionToken } from "../../../types";
 
 interface LoyaltySummary {
   outstanding_points: number;
@@ -18,7 +18,7 @@ import type { Column } from "../../../components/templates";
 import "./customers.css";
 
 interface Props {
-  actorUserId: string;
+  sessionToken: SessionToken;
   /** Opens the directory so a balance can be acted on where the customer is. */
   onOpenDirectory: () => void;
   /** Where the earn rule is actually edited. */
@@ -38,7 +38,7 @@ interface Props {
  *   • "Find customers with points but no recent purchase" and similar prompts.
  *     No command joins a customer to a sale, so nothing could answer them.
  */
-export default function LoyaltyPage({ actorUserId, onOpenDirectory, onOpenSettings }: Props) {
+export default function LoyaltyPage({ sessionToken, onOpenDirectory, onOpenSettings }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => operationsTranslator(language), [language]);
 
@@ -59,8 +59,8 @@ export default function LoyaltyPage({ actorUserId, onOpenDirectory, onOpenSettin
       // SQL. Neither is derived from the directory's page, which would describe
       // only the rows currently on screen.
       const [nextSummary, nextRanked, settings] = await Promise.all([
-        customerLoyaltySummary(actorUserId),
-        customerTopBalances(actorUserId, 25),
+        customerLoyaltySummary(sessionToken),
+        customerTopBalances(sessionToken, 25),
         operationalSettingsLoad().catch(() => null),
       ]);
       setSummary(nextSummary);
@@ -73,7 +73,7 @@ export default function LoyaltyPage({ actorUserId, onOpenDirectory, onOpenSettin
     } finally {
       setLoading(false);
     }
-  }, [actorUserId, t]);
+  }, [sessionToken, t]);
 
   useEffect(() => { void load(); }, [load]);
 

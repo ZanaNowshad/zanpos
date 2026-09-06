@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { SessionToken } from "../types";
 import {
   ghostSummary,
   paymentConfirmationsUnseenCount,
@@ -30,11 +31,12 @@ export function shouldChime(previous: number | null, current: number): boolean {
  */
 export function usePosAlerts(options: {
   userId: string;
+  sessionToken: SessionToken;
   /** Bell is admin-only; orders additionally require commerce to be enabled. */
   canOpenBackOffice: boolean;
   commerceEnabled: boolean;
 }) {
-  const { userId, canOpenBackOffice, commerceEnabled } = options;
+  const { userId, sessionToken, canOpenBackOffice, commerceEnabled } = options;
   const [notifCount, setNotifCount] = useState(0);
   const [orderCount, setOrderCount] = useState(0);
   const previousOrderCount = useRef<number | null>(null);
@@ -74,7 +76,7 @@ export function usePosAlerts(options: {
       const [ghosts, waUnread, payUnseen] = await Promise.all([
         ghostSummary(userId),
         whatsappPollMessages(userId).catch(() => 0),
-        paymentConfirmationsUnseenCount(userId).catch(() => 0),
+        paymentConfirmationsUnseenCount(sessionToken).catch(() => 0),
       ]);
       /* Coerced, not just added. `+` on a null or a string concatenates rather
          than sums, and the badge then held "0null" — which is also truthy past
@@ -86,7 +88,7 @@ export function usePosAlerts(options: {
       };
       setNotifCount(n(ghosts.pending) + n(ghosts.found) + n(waUnread) + n(payUnseen));
     } catch { /* non-fatal */ }
-  }, [canOpenBackOffice, userId]);
+  }, [canOpenBackOffice, userId, sessionToken]);
 
   const refreshOrderCount = useCallback(async () => {
     if (!canOpenBackOffice || !commerceEnabled) return;

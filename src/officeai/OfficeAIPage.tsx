@@ -344,7 +344,7 @@ export default function OfficeAIPage({
       return (
         <LoyaltyPage
           key={tabKey}
-          actorUserId={sessionUser.user_id}
+          sessionToken={sessionUser.session_token}
           onOpenDirectory={() => openVisibleTab("customers")}
           onOpenSettings={isManager ? () => openVisibleTab("settings") : undefined}
         />

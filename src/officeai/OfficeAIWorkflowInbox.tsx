@@ -37,13 +37,13 @@ export default function OfficeAIWorkflowInbox({ actorUserId, sessionToken, onSen
     setLoading(true);
     setError(null);
     try {
-      setItems(await officeAiWorkflowInbox(actorUserId, t));
+      setItems(await officeAiWorkflowInbox(actorUserId, sessionToken, t));
     } catch (e) {
       setError(typeof e === "string" ? e : String(e));
     } finally {
       setLoading(false);
     }
-  }, [actorUserId, t]);
+  }, [actorUserId, sessionToken, t]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -65,7 +65,7 @@ export default function OfficeAIWorkflowInbox({ actorUserId, sessionToken, onSen
     if (!isPayment(item.source)) return;
     setError(null);
     try {
-      await paymentConfirmationOverride(item.source.id, confirm, actorUserId);
+      await paymentConfirmationOverride(item.source.id, confirm, sessionToken);
       await load();
     } catch (e) {
       setError(typeof e === "string" ? e : t("paymentOverrideFailed"));

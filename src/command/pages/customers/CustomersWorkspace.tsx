@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Minus, Plus, Users } from "lucide-react";
-import type { CustomerRow } from "../../../types";
+import type { CustomerRow, SessionToken } from "../../../types";
 import { customerAddLoyalty, customerCreate, customerList, customerUpdate } from "../../../tauri/commands";
 import { useLanguage } from "../../../hooks/useLanguage";
 import { countText, operationsTranslator, type OperationsStringKey } from "../../../i18n/operationsStrings";
@@ -19,6 +19,8 @@ const PAGE_SIZE = 50;
 
 interface Props {
   actorUserId: string;
+  /** Authorises the loyalty adjustment. */
+  sessionToken: SessionToken;
   /** Loyalty adjustment is manager_or_owner server-side. */
   canAdjustLoyalty: boolean;
 }
@@ -32,7 +34,7 @@ interface Props {
  * this screen could do. Likewise there is no loyalty history: `loyalty_points`
  * is a single integer with no ledger behind it.
  */
-export default function CustomersWorkspace({ actorUserId, canAdjustLoyalty }: Props) {
+export default function CustomersWorkspace({ actorUserId, sessionToken, canAdjustLoyalty }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => operationsTranslator(language), [language]);
 
@@ -167,7 +169,7 @@ export default function CustomersWorkspace({ actorUserId, canAdjustLoyalty }: Pr
     setLoyaltyError(null);
     try {
       // Returns the new balance; the list is reloaded so both surfaces agree.
-      await customerAddLoyalty(actorUserId, selected.customer_id, delta);
+      await customerAddLoyalty(sessionToken, selected.customer_id, delta);
       setLoyaltyOpen(false);
       setPointsInput("");
       await load(search, offset);

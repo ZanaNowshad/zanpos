@@ -27,10 +27,12 @@ pub struct LoyaltySummary {
 
 #[tauri::command]
 pub async fn customer_loyalty_summary(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<LoyaltySummary, AppError> {
-    customer_loyalty_summary_inner(&state.db, &actor_user_id).await
+    let actor =
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
+    customer_loyalty_summary_inner(&state.db, &actor.user_id).await
 }
 
 pub(crate) async fn customer_loyalty_summary_inner(
@@ -65,11 +67,13 @@ pub(crate) async fn customer_loyalty_summary_inner(
 /// Highest balances in the actor's branch, ranked in SQL.
 #[tauri::command]
 pub async fn customer_top_balances(
-    actor_user_id: String,
+    session_token: String,
     limit: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<Vec<CustomerRow>, AppError> {
-    customer_top_balances_inner(&state.db, &actor_user_id, limit).await
+    let actor =
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
+    customer_top_balances_inner(&state.db, &actor.user_id, limit).await
 }
 
 pub(crate) async fn customer_top_balances_inner(
@@ -100,13 +104,24 @@ pub(crate) async fn customer_top_balances_inner(
 
 #[tauri::command]
 pub async fn customer_add_loyalty(
-    actor_user_id: String,
+    session_token: String,
     customer_id: String,
     points: i64,
     state: State<'_, AppState>,
 ) -> Result<i64, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
-    let actor_branch = actor_branch_id(&state.db, &actor_user_id).await?;
+    // Loyalty points are spendable, so granting them is a manager action and the
+    // grant is audited. Both the permission and the name in the audit entry come
+    // from the session — while the id came from the payload, a cashier could
+    // award points by sending a manager's id and the trail would name them.
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
+    let actor_user_id = actor.user_id;
+    let actor_branch = actor.branch_id.clone();
     customer_in_branch(&state.db, &customer_id, &actor_branch).await?;
     if points == 0 {
         return Err(AppError::Validation("Points delta must be non-zero".into()));

@@ -1049,13 +1049,13 @@ export const customerList = (
   invoke("customer_list", { actorUserId, search, offset, limit: limit ?? null });
 
 /** SQL aggregate over the actor's whole branch — never derived from a page. */
-export const customerLoyaltySummary = (actorUserId: string): Promise<{
+export const customerLoyaltySummary = (sessionToken: SessionToken): Promise<{
   outstanding_points: number; holders: number;
   total_customers: number; contactable_holders: number;
-}> => invoke("customer_loyalty_summary", { actorUserId });
+}> => invoke("customer_loyalty_summary", { sessionToken });
 
-export const customerTopBalances = (actorUserId: string, limit = 25): Promise<CustomerRow[]> =>
-  invoke("customer_top_balances", { actorUserId, limit });
+export const customerTopBalances = (sessionToken: SessionToken, limit = 25): Promise<CustomerRow[]> =>
+  invoke("customer_top_balances", { sessionToken, limit });
 
 export const customerCreate = (input: {
   name: string; phone?: string; email?: string; notes?: string; actor_user_id: string;
@@ -1070,8 +1070,8 @@ export const customerUpdate = (input: {
 export const customerGet = (actorUserId: string, customerId: string): Promise<CustomerRow> =>
   invoke("customer_get", { actorUserId, customerId });
 
-export const customerAddLoyalty = (actorUserId: string, customerId: string, points: number): Promise<number> =>
-  invoke("customer_add_loyalty", { actorUserId, customerId, points });
+export const customerAddLoyalty = (sessionToken: SessionToken, customerId: string, points: number): Promise<number> =>
+  invoke("customer_add_loyalty", { sessionToken, customerId, points });
 
 // ─── Phase 10b — Devices ──────────────────────────────────────────────────────
 
@@ -1450,23 +1450,23 @@ export const whatsappOrderMessage = (
 
 // ── AI payment verification (WhatsApp screenshot → OCR → AI confirm) ──────────
 /** Resolved payment confirmations (confirmed/failed) for the Notification panel. */
-export const paymentConfirmationsList = (actorUserId: string): Promise<PaymentConfirmation[]> =>
-  invoke("payment_confirmations_list", { actorUserId });
+export const paymentConfirmationsList = (sessionToken: SessionToken): Promise<PaymentConfirmation[]> =>
+  invoke("payment_confirmations_list", { sessionToken });
 
 /** Count of unseen confirmations — folded into the POS bell badge. */
-export const paymentConfirmationsUnseenCount = (actorUserId: string): Promise<number> =>
-  invoke("payment_confirmations_unseen_count", { actorUserId });
+export const paymentConfirmationsUnseenCount = (sessionToken: SessionToken): Promise<number> =>
+  invoke("payment_confirmations_unseen_count", { sessionToken });
 
 /** Mark all confirmations as seen (clears the badge contribution). */
-export const paymentConfirmationsMarkAllSeen = (actorUserId: string): Promise<void> =>
-  invoke("payment_confirmations_mark_all_seen", { actorUserId });
+export const paymentConfirmationsMarkAllSeen = (sessionToken: SessionToken): Promise<void> =>
+  invoke("payment_confirmations_mark_all_seen", { sessionToken });
 
 /** Manager/owner manual override for a confirmation the AI couldn't auto-verify. */
 export const paymentConfirmationOverride = (
   id: string,
   confirm: boolean,
-  actorUserId: string,
-): Promise<void> => invoke("payment_confirmation_override", { id, confirm, actorUserId });
+  sessionToken: SessionToken,
+): Promise<void> => invoke("payment_confirmation_override", { id, confirm, sessionToken });
 
 // ── Invoice / price-list photo → catalog update (review-first) ─────────────────
 /** Extract + match an invoice/price-list image. Read-only — returns proposals. */

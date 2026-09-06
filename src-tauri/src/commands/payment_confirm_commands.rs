@@ -477,10 +477,10 @@ fn row_to_conf(r: &sqlx::sqlite::SqliteRow) -> PaymentConfirmation {
 
 #[tauri::command]
 pub async fn payment_confirmations_list(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<PaymentConfirmation>> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     let rows = sqlx::query(
         "SELECT id, customer_jid, customer_name, receipt_number, expected_amount_minor, \
                 currency_exponent, amount_found, name_matched, status, reason, seen, created_at, resolved_at \
@@ -494,10 +494,10 @@ pub async fn payment_confirmations_list(
 
 #[tauri::command]
 pub async fn payment_confirmations_unseen_count(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<i64> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     Ok(sqlx::query_scalar(
         "SELECT COUNT(*) FROM payment_confirmations WHERE status IN ('confirmed','failed') AND seen=0",
     )
@@ -508,10 +508,10 @@ pub async fn payment_confirmations_unseen_count(
 
 #[tauri::command]
 pub async fn payment_confirmations_mark_all_seen(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     sqlx::query("UPDATE payment_confirmations SET seen=1 WHERE seen=0")
         .execute(&state.db)
         .await?;
@@ -523,10 +523,21 @@ pub async fn payment_confirmations_mark_all_seen(
 pub async fn payment_confirmation_override(
     id: String,
     confirm: bool,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    // Accepting a payment the verifier rejected is a manager decision that moves
+    // a delivery to paid. The name it is recorded under — in the reason text and
+    // in delivery_orders.paid_confirmed_by_user_id — is the answer to "who
+    // accepted this", so it has to be the caller and not a name they supplied.
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
+    let actor_user_id = actor.user_id;
     let receipt: Option<String> =
         sqlx::query_scalar("SELECT receipt_number FROM payment_confirmations WHERE id=?")
             .bind(&id)

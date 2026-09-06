@@ -64,6 +64,7 @@ export function renderDataTab(ctx: DataTabContext): ReactNode {
         <CustomersWorkspace
           key={tabKey}
           actorUserId={sessionUser.user_id}
+          sessionToken={sessionUser.session_token}
           canAdjustLoyalty={isManager}
         />
       );

@@ -113,14 +113,34 @@ if (!existsSync(NSIS_DIR)) {
 }
 
 const files = readdirSync(NSIS_DIR);
+const version = conf.version;
+if (!version) die("tauri.conf.json has no version.");
 
-// Which file the updater actually downloads depends on the Tauri version. The
-// docs describe `.nsis.zip` + `.nsis.zip.sig`; this toolchain signs the
-// installer `.exe` directly with no zip wrapper. Both are accepted rather than
-// assuming, because guessing wrong here produces a manifest pointing at a file
-// that was never uploaded — which fails on the till, not here.
-const signature = files.find(f => f.endsWith(".sig"));
-const archive = signature ? signature.slice(0, -".sig".length) : undefined;
+// Which file the updater downloads depends on the Tauri version — the docs
+// describe `.nsis.zip`, this toolchain signs the installer `.exe` directly — so
+// the extension is discovered rather than assumed.
+//
+// The version must be matched explicitly. The bundle directory accumulates every
+// build ever made, so a bare "first .sig found" picked 2.0.0's signature while
+// publishing 2.0.1: the manifest advertised the new version, pointed at the old
+// binary, and carried a signature that verified it. A till would have installed
+// 2.0.0, still reported 2.0.0, and been offered the same update forever.
+const candidates = files.filter(
+  f => f.endsWith(".sig") && f.includes(version),
+);
+if (candidates.length !== 1) {
+  die(
+    candidates.length === 0
+      ? `No signature for version ${version} in the bundle directory.`
+      : `Ambiguous: ${candidates.length} signatures match ${version}.`,
+    `    Found: ${files.join(", ") || "(nothing)"}\n\n` +
+    `    The artifact published must be the one just built. Run\n` +
+    `    ${c.bold}npm run ship${c.reset} for ${version}, or clear stale builds from\n` +
+    `    src-tauri/target/release/bundle/nsis/.\n`,
+  );
+}
+const signature = candidates[0];
+const archive = signature.slice(0, -".sig".length);
 
 if (!archive || !signature || !existsSync(join(NSIS_DIR, archive))) {
   die(
@@ -155,9 +175,6 @@ pass(`${archive} (${mb(archiveBytes)}) with a ${sig.length}-char signature`);
 // ── 3. The manifest ──────────────────────────────────────────────────────────
 
 step("Manifest");
-
-const version = conf.version;
-if (!version) die("tauri.conf.json has no version.");
 
 const manifest = {
   version,

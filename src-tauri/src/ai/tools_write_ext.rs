@@ -739,7 +739,7 @@ pub async fn execute(
                 .unwrap_or(9600);
             let sale = refund_repo::get_sale_by_receipt(pool, &receipt).await?;
             let mut lines = vec![
-                format!("REPRINT"),
+                "REPRINT".to_string(),
                 format!("Receipt: #{}", sale.receipt_number),
                 format!("Date: {}", sale.sold_at),
                 format!("Cashier: {}", sale.cashier_name),

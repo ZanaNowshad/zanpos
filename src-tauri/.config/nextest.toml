@@ -1,10 +1,11 @@
 # cargo-nextest configuration for ZANPOS
 #
 # Test parity (2026-08-02):
-#   cargo test --all-targets:    covers all tests
-#   cargo nextest --all-targets: covers same set
-#   cargo test --doc:            retained separately (nextest does not run doc-tests)
-#   CI runs both cargo test --all-targets AND cargo nextest with JUnit output
+#   cargo nextest --all-targets: covers every test except doc-tests
+#   cargo test --doc:            retained separately (nextest does not run them)
+#   CI runs nextest for the JUnit report, plus the doc-test step. It used to run
+#   `cargo test --all-targets` as well, over the identical set; that duplicate
+#   was removed once it started pushing the job past its timeout.
 #   No generic retry policy: flaky tests addressed individually at source
 
 [profile.default]
@@ -12,7 +13,15 @@ slow-timeout = { period = "30s", terminate-after = 3 }
 leak-timeout = "2s"
 
 [profile.ci]
-slow-timeout = { period = "30s", terminate-after = 2 }
+# Report at 30s so slowness stays visible, but do not kill until 180s.
+#
+# This used to terminate at 60s — stricter than the default profile's 90s,
+# which had it backwards: CI is the slower machine, not the faster one. The
+# heartbeat e2e test stands two databases up against a real HTTP hub and takes
+# ~27s here and just over 60s on windows-latest, so the ceiling was failing a
+# healthy test for running on the hardware it was meant to run on. 180s still
+# catches a genuine hang, which is what a kill threshold is for.
+slow-timeout = { period = "30s", terminate-after = 6 }
 leak-timeout = "2s"
 
 # JUnit output for CI artifact publication

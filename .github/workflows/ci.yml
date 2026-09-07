@@ -149,10 +149,12 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --all-targets -- -D warnings
 
-      - name: Cargo test (unit + integration)
-        working-directory: src-tauri
-        run: cargo test --all-targets
-
+      # `cargo test --all-targets` used to run here as well. It executed exactly
+      # the same set as the nextest step below — the whole suite, compiled and
+      # run twice — and nextest is the one that emits the JUnit report. Doc-tests
+      # are the only thing nextest does not cover, and they have their own step.
+      # Coverage is unchanged; the job stops doing the work twice, which is what
+      # was pushing it past its timeout on windows-latest.
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
         with:

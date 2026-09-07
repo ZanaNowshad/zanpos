@@ -1458,17 +1458,29 @@ mod tests {
         pool
     }
 
+    /// A shift as `shift_repo::open_shift` writes one, business_date included.
+    ///
+    /// It used to leave that column NULL, which sent the EOD query down its
+    /// `COALESCE(business_date, DATE(opened_at, '+3 hours'))` fallback — the
+    /// branch kept for rows written before the column existed. The fixture was
+    /// therefore testing the legacy path, and comparing its result against
+    /// `chrono::Local`. Those agree only on a machine whose timezone is
+    /// Bahrain: on a UTC runner, between 21:00 and midnight the fallback
+    /// already reads as tomorrow and the query matched nothing. That is what
+    /// failed in CI at 21:21 UTC while passing here.
     async fn insert_shift(pool: &SqlitePool) -> String {
         let shift_id = ulid::Ulid::new().to_string();
+        let business_date = chrono::Local::now().format("%Y-%m-%d").to_string();
         sqlx::query(
-            "INSERT INTO shifts (shift_id, branch_id, device_id, origin_device_id, cashier_user_id, opened_at, status, created_at, updated_at, version, sync_status, sync_attempts)
-             VALUES (?, ?, ?, ?, ?, datetime('now'), 'open', datetime('now'), datetime('now'), 1, 'pending', 0)"
+            "INSERT INTO shifts (shift_id, branch_id, device_id, origin_device_id, cashier_user_id, opened_at, business_date, status, created_at, updated_at, version, sync_status, sync_attempts)
+             VALUES (?, ?, ?, ?, ?, datetime('now'), ?, 'open', datetime('now'), datetime('now'), 1, 'pending', 0)"
         )
         .bind(&shift_id)
         .bind(BRANCH)
         .bind(DEVICE)
         .bind(DEVICE)
         .bind(CASHIER)
+        .bind(&business_date)
         .execute(pool)
         .await
         .expect("insert shift");

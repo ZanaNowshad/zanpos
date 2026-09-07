@@ -24,9 +24,15 @@ leak-timeout = "2s"
 slow-timeout = { period = "30s", terminate-after = 6 }
 leak-timeout = "2s"
 
-# JUnit output for CI artifact publication
+# JUnit output for CI artifact publication.
+#
+# Relative to nextest's store directory for this profile, which is already
+# `target/nextest/ci/`. Naming the file "ci/junit.xml" put it at
+# target/nextest/ci/ci/junit.xml, one level below where the workflow's
+# upload step looks, so the artifact step failed with "no files found" every
+# time it was reached.
 [profile.ci.junit]
-path = "ci/junit.xml"
+path = "junit.xml"
 report-name = "zanpos-test-report"
 store-success-output = false
 store-failure-output = true

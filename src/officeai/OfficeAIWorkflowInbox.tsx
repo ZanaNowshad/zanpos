@@ -10,7 +10,6 @@ import { useLanguage } from "../hooks/useLanguage";
 import { officeAiTranslator, type OfficeAiStringKey } from "../i18n/officeAiStrings";
 
 interface Props {
-  actorUserId: string;
   sessionToken: SessionToken;
   onSendPrompt: (prompt: string) => void;
 }
@@ -23,7 +22,7 @@ function isPayment(source: OfficeAiWorkflowInboxItem["source"]): source is Payme
   return Boolean(source && "receipt_number" in source);
 }
 
-export default function OfficeAIWorkflowInbox({ actorUserId, sessionToken, onSendPrompt }: Props) {
+export default function OfficeAIWorkflowInbox({ sessionToken, onSendPrompt }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => officeAiTranslator(language), [language]);
   const [items, setItems] = useState<OfficeAiWorkflowInboxItem[]>([]);
@@ -37,13 +36,13 @@ export default function OfficeAIWorkflowInbox({ actorUserId, sessionToken, onSen
     setLoading(true);
     setError(null);
     try {
-      setItems(await officeAiWorkflowInbox(actorUserId, sessionToken, t));
+      setItems(await officeAiWorkflowInbox(sessionToken, t));
     } catch (e) {
       setError(typeof e === "string" ? e : String(e));
     } finally {
       setLoading(false);
     }
-  }, [actorUserId, sessionToken, t]);
+  }, [sessionToken, t]);
 
   useEffect(() => { void load(); }, [load]);
 

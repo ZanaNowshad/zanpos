@@ -2,27 +2,28 @@ import { useEffect, useState } from "react";
 import type { WhatsAppStatus } from "../../types";
 import { whatsappStatus } from "../../tauri/commands";
 import WhatsAppQRModal from "../WhatsAppQRModal";
+import type { SessionToken } from "../../types";
 
 interface Props {
-  ownerUserId: string;
+  sessionToken: SessionToken;
   onDone: () => void;
 }
 
 /** Step 3 — pair WhatsApp. Reuses WhatsAppQRModal verbatim; skippable, with an
  * explicit note that pairing can happen later in Settings. */
-export default function StepWhatsApp({ ownerUserId, onDone }: Props) {
+export default function StepWhatsApp({ sessionToken, onDone }: Props) {
   const [status, setStatus] = useState<WhatsAppStatus>({ connected: false });
   const [checked, setChecked] = useState(false);
   const [showQr, setShowQr] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    whatsappStatus(ownerUserId)
+    whatsappStatus(sessionToken)
       .then(s => { if (!cancelled) setStatus(s); })
       .catch(() => { /* sidecar not up yet — connect button still available */ })
       .finally(() => { if (!cancelled) setChecked(true); });
     return () => { cancelled = true; };
-  }, [ownerUserId]);
+  }, [sessionToken]);
 
   return (
     <div className="setup-content">
@@ -60,7 +61,7 @@ export default function StepWhatsApp({ ownerUserId, onDone }: Props) {
 
       {showQr && (
         <WhatsAppQRModal
-          sessionUserId={ownerUserId}
+          sessionToken={sessionToken}
           onConnected={() => setStatus(s => ({ ...s, connected: true }))}
           onClose={() => setShowQr(false)}
         />

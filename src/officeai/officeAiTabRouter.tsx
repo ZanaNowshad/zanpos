@@ -53,17 +53,16 @@ export function renderDataTab(ctx: DataTabContext): ReactNode {
       case "operations": return <ProductsTab key={tabKey} sessionToken={sessionUser.session_token} prefill={productPrefill} onPrefillConsumed={() => ctx.onPrefillConsumed()} />;
       case "products": return <ProductsTab key={tabKey} sessionToken={sessionUser.session_token} prefill={productPrefill} onPrefillConsumed={() => ctx.onPrefillConsumed()} />;
       case "categories": return <CategoriesTab key={tabKey} sessionToken={sessionUser.session_token} />;
-      case "quickpos": return <QuickPosTab key={tabKey} sessionUserId={sessionUser.user_id} sessionToken={sessionUser.session_token} />;
+      case "quickpos": return <QuickPosTab key={tabKey} sessionToken={sessionUser.session_token} />;
       case "users": return <UsersTab key={tabKey} sessionToken={sessionUser.session_token} sessionRole={sessionUser.role_name} />;
-      case "riders": return <RidersPage key={tabKey} actorUserId={sessionUser.user_id} />;
+      case "riders": return <RidersPage key={tabKey} sessionToken={sessionUser.session_token} />;
       case "reports": return <ReportsTab key={tabKey} sessionToken={sessionUser.session_token} />;
-      case "cashier": return <CashierReportTab key={tabKey} sessionUserId={sessionUser.user_id} />;
+      case "cashier": return <CashierReportTab key={tabKey} sessionToken={sessionUser.session_token} />;
       case "eod": return <EodCashupTab key={tabKey} sessionToken={sessionUser.session_token} />;
       case "inventory": return <InventoryTab key={tabKey} sessionToken={sessionUser.session_token} />;
       case "customers": return (
         <CustomersWorkspace
           key={tabKey}
-          actorUserId={sessionUser.user_id}
           sessionToken={sessionUser.session_token}
           canAdjustLoyalty={isManager}
         />
@@ -71,7 +70,6 @@ export function renderDataTab(ctx: DataTabContext): ReactNode {
       case "settings": return (
         <CommandSettingsPage
           key={tabKey}
-          sessionUserId={sessionUser.user_id}
           sessionToken={sessionUser.session_token}
           sessionRole={sessionUser.role_name}
           initialSection={(ctx.maintenancePane ? "advanced" : "store") as SettingsSection}
@@ -85,7 +83,6 @@ export function renderDataTab(ctx: DataTabContext): ReactNode {
       case "purchasing": return (
         <OfficeAIPurchasingWorkspace
           key={tabKey}
-          actorUserId={sessionUser.user_id}
           sessionToken={sessionUser.session_token}
           currencyExp={DEVICE.currency_exponent}
           onSendPrompt={ctx.onSendPrompt}
@@ -94,7 +91,7 @@ export function renderDataTab(ctx: DataTabContext): ReactNode {
       case "zanshop": return (
         <ZanShopPage
           key={tabKey}
-          sessionUserId={sessionUser.user_id}
+          sessionToken={sessionUser.session_token}
           onOpenSettings={() => ctx.onOpenTab("settings")}
         />
       );

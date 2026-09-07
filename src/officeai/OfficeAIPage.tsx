@@ -92,7 +92,7 @@ export default function OfficeAIPage({
   const configured = Boolean(config?.provider);
 
   useEffect(() => {
-    settingsGetBranch(sessionUser.user_id).then(b => { if (b?.name) setBusinessName(b.name); }).catch(() => {});
+    settingsGetBranch(sessionUser.session_token).then(b => { if (b?.name) setBusinessName(b.name); }).catch(() => {});
     adminGetProviderConfig(sessionUser.session_token)
       .then(cfg => setConfig(cfg))
       .catch(() => setConfig(null))
@@ -102,7 +102,7 @@ export default function OfficeAIPage({
   const refreshOverview = useCallback(async () => {
     setOverview(prev => ({ ...prev, loading: true }));
     try {
-      const next = await officeAiOverview(sessionUser.user_id, sessionUser.session_token, sessionUser.branch_id, t);
+      const next = await officeAiOverview(sessionUser.session_token, sessionUser.branch_id, t);
       setOverview(next);
       if (next.provider) setConfig(next.provider);
     } catch (e) {
@@ -112,7 +112,7 @@ export default function OfficeAIPage({
         errors: [`${t("officeAiOverview")}: ${typeof e === "string" ? e : String(e)}`],
       }));
     }
-  }, [sessionUser.branch_id, sessionUser.user_id, sessionUser.session_token, t]);
+  }, [sessionUser.branch_id, sessionUser.session_token, t]);
 
   useEffect(() => { void refreshOverview(); }, [refreshOverview]);
   useEffect(() => { if (productPrefill) setTab("products"); }, [productPrefill]);
@@ -331,13 +331,13 @@ export default function OfficeAIPage({
       );
     }
     if (tab === "health") {
-      return <OfficeAISystemHealth actorUserId={sessionUser.user_id} sessionToken={sessionUser.session_token} initialReport={overview.health} onReport={(health) => setOverview(prev => ({ ...prev, health }))} />;
+      return <OfficeAISystemHealth sessionToken={sessionUser.session_token} initialReport={overview.health} onReport={(health) => setOverview(prev => ({ ...prev, health }))} />;
     }
     if (tab === "conflicts") {
       return <OfficeAIConflictInbox sessionToken={sessionUser.session_token} />;
     }
     if (tab === "workflows") {
-      return <OfficeAIWorkflowInbox actorUserId={sessionUser.user_id} sessionToken={sessionUser.session_token} onSendPrompt={sendPrompt} />;
+      return <OfficeAIWorkflowInbox sessionToken={sessionUser.session_token} onSendPrompt={sendPrompt} />;
     }
     if (tab === "loyalty") {
       return (

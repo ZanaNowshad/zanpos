@@ -189,15 +189,23 @@ async fn every_price_lookup_agrees_with_what_the_till_charges() {
     .await
     .unwrap();
     sqlx::query(
+        // RFC3339 at the start of today, so the row is unambiguously current
+        // and a raw text comparison against datetime('now') still rejects it.
+        //
+        // The timestamp is built from SQLite's own clock rather than the host's
+        // because the hazard is a *character* comparison: 'T' (0x54) only sorts
+        // above a space (0x20) when the date parts match. Dating the row an
+        // hour back put it on the previous calendar date between 00:00 and
+        // 01:00 UTC, where '…-06T23:…' < '…-07 00:…' compares by the day digit
+        // instead — the raw query then agreed with checkout and this test
+        // failed for one hour a day, on the fixture rather than on the bug.
         "INSERT INTO product_prices
            (price_id, product_id, price_type, price_minor, currency,
             effective_from, created_by_user_id, created_at, updated_at)
-         VALUES ('prc_new','prd_inv','selling', 2500, 'BHD', ?, ?,
+         VALUES ('prc_new','prd_inv','selling', 2500, 'BHD',
+                 strftime('%Y-%m-%dT00:00:00Z','now'), ?,
                  datetime('now'), datetime('now'))",
     )
-    // RFC3339, an hour ago: unambiguously current, and the row a raw text
-    // comparison against datetime('now') rejects.
-    .bind((chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339())
     .bind(CASHIER)
     .execute(&pool)
     .await

@@ -18,9 +18,9 @@ import "./customers.css";
 const PAGE_SIZE = 50;
 
 interface Props {
-  actorUserId: string;
-  /** Authorises the loyalty adjustment. */
   sessionToken: SessionToken;
+  /** Authorises the loyalty adjustment. */
+
   /** Loyalty adjustment is manager_or_owner server-side. */
   canAdjustLoyalty: boolean;
 }
@@ -34,7 +34,7 @@ interface Props {
  * this screen could do. Likewise there is no loyalty history: `loyalty_points`
  * is a single integer with no ledger behind it.
  */
-export default function CustomersWorkspace({ actorUserId, sessionToken, canAdjustLoyalty }: Props) {
+export default function CustomersWorkspace({ sessionToken, canAdjustLoyalty }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => operationsTranslator(language), [language]);
 
@@ -78,7 +78,7 @@ export default function CustomersWorkspace({ actorUserId, sessionToken, canAdjus
     setLoading(true);
     setError(null);
     try {
-      const page = await customerList(actorUserId, q, off, PAGE_SIZE);
+      const page = await customerList(sessionToken, q, off, PAGE_SIZE);
       setRows(page.items);
       setTotal(page.total);
       setOffset(page.offset);
@@ -91,7 +91,7 @@ export default function CustomersWorkspace({ actorUserId, sessionToken, canAdjus
     } finally {
       setLoading(false);
     }
-  }, [actorUserId, t]);
+  }, [sessionToken, t]);
 
   useEffect(() => { void load(search, offset); }, [load, search, offset]);
 
@@ -139,14 +139,13 @@ export default function CustomersWorkspace({ actorUserId, sessionToken, canAdjus
         await customerUpdate({
           customer_id: editing.customer_id, name: fName.trim(),
           phone: fPhone.trim() || undefined, email: fEmail.trim() || undefined,
-          notes: fNotes.trim() || undefined, actor_user_id: actorUserId,
-        });
+          notes: fNotes.trim() || undefined,
+        }, sessionToken);
       } else {
         await customerCreate({
           name: fName.trim(), phone: fPhone.trim() || undefined,
           email: fEmail.trim() || undefined, notes: fNotes.trim() || undefined,
-          actor_user_id: actorUserId,
-        });
+        }, sessionToken);
       }
       setFormOpen(false);
       await load(search, offset);

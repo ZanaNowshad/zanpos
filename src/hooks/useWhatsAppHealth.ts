@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { whatsappStatus } from "../tauri/commands";
+import type { SessionToken } from "../types";
 
-export function useWhatsAppHealth(enabled: boolean, userId: string) {
+export function useWhatsAppHealth(enabled: boolean, sessionToken: SessionToken) {
   const [connected, setConnected] = useState<boolean | null>(null);
   const [stale, setStale] = useState(false);
 
@@ -10,7 +11,7 @@ export function useWhatsAppHealth(enabled: boolean, userId: string) {
     let cancelled = false;
     const check = async () => {
       try {
-        const status = await whatsappStatus(userId);
+        const status = await whatsappStatus(sessionToken);
         if (!cancelled) {
           setConnected(status.connected);
           setStale(false);
@@ -26,7 +27,7 @@ export function useWhatsAppHealth(enabled: boolean, userId: string) {
       cancelled = true;
       clearInterval(id);
     };
-  }, [enabled, userId]);
+  }, [enabled, sessionToken]);
 
   return { connected, stale } as const;
 }

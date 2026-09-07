@@ -1,31 +1,32 @@
 import { useEffect, useState } from "react";
 import { LoaderCircle, MessageCircle } from "lucide-react";
 import * as cmd from "../../tauri/commands";
+import type { SessionToken } from "../../types";
 
-interface Props { sessionUserId: string; }
+interface Props { sessionToken: SessionToken; }
 
 /** Master ON/OFF for WhatsApp order capture, shown as the closing step of the
  *  storefront journey: customers browse the shop, order over WhatsApp, and the
  *  order lands on the POS Orders page. When OFF, the POS Orders page is hidden,
  *  no order capture runs, and every order command refuses. */
-export default function StorefrontOrderCapture({ sessionUserId }: Props) {
+export default function StorefrontOrderCapture({ sessionToken }: Props) {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    cmd.whatsappCommerceGetEnabled(sessionUserId)
+    cmd.whatsappCommerceGetEnabled(sessionToken)
       .then(value => { if (!cancelled) setEnabled(value); })
       .catch(e => { if (!cancelled) { setError(String(e)); setEnabled(false); } });
     return () => { cancelled = true; };
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   async function toggle(next: boolean) {
     setSaving(true);
     setError(null);
     try {
-      await cmd.whatsappCommerceSetEnabled(sessionUserId, next);
+      await cmd.whatsappCommerceSetEnabled(sessionToken, next);
       setEnabled(next);
     } catch (e) {
       setError(String(e));

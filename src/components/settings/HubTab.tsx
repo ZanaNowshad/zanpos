@@ -19,11 +19,9 @@ import { hubTruthStatusText, operationsTranslator } from "../../i18n/operationsS
 
 interface Props {
   sessionToken: SessionToken;
-  /** Still a user id: TerminalRosterPanel's commands are not migrated yet. */
-  sessionUserId: string;
 }
 
-export default function HubTab({ sessionToken, sessionUserId }: Props) {
+export default function HubTab({ sessionToken }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => operationsTranslator(language), [language]);
   const [status, setStatus] = useState<HubStatus | null>(null);
@@ -292,7 +290,7 @@ export default function HubTab({ sessionToken, sessionUserId }: Props) {
             terminal that had never once contacted it — every state below is
             derived from heartbeat evidence instead. Two terminal lists giving
             different answers is worse than one. */}
-        <TerminalRosterPanel actorUserId={sessionUserId} canRepair isHub />
+        <TerminalRosterPanel sessionToken={sessionToken} canRepair isHub />
 
         {error && <div className="modal-error">{error}</div>}
       </div>
@@ -361,7 +359,7 @@ export default function HubTab({ sessionToken, sessionUserId }: Props) {
 
         {/* A till needs to know about its siblings too — a terminal that
             stopped syncing on Tuesday is the usual reason two screens disagree. */}
-        <TerminalRosterPanel actorUserId={sessionUserId} canRepair />
+        <TerminalRosterPanel sessionToken={sessionToken} canRepair />
 
         {error && <div className="modal-error">{error}</div>}
       </div>

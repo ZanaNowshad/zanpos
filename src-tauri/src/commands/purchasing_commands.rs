@@ -80,6 +80,9 @@ pub struct PurchaseOrderCreateInput {
     pub supplier_id: Option<String>,
     pub expected_date: Option<String>,
     pub notes: Option<String>,
+    /// Who raised the order. Set from the caller's session before the inner
+    /// runs; anything a client sends here is overwritten.
+    #[serde(default)]
     pub created_by: String,
     pub lines: Vec<PurchaseOrderLineInput>,
 }
@@ -177,11 +180,13 @@ pub async fn po_get(
 #[tauri::command]
 pub async fn po_create(
     session_token: String,
-    input: PurchaseOrderCreateInput,
+    mut input: PurchaseOrderCreateInput,
     state: State<'_, AppState>,
 ) -> Result<PurchaseOrderDetail, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    let actor =
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+            .await?;
+    input.created_by = actor.user_id;
     let detail = po_create_inner(&state.db, input).await?;
     sync_commands::schedule_immediate_sync(&state);
     Ok(detail)

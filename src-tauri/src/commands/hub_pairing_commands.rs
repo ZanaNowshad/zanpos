@@ -35,12 +35,13 @@ async fn reload_paired(state: &AppState) {
 /// this value cannot be recovered later — show it, then let it go.
 #[tauri::command]
 pub async fn hub_pair_device(
-    actor_user_id: String,
+    session_token: String,
     device_id: String,
     device_name: String,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    rbac::owner_only(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY)
+        .await?;
     let token = crate::hub::pairing::pair_device(&state.db, &device_id, &device_name).await?;
     reload_paired(&state).await;
     Ok(token)
@@ -48,11 +49,12 @@ pub async fn hub_pair_device(
 
 #[tauri::command]
 pub async fn hub_revoke_device(
-    actor_user_id: String,
+    session_token: String,
     device_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::owner_only(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY)
+        .await?;
     crate::hub::pairing::revoke_device(&state.db, &device_id).await?;
     reload_paired(&state).await;
     Ok(())
@@ -60,9 +62,10 @@ pub async fn hub_revoke_device(
 
 #[tauri::command]
 pub async fn hub_list_devices(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::hub::pairing::PairedDeviceRow>, AppError> {
-    rbac::owner_only(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY)
+        .await?;
     crate::hub::pairing::list_devices(&state.db).await
 }

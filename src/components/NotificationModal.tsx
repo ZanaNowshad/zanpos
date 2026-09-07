@@ -18,8 +18,8 @@ import CatalogImportModal from "./CatalogImportModal";
 import { canImportCatalogFromMessage, relativeMessageTime } from "./notificationPresentation";
 export { canImportCatalogFromMessage } from "./notificationPresentation";
 interface Props {
-  sessionUserId: string;
   sessionToken: SessionToken;
+
   onClose: () => void;
   /** Hand a resolved barcode off to OfficeAI's product create form. */
   onCreateProduct: (prefill: ProductPrefill) => void;
@@ -30,7 +30,6 @@ interface Props {
 }
 
 export default function NotificationModal({
-  sessionUserId,
   sessionToken,
   onClose,
   onCreateProduct,
@@ -61,8 +60,8 @@ export default function NotificationModal({
     setError(null);
     try {
       const [ghosts, msgs, confs] = await Promise.all([
-        ghostList(sessionUserId),
-        whatsappListMessages(sessionUserId).catch(() => [] as WaMessage[]),
+        ghostList(sessionToken),
+        whatsappListMessages(sessionToken).catch(() => [] as WaMessage[]),
         paymentConfirmationsList(sessionToken).catch(() => [] as PaymentConfirmation[]),
       ]);
       setItems(ghosts);
@@ -73,7 +72,7 @@ export default function NotificationModal({
     } finally {
       setLoading(false);
     }
-  }, [language, sessionUserId, sessionToken]);
+  }, [language, sessionToken]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -81,13 +80,13 @@ export default function NotificationModal({
   // which clears the bell badge. Ghost barcodes still require explicit action.
   const handleClose = useCallback(() => {
     if (waMsgs.some(m => !m.read)) {
-      whatsappMarkAllRead(sessionUserId).then(onCountChange).catch(() => {});
+      whatsappMarkAllRead(sessionToken).then(onCountChange).catch(() => {});
     }
     if (payConfs.some(c => !c.seen)) {
       paymentConfirmationsMarkAllSeen(sessionToken).then(onCountChange).catch(() => {});
     }
     onClose();
-  }, [waMsgs, payConfs, sessionUserId, sessionToken, onCountChange, onClose]);
+  }, [waMsgs, payConfs, sessionToken, onCountChange, onClose]);
 
   const overridePay = async (id: string, confirm: boolean) => {
     try {
@@ -104,7 +103,7 @@ export default function NotificationModal({
 
   const markWaRead = async (id: string) => {
     try {
-      await whatsappMarkRead(id, sessionUserId);
+      await whatsappMarkRead(id, sessionToken);
       setWaMsgs(prev => prev.map(m => (m.id === id ? { ...m, read: true } : m)));
       onCountChange();
     } catch { /* non-fatal */ }
@@ -112,7 +111,7 @@ export default function NotificationModal({
 
   const clearWa = async () => {
     try {
-      await whatsappClearMessages(sessionUserId);
+      await whatsappClearMessages(sessionToken);
       setWaMsgs([]);
       onCountChange();
     } catch (e) {
@@ -129,7 +128,7 @@ export default function NotificationModal({
     if (m.media_type === "image") {
       setMediaLoading(true);
       try {
-        const r = await whatsappGetMedia(m.id, sessionUserId);
+        const r = await whatsappGetMedia(m.id, sessionToken);
         if (r.ok && r.base64) {
           setMediaSrc(`data:${r.mimetype || "image/jpeg"};base64,${r.base64}`);
         } else {
@@ -152,7 +151,7 @@ export default function NotificationModal({
     // Attach the photo so the assistant can read prices/products off the image.
     if (m.media_type === "image") {
       try {
-        const r = await whatsappGetMedia(m.id, sessionUserId);
+        const r = await whatsappGetMedia(m.id, sessionToken);
         if (r.ok && r.base64) {
           onSendToAi({ text, imageBase64: r.base64, imageMediaType: r.mimetype || "image/jpeg" });
           return;
@@ -192,7 +191,7 @@ export default function NotificationModal({
     setResolving(true);
     setError(null);
     try {
-      await ghostResolve(sessionUserId);
+      await ghostResolve(sessionToken);
       await load();
       onCountChange();
     } catch (e) {
@@ -204,7 +203,7 @@ export default function NotificationModal({
 
   const handleDismiss = async (id: string) => {
     try {
-      await ghostDismiss(id, sessionUserId);
+      await ghostDismiss(id, sessionToken);
       setItems(prev => prev.filter(i => i.id !== id));
       onCountChange();
     } catch (e) {
@@ -217,7 +216,7 @@ export default function NotificationModal({
       // 'found' items use the resolved lookup data; for pending/not_found we still
       // let the admin add the product manually, pre-filling just the barcode.
       const prefill: ProductPrefill = item.status === "found"
-        ? await ghostPrefill(item.id, sessionUserId)
+        ? await ghostPrefill(item.id, sessionToken)
         : {
             name: item.product_name ?? "",
             barcode: item.barcode,
@@ -225,7 +224,7 @@ export default function NotificationModal({
             category: item.category,
             image_url: item.image_url,
           };
-      await ghostDismiss(item.id, sessionUserId);
+      await ghostDismiss(item.id, sessionToken);
       setItems(prev => prev.filter(i => i.id !== item.id));
       onCountChange();
       onCreateProduct(prefill);

@@ -160,10 +160,11 @@ fn is_safe_sql_identifier(name: &str) -> bool {
 #[tauri::command]
 pub async fn migration_inspect_file(
     path: String,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<FileSchema> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let lower = path.to_lowercase();
     if lower.ends_with(".csv") {
         inspect_csv(path).await
@@ -796,10 +797,11 @@ async fn inspect_json(path: String) -> AppResult<FileSchema> {
 pub async fn migration_ai_map(
     schema: FileSchema,
     currency_exponent: u32,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<MappingConfig> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let provider = match Provider::from_db(&state.db).await? {
         Some(p) => p,
         None => return Err(AppError::Internal("No AI provider configured".into())),
@@ -903,11 +905,12 @@ pub async fn migration_execute(
     path: String,
     mapping: MappingConfig,
     currency_exponent: u32,
-    actor_user_id: String,
+    session_token: String,
     on_event: tauri::ipc::Channel<MigrationProgress>,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let pool = state.db.clone();
 
     // Step 1: Read all source data into memory
@@ -1025,7 +1028,7 @@ pub async fn migration_execute(
                 "MIGRATION_EXECUTED",
                 "migration",
                 &migration_id,
-                &actor_user_id,
+                &actor.user_id,
                 "user",
                 &device_id,
                 &branch_id,
@@ -1688,10 +1691,11 @@ fn format_ts(secs: u64) -> String {
 pub async fn migration_connect_test(
     db_type: String,
     conn_str: String,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<ConnectTestResult> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     match db_type.as_str() {
         "sqlite" => {
             let url = format!("sqlite:{}?mode=ro", conn_str);
@@ -1802,10 +1806,11 @@ pub async fn migration_connect_test(
 pub async fn migration_list_tables(
     db_type: String,
     conn_str: String,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<RemoteTableInfo>> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     match db_type.as_str() {
         "sqlite" => {
             let url = format!("sqlite:{}?mode=ro", conn_str);
@@ -1956,10 +1961,11 @@ pub async fn migration_query_remote(
     conn_str: String,
     query: String,
     max_rows: Option<usize>,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<QueryResult> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     // Finding 6: block CTE-wrapped destructive queries (e.g. WITH x AS (SELECT 1) DELETE …)
     let q_upper = query.trim().to_uppercase();
     let allowed_starts = [
@@ -2160,10 +2166,11 @@ pub async fn migration_query_remote(
 #[tauri::command]
 pub async fn migration_list_processes(
     filter: Option<String>,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ProcessInfo>> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     tokio::task::spawn_blocking(move || -> AppResult<Vec<ProcessInfo>> {
         let output = std::process::Command::new("tasklist")
             .args(["/FO", "CSV", "/NH"])
@@ -2210,10 +2217,11 @@ pub async fn migration_list_processes(
 #[tauri::command]
 pub async fn migration_find_db_files(
     extra_paths: Option<Vec<String>>,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<DbFileInfo>> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     tokio::task::spawn_blocking(move || -> AppResult<Vec<DbFileInfo>> {
         let db_exts = [
             "db", "sqlite", "sqlite3", "db3", "s3db", "mdf", "ndf", "mdb", "accdb", "fdb", "gdb",
@@ -2328,14 +2336,15 @@ fn walk_for_db_files(
 pub async fn migration_read_file(
     path: String,
     max_chars: Option<usize>,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<String> {
     // The other ten commands in this file are manager/owner gated; these two were
     // not, so any caller reaching the IPC boundary could read up to 32,000
     // characters from any file under Desktop, Documents, Downloads or AppData.
     // The path allowlist limits *where*, not *who*.
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
 
     // Finding 4: reject paths outside approved directories or in sensitive locations
     if !is_safe_read_path(&path) {
@@ -2370,13 +2379,14 @@ pub async fn migration_read_file(
 pub async fn migration_decompress(
     archive_path: String,
     dest_dir: Option<String>,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<DecompressResult> {
     // Entries inside the archive are zip-slip guarded, but `dest_dir` is chosen
     // by the caller and was not, so an unguarded caller could have this process
     // write a ZIP's contents anywhere it can reach.
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
 
     tokio::task::spawn_blocking(move || -> AppResult<DecompressResult> {
         let archive = std::path::PathBuf::from(&archive_path);
@@ -4078,10 +4088,11 @@ When executing the actual migration via the migration wizard UI:
 #[tauri::command]
 pub async fn migration_agent_chat(
     input: MigrationAgentChatInput,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<String> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let Some(provider) = Provider::from_db(&state.db).await? else {
         return Err(AppError::Internal(
             "No AI provider configured. Please set up your API key.".into(),
@@ -4126,7 +4137,7 @@ pub async fn migration_agent_chat(
         }
 
         let tool_result =
-            execute_migration_agent_tool(&tc.name, &tc.input, &state.db, &actor_user_id, &state)
+            execute_migration_agent_tool(&tc.name, &tc.input, &state.db, &actor.user_id, &state)
                 .await
                 .unwrap_or_else(|e| format!("Tool error: {}", e));
 

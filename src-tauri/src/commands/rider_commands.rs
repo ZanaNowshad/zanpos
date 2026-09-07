@@ -29,6 +29,9 @@ pub struct RiderInput {
     pub name: String,
     pub phone: String,
     pub notes: Option<String>,
+    /// Set from the caller's session before use. Anything sent here is
+    /// overwritten; it stays on the struct because the row records it.
+    #[serde(default)]
     pub actor_user_id: String,
 }
 
@@ -39,6 +42,9 @@ pub struct RiderUpdateInput {
     pub phone: String,
     pub notes: Option<String>,
     pub is_active: bool,
+    /// Set from the caller's session before use. Anything sent here is
+    /// overwritten; it stays on the struct because the row records it.
+    #[serde(default)]
     pub actor_user_id: String,
 }
 
@@ -109,12 +115,13 @@ const SELECT_COLUMNS: &str = "rider_id, branch_id, name, phone, notes, is_active
 /// admin list so their record can be edited or restored.
 #[tauri::command]
 pub async fn rider_list(
-    actor_user_id: String,
+    session_token: String,
     active_only: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<Vec<RiderRow>, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
-    let branch_id = actor_branch_id(&state.db, &actor_user_id).await?;
+    let actor =
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
+    let branch_id = actor.branch_id.clone();
 
     let sql = if active_only.unwrap_or(false) {
         format!(
@@ -139,10 +146,18 @@ pub async fn rider_list(
 
 #[tauri::command]
 pub async fn rider_create(
-    input: RiderInput,
+    mut input: RiderInput,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<RiderRow, AppError> {
-    rbac::require_role(&state.db, &input.actor_user_id, &["owner", "manager"]).await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
+    input.actor_user_id = actor.user_id.clone();
     let name = input.name.trim();
     if name.is_empty() {
         return Err(AppError::Validation("Rider name is required".into()));
@@ -196,10 +211,18 @@ pub async fn rider_create(
 
 #[tauri::command]
 pub async fn rider_update(
-    input: RiderUpdateInput,
+    mut input: RiderUpdateInput,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<RiderRow, AppError> {
-    rbac::require_role(&state.db, &input.actor_user_id, &["owner", "manager"]).await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
+    input.actor_user_id = actor.user_id.clone();
     let name = input.name.trim();
     if name.is_empty() {
         return Err(AppError::Validation("Rider name is required".into()));
@@ -250,11 +273,17 @@ pub async fn rider_update(
 #[tauri::command]
 pub async fn rider_delete(
     rider_id: String,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::require_role(&state.db, &actor_user_id, &["owner", "manager"]).await?;
-    let branch_id = actor_branch_id(&state.db, &actor_user_id).await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
+    let branch_id = actor.branch_id.clone();
     let now = chrono::Utc::now().to_rfc3339();
 
     let changed = sqlx::query(

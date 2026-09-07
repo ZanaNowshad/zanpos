@@ -28,9 +28,10 @@ import {
 } from "../../storefront/storefrontUtils";
 import * as storefront from "../../tauri/storefront";
 import StorefrontReadinessSummary from "./StorefrontReadinessSummary";
+import type { SessionToken } from "../../types";
 
 interface Props {
-  sessionUserId: string;
+  sessionToken: SessionToken;
   settings: StorefrontSettings;
 }
 
@@ -50,7 +51,7 @@ function releaseTime(value: string | null) {
   }).format(new Date(value));
 }
 
-export default function StorefrontCataloguePage({ sessionUserId, settings }: Props) {
+export default function StorefrontCataloguePage({ sessionToken, settings }: Props) {
   const [status, setStatus] = useState<StorefrontStatus | null>(null);
   const [products, setProducts] = useState<StorefrontProduct[]>([]);
   const [previewProducts, setPreviewProducts] = useState<StorefrontProduct[]>([]);
@@ -71,7 +72,7 @@ export default function StorefrontCataloguePage({ sessionUserId, settings }: Pro
     const sequence = ++requestSequence.current;
     setLoading(true);
     try {
-      const page = await storefront.storefrontProductsList(sessionUserId, {
+      const page = await storefront.storefrontProductsList(sessionToken, {
         search: query || undefined,
         offset: nextOffset,
         limit: PAGE_SIZE,
@@ -87,11 +88,11 @@ export default function StorefrontCataloguePage({ sessionUserId, settings }: Pro
     } finally {
       if (sequence === requestSequence.current) setLoading(false);
     }
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   const loadPreview = useCallback(async () => {
     try {
-      const page = await storefront.storefrontProductsList(sessionUserId, {
+      const page = await storefront.storefrontProductsList(sessionToken, {
         offset: 0,
         limit: 3,
         publishedOnly: true,
@@ -100,15 +101,15 @@ export default function StorefrontCataloguePage({ sessionUserId, settings }: Pro
     } catch {
       setPreviewProducts([]);
     }
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   const loadStatus = useCallback(async () => {
     try {
-      setStatus(await storefront.storefrontStatus(sessionUserId));
+      setStatus(await storefront.storefrontStatus(sessionToken));
     } catch (loadError) {
       setError(messageFrom(loadError, "ZanShop publishing status could not be loaded."));
     }
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   useEffect(() => {
     void Promise.all([loadPreview(), loadStatus()]);
@@ -166,7 +167,7 @@ export default function StorefrontCataloguePage({ sessionUserId, settings }: Pro
     setUpdatingId(productId);
     setError(null);
     try {
-      const updated = await storefront.storefrontProductUpdate(sessionUserId, productId, update);
+      const updated = await storefront.storefrontProductUpdate(sessionToken, productId, update);
       setProducts(current => current.map(item => item.product_id === productId ? updated : item));
       await Promise.all([loadStatus(), loadPreview()]);
       setResult(null);
@@ -183,7 +184,7 @@ export default function StorefrontCataloguePage({ sessionUserId, settings }: Pro
     setError(null);
     setResult(null);
     try {
-      const publishResult = await storefront.storefrontPublish(sessionUserId);
+      const publishResult = await storefront.storefrontPublish(sessionToken);
       setResult(publishResult);
       await Promise.allSettled([
         loadStatus(),

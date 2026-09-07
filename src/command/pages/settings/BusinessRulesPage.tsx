@@ -4,9 +4,9 @@ import { businessFlagsLoad, businessFlagsSave, adminListTaxRules, adminSaveTaxRu
 import BusinessTab from "../../../components/settings/BusinessTab";
 import type { SessionToken } from "../../../types";
 
-interface Props { sessionUserId: string; sessionToken: SessionToken; onStartPractice?: () => void; }
+interface Props { sessionToken: SessionToken; onStartPractice?: () => void; }
 
-export default function BusinessRulesPage({ sessionUserId, sessionToken, onStartPractice }: Props) {
+export default function BusinessRulesPage({ sessionToken, onStartPractice }: Props) {
   const [flags, setFlags] = useState<BusinessFlags>({ allow_negative_stock: false, require_discount_reason: true, cashier_can_discount: false, auto_print_receipt: false });
   const [taxRules, setTaxRules] = useState<TaxRuleRow[]>([]);
   const [editingRule, setEditingRule] = useState<Partial<TaxRuleRow> & { rate_basis_points?: number } | null>(null);
@@ -23,11 +23,11 @@ export default function BusinessRulesPage({ sessionUserId, sessionToken, onStart
     ])
       .then(([f, rules]) => { setFlags(f); setTaxRules(rules); })
       .finally(() => setLoading(false));
-  }, [sessionUserId, sessionToken]);
+  }, [sessionToken]);
 
   const handleSaveFlags = async () => {
     setSavingFlags(true); setFlagsError(null);
-    try { await businessFlagsSave(flags, sessionUserId); setSavedFlags(true); setTimeout(() => setSavedFlags(false), 3000); }
+    try { await businessFlagsSave(flags, sessionToken); setSavedFlags(true); setTimeout(() => setSavedFlags(false), 3000); }
     catch (e: unknown) { setFlagsError(typeof e === "string" ? e : "Failed to save"); }
     finally { setSavingFlags(false); }
   };
@@ -61,6 +61,6 @@ export default function BusinessRulesPage({ sessionUserId, sessionToken, onStart
       savingFlags={savingFlags} savedFlags={savedFlags} flagsError={flagsError}
       savingRule={savingRule}
       handleSaveFlags={handleSaveFlags} handleSaveTaxRule={handleSaveTaxRule}
-      handleDeleteTaxRule={handleDeleteTaxRule} sessionUserId={sessionUserId} sessionToken={sessionToken} onStartPractice={onStartPractice} />
+      handleDeleteTaxRule={handleDeleteTaxRule} sessionToken={sessionToken} onStartPractice={onStartPractice} />
   );
 }

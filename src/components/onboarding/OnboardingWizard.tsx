@@ -112,14 +112,14 @@ export default function OnboardingWizard({ onComplete }: Props) {
     return () => { cancelled = true; };
   }, []);
 
-  const markDone = useCallback(async (key: OnboardingStepKey, actorUserId: string) => {
+  const markDone = useCallback(async (key: OnboardingStepKey, sessionToken: SessionToken) => {
     // Progress is a convenience, never a blocker — a store mid-setup must be
     // able to keep moving even if this write fails.
-    try { await onboardingMarkStep(key, actorUserId); } catch { /* non-fatal */ }
+    try { await onboardingMarkStep(key, sessionToken); } catch { /* non-fatal */ }
   }, []);
 
-  const advance = useCallback(async (key: OnboardingStepKey, actorUserId: string) => {
-    await markDone(key, actorUserId);
+  const advance = useCallback(async (key: OnboardingStepKey, sessionToken: SessionToken) => {
+    await markDone(key, sessionToken);
     setStepIndex(current => {
       const next = current + 1;
       if (next >= ONBOARDING_STEPS.length) void finish();
@@ -152,8 +152,8 @@ export default function OnboardingWizard({ onComplete }: Props) {
       };
       setOwner(next);
       await applyVatChoice(identity, next.token);
-      await markDone("identity", next.userId);
-      await advance("owner_pin", next.userId);
+      await markDone("identity", next.token);
+      await advance("owner_pin", next.token);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -185,7 +185,7 @@ export default function OnboardingWizard({ onComplete }: Props) {
       <div className="setup-screen">
         <div className="setup-panel">
           <StepRestore
-            ownerUserId={owner?.userId ?? ""}
+            sessionToken={owner?.token ?? null}
             onRestored={() => setRestoreOffered(true)}
             onSkip={() => setRestoreOffered(true)}
           />
@@ -252,20 +252,20 @@ export default function OnboardingWizard({ onComplete }: Props) {
             onBack={() => setStepIndex(0)}
           />
         ) : activeKey === "whatsapp" ? (
-          <StepWhatsApp ownerUserId={owner!.userId} onDone={() => void advance("whatsapp", owner!.userId)} />
+          <StepWhatsApp sessionToken={owner!.token} onDone={() => void advance("whatsapp", owner!.token)} />
         ) : activeKey === "products" ? (
           <StepProducts
             ownerUsername={owner!.username}
             sessionToken={owner!.token}
-            onDone={() => void advance("products", owner!.userId)}
+            onDone={() => void advance("products", owner!.token)}
           />
         ) : activeKey === "printer" ? (
-          <StepPrinter ownerUserId={owner!.userId} onDone={() => void advance("printer", owner!.userId)} />
+          <StepPrinter sessionToken={owner!.token} onDone={() => void advance("printer", owner!.token)} />
         ) : (
           <StepGoLive
-            ownerUserId={owner!.userId}
+            sessionToken={owner!.token}
             language={identity.language}
-            onDone={() => void advance("golive", owner!.userId)}
+            onDone={() => void advance("golive", owner!.token)}
           />
         )}
       </div>

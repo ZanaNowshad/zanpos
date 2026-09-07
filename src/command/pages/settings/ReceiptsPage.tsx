@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { settingsGetBranch, settingsUpdateBranch } from "../../../tauri/commands";
 import ReceiptTab from "../../../components/settings/ReceiptTab";
+import type { SessionToken } from "../../../types";
 
-interface Props { sessionUserId: string; }
+interface Props { sessionToken: SessionToken; }
 
-export default function ReceiptsPage({ sessionUserId }: Props) {
+export default function ReceiptsPage({ sessionToken }: Props) {
   const [name, setName] = useState(""); const [address, setAddress] = useState("");
   const [phone, setPhone] = useState(""); const [taxNumber, setTaxNumber] = useState("");
   const [crNumber, setCrNumber] = useState("");
@@ -14,12 +15,12 @@ export default function ReceiptsPage({ sessionUserId }: Props) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    settingsGetBranch(sessionUserId).then(b => {
+    settingsGetBranch(sessionToken).then(b => {
       setName(b.name); setAddress(b.address ?? ""); setPhone(b.phone ?? "");
       setTaxNumber(b.tax_number ?? ""); setCrNumber(b.cr_number ?? "");
       setReceiptHeader(b.receipt_header ?? ""); setReceiptFooter(b.receipt_footer ?? "");
     }).finally(() => setLoading(false));
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -30,8 +31,7 @@ export default function ReceiptsPage({ sessionUserId }: Props) {
         cr_number: crNumber.trim() || undefined,
         receipt_header: receiptHeader.trim() || undefined,
         receipt_footer: receiptFooter.trim() || undefined,
-        actor_user_id: sessionUserId,
-      });
+      }, sessionToken);
       setSaved(true); setTimeout(() => setSaved(false), 3000);
     } finally { setSaving(false); }
   };

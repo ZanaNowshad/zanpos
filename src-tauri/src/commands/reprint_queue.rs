@@ -95,10 +95,11 @@ async fn pending(pool: &SqlitePool) -> AppResult<Vec<ReprintEntry>> {
 /// Everything still unprinted. Drives both the till banner and the EOD list.
 #[tauri::command]
 pub async fn reprint_queue_pending(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<ReprintEntry>, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     pending(&state.db).await
 }
 
@@ -106,11 +107,12 @@ pub async fn reprint_queue_pending(
 /// finally prints stops nagging.
 #[tauri::command]
 pub async fn reprint_queue_mark_printed(
-    actor_user_id: String,
+    session_token: String,
     id: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     sqlx::query("UPDATE reprint_queue SET printed_at = ? WHERE id = ? AND printed_at IS NULL")
         .bind(chrono::Utc::now().to_rfc3339())
         .bind(&id)

@@ -7,6 +7,7 @@ import {
   thermalGetConfig,
 } from "../tauri/commands";
 import { performReceiptPrint, type ReceiptPrintTrigger } from "../utils/receiptLines";
+import type { SessionToken } from "../types";
 
 export type ReceiptStatus = "ready" | "printing" | "printed" | "failed";
 
@@ -23,23 +24,23 @@ export type ReceiptStatus = "ready" | "printing" | "printed" | "failed";
  * the outcome is always surfaced rather than swallowed.
  */
 export function usePosReceipt(options: {
-  userId: string;
+  sessionToken: SessionToken;
   setBizFlags: (flags: BusinessFlags) => void;
   setReceiptStatus: (status: ReceiptStatus) => void;
   setError: (message: string) => void;
   focusBarcode: () => void;
 }) {
-  const { userId, setBizFlags, setReceiptStatus, setError, focusBarcode } = options;
+  const { sessionToken, setBizFlags, setReceiptStatus, setError, focusBarcode } = options;
 
   const refreshPrintConfig = useCallback(async () => {
     const [flagsNow, settingsNow, thermalNow] = await Promise.all([
       businessFlagsLoad(),
-      settingsGetBranch(userId),
-      thermalGetConfig(userId),
+      settingsGetBranch(sessionToken),
+      thermalGetConfig(sessionToken),
     ]);
     setBizFlags(flagsNow);
     return { flags: flagsNow, settings: settingsNow, thermalEnabled: thermalNow.enabled };
-  }, [userId, setBizFlags]);
+  }, [sessionToken, setBizFlags]);
 
   const printSaleNow = useCallback(async (
     sale: SaleResult,
@@ -59,7 +60,7 @@ export function usePosReceipt(options: {
         autoPrintEnabled: config.flags.auto_print_receipt,
         thermalEnabled: config.thermalEnabled,
         isReprint,
-        print: (storeName, lines) => printReceiptRaw(userId, storeName, lines),
+        print: (storeName, lines) => printReceiptRaw(sessionToken, storeName, lines),
       });
 
       if (outcome === "printed") {
@@ -80,7 +81,7 @@ export function usePosReceipt(options: {
         : "Sale saved, but the printer did not respond — check power/cable, then press Print.");
       return false;
     }
-  }, [focusBarcode, refreshPrintConfig, userId, setError, setReceiptStatus]);
+  }, [focusBarcode, refreshPrintConfig, sessionToken, setError, setReceiptStatus]);
 
   return { refreshPrintConfig, printSaleNow } as const;
 }

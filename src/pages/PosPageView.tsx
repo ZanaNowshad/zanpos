@@ -137,7 +137,7 @@ export default function PosPageView({
         <div className="till-centre">
           <PosCartColumn
             barcodeRef={barcodeRef}
-            actorUserId={sessionUser.user_id}
+            sessionToken={sessionUser.session_token}
             cart={cart}
             numpadValue={numpadValue}
             suggestions={suggestions}
@@ -256,7 +256,7 @@ export default function PosPageView({
         activeModal={activeModal}
         payableTotal={payableTotal}
         loading={loading}
-        sessionUserId={sessionUser.user_id}
+        sessionToken={sessionUser.session_token}
         defaultPrintReceipt={bizFlags.auto_print_receipt}
         bannerResult={bannerResult}
         receiptStatus={receiptStatus}

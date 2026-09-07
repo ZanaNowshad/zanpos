@@ -286,7 +286,6 @@ export default function App() {
               setMigrationMode(false);
               setView("login");
             }}
-            sessionUserId={sessionUser.user_id}
             sessionToken={sessionUser.session_token}
           />
         </Suspense>

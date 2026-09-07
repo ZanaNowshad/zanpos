@@ -8,6 +8,7 @@ import {
   appConfigLoad,
 } from "../../../tauri/commands";
 import StoreTab from "../../../components/settings/StoreTab";
+import type { SessionToken } from "../../../types";
 
 const TIMEZONES = [
   "Asia/Bahrain", "Asia/Riyadh", "Asia/Dubai", "Asia/Kuwait", "Asia/Muscat",
@@ -17,9 +18,9 @@ const TIMEZONES = [
 const TIMEOUT_OPTIONS = [0, 1, 2, 5, 10, 15, 30, 60];
 function timeoutLabel(m: number) { return m === 0 ? "Off — Never lock" : `${m} minute${m !== 1 ? "s" : ""}`; }
 
-interface Props { sessionUserId: string; sessionRole?: string; }
+interface Props { sessionToken: SessionToken; sessionRole?: string; }
 
-export default function StoreIdentityPage({ sessionUserId, sessionRole }: Props) {
+export default function StoreIdentityPage({ sessionToken, sessionRole }: Props) {
   const [name, setName] = useState("");
   const [timezone, setTimezone] = useState("Asia/Bahrain");
   const [address, setAddress] = useState("");
@@ -39,7 +40,7 @@ export default function StoreIdentityPage({ sessionUserId, sessionRole }: Props)
   useEffect(() => () => { timerRefs.current.forEach(clearTimeout); timerRefs.current = []; }, []);
 
   useEffect(() => {
-    Promise.all([settingsGetBranch(sessionUserId), appConfigGetTimeout().catch(() => 5)])
+    Promise.all([settingsGetBranch(sessionToken), appConfigGetTimeout().catch(() => 5)])
       .then(([branch, mins]) => {
         setName(branch.name); setTimezone(branch.timezone);
         setAddress(branch.address ?? ""); setPhone(branch.phone ?? "");
@@ -48,7 +49,7 @@ export default function StoreIdentityPage({ sessionUserId, sessionRole }: Props)
       })
       .catch(() => setSaveError("Failed to load settings"))
       .finally(() => setLoading(false));
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   const handleSave = async () => {
     if (!name.trim()) { setSaveError("Store name is required"); return; }
@@ -57,8 +58,8 @@ export default function StoreIdentityPage({ sessionUserId, sessionRole }: Props)
       await settingsUpdateBranch({
         name: name.trim(), timezone, address: address.trim() || undefined,
         phone: phone.trim() || undefined, tax_number: taxNumber.trim() || undefined,
-        cr_number: crNumber.trim() || undefined, actor_user_id: sessionUserId,
-      });
+        cr_number: crNumber.trim() || undefined,
+      }, sessionToken);
       // Pull the saved values back into the in-memory DEVICE singleton.
       //
       // It was populated once at startup and never again, so renaming the store
@@ -79,7 +80,7 @@ export default function StoreIdentityPage({ sessionUserId, sessionRole }: Props)
 
   const handleSaveTimeout = async () => {
     setSavingTimeout(true); setTimeoutError(null);
-    try { await appConfigSetTimeout(timeoutMinutes, sessionUserId); setSavedTimeout(true); registerTimer(setTimeout(() => setSavedTimeout(false), 3000)); }
+    try { await appConfigSetTimeout(timeoutMinutes, sessionToken); setSavedTimeout(true); registerTimer(setTimeout(() => setSavedTimeout(false), 3000)); }
     catch (e: unknown) { setTimeoutError(typeof e === "string" ? e : "Failed to save"); }
     finally { setSavingTimeout(false); }
   };

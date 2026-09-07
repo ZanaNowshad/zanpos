@@ -4,9 +4,10 @@ import ContactSuggestions, { type SuggestionListHandle } from "./ContactSuggesti
 import type { ContactSuggestion } from "./paymentContacts";
 import { typeIntoFocusedField } from "./paymentFieldTyping";
 import TouchKeyboard from "./TouchKeyboard";
+import type { SessionToken } from "../types";
 
 interface Props {
-  sessionUserId?: string;
+  sessionToken?: SessionToken;
   onPick: (contact: ContactSuggestion) => void;
   onClose: () => void;
 }
@@ -24,7 +25,7 @@ interface Props {
  * touchscreen with nothing plugged into it, so a search box with no way to type
  * is decoration.
  */
-export default function CustomerDirectoryDialog({ sessionUserId, onPick, onClose }: Props) {
+export default function CustomerDirectoryDialog({ sessionToken, onPick, onClose }: Props) {
   const [query, setQuery] = useState("");
   const [showKeys, setShowKeys] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -128,7 +129,7 @@ export default function CustomerDirectoryDialog({ sessionUserId, onPick, onClose
         <ContactSuggestions
           ref={listRef}
           query={query}
-          sessionUserId={sessionUserId}
+          sessionToken={sessionToken}
           open
           limit={40}
           autoHighlight

@@ -598,6 +598,7 @@ function NewStoreWizard({ onComplete, onMigrate }: { onComplete: (cfg: AppConfig
 
           {showWaQR && (
             <WhatsAppQRModal
+              sessionToken={ownerSessionToken!}
               onClose={() => setShowWaQR(false)}
             />
           )}

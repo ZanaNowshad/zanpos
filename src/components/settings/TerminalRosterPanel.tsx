@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import type { SessionToken } from "../../types";
 import {
   reconciliationPreview, reconciliationRun, terminalRoster,
   type ReconciliationOutcome, type ReconciliationPreview, type TerminalRow,
@@ -33,8 +34,8 @@ function lastSeen(seconds: number | null): string {
 }
 
 export default function TerminalRosterPanel({
-  actorUserId, canRepair, isHub = false,
-}: { actorUserId: string; canRepair: boolean; isHub?: boolean }) {
+  sessionToken, canRepair, isHub = false,
+}: { sessionToken: SessionToken; canRepair: boolean; isHub?: boolean }) {
   const [rows, setRows] = useState<TerminalRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ReconciliationPreview | null>(null);
@@ -42,11 +43,11 @@ export default function TerminalRosterPanel({
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
-    terminalRoster(actorUserId)
+    terminalRoster(sessionToken)
       .then(setRows)
       .catch((cause: unknown) =>
         setError(typeof cause === "string" ? cause : "Could not read the terminal list."));
-  }, [actorUserId]);
+  }, [sessionToken]);
 
   useEffect(() => {
     load();
@@ -59,7 +60,7 @@ export default function TerminalRosterPanel({
   const runPreview = (table: string) => {
     setBusy(true);
     setOutcomes(null);
-    reconciliationPreview(actorUserId, table)
+    reconciliationPreview(sessionToken, table)
       .then(setPreview)
       .catch((cause: unknown) =>
         setError(typeof cause === "string" ? cause : "Could not compare with the hub."))
@@ -69,7 +70,7 @@ export default function TerminalRosterPanel({
   const runRepair = () => {
     if (!preview) return;
     setBusy(true);
-    reconciliationRun(actorUserId, preview.table)
+    reconciliationRun(sessionToken, preview.table)
       .then(result => { setOutcomes(result); setPreview(null); load(); })
       .catch((cause: unknown) =>
         setError(typeof cause === "string" ? cause : "The repair could not run."))

@@ -16,6 +16,7 @@ import { systemKeyboardOpen } from "../tauri/commands";
 import { useFocusedField } from "./PaymentInputSurface";
 import { PaymentCashTender, PaymentSplitLines } from "./PaymentCashFields";
 import { usePaymentKeyboard } from "./usePaymentKeyboard";
+import type { SessionToken } from "../types";
 export type PaymentJourney = "receipt" | "delivery" | "digital";
 
 export interface PaymentCompletionOptions {
@@ -35,7 +36,7 @@ interface Props {
   loading?: boolean;
   initialMethod?: PaymentInput["method"];
   splitMode?: boolean;
-  sessionUserId?: string;
+  sessionToken?: SessionToken;
   journey?: PaymentJourney;
   defaultPrintReceipt?: boolean;
 }
@@ -44,7 +45,7 @@ interface Props {
 
 export default function PaymentModal({
   netTotal, onConfirm, onCancel, loading,
-  initialMethod, splitMode, sessionUserId, journey: initialJourney = "receipt",
+  initialMethod, splitMode, sessionToken, journey: initialJourney = "receipt",
   defaultPrintReceipt = false,
 }: Props) {
   /* The journey is chosen before the modal opens, but customers change their
@@ -427,7 +428,7 @@ export default function PaymentModal({
         <PaymentContactPanel
           journey={journey}
           contact={contact}
-          sessionUserId={sessionUserId}
+          sessionToken={sessionToken}
           deliveryData={deliveryData}
           onDeliveryChange={setDeliveryData}
           rider={rider}

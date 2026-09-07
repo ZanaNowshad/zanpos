@@ -8,6 +8,7 @@ import type { Cart, CartLine } from "../../types";
 import { DEVICE } from "../../types";
 import type { useCart } from "../../hooks/useCart";
 import type { ActiveModal } from "./posModalState";
+import type { SessionToken } from "../../types";
 
 interface Suggestion {
   id: string;
@@ -17,7 +18,7 @@ interface Suggestion {
 
 interface Props {
   barcodeRef: RefObject<BarcodeInputHandle | null>;
-  actorUserId: string;
+  sessionToken: SessionToken;
   cart: Cart;
   numpadValue: string;
   suggestions: Suggestion[];
@@ -39,7 +40,7 @@ interface Props {
 }
 
 export default function PosCartColumn({
-  barcodeRef, actorUserId, cart, numpadValue, suggestions, loading,
+  barcodeRef, sessionToken, cart, numpadValue, suggestions, loading,
   payFastLoading, selectedLineId, quickSlots, setNumpadValue, setActiveModal,
   setError, addProduct, addCustomItem, onBarcode, onQuickAdd, onSelectLine,
   onBumpQty, onEditPrice, focusBarcode,
@@ -67,7 +68,7 @@ export default function PosCartColumn({
         }}
         onSearch={() => {}}
         onEscape={() => {}}
-        actorUserId={actorUserId}
+        sessionToken={sessionToken}
         disabled={disabled}
       />
 

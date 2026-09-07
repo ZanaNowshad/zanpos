@@ -9,13 +9,12 @@ import { backOfficeTranslator, cashEventTypeText } from "../i18n/backOfficeStrin
 
 interface Props {
   onClose: () => void;
-  sessionUserId: string;
   shiftId: string;
   sessionToken: SessionToken;
   includeCashDrawer?: boolean;
 }
 
-export default function TodayReportModal({ onClose, sessionUserId, shiftId, sessionToken, includeCashDrawer = true }: Props) {
+export default function TodayReportModal({ onClose, shiftId, sessionToken, includeCashDrawer = true }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => backOfficeTranslator(language), [language]);
   const [sales, setSales] = useState<TodaySummary | null>(null);
@@ -36,7 +35,7 @@ export default function TodayReportModal({ onClose, sessionUserId, shiftId, sess
         .catch(error => { if (!cancelled) setDrawerError(typeof error === "string" ? error : t("failedLoadReport")); });
     }
     return () => { cancelled = true; };
-  }, [sessionToken, includeCashDrawer, sessionUserId, shiftId, t, today]);
+  }, [sessionToken, includeCashDrawer, shiftId, t, today]);
 
   const fmt = (minor: number) => `${DEVICE.currency} ${formatMoney(minor, DEVICE.currency_exponent)}`;
 

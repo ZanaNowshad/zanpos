@@ -30,13 +30,13 @@ export function shouldChime(previous: number | null, current: number): boolean {
  * error over a cashier's till.
  */
 export function usePosAlerts(options: {
-  userId: string;
   sessionToken: SessionToken;
+
   /** Bell is admin-only; orders additionally require commerce to be enabled. */
   canOpenBackOffice: boolean;
   commerceEnabled: boolean;
 }) {
-  const { userId, sessionToken, canOpenBackOffice, commerceEnabled } = options;
+  const { sessionToken, canOpenBackOffice, commerceEnabled } = options;
   const [notifCount, setNotifCount] = useState(0);
   const [orderCount, setOrderCount] = useState(0);
   const previousOrderCount = useRef<number | null>(null);
@@ -74,8 +74,8 @@ export function usePosAlerts(options: {
     if (!canOpenBackOffice) return;
     try {
       const [ghosts, waUnread, payUnseen] = await Promise.all([
-        ghostSummary(userId),
-        whatsappPollMessages(userId).catch(() => 0),
+        ghostSummary(sessionToken),
+        whatsappPollMessages(sessionToken).catch(() => 0),
         paymentConfirmationsUnseenCount(sessionToken).catch(() => 0),
       ]);
       /* Coerced, not just added. `+` on a null or a string concatenates rather
@@ -88,18 +88,18 @@ export function usePosAlerts(options: {
       };
       setNotifCount(n(ghosts.pending) + n(ghosts.found) + n(waUnread) + n(payUnseen));
     } catch { /* non-fatal */ }
-  }, [canOpenBackOffice, userId, sessionToken]);
+  }, [canOpenBackOffice, sessionToken]);
 
   const refreshOrderCount = useCallback(async () => {
     if (!canOpenBackOffice || !commerceEnabled) return;
     try {
-      const orders = await whatsappOrderList(userId, "new");
+      const orders = await whatsappOrderList(sessionToken, "new");
       const count = orders.length;
       if (shouldChime(previousOrderCount.current, count)) playOrderChime();
       previousOrderCount.current = count;
       setOrderCount(count);
     } catch { /* non-fatal */ }
-  }, [canOpenBackOffice, commerceEnabled, userId, playOrderChime]);
+  }, [canOpenBackOffice, commerceEnabled, sessionToken, playOrderChime]);
 
   useEffect(() => {
     refreshNotifications();

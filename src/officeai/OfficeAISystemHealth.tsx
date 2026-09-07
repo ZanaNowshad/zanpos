@@ -14,9 +14,6 @@ import { useLanguage } from "../hooks/useLanguage";
 import { officeAiFormat, officeAiTranslator, type OfficeAiTranslator } from "../i18n/officeAiStrings";
 
 interface Props {
-  actorUserId: string;
-  /** The sync commands authenticate the caller; the health commands still take a
-   *  bare id. Both are passed until those migrate too. */
   sessionToken: SessionToken;
   initialReport: SystemHealthReport | null;
   onReport: (report: SystemHealthReport) => void;
@@ -59,7 +56,7 @@ export function buildSystemCommandCenterModel(
   };
 }
 
-export default function OfficeAISystemHealth({ actorUserId, sessionToken, initialReport, onReport }: Props) {
+export default function OfficeAISystemHealth({ sessionToken, initialReport, onReport }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => officeAiTranslator(language), [language]);
   const [report, setReport] = useState<SystemHealthReport | null>(initialReport);
@@ -85,8 +82,8 @@ export default function OfficeAISystemHealth({ actorUserId, sessionToken, initia
     setMessage(null);
     try {
       const [next, wa] = await Promise.all([
-        systemHealthCheck(actorUserId),
-        whatsappStatus(actorUserId).catch(() => null),
+        systemHealthCheck(sessionToken),
+        whatsappStatus(sessionToken).catch(() => null),
       ]);
       setReport(next);
       onReport(next);
@@ -96,7 +93,7 @@ export default function OfficeAISystemHealth({ actorUserId, sessionToken, initia
     } finally {
       setLoading(false);
     }
-  }, [actorUserId, onReport, t]);
+  }, [sessionToken, onReport, t]);
 
   const loadSyncDiagnostics = useCallback(async () => {
     try {
@@ -122,7 +119,7 @@ export default function OfficeAISystemHealth({ actorUserId, sessionToken, initia
         setError(null);
         setMessage(null);
         try {
-          const result = await systemHealthApplyFix(actorUserId, fixAction);
+          const result = await systemHealthApplyFix(sessionToken, fixAction);
           setMessage(result.message);
           await run();
           await loadSyncDiagnostics();

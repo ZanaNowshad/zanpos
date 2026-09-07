@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { Bike, TriangleAlert } from "lucide-react";
 import type { RiderRow } from "../types";
 import { riderList } from "../tauri/commands";
+import type { SessionToken } from "../types";
 
 interface Props {
-  sessionUserId?: string;
+  sessionToken?: SessionToken;
   selectedId: string | null;
   onSelect: (rider: RiderRow | null) => void;
 }
@@ -18,20 +19,20 @@ interface Props {
  * the job to that rider's WhatsApp at the same moment the customer gets their
  * receipt.
  */
-export default function RiderPicker({ sessionUserId, selectedId, onSelect }: Props) {
+export default function RiderPicker({ sessionToken, selectedId, onSelect }: Props) {
   const [riders, setRiders] = useState<RiderRow[]>([]);
   const [loadFailed, setLoadFailed] = useState(false);
 
   useEffect(() => {
-    if (!sessionUserId) return;
+    if (!sessionToken) return;
     let cancelled = false;
-    riderList(sessionUserId, true)
+    riderList(sessionToken, true)
       .then(rows => { if (!cancelled) { setRiders(rows); setLoadFailed(false); } })
       // A roster that will not load must not block the sale; the drop is still
       // recorded and can be assigned from the deliveries list later.
       .catch(() => { if (!cancelled) setLoadFailed(true); });
     return () => { cancelled = true; };
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   return (
     <div className="pm-rider">

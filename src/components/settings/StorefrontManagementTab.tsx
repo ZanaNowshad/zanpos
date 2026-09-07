@@ -5,9 +5,10 @@ import * as storefront from "../../tauri/storefront";
 import StorefrontCataloguePage from "./StorefrontCataloguePage";
 import StorefrontSetupPage from "./StorefrontSetupPage";
 import "./StorefrontManagement.css";
+import type { SessionToken } from "../../types";
 
 interface Props {
-  sessionUserId: string;
+  sessionToken: SessionToken;
   sessionRole: string;
   setupOnly?: boolean;
 }
@@ -21,7 +22,7 @@ function messageFrom(error: unknown) {
 }
 
 export default function StorefrontManagementTab({
-  sessionUserId,
+  sessionToken,
   sessionRole,
   setupOnly = false,
 }: Props) {
@@ -33,7 +34,7 @@ export default function StorefrontManagementTab({
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    storefront.storefrontSettingsGet(sessionUserId)
+    storefront.storefrontSettingsGet(sessionToken)
       .then(nextSettings => {
         if (!cancelled) setSettings(nextSettings);
       })
@@ -44,7 +45,7 @@ export default function StorefrontManagementTab({
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   if (loading) {
     return <div className="sf-loading"><Globe2 aria-hidden="true" /> Loading ZanShop setup…</div>;
@@ -98,13 +99,13 @@ export default function StorefrontManagementTab({
 
       {page === "setup" || setupOnly ? (
         <StorefrontSetupPage
-          sessionUserId={sessionUserId}
+          sessionToken={sessionToken}
           settings={settings}
           onSettingsChange={setSettings}
         />
       ) : (
         <StorefrontCataloguePage
-          sessionUserId={sessionUserId}
+          sessionToken={sessionToken}
           settings={settings}
         />
       )}

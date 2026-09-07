@@ -161,8 +161,8 @@ export interface PullSummary {
 export const setupPullCatalog = (): Promise<PullSummary> =>
   invoke("setup_pull_catalog");
 
-export const settingsGetBranch = (actorUserId: string): Promise<BranchSettings> =>
-  invoke("settings_get_branch", { actorUserId });
+export const settingsGetBranch = (sessionToken: SessionToken): Promise<BranchSettings> =>
+  invoke("settings_get_branch", { sessionToken });
 
 export const settingsUpdateBranch = (input: {
   name: string;
@@ -173,9 +173,8 @@ export const settingsUpdateBranch = (input: {
   tax_number?: string;
   cr_number?: string;
   timezone: string;
-  actor_user_id: string;
-}): Promise<BranchSettings> =>
-  invoke("settings_update_branch", { input });
+}, sessionToken: SessionToken): Promise<BranchSettings> =>
+  invoke("settings_update_branch", { input, sessionToken });
 
 // ─── Business flags ────────────────────────────────────────────────────────────
 
@@ -184,9 +183,9 @@ export const businessFlagsLoad = (): Promise<BusinessFlags> =>
 
 export const businessFlagsSave = (
   flags: BusinessFlags,
-  actor_user_id: string,
+  sessionToken: SessionToken,
 ): Promise<void> =>
-  invoke("business_flags_save", { input: { flags, actor_user_id } });
+  invoke("business_flags_save", { input: { flags }, sessionToken });
 
 // ─── Operational settings ──────────────────────────────────────────────────────
 
@@ -195,9 +194,9 @@ export const operationalSettingsLoad = (): Promise<import("../types").Operationa
 
 export const operationalSettingsSave = (
   settings: import("../types").OperationalSettings,
-  actor_user_id: string,
+  sessionToken: SessionToken,
 ): Promise<void> =>
-  invoke("operational_settings_save", { input: { settings, actor_user_id } });
+  invoke("operational_settings_save", { input: { settings }, sessionToken });
 
 // ─── Onboarding wizard progress (resumable) ──────────────────────────────────
 
@@ -209,8 +208,8 @@ export interface OnboardingStepRow {
 export const onboardingGetState = (): Promise<OnboardingStepRow[]> =>
   invoke("onboarding_get_state");
 
-export const onboardingMarkStep = (step: string, actorUserId: string): Promise<void> =>
-  invoke("onboarding_mark_step", { step, actorUserId });
+export const onboardingMarkStep = (step: string, sessionToken: SessionToken): Promise<void> =>
+  invoke("onboarding_mark_step", { step, sessionToken });
 
 // ─── Auth commands ────────────────────────────────────────────────────────────
 
@@ -246,19 +245,19 @@ export const shiftClose = (
 
 // ─── Product commands ─────────────────────────────────────────────────────────
 
-export const productSearch = (actorUserId: string, query: string): Promise<ProductWithPrice[]> =>
-  invoke("product_search", { actorUserId, query });
+export const productSearch = (sessionToken: SessionToken, query: string): Promise<ProductWithPrice[]> =>
+  invoke("product_search", { sessionToken, query });
 
-export const productGetByBarcode = (actorUserId: string, barcode: string): Promise<ProductWithPrice | null> =>
-  invoke("product_get_by_barcode", { actorUserId, barcode });
+export const productGetByBarcode = (sessionToken: SessionToken, barcode: string): Promise<ProductWithPrice | null> =>
+  invoke("product_get_by_barcode", { sessionToken, barcode });
 
 export const productListAll = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   afterId?: string | null,
   pageSize?: number,
 ): Promise<ProductWithPrice[]> =>
   invoke("product_list_all", {
-    actorUserId,
+    sessionToken,
     afterId: afterId ?? null,
     pageSize: pageSize ?? 50,
   });
@@ -787,14 +786,14 @@ export interface SaleCursorPage {
 }
 
 export const reportSalesCursor = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   branchId: string,
   fromDate: string,
   toDate: string,
   cursor?: string | null,
   limit = 200,
 ): Promise<SaleCursorPage> =>
-  invoke("report_sales_cursor", { actorUserId, branchId, fromDate, toDate, cursor: cursor ?? null, limit });
+  invoke("report_sales_cursor", { sessionToken, branchId, fromDate, toDate, cursor: cursor ?? null, limit });
 
 export const reportSalesExportCsv = (
   sessionToken: SessionToken,
@@ -977,8 +976,8 @@ export const inventoryReceiveStock = (
 export const appConfigGetTimeout = (): Promise<number> =>
   invoke("app_config_get_timeout");
 
-export const appConfigSetTimeout = (minutes: number, actorUserId: string): Promise<void> =>
-  invoke("app_config_set_timeout", { minutes, actorUserId });
+export const appConfigSetTimeout = (minutes: number, sessionToken: SessionToken): Promise<void> =>
+  invoke("app_config_set_timeout", { minutes, sessionToken });
 
 // ─── Reports device-scope (Phase E) ───────────────────────────────────────────
 export type ReportsConfig = {
@@ -996,8 +995,8 @@ export const reportsConfigSave = (
 ): Promise<void> =>
   invoke("reports_config_save", { input: { device_scope }, sessionToken });
 
-export const dbBackup = (destPath: string, actorUserId: string): Promise<string> =>
-  invoke("db_backup", { destPath, actorUserId });
+export const dbBackup = (destPath: string, sessionToken: SessionToken): Promise<string> =>
+  invoke("db_backup", { destPath, sessionToken });
 
 export const reportTaxByDay = (
   sessionToken: SessionToken,
@@ -1043,9 +1042,9 @@ export interface CustomerPage {
 /** Branch-scoped and paged server-side. `total` counts the whole branch match,
  *  not the page, so the UI can report scale without loading it. */
 export const customerList = (
-  actorUserId: string, search: string, offset = 0, limit?: number,
+  sessionToken: SessionToken, search: string, offset = 0, limit?: number,
 ): Promise<CustomerPage> =>
-  invoke("customer_list", { actorUserId, search, offset, limit: limit ?? null });
+  invoke("customer_list", { sessionToken, search, offset, limit: limit ?? null });
 
 /** SQL aggregate over the actor's whole branch — never derived from a page. */
 export const customerLoyaltySummary = (sessionToken: SessionToken): Promise<{
@@ -1057,17 +1056,17 @@ export const customerTopBalances = (sessionToken: SessionToken, limit = 25): Pro
   invoke("customer_top_balances", { sessionToken, limit });
 
 export const customerCreate = (input: {
-  name: string; phone?: string; email?: string; notes?: string; actor_user_id: string;
-}): Promise<CustomerRow> =>
-  invoke("customer_create", { input });
+  name: string; phone?: string; email?: string; notes?: string;
+}, sessionToken: SessionToken): Promise<CustomerRow> =>
+  invoke("customer_create", { input, sessionToken });
 
 export const customerUpdate = (input: {
-  customer_id: string; name: string; phone?: string; email?: string; notes?: string; actor_user_id: string;
-}): Promise<CustomerRow> =>
-  invoke("customer_update", { input });
+  customer_id: string; name: string; phone?: string; email?: string; notes?: string;
+}, sessionToken: SessionToken): Promise<CustomerRow> =>
+  invoke("customer_update", { input, sessionToken });
 
-export const customerGet = (actorUserId: string, customerId: string): Promise<CustomerRow> =>
-  invoke("customer_get", { actorUserId, customerId });
+export const customerGet = (sessionToken: SessionToken, customerId: string): Promise<CustomerRow> =>
+  invoke("customer_get", { sessionToken, customerId });
 
 export const customerAddLoyalty = (sessionToken: SessionToken, customerId: string, points: number): Promise<number> =>
   invoke("customer_add_loyalty", { sessionToken, customerId, points });
@@ -1114,8 +1113,8 @@ export const checkForUpdates = (): Promise<string | null> =>
 
 /// Download + install the available update, then restart. Resolves false if none.
 /// On success the app restarts, so the promise typically does not resolve.
-export const downloadAndInstallUpdate = (actorUserId: string): Promise<boolean> =>
-  invoke("download_and_install_update", { actorUserId });
+export const downloadAndInstallUpdate = (sessionToken: SessionToken): Promise<boolean> =>
+  invoke("download_and_install_update", { sessionToken });
 
 // ─── Maintenance page gate — verify an owner PIN ──────────────────────────────
 export const authVerifyOwnerPin = (pin: string): Promise<boolean> =>
@@ -1137,28 +1136,28 @@ export interface PortEntry {
 export const thermalListPorts = (): Promise<PortEntry[]> =>
   invoke("thermal_list_ports");
 
-export const thermalGetConfig = (actorUserId: string): Promise<ThermalConfig> =>
-  invoke("thermal_get_config", { actorUserId });
+export const thermalGetConfig = (sessionToken: SessionToken): Promise<ThermalConfig> =>
+  invoke("thermal_get_config", { sessionToken });
 
-export const thermalSetConfig = (actorUserId: string, input: ThermalConfig): Promise<void> =>
-  invoke("thermal_set_config", { input, actorUserId });
+export const thermalSetConfig = (sessionToken: SessionToken, input: ThermalConfig): Promise<void> =>
+  invoke("thermal_set_config", { input, sessionToken });
 
-export const thermalPrintTest = (actorUserId: string): Promise<string> =>
-  invoke("thermal_print_test", { actorUserId });
+export const thermalPrintTest = (sessionToken: SessionToken): Promise<string> =>
+  invoke("thermal_print_test", { sessionToken });
 
-export const printReceiptRaw = (actorUserId: string, storeName: string, lines: string[]): Promise<string> =>
-  invoke("print_receipt_raw", { actorUserId, storeName, lines });
+export const printReceiptRaw = (sessionToken: SessionToken, storeName: string, lines: string[]): Promise<string> =>
+  invoke("print_receipt_raw", { sessionToken, storeName, lines });
 
-export const reprintQueuePending = (actorUserId: string): Promise<ReprintQueueEntry[]> =>
-  invoke("reprint_queue_pending", { actorUserId });
+export const reprintQueuePending = (sessionToken: SessionToken): Promise<ReprintQueueEntry[]> =>
+  invoke("reprint_queue_pending", { sessionToken });
 
-export const reprintQueueMarkPrinted = (actorUserId: string, id: string): Promise<void> =>
-  invoke("reprint_queue_mark_printed", { actorUserId, id });
+export const reprintQueueMarkPrinted = (sessionToken: SessionToken, id: string): Promise<void> =>
+  invoke("reprint_queue_mark_printed", { sessionToken, id });
 
 /** Open the cash drawer connected to the ESC/POS printer's RJ-11 port.
  *  Returns "opened" on success, "no_printer" if thermal printing is disabled. */
-export const openCashDrawer = (actorUserId: string): Promise<string> =>
-  invoke("open_cash_drawer", { actorUserId });
+export const openCashDrawer = (sessionToken: SessionToken): Promise<string> =>
+  invoke("open_cash_drawer", { sessionToken });
 
 // ─── Cash events ──────────────────────────────────────────────────────────────
 
@@ -1201,12 +1200,12 @@ export const productBarcodesList = (sessionToken: SessionToken, product_id: stri
 // ─── New pilot-hardening commands ─────────────────────────────────────────────
 
 export const reportByCashier = (
-  actor_user_id: string,
+  sessionToken: SessionToken,
   branch_id: string,
   from_date: string,
   to_date: string,
 ): Promise<CashierSummaryRow[]> =>
-  invoke("report_by_cashier", { actorUserId: actor_user_id, branchId: branch_id, fromDate: from_date, toDate: to_date });
+  invoke("report_by_cashier", { sessionToken, branchId: branch_id, fromDate: from_date, toDate: to_date });
 
 export const reportEodCashup = (
   sessionToken: SessionToken,
@@ -1310,12 +1309,12 @@ export const deliveryRiderSuggestions = (
 
 // ─── WhatsApp ─────────────────────────────────────────────────────────────────
 
-export function whatsappStatus(actorUserId: string): Promise<WhatsAppStatus> {
-  return invoke("whatsapp_status", { actorUserId });
+export function whatsappStatus(sessionToken: SessionToken): Promise<WhatsAppStatus> {
+  return invoke("whatsapp_status", { sessionToken });
 }
 
-export function whatsappSendDelivery(actorUserId: string, input: SendDeliveryInput): Promise<boolean> {
-  return invoke("whatsapp_send_delivery", { input, actorUserId });
+export function whatsappSendDelivery(sessionToken: SessionToken, input: SendDeliveryInput): Promise<boolean> {
+  return invoke("whatsapp_send_delivery", { input, sessionToken });
 }
 
 export function whatsappNotifyArrival(actorUserId: string, to: string, receiptNumber: string, deliveryId: string): Promise<boolean> {
@@ -1347,34 +1346,34 @@ export function whatsappPaymentReminder(
   });
 }
 
-export function whatsappDisconnect(actorUserId: string): Promise<boolean> {
-  return invoke("whatsapp_disconnect", { actorUserId });
+export function whatsappDisconnect(sessionToken: SessionToken): Promise<boolean> {
+  return invoke("whatsapp_disconnect", { sessionToken });
 }
 
-export function whatsappSaveConfig(benefitNumber: string, actorUserId: string): Promise<void> {
-  return invoke("whatsapp_save_config", { benefitNumber, actorUserId });
+export function whatsappSaveConfig(benefitNumber: string, sessionToken: SessionToken): Promise<void> {
+  return invoke("whatsapp_save_config", { benefitNumber, sessionToken });
 }
 
-export function whatsappImportContacts(actorUserId: string): Promise<ImportContactsResult> {
-  return invoke("whatsapp_import_contacts", { actorUserId });
+export function whatsappImportContacts(sessionToken: SessionToken): Promise<ImportContactsResult> {
+  return invoke("whatsapp_import_contacts", { sessionToken });
 }
 
 // ── WhatsApp → POS notification inbox (admin) ──────────────────────────────────
-export const whatsappListContacts = (actorUserId: string): Promise<WaContact[]> =>
-  invoke("whatsapp_list_contacts", { actorUserId });
+export const whatsappListContacts = (sessionToken: SessionToken): Promise<WaContact[]> =>
+  invoke("whatsapp_list_contacts", { sessionToken });
 
-export const whatsappListGroups = (actorUserId: string): Promise<WaGroup[]> =>
-  invoke("whatsapp_list_groups", { actorUserId });
+export const whatsappListGroups = (sessionToken: SessionToken): Promise<WaGroup[]> =>
+  invoke("whatsapp_list_groups", { sessionToken });
 
-export const whatsappGetTargets = (actorUserId: string): Promise<WaTargets> =>
-  invoke("whatsapp_get_targets", { actorUserId });
+export const whatsappGetTargets = (sessionToken: SessionToken): Promise<WaTargets> =>
+  invoke("whatsapp_get_targets", { sessionToken });
 
 export const whatsappSetTargets = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   t: WaTargets,
 ): Promise<void> =>
   invoke("whatsapp_set_targets", {
-    actorUserId,
+    sessionToken,
     ownerJid: t.owner_jid,
     ownerName: t.owner_name,
     groupJid: t.group_jid,
@@ -1382,70 +1381,70 @@ export const whatsappSetTargets = (
   });
 
 /** Pull new owner/group messages from the sidecar; returns current unread count. */
-export const whatsappPollMessages = (actorUserId: string): Promise<number> =>
-  invoke("whatsapp_poll_messages", { actorUserId });
+export const whatsappPollMessages = (sessionToken: SessionToken): Promise<number> =>
+  invoke("whatsapp_poll_messages", { sessionToken });
 
-export const whatsappListMessages = (actorUserId: string): Promise<WaMessage[]> =>
-  invoke("whatsapp_list_messages", { actorUserId });
+export const whatsappListMessages = (sessionToken: SessionToken): Promise<WaMessage[]> =>
+  invoke("whatsapp_list_messages", { sessionToken });
 
 /** Download the decrypted image for a message (View action). */
-export const whatsappGetMedia = (messageId: string, actorUserId: string): Promise<WaMedia> =>
-  invoke("whatsapp_get_media", { messageId, actorUserId });
+export const whatsappGetMedia = (messageId: string, sessionToken: SessionToken): Promise<WaMedia> =>
+  invoke("whatsapp_get_media", { messageId, sessionToken });
 
-export const whatsappMarkRead = (id: string, actorUserId: string): Promise<void> =>
-  invoke("whatsapp_mark_read", { id, actorUserId });
+export const whatsappMarkRead = (id: string, sessionToken: SessionToken): Promise<void> =>
+  invoke("whatsapp_mark_read", { id, sessionToken });
 
-export const whatsappMarkAllRead = (actorUserId: string): Promise<void> =>
-  invoke("whatsapp_mark_all_read", { actorUserId });
+export const whatsappMarkAllRead = (sessionToken: SessionToken): Promise<void> =>
+  invoke("whatsapp_mark_all_read", { sessionToken });
 
 /** Delete all stored WhatsApp notifications ("Clear all"). */
-export const whatsappClearMessages = (actorUserId: string): Promise<void> =>
-  invoke("whatsapp_clear_messages", { actorUserId });
+export const whatsappClearMessages = (sessionToken: SessionToken): Promise<void> =>
+  invoke("whatsapp_clear_messages", { sessionToken });
 
 // ── WhatsApp Business Catalog + Commerce ──────────────────────────────────────
-export const whatsappCommerceGetEnabled = (actorUserId: string): Promise<boolean> =>
-  invoke("whatsapp_commerce_get_enabled", { actorUserId });
+export const whatsappCommerceGetEnabled = (sessionToken: SessionToken): Promise<boolean> =>
+  invoke("whatsapp_commerce_get_enabled", { sessionToken });
 
-export const whatsappCommerceSetEnabled = (actorUserId: string, enabled: boolean): Promise<void> =>
-  invoke("whatsapp_commerce_set_enabled", { actorUserId, enabled });
+export const whatsappCommerceSetEnabled = (sessionToken: SessionToken, enabled: boolean): Promise<void> =>
+  invoke("whatsapp_commerce_set_enabled", { sessionToken, enabled });
 
 /** True when WhatsApp Commerce OR the public Storefront is enabled — gates the POS Orders button. */
-export const whatsappOrdersGetEnabled = (actorUserId: string): Promise<boolean> =>
-  invoke("whatsapp_orders_get_enabled", { actorUserId });
+export const whatsappOrdersGetEnabled = (sessionToken: SessionToken): Promise<boolean> =>
+  invoke("whatsapp_orders_get_enabled", { sessionToken });
 
 export const whatsappOrderList = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   status?: string,
 ): Promise<WaOrder[]> =>
-  invoke("whatsapp_order_list", { actorUserId, status });
+  invoke("whatsapp_order_list", { sessionToken, status });
 
 export const whatsappOrderUpdateStatus = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   orderId: string,
   status: string,
   linkedSaleId?: string,
 ): Promise<void> =>
-  invoke("whatsapp_order_update_status", { actorUserId, orderId, status, linkedSaleId });
+  invoke("whatsapp_order_update_status", { sessionToken, orderId, status, linkedSaleId });
 
 export const whatsappOrderMatch = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   orderId: string,
 ): Promise<WaOrderMatch> =>
-  invoke("whatsapp_order_match", { actorUserId, orderId });
+  invoke("whatsapp_order_match", { sessionToken, orderId });
 
 export const whatsappSendProduct = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   to: string,
   waProductId: string,
 ): Promise<boolean> =>
-  invoke("whatsapp_send_product", { actorUserId, to, waProductId });
+  invoke("whatsapp_send_product", { sessionToken, to, waProductId });
 
 export const whatsappOrderMessage = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   orderId: string,
   message: string,
 ): Promise<boolean> =>
-  invoke("whatsapp_order_message", { actorUserId, orderId, message });
+  invoke("whatsapp_order_message", { sessionToken, orderId, message });
 
 // ── AI payment verification (WhatsApp screenshot → OCR → AI confirm) ──────────
 /** Resolved payment confirmations (confirmed/failed) for the Notification panel. */
@@ -1519,10 +1518,10 @@ export interface WhatsAppReceiptPdfInput {
 /** Send a PDF receipt + caption text as a single WhatsApp document message.
  *  Returns true on confirmed delivery, false if sidecar rejects (caller can fall back). */
 export function whatsappSendReceiptPdf(
-  actorUserId: string,
+  sessionToken: SessionToken,
   input: WhatsAppReceiptPdfInput,
 ): Promise<boolean> {
-  return invoke("whatsapp_send_receipt_pdf", { input, actorUserId });
+  return invoke("whatsapp_send_receipt_pdf", { input, sessionToken });
 }
 
 export function setupSaveBenefitNumber(benefitNumber: string): Promise<void> {
@@ -1544,10 +1543,10 @@ export const migrationExecute = (
   path: string,
   mapping: MappingConfig,
   currencyExponent: number,
-  actorUserId: string,
+  sessionToken: SessionToken,
   onEvent: Channel<MigrationProgress>,
 ): Promise<void> =>
-  invoke("migration_execute", { path, mapping, currencyExponent, actorUserId, onEvent });
+  invoke("migration_execute", { path, mapping, currencyExponent, sessionToken, onEvent });
 
 // ── Migration extended tools ──────────────────────────────────────────────────
 
@@ -1584,16 +1583,16 @@ export const migrationFindDbFiles = (
 export const migrationReadFile = (
   path: string,
   maxChars: number | undefined,
-  actorUserId: string,
+  sessionToken: SessionToken,
 ): Promise<string> =>
-  invoke("migration_read_file", { path, maxChars, actorUserId });
+  invoke("migration_read_file", { path, maxChars, sessionToken });
 
 export const migrationDecompress = (
   archivePath: string,
   destDir: string | undefined,
-  actorUserId: string,
+  sessionToken: SessionToken,
 ): Promise<DecompressResult> =>
-  invoke("migration_decompress", { archivePath, destDir, actorUserId });
+  invoke("migration_decompress", { archivePath, destDir, sessionToken });
 
 export const migrationZanposStats = (): Promise<ZanposStats> =>
   invoke("migration_zanpos_stats");
@@ -1617,24 +1616,24 @@ export const ghostRecord = (actorUserId: string, barcode: string): Promise<void>
   invoke<void>("ghost_record", { barcode, actorUserId }).catch(() => {});
 
 /** Get counts of pending/found/not_found ghost barcodes. Manager+ only. */
-export const ghostSummary = (actorUserId: string): Promise<GhostSummary> =>
-  invoke("ghost_summary", { actorUserId });
+export const ghostSummary = (sessionToken: SessionToken): Promise<GhostSummary> =>
+  invoke("ghost_summary", { sessionToken });
 
 /** Full list of non-dismissed ghost barcodes. Manager+ only. */
-export const ghostList = (actorUserId: string): Promise<GhostBarcode[]> =>
-  invoke("ghost_list", { actorUserId });
+export const ghostList = (sessionToken: SessionToken): Promise<GhostBarcode[]> =>
+  invoke("ghost_list", { sessionToken });
 
 /** Run HTTP lookup chain for all pending barcodes. Manager+ only. */
-export const ghostResolve = (actorUserId: string): Promise<ResolveResult> =>
-  invoke("ghost_resolve", { actorUserId });
+export const ghostResolve = (sessionToken: SessionToken): Promise<ResolveResult> =>
+  invoke("ghost_resolve", { sessionToken });
 
 /** Dismiss a ghost barcode (removes from panel). Manager+ only. */
-export const ghostDismiss = (id: string, actorUserId: string): Promise<void> =>
-  invoke("ghost_dismiss", { id, actorUserId });
+export const ghostDismiss = (id: string, sessionToken: SessionToken): Promise<void> =>
+  invoke("ghost_dismiss", { id, sessionToken });
 
 /** Get product form pre-fill data from a 'found' ghost barcode. Manager+ only. */
-export const ghostPrefill = (id: string, actorUserId: string): Promise<ProductPrefill> =>
-  invoke("ghost_prefill", { id, actorUserId });
+export const ghostPrefill = (id: string, sessionToken: SessionToken): Promise<ProductPrefill> =>
+  invoke("ghost_prefill", { id, sessionToken });
 
 // ── Diagnostics ──────────────────────────────────────────────────────────────────
 
@@ -1642,15 +1641,16 @@ export const ghostPrefill = (id: string, actorUserId: string): Promise<ProductPr
 export const adminRunDiagnostics = (): Promise<DiagnosticReport> =>
   invoke("admin_run_diagnostics");
 
-export const systemHealthCheck = (actorUserId: string): Promise<SystemHealthReport> =>
-  invoke("system_health_check", { actorUserId });
+export const systemHealthCheck = (sessionToken: SessionToken): Promise<SystemHealthReport> =>
+  invoke("system_health_check", { sessionToken });
 
 export const systemHealthApplyFix = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   fixAction: string,
 ): Promise<HealthFixResult> =>
   invoke("system_health_apply_fix", {
-    input: { actor_user_id: actorUserId, fix_action: fixAction },
+    input: { fix_action: fixAction },
+    sessionToken,
   });
 
 // ── Startup health ────────────────────────────────────────────────────────────────
@@ -1670,20 +1670,20 @@ export const systemKeyboardOpen = (): Promise<"touch" | "osk"> =>
 
 /** `activeOnly` is what the till asks for — a rider who has left should not be
  *  offered a new drop, but stays in the admin list so the record can be fixed. */
-export const riderList = (actorUserId: string, activeOnly?: boolean): Promise<RiderRow[]> =>
-  invoke("rider_list", { actorUserId, activeOnly });
+export const riderList = (sessionToken: SessionToken, activeOnly?: boolean): Promise<RiderRow[]> =>
+  invoke("rider_list", { sessionToken, activeOnly });
 
 export const riderCreate = (input: {
-  name: string; phone: string; notes?: string; actor_user_id: string;
-}): Promise<RiderRow> => invoke("rider_create", { input });
+  name: string; phone: string; notes?: string;
+}, sessionToken: SessionToken): Promise<RiderRow> => invoke("rider_create", { input, sessionToken });
 
 export const riderUpdate = (input: {
   rider_id: string; name: string; phone: string; notes?: string;
-  is_active: boolean; actor_user_id: string;
-}): Promise<RiderRow> => invoke("rider_update", { input });
+  is_active: boolean;
+}, sessionToken: SessionToken): Promise<RiderRow> => invoke("rider_update", { input, sessionToken });
 
-export const riderDelete = (riderId: string, actorUserId: string): Promise<void> =>
-  invoke("rider_delete", { riderId, actorUserId });
+export const riderDelete = (riderId: string, sessionToken: SessionToken): Promise<void> =>
+  invoke("rider_delete", { riderId, sessionToken });
 
 // ── Quick POS slots ───────────────────────────────────────────────────────────
 
@@ -1699,14 +1699,14 @@ export interface QuickPosSlot {
 
 /** Ten slots, always. Name and price are resolved live, so a repricing reaches
  *  the till without anyone re-picking the item. */
-export const quickPosLoad = (actorUserId: string): Promise<QuickPosSlot[]> =>
-  invoke("quick_pos_load", { actorUserId });
+export const quickPosLoad = (sessionToken: SessionToken): Promise<QuickPosSlot[]> =>
+  invoke("quick_pos_load", { sessionToken });
 
 export const quickPosSave = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   productIds: (string | null)[],
 ): Promise<QuickPosSlot[]> =>
-  invoke("quick_pos_save", { input: { actor_user_id: actorUserId, product_ids: productIds } });
+  invoke("quick_pos_save", { input: { product_ids: productIds }, sessionToken });
 
 // ── Terminals and reconciliation ─────────────────────────────────────────────
 
@@ -1735,8 +1735,8 @@ export interface TerminalRow {
   is_active: boolean;
 }
 
-export const terminalRoster = (actorUserId: string): Promise<TerminalRow[]> =>
-  invoke("terminal_roster", { actorUserId });
+export const terminalRoster = (sessionToken: SessionToken): Promise<TerminalRow[]> =>
+  invoke("terminal_roster", { sessionToken });
 
 export interface ReconciliationPreview {
   table: string;
@@ -1751,10 +1751,10 @@ export interface ReconciliationPreview {
 }
 
 export const reconciliationPreview = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   table: string,
 ): Promise<ReconciliationPreview> =>
-  invoke("reconciliation_preview", { actorUserId, table });
+  invoke("reconciliation_preview", { sessionToken, table });
 
 export interface ReconciliationOutcome {
   table: string;
@@ -1770,10 +1770,10 @@ export interface ReconciliationOutcome {
 /** Repair what may be repaired. Financial rows both sides hold with different
  *  contents are refused by the engine whatever the caller's role. */
 export const reconciliationRun = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   table?: string,
 ): Promise<ReconciliationOutcome[]> =>
-  invoke("reconciliation_run", { actorUserId, table: table ?? null });
+  invoke("reconciliation_run", { sessionToken, table: table ?? null });
 
 // ── Market prices ─────────────────────────────────────────────────────────────
 //

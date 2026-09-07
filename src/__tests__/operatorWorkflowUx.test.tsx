@@ -420,7 +420,6 @@ describe("operator-first workflow hierarchy", () => {
 
   it("presents sales and drawer reconciliation in one POS report view", () => {
     const props: ComponentProps<typeof TodayReportModal> = {
-      sessionUserId: "u-1",
       shiftId: "shift-1",
       sessionToken: asSessionToken("session-1"),
       onClose: vi.fn(),
@@ -437,7 +436,7 @@ describe("operator-first workflow hierarchy", () => {
       setFlags: vi.fn(), taxRules: [], editingRule: null, setEditingRule: vi.fn(),
       taxRuleError: null, setTaxRuleError: vi.fn(), savingFlags: false, savedFlags: false,
       flagsError: null, savingRule: false, handleSaveFlags: vi.fn(), handleSaveTaxRule: vi.fn(),
-      handleDeleteTaxRule: vi.fn(), sessionUserId: "u-1",
+      handleDeleteTaxRule: vi.fn(),
       sessionToken: asSessionToken("session-1"), onStartPractice: vi.fn(),
     };
     const html = renderToStaticMarkup(createElement(BusinessTab, props));

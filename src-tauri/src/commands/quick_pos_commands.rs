@@ -65,10 +65,11 @@ async fn read_slots(pool: &SqlitePool) -> Vec<Option<String>> {
 
 #[tauri::command]
 pub async fn quick_pos_load(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<QuickPosSlot>, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     load_inner(&state.db).await
 }
 
@@ -117,6 +118,9 @@ pub(crate) async fn load_inner(pool: &SqlitePool) -> AppResult<Vec<QuickPosSlot>
 
 #[derive(Debug, Deserialize)]
 pub struct QuickPosSaveInput {
+    /// Set from the caller's session before use. Anything sent here is
+    /// overwritten; it stays on the struct because the row records it.
+    #[serde(default)]
     pub actor_user_id: String,
     /// Exactly `SLOT_COUNT` entries; `null` for an empty slot. Order is the
     /// order the till renders.
@@ -125,10 +129,18 @@ pub struct QuickPosSaveInput {
 
 #[tauri::command]
 pub async fn quick_pos_save(
-    input: QuickPosSaveInput,
+    mut input: QuickPosSaveInput,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<QuickPosSlot>, AppError> {
-    rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
+    input.actor_user_id = actor.user_id.clone();
 
     if input.product_ids.len() > SLOT_COUNT {
         return Err(AppError::Validation(format!(

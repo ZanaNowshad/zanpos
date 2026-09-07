@@ -57,7 +57,7 @@ export function useConfirmPayment({
       const result = await finalizeSale(allPayments, customerId, deliveryInput, cart);
       onCommitted(result);
       if (payments.some(payment => payment.method === "cash")) {
-        openCashDrawer(sessionUser.user_id)
+        openCashDrawer(sessionUser.session_token)
           .catch((error: unknown) => console.warn("Cash drawer open failed:", error));
       }
       if (completionOptions?.printReceipt) {

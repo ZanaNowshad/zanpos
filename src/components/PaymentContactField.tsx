@@ -4,10 +4,11 @@ import type { PaymentContactState } from "../hooks/usePaymentContact";
 import type { ContactSuggestion } from "./paymentContacts";
 import ContactSuggestions, { type SuggestionListHandle } from "./ContactSuggestions";
 import CustomerDirectoryDialog from "./CustomerDirectoryDialog";
+import type { SessionToken } from "../types";
 
 interface Props {
   contact: PaymentContactState;
-  sessionUserId?: string;
+  sessionToken?: SessionToken;
   onFocus: () => void;
   /** True when this journey sends the receipt over WhatsApp rather than paper. */
   isDelivery: boolean;
@@ -26,7 +27,7 @@ interface Props {
  * findable as one who is on file. It is a separate component for a reason worth
  * knowing before merging it back: see ContactSuggestions.
  */
-export default function PaymentContactField({ contact, sessionUserId, onFocus, isDelivery }: Props) {
+export default function PaymentContactField({ contact, sessionToken, onFocus, isDelivery }: Props) {
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -134,14 +135,14 @@ export default function PaymentContactField({ contact, sessionUserId, onFocus, i
       <ContactSuggestions
         ref={listRef}
         query={contact.query}
-        sessionUserId={sessionUserId}
+        sessionToken={sessionToken}
         open={dropdownOpen && !contact.selected}
         onPick={choose}
       />
 
       {directoryOpen && (
         <CustomerDirectoryDialog
-          sessionUserId={sessionUserId}
+          sessionToken={sessionToken}
           onPick={choose}
           onClose={() => setDirectoryOpen(false)}
         />

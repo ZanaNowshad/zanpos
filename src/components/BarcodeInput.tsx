@@ -4,6 +4,7 @@ import { productSearch } from "../tauri/commands";
 import type { ProductWithPrice } from "../types";
 import { formatMoney } from "../money";
 import { DEVICE } from "../types";
+import type { SessionToken } from "../types";
 
 export interface BarcodeInputHandle {
   focus: () => void;
@@ -21,7 +22,7 @@ interface Props {
   onEscape?: () => void;
   disabled?: boolean;
   /** Active user ID for RBAC on product search. */
-  actorUserId?: string;
+  sessionToken: SessionToken;
 }
 
 /**
@@ -33,7 +34,7 @@ interface Props {
  * dropdown. Arrow keys navigate; Enter / click selects.
  */
 const BarcodeInput = forwardRef<BarcodeInputHandle, Props>(function BarcodeInput(
-  { onBarcode, onSelectProduct, onSearch, onEscape, disabled, actorUserId = "" },
+  { onBarcode, onSelectProduct, onSearch, onEscape, disabled, sessionToken },
   ref,
 ) {
   const inputRef    = useRef<HTMLInputElement>(null);
@@ -162,7 +163,7 @@ const BarcodeInput = forwardRef<BarcodeInputHandle, Props>(function BarcodeInput
     if (!v.trim()) { setResults([]); onSearch(""); return; }
     debounceTimer.current = setTimeout(async () => {
       try {
-        const found = await productSearch(actorUserId, v.trim());
+        const found = await productSearch(sessionToken, v.trim());
         setResults(found.slice(0, 8));
       } catch {
         setResults([]);

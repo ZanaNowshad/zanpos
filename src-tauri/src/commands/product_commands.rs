@@ -13,24 +13,26 @@ use tauri::State;
 /// `page_size`: max results, capped at 100, defaults to 50.
 #[tauri::command]
 pub async fn product_search(
-    actor_user_id: String,
+    session_token: String,
     query: String,
     after_id: Option<String>,
     page_size: Option<u32>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ProductWithPrice>, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     let page_size = page_size.unwrap_or(50).min(100);
     product_repo::search_products_paginated(&state.db, &query, after_id.as_deref(), page_size).await
 }
 
 #[tauri::command]
 pub async fn product_get_by_barcode(
-    actor_user_id: String,
+    session_token: String,
     barcode: String,
     state: State<'_, AppState>,
 ) -> Result<Option<ProductWithPrice>, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     product_repo::get_product_by_barcode(&state.db, &barcode).await
 }
 
@@ -38,12 +40,13 @@ pub async fn product_get_by_barcode(
 // Page size — capped at 200, defaults to 50.
 #[tauri::command]
 pub async fn product_list_all(
-    actor_user_id: String,
+    session_token: String,
     after_id: Option<String>,
     page_size: Option<u32>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ProductWithPrice>, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     let page_size = page_size.unwrap_or(50).min(200);
     product_repo::list_all_active(&state.db, after_id.as_deref(), page_size).await
 }

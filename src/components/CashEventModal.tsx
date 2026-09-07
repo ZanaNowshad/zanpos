@@ -10,9 +10,6 @@ interface Props {
   shiftId:     string;
   /** Authorises the drawer adjustment. */
   sessionToken: SessionToken;
-  /** Still identifies the operator to the printer, which has not moved to
-   *  session auth yet. */
-  userId:      string;
   cashierName: string;
   onDone:      () => void;
   onCancel:    () => void;
@@ -31,7 +28,7 @@ const TYPE_META = {
   safe_drop: { label: "Safe Drop", icon: "⬇", color: "var(--warning)",  desc: "Transfer cash from drawer to safe. Reduces expected drawer total." },
 } as const;
 
-export default function CashEventModal({ shiftId, sessionToken, userId, cashierName, onDone, onCancel }: Props) {
+export default function CashEventModal({ shiftId, sessionToken, cashierName, onDone, onCancel }: Props) {
   const { t } = useTranslation("modal");
   const { t: dt } = useTranslation("detail");
   const [eventType, setEventType] = useState<"paid_in" | "paid_out" | "safe_drop">("paid_in");
@@ -107,7 +104,7 @@ export default function CashEventModal({ shiftId, sessionToken, userId, cashierN
       `Cashier : ${cashierName}`,
       `Branch  : ${DEVICE.branch_name}`, sep,
     ];
-    try { await printReceiptRaw(userId, DEVICE.branch_name, lines); }
+    try { await printReceiptRaw(sessionToken, DEVICE.branch_name, lines); }
     catch (e) { console.error("Print failed", e); }
     finally { setPrinting(false); }
   };

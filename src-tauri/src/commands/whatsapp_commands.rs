@@ -175,10 +175,10 @@ pub fn build_delivery_whatsapp_message(p: &WhatsAppDeliveryParams) -> String {
 
 #[tauri::command]
 pub async fn whatsapp_status(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<WhatsAppStatus> {
-    if actor_user_id.trim().is_empty() {
+    if session_token.trim().is_empty() {
         let setup_done: Option<String> =
             sqlx::query_scalar("SELECT value FROM app_config WHERE key = 'setup_complete'")
                 .fetch_optional(&state.db)
@@ -188,7 +188,8 @@ pub async fn whatsapp_status(
             return Err(AppError::Permission("User context is required".into()));
         }
     } else {
-        rbac::require_any_role(&state.db, &actor_user_id).await?;
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     }
     let token = read_sidecar_token(&state);
     let client = reqwest::Client::builder()
@@ -230,10 +231,11 @@ pub async fn whatsapp_status(
 #[tauri::command]
 pub async fn whatsapp_send_delivery(
     input: SendDeliveryInput,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
 
     if !is_network_available().await {
         return Err(AppError::Internal("WhatsApp: device is offline".into()));
@@ -288,10 +290,11 @@ pub async fn whatsapp_send_delivery(
 
 #[tauri::command]
 pub async fn whatsapp_disconnect(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    crate::commands::rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let token = read_sidecar_token(&state);
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
@@ -309,10 +312,11 @@ pub async fn whatsapp_disconnect(
 #[tauri::command]
 pub async fn whatsapp_save_config(
     benefit_number: String,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    crate::commands::rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
 
     // BUG-WA-PHONE-VALIDATION: validate the BenefitPay phone number before saving.
     // Allow empty string (clears the setting). Non-empty strings must be a valid
@@ -363,10 +367,11 @@ pub struct NotifyArrivalInput {
 #[tauri::command]
 pub async fn whatsapp_notify_arrival(
     input: NotifyArrivalInput,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
 
     // Hard rule: arrival message only within 1 hour of delivery bill creation.
     if !input.delivery_id.is_empty() {
@@ -423,10 +428,11 @@ pub struct PaymentReminderInput {
 #[tauri::command]
 pub async fn whatsapp_payment_reminder(
     input: PaymentReminderInput,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
 
     // Hard rule: payment reminder only on the same calendar day as the delivery bill (Bahrain UTC+3).
     if !input.delivery_id.is_empty() {
@@ -530,11 +536,12 @@ pub struct ImportContactsResult {
 /// skipped via INSERT OR IGNORE on the UNIQUE index added in migration 0023.
 #[tauri::command]
 pub async fn whatsapp_import_contacts(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<ImportContactsResult> {
     // Only managers and owners may import contacts.
-    crate::commands::rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
 
     // Fetch contacts from the Node sidecar.
     let token = read_sidecar_token(&state);
@@ -910,12 +917,13 @@ async fn send_raw(to: &str, message: &str, token: &str) -> AppResult<bool> {
 #[tauri::command]
 pub async fn whatsapp_send_receipt_pdf(
     input: crate::commands::receipt_pdf::WhatsAppReceiptPdfInput,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
     use base64::Engine as _;
 
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
 
     if !is_network_available().await {
         return Err(AppError::Internal("WhatsApp: device is offline".into()));

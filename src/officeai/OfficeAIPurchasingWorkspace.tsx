@@ -14,13 +14,12 @@ import { usePurchasingWorkspace } from "./usePurchasingWorkspace";
 export { buildPurchasingCommandModel } from "./purchasingPresentation";
 
 interface Props {
-  actorUserId: string;
   sessionToken: SessionToken;
   currencyExp: number;
   onSendPrompt: (prompt: string) => void;
 }
 
-export default function OfficeAIPurchasingWorkspace({ actorUserId, sessionToken, currencyExp, onSendPrompt }: Props) {
+export default function OfficeAIPurchasingWorkspace({ sessionToken, currencyExp, onSendPrompt }: Props) {
   const {
     language,
     t,
@@ -104,7 +103,7 @@ export default function OfficeAIPurchasingWorkspace({ actorUserId, sessionToken,
     submitReceipt,
     openCostHistory,
     cancelPo,
-  } = usePurchasingWorkspace({ actorUserId, sessionToken, currencyExp });
+  } = usePurchasingWorkspace({ sessionToken, currencyExp });
 
   return (
     <div className="oa-purchasing">

@@ -5,9 +5,10 @@ import { riderCreate, riderDelete, riderList, riderUpdate } from "../../../tauri
 import { DataTable, Drawer, EmptyState, LoadingSkeleton, PageTemplate } from "../../../components/templates";
 import type { Column } from "../../../components/templates";
 import ConfirmDialog from "../../../components/templates/ConfirmDialog";
+import type { SessionToken } from "../../../types";
 
 interface Props {
-  actorUserId: string;
+  sessionToken: SessionToken;
 }
 
 interface Draft {
@@ -29,7 +30,7 @@ const EMPTY_DRAFT: Draft = { rider_id: null, name: "", phone: "", notes: "", is_
  * send a drop to. Merging the two lists would mean either inventing credentials
  * nobody uses or putting riders on the login screen.
  */
-export default function RidersPage({ actorUserId }: Props) {
+export default function RidersPage({ sessionToken }: Props) {
   const [riders, setRiders] = useState<RiderRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -40,14 +41,14 @@ export default function RidersPage({ actorUserId }: Props) {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      setRiders(await riderList(actorUserId, false));
+      setRiders(await riderList(sessionToken, false));
       setError(null);
     } catch (cause) {
       setError(String(cause));
     } finally {
       setLoading(false);
     }
-  }, [actorUserId]);
+  }, [sessionToken]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -63,15 +64,13 @@ export default function RidersPage({ actorUserId }: Props) {
           phone: draft.phone,
           notes: draft.notes || undefined,
           is_active: draft.is_active,
-          actor_user_id: actorUserId,
-        });
+        }, sessionToken);
       } else {
         await riderCreate({
           name: draft.name,
           phone: draft.phone,
           notes: draft.notes || undefined,
-          actor_user_id: actorUserId,
-        });
+        }, sessionToken);
       }
       setDraft(null);
       await refresh();
@@ -87,7 +86,7 @@ export default function RidersPage({ actorUserId }: Props) {
   const confirmDelete = async () => {
     if (!pendingDelete) return;
     try {
-      await riderDelete(pendingDelete.rider_id, actorUserId);
+      await riderDelete(pendingDelete.rider_id, sessionToken);
       setPendingDelete(null);
       await refresh();
     } catch (cause) {

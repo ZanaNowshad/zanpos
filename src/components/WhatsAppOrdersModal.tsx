@@ -5,9 +5,10 @@ import * as cmd from "../tauri/commands";
 import { useLanguage } from "../hooks/useLanguage";
 import { modalTranslator, ownedModalLabel } from "../i18n/modalStrings";
 import { detailTranslator } from "../i18n/detailStrings";
+import type { SessionToken } from "../types";
 
 interface Props {
-  sessionUserId: string;
+  sessionToken: SessionToken;
   /** Called with matched order lines the cashier chose to fulfil. Returns the
    *  count actually added so the modal can report partial fulfilment. */
   onAddToCart: (lines: WaMatchedLine[]) => Promise<number>;
@@ -23,7 +24,7 @@ function fmtPrice(minor: number | null, currency: string | null): string {
 
 /** POS-side WhatsApp Orders command center: review, message the customer,
  *  send payment reminders, and fulfil an order into the POS cart. */
-export default function WhatsAppOrdersModal({ sessionUserId, onAddToCart, onClose }: Props) {
+export default function WhatsAppOrdersModal({ sessionToken, onAddToCart, onClose }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => modalTranslator(language), [language]);
   const dt = useMemo(() => detailTranslator(language), [language]);
@@ -39,29 +40,29 @@ export default function WhatsAppOrdersModal({ sessionUserId, onAddToCart, onClos
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
-      setOrders(await cmd.whatsappOrderList(sessionUserId, filter || undefined));
+      setOrders(await cmd.whatsappOrderList(sessionToken, filter || undefined));
     } catch (e) { setError(String(e)); } finally { setLoading(false); }
-  }, [sessionUserId, filter]);
+  }, [sessionToken, filter]);
 
   useEffect(() => { void load(); }, [load]);
 
   async function setStatus(o: WaOrder, status: string) {
     setBusy(o.order_id); setError(null);
-    try { await cmd.whatsappOrderUpdateStatus(sessionUserId, o.order_id, status); await load(); }
+    try { await cmd.whatsappOrderUpdateStatus(sessionToken, o.order_id, status); await load(); }
     catch (e) { setError(String(e)); } finally { setBusy(null); }
   }
 
   async function fulfil(o: WaOrder) {
     setBusy(o.order_id); setError(null); setNote(null);
     try {
-      const match = await cmd.whatsappOrderMatch(sessionUserId, o.order_id);
+      const match = await cmd.whatsappOrderMatch(sessionToken, o.order_id);
       if (match.matched.length === 0) {
         setNote(dt("noOrderItemsMatched"));
         return;
       }
       const added = await onAddToCart(match.matched);
       const missing = match.unmatched.length;
-      await cmd.whatsappOrderUpdateStatus(sessionUserId, o.order_id, "reviewed");
+      await cmd.whatsappOrderUpdateStatus(sessionToken, o.order_id, "reviewed");
       setNote(
         `${added} ${dt("addedToCart")}` +
         (missing > 0 ? ` · ${missing} ${dt("unmatchedItems")}` : "") +
@@ -75,7 +76,7 @@ export default function WhatsAppOrdersModal({ sessionUserId, onAddToCart, onClos
     if (!msgFor || !msgText.trim()) return;
     setBusy(msgFor.order_id); setError(null);
     try {
-      const ok = await cmd.whatsappOrderMessage(sessionUserId, msgFor.order_id, msgText.trim());
+      const ok = await cmd.whatsappOrderMessage(sessionToken, msgFor.order_id, msgText.trim());
       if (!ok) setError("Message not sent — is WhatsApp connected?");
       else setNote(dt("messageSent"));
       setMsgFor(null); setMsgText("");

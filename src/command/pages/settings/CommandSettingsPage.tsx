@@ -10,8 +10,8 @@ import type { SessionToken } from "../../../types";
 import "./settings.css";
 
 interface Props {
-  sessionUserId: string;
   sessionToken: SessionToken;
+
   sessionRole: string;
   initialSection?: SettingsSection;
   /** Navigate to another domain, e.g. Team or Audit, instead of duplicating it. */
@@ -41,7 +41,7 @@ function Fallback() { return <div className="zp-set-loading">Loading…</div>; }
  * Data & sync / Security / Advanced) so a page answers one question at a time.
  */
 export default function CommandSettingsPage({
-  sessionUserId, sessionToken, sessionRole, initialSection, onOpenTab, onStartPractice,
+  sessionToken, sessionRole, initialSection, onOpenTab, onStartPractice,
 }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => commandTranslator(language), [language]);
@@ -65,14 +65,14 @@ export default function CommandSettingsPage({
     setBackingUp(true);
     setBackupMsg(null);
     try {
-      const dest = await dbBackup("", sessionUserId);
+      const dest = await dbBackup("", sessionToken);
       setBackupMsg(dest ? `${t("backupSaved" as CommandStringKey)} ${dest}` : t("backupSaved" as CommandStringKey));
     } catch (e) {
       setBackupMsg(typeof e === "string" ? e : t("backupFailed" as CommandStringKey));
     } finally {
       setBackingUp(false);
     }
-  }, [sessionUserId, t]);
+  }, [sessionToken, t]);
 
   const handleCheckUpdate = useCallback(async () => {
     setCheckingUpdate(true);
@@ -105,12 +105,12 @@ export default function CommandSettingsPage({
   return (
     <SettingsShell activeSection={section} roleName={sessionRole} onSelectSection={setSection}>
       <Suspense fallback={<Fallback />}>
-        {section === "store" && <StoreIdentityPage sessionUserId={sessionUserId} sessionRole={sessionRole} />}
+        {section === "store" && <StoreIdentityPage sessionToken={sessionToken} sessionRole={sessionRole} />}
 
         {section === "sales" && (
           <>
-            <ReceiptsPage sessionUserId={sessionUserId} />
-            <BusinessRulesPage sessionUserId={sessionUserId} sessionToken={sessionToken} onStartPractice={onStartPractice} />
+            <ReceiptsPage sessionToken={sessionToken} />
+            <BusinessRulesPage sessionToken={sessionToken} onStartPractice={onStartPractice} />
           </>
         )}
 
@@ -133,20 +133,20 @@ export default function CommandSettingsPage({
           </section>
         )}
 
-        {section === "hardware" && <HardwarePage sessionUserId={sessionUserId} />}
+        {section === "hardware" && <HardwarePage sessionToken={sessionToken} />}
 
         {section === "integrations" && (
           <>
-            <WhatsAppTab sessionUserId={sessionUserId} sessionRole={sessionRole} registerTimer={registerTimer} />
-            <StorefrontManagementTab sessionUserId={sessionUserId} sessionRole={sessionRole} />
+            <WhatsAppTab sessionToken={sessionToken} sessionRole={sessionRole} registerTimer={registerTimer} />
+            <StorefrontManagementTab sessionToken={sessionToken} sessionRole={sessionRole} />
           </>
         )}
 
-        {section === "ai" && <AITab sessionUserId={sessionUserId} sessionToken={sessionToken} />}
+        {section === "ai" && <AITab sessionToken={sessionToken} />}
 
         {section === "data" && (
           <>
-            <HubTab sessionToken={sessionToken} sessionUserId={sessionUserId} />
+            <HubTab sessionToken={sessionToken} />
             <SystemTab
               appVersion={appVersion}
               backingUp={backingUp} backupMsg={backupMsg}
@@ -179,7 +179,7 @@ export default function CommandSettingsPage({
           </section>
         )}
 
-        {section === "advanced" && <MaintenanceTab sessionUserId={sessionUserId} />}
+        {section === "advanced" && <MaintenanceTab sessionToken={sessionToken} />}
       </Suspense>
     </SettingsShell>
   );

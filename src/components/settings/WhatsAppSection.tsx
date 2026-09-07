@@ -12,13 +12,14 @@ import {
   whatsappStatus,
 } from "../../tauri/commands";
 import WhatsAppQRModal from "../WhatsAppQRModal";
+import type { SessionToken } from "../../types";
 
 export default function WhatsAppSection({
-  sessionUserId,
+  sessionToken,
   sessionRole,
   registerTimer,
 }: {
-  sessionUserId: string;
+  sessionToken: SessionToken;
   sessionRole: string;
   registerTimer: (id: ReturnType<typeof setTimeout>) => void;
 }) {
@@ -57,9 +58,9 @@ export default function WhatsAppSection({
   const refresh = useCallback(async () => {
     // R-17: log polling errors instead of silently swallowing — a persistently
     // unreachable sidecar should leave a diagnostic trail.
-    try { setStatus(await whatsappStatus(sessionUserId)); }
+    try { setStatus(await whatsappStatus(sessionToken)); }
     catch (e: unknown) { console.warn("WhatsApp status poll failed:", e); }
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   useEffect(() => {
     refresh();
@@ -93,7 +94,7 @@ export default function WhatsAppSection({
     }
     setSaving(true);
     try {
-      await whatsappSaveConfig(benefitNum.trim(), sessionUserId);
+      await whatsappSaveConfig(benefitNum.trim(), sessionToken);
       setSaved(true);
       registerTimer(setTimeout(() => setSaved(false), 2000));
     } catch (e: unknown) {
@@ -107,7 +108,7 @@ export default function WhatsAppSection({
     setConfirmDisconnect(false);
     setDisconnecting(true);
     try {
-      await whatsappDisconnect(sessionUserId);
+      await whatsappDisconnect(sessionToken);
       await refresh();
     } catch (e: unknown) {
       setSaveError(typeof e === "string" ? e : "Failed to disconnect");
@@ -121,7 +122,7 @@ export default function WhatsAppSection({
     setImportResult(null);
     setImportError(null);
     try {
-      const result = await whatsappImportContacts(sessionUserId);
+      const result = await whatsappImportContacts(sessionToken);
       setImportResult(result);
       registerTimer(setTimeout(() => setImportResult(null), 8_000));
     } catch (e: unknown) {
@@ -130,7 +131,7 @@ export default function WhatsAppSection({
     } finally {
       setImporting(false);
     }
-  }, [sessionUserId, registerTimer]);
+  }, [sessionToken, registerTimer]);
 
   const handleConnected = useCallback(async () => {
     await refresh();
@@ -147,9 +148,9 @@ export default function WhatsAppSection({
     setChatsError(null);
     try {
       const [t, contacts, groups] = await Promise.all([
-        whatsappGetTargets(sessionUserId),
-        whatsappListContacts(sessionUserId),
-        whatsappListGroups(sessionUserId),
+        whatsappGetTargets(sessionToken),
+        whatsappListContacts(sessionToken),
+        whatsappListGroups(sessionToken),
       ]);
       setOwnerJid(t.owner_jid); setOwnerName(t.owner_name);
       setGroupJid(t.group_jid); setGroupName(t.group_name);
@@ -160,7 +161,7 @@ export default function WhatsAppSection({
     } finally {
       setLoadingChats(false);
     }
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   useEffect(() => {
     if (status.connected && isManager) loadChats();
@@ -175,7 +176,7 @@ export default function WhatsAppSection({
     setSavingTargets(true);
     setChatsError(null);
     try {
-      await whatsappSetTargets(sessionUserId, {
+      await whatsappSetTargets(sessionToken, {
         owner_jid: ownerJid, owner_name: ownerName,
         group_jid: manualGroup, group_name: groupName || manualGroup,
       });
@@ -386,7 +387,7 @@ export default function WhatsAppSection({
       )}
 
       {showQR && (
-        <WhatsAppQRModal onClose={() => setShowQR(false)} onConnected={handleConnected} sessionUserId={sessionUserId} />
+        <WhatsAppQRModal onClose={() => setShowQR(false)} onConnected={handleConnected} sessionToken={sessionToken} />
       )}
     </>
   );

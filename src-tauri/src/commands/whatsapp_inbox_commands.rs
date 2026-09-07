@@ -179,10 +179,11 @@ async fn unread_count(db: &SqlitePool) -> AppResult<i64> {
 /// `whatsapp_import_contacts`, which writes them into the customers table.)
 #[tauri::command]
 pub async fn whatsapp_list_contacts(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<WaContact>> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let token = read_sidecar_token(&state);
     let resp = sidecar_client()
         .get(format!("{}/contacts", SIDECAR_URL))
@@ -201,10 +202,11 @@ pub async fn whatsapp_list_contacts(
 /// Groups the connected account participates in, for the store-group picker.
 #[tauri::command]
 pub async fn whatsapp_list_groups(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<WaGroup>> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let token = read_sidecar_token(&state);
     let resp = sidecar_client()
         .get(format!("{}/groups", SIDECAR_URL))
@@ -227,10 +229,11 @@ pub async fn whatsapp_set_targets(
     owner_name: String,
     group_jid: String,
     group_name: String,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     set_cfg(&state.db, "whatsapp_owner_jid", &normalize_jid(&owner_jid)).await?;
     set_cfg(&state.db, "whatsapp_owner_name", owner_name.trim()).await?;
     set_cfg(&state.db, "whatsapp_group_jid", &normalize_jid(&group_jid)).await?;
@@ -241,10 +244,11 @@ pub async fn whatsapp_set_targets(
 /// Current owner/group selection, to pre-fill the Settings pickers.
 #[tauri::command]
 pub async fn whatsapp_get_targets(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<WaTargets> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     Ok(WaTargets {
         owner_jid: get_cfg(&state.db, "whatsapp_owner_jid")
             .await
@@ -268,10 +272,11 @@ pub async fn whatsapp_get_targets(
 /// interval by the POS. Sidecar/network failures are non-fatal (returns the count).
 #[tauri::command]
 pub async fn whatsapp_poll_messages(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<i64> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
 
     let owner_jid = get_cfg(&state.db, "whatsapp_owner_jid")
         .await
@@ -426,10 +431,11 @@ pub async fn whatsapp_poll_messages(
 /// Recent stored messages for the notification popup (unread first, newest first).
 #[tauri::command]
 pub async fn whatsapp_list_messages(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<WaMessage>> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let rows = sqlx::query(
         "SELECT id, chat_jid, chat_name, is_group, sender_jid, sender_name, body, ts, read, media_type \
          FROM wa_messages ORDER BY read ASC, ts DESC LIMIT 100",
@@ -462,10 +468,11 @@ pub async fn whatsapp_list_messages(
 #[tauri::command]
 pub async fn whatsapp_get_media(
     message_id: String,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<WaMedia> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let token = read_sidecar_token(&state);
     let resp = sidecar_client()
         .get(format!("{}/media", SIDECAR_URL))
@@ -496,10 +503,11 @@ pub async fn whatsapp_get_media(
 #[tauri::command]
 pub async fn whatsapp_mark_read(
     id: String,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     sqlx::query("UPDATE wa_messages SET read = 1 WHERE id = ?")
         .bind(&id)
         .execute(&state.db)
@@ -510,10 +518,11 @@ pub async fn whatsapp_mark_read(
 /// Mark every unread message read (popup close / "mark all read").
 #[tauri::command]
 pub async fn whatsapp_mark_all_read(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     sqlx::query("UPDATE wa_messages SET read = 1 WHERE read = 0")
         .execute(&state.db)
         .await?;
@@ -525,10 +534,11 @@ pub async fn whatsapp_mark_all_read(
 /// still arrive normally.
 #[tauri::command]
 pub async fn whatsapp_clear_messages(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     sqlx::query("DELETE FROM wa_messages")
         .execute(&state.db)
         .await?;

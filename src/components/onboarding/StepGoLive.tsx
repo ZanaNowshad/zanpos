@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import * as storefront from "../../tauri/storefront";
 import StorefrontManagementTab from "../settings/StorefrontManagementTab";
+import type { SessionToken } from "../../types";
 
 interface Props {
-  ownerUserId: string;
+  sessionToken: SessionToken;
   language: "en" | "ar" | "en-ar";
   onDone: () => void;
 }
@@ -13,16 +14,16 @@ interface Props {
  * step does on its own is seed the customer language chosen in step 1 before
  * the tab loads, and provide the wizard's own "finish" action since the tab
  * has no completion callback of its own. */
-export default function StepGoLive({ ownerUserId, language, onDone }: Props) {
+export default function StepGoLive({ sessionToken, language, onDone }: Props) {
   const [seeded, setSeeded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const settings = await storefront.storefrontSettingsGet(ownerUserId);
+        const settings = await storefront.storefrontSettingsGet(sessionToken);
         if (!cancelled && settings.locale !== language) {
-          await storefront.storefrontSettingsSave(ownerUserId, { ...settings, locale: language });
+          await storefront.storefrontSettingsSave(sessionToken, { ...settings, locale: language });
         }
       } catch {
         // Non-blocking — the storefront tab loads and manages its own state either way.
@@ -31,7 +32,7 @@ export default function StepGoLive({ ownerUserId, language, onDone }: Props) {
       }
     })();
     return () => { cancelled = true; };
-  }, [ownerUserId, language]);
+  }, [sessionToken, language]);
 
   return (
     <div className="setup-content setup-golive">
@@ -42,7 +43,7 @@ export default function StepGoLive({ ownerUserId, language, onDone }: Props) {
       </p>
 
       {seeded
-        ? <StorefrontManagementTab sessionUserId={ownerUserId} sessionRole="owner" setupOnly />
+        ? <StorefrontManagementTab sessionToken={sessionToken} sessionRole="owner" setupOnly />
         : <div className="setup-body-dim">Loading storefront…</div>}
 
       <div className="setup-actions">

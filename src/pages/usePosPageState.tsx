@@ -81,9 +81,9 @@ export function usePosPageState({
     businessFlags: bizFlags,
     setBusinessFlags: setBizFlags,
     commerceEnabled
-  } = usePosConfiguration(sessionUser.user_id);
+  } = usePosConfiguration(sessionUser.session_token);
   const { suggestions, refreshSuggestions } = useCustomItemSuggestions();
-  const { slots: quickSlots } = useQuickPosSlots(sessionUser.user_id);
+  const { slots: quickSlots } = useQuickPosSlots(sessionUser.session_token);
 
   const canOpenBackOffice = ["owner", "manager"].includes(sessionUser.role_name);
   const canViewXReport    = canOpenBackOffice;
@@ -91,7 +91,6 @@ export function usePosPageState({
 
   // Sidebar badges: alerts bell + unfulfilled orders, one shared 8s poll.
   const { notifCount, orderCount, refreshNotifications } = usePosAlerts({
-    userId: sessionUser.user_id,
     sessionToken: sessionUser.session_token,
     canOpenBackOffice,
     commerceEnabled
@@ -150,7 +149,7 @@ export function usePosPageState({
   // the sidecar check is a network call and must not ride the 8s badge poll
   // that already runs on every till.
   const { connected: waConnected, stale: waStale } =
-    useWhatsAppHealth(commerceEnabled, sessionUser.user_id);
+    useWhatsAppHealth(commerceEnabled, sessionUser.session_token);
 
   const { recoverable, dismissRecovery, recoverCart } = usePosCartRecovery({
     cart,
@@ -172,7 +171,7 @@ export function usePosPageState({
   }, [addProductById, focusBarcode]);
 
   const { printSaleNow } = usePosReceipt({
-    userId: sessionUser.user_id,
+    sessionToken: sessionUser.session_token,
     setBizFlags,
     setReceiptStatus,
     setError,
@@ -220,7 +219,6 @@ export function usePosPageState({
   } = usePosRegisterActions({
     shift,
     sessionToken: sessionUser.session_token,
-    userId: sessionUser.user_id,
     lineCount,
     lastReceiptNumber,
     printSaleNow,

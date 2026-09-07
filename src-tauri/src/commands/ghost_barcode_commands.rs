@@ -61,10 +61,11 @@ fn now_ms() -> i64 {
 #[tauri::command]
 pub async fn ghost_record(
     barcode: String,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     if barcode.trim().is_empty() {
         return Ok(());
     }
@@ -94,10 +95,11 @@ pub async fn ghost_record(
 /// Used by BackOffice nav badge. Manager/owner only.
 #[tauri::command]
 pub async fn ghost_summary(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<GhostSummary> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     // M-19: include dismissed in the GROUP BY so the count is complete
     let rows: Vec<(String, i64)> =
         sqlx::query_as("SELECT status, COUNT(*) as cnt FROM unknown_barcodes GROUP BY status")
@@ -126,10 +128,11 @@ pub async fn ghost_summary(
 /// Manager/owner only.
 #[tauri::command]
 pub async fn ghost_list(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<GhostBarcode>> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     list_ghosts(&state.db).await
 }
 
@@ -161,10 +164,11 @@ async fn list_ghosts(pool: &SqlitePool) -> AppResult<Vec<GhostBarcode>> {
 #[tauri::command]
 pub async fn ghost_dismiss(
     id: String,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     // Intentionally idempotent: if the row was already dismissed (or never
     // existed), this is a no-op rather than an error.  The manager panel will
     // have removed the card client-side already, so a 404 here is noise.
@@ -181,10 +185,11 @@ pub async fn ghost_dismiss(
 #[tauri::command]
 pub async fn ghost_prefill(
     id: String,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<ProductPrefill> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let row: Option<(
         String,
         String,
@@ -769,10 +774,11 @@ async fn lookup_chain(
 /// barcode, marking each 'found' or 'not_found'. Manager/owner only.
 #[tauri::command]
 pub async fn ghost_resolve(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<ResolveResult> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
 
     let pending: Vec<(String, String)> =
         sqlx::query_as("SELECT id, barcode FROM unknown_barcodes WHERE status = 'pending'")

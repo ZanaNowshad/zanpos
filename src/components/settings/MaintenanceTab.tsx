@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { authVerifyOwnerPin, checkForUpdates, downloadAndInstallUpdate } from "../../tauri/commands";
+import type { SessionToken } from "../../types";
 
 /**
  * Password-protected Maintenance page (Settings → Maintenance).
@@ -10,7 +11,7 @@ import { authVerifyOwnerPin, checkForUpdates, downloadAndInstallUpdate } from ".
  *
  * Contents: Application Update (check + download & install).
  */
-export default function MaintenanceTab({ sessionUserId }: { sessionUserId: string }) {
+export default function MaintenanceTab({ sessionToken }: { sessionToken: SessionToken }) {
   // ── Gate state ────────────────────────────────────────────────────────────
   const [unlocked, setUnlocked] = useState(false);
   const [pin, setPin] = useState("");
@@ -72,7 +73,7 @@ export default function MaintenanceTab({ sessionUserId }: { sessionUserId: strin
     setInstalling(true);
     setUpdateMsg("Downloading and installing… the app will restart automatically.");
     try {
-      const did = await downloadAndInstallUpdate(sessionUserId);
+      const did = await downloadAndInstallUpdate(sessionToken);
       // If we get here, no restart happened (e.g. no update found mid-flight).
       if (!did) {
         setUpdateMsg("No update was available to install.");

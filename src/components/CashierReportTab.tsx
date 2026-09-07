@@ -7,6 +7,7 @@ import { useLanguage } from "../hooks/useLanguage";
 import { backOfficeTranslator } from "../i18n/backOfficeStrings";
 import { PageTemplate, EmptyState, LoadingSkeleton } from "./templates";
 import { Users } from "lucide-react";
+import type { SessionToken } from "../types";
 
 const EXP = DEVICE.currency_exponent;
 const CUR = DEVICE.currency;
@@ -14,7 +15,7 @@ function fmt(n: number) { return `${CUR} ${formatMoney(n, EXP)}`; }
 
 function isoDate(d: Date) { return d.toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" }); }
 
-export default function CashierReportTab({ sessionUserId }: { sessionUserId: string }) {
+export default function CashierReportTab({ sessionToken }: { sessionToken: SessionToken }) {
   const { language } = useLanguage();
   const t = useMemo(() => backOfficeTranslator(language), [language]);
   const today = isoDate(new Date());
@@ -29,7 +30,7 @@ export default function CashierReportTab({ sessionUserId }: { sessionUserId: str
     setLoading(true);
     setError(null);
     try {
-      const data = await reportByCashier(sessionUserId, DEVICE.branch_id, from, to);
+      const data = await reportByCashier(sessionToken, DEVICE.branch_id, from, to);
       setRows(data);
       setLoaded(true);
     } catch (e: unknown) {

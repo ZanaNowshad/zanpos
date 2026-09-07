@@ -23,7 +23,7 @@ export default function BulkStockTakeModal({ user, onClose }: Props) {
   const [search, setSearch] = useState("");
 
   useEffect(() => {
-    productListAll(user.user_id)
+    productListAll(user.session_token)
       .then((products: ProductWithPrice[]) => {
         const tracked = products.filter(p => p.track_inventory);
         setRows(tracked.map(p => ({
@@ -35,7 +35,7 @@ export default function BulkStockTakeModal({ user, onClose }: Props) {
       })
       .catch(() => setError("Failed to load products"))
       .finally(() => setLoading(false));
-  }, [user.user_id]);
+  }, [user.session_token]);
 
   const handleSubmit = async () => {
     const entries = rows

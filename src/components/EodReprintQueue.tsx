@@ -8,9 +8,10 @@ import {
 import { clearPrintedReminder, retryPendingReprint } from "../utils/reprintQueue";
 import { useLanguage } from "../hooks/useLanguage";
 import { backOfficeTranslator } from "../i18n/backOfficeStrings";
+import type { SessionToken } from "../types";
 
 interface Props {
-  actorUserId: string;
+  sessionToken: SessionToken;
 }
 
 function failedAtLabel(value: string, locale: string): string {
@@ -21,7 +22,7 @@ function failedAtLabel(value: string, locale: string): string {
   });
 }
 
-export default function EodReprintQueue({ actorUserId }: Props) {
+export default function EodReprintQueue({ sessionToken }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => backOfficeTranslator(language), [language]);
   const locale = language === "ar" ? "ar-BH" : "en-BH";
@@ -34,7 +35,7 @@ export default function EodReprintQueue({ actorUserId }: Props) {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    reprintQueuePending(actorUserId)
+    reprintQueuePending(sessionToken)
       .then((pending) => {
         if (!cancelled) setEntries(pending);
       })
@@ -50,7 +51,7 @@ export default function EodReprintQueue({ actorUserId }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [actorUserId, t]);
+  }, [sessionToken, t]);
 
   const handleRetry = async (entry: ReprintQueueEntry) => {
     setRetryingId(entry.id);
@@ -59,7 +60,7 @@ export default function EodReprintQueue({ actorUserId }: Props) {
       const result = await clearPrintedReminder(
         entries,
         entry.id,
-        (id) => reprintQueueMarkPrinted(actorUserId, id),
+        (id) => reprintQueueMarkPrinted(sessionToken, id),
       );
       setEntries(result.entries);
       setError(result.error);
@@ -73,8 +74,8 @@ export default function EodReprintQueue({ actorUserId }: Props) {
     const result = await retryPendingReprint({
       entries,
       entry,
-      print: (storeName, lines) => printReceiptRaw(actorUserId, storeName, lines),
-      markPrinted: (id) => reprintQueueMarkPrinted(actorUserId, id),
+      print: (storeName, lines) => printReceiptRaw(sessionToken, storeName, lines),
+      markPrinted: (id) => reprintQueueMarkPrinted(sessionToken, id),
     });
     setEntries(result.entries);
     setError(result.error);

@@ -1,22 +1,23 @@
 import { memo, useEffect, useState, useCallback } from "react";
 import type { WhatsAppStatus } from "../types";
 import { whatsappStatus } from "../tauri/commands";
+import type { SessionToken } from "../types";
 
 interface Props {
   sessionRole: string;
-  sessionUserId?: string;
+  sessionToken: SessionToken;
   onOpenQR: () => void;
 }
 
-const WhatsAppStatusPill = memo(function WhatsAppStatusPill({ sessionRole, sessionUserId = "", onOpenQR }: Props) {
+const WhatsAppStatusPill = memo(function WhatsAppStatusPill({ sessionRole, sessionToken, onOpenQR }: Props) {
   const [status, setStatus] = useState<WhatsAppStatus>({ connected: false });
 
   const poll = useCallback(async () => {
     try {
-      const s = await whatsappStatus(sessionUserId);
+      const s = await whatsappStatus(sessionToken);
       setStatus(s);
     } catch { /* sidecar not running */ }
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   useEffect(() => {
     poll();

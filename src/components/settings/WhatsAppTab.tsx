@@ -1,6 +1,7 @@
 import { useState } from "react";
 import WaMessageEditor from "../WaMessageEditor";
 import WhatsAppSection from "./WhatsAppSection";
+import type { SessionToken } from "../../types";
 import {
   loadWaFormat,
   saveWaFormat,
@@ -13,21 +14,21 @@ import {
 } from "../../utils/waMessageFormat";
 
 interface WhatsAppTabProps {
-  sessionUserId: string;
+  sessionToken: SessionToken;
   sessionRole: string;
   registerTimer: (id: ReturnType<typeof setTimeout>) => void;
 }
 
 type MsgKind = "delivery" | "customer";
 
-export default function WhatsAppTab({ sessionUserId, sessionRole, registerTimer }: WhatsAppTabProps) {
+export default function WhatsAppTab({ sessionToken, sessionRole, registerTimer }: WhatsAppTabProps) {
   const [kind, setKind] = useState<MsgKind>("delivery");
 
   return (
     <div className="settings-page">
       <section>
         <h3 className="settings-page-title">WhatsApp</h3>
-        <WhatsAppSection sessionUserId={sessionUserId} sessionRole={sessionRole} registerTimer={registerTimer} />
+        <WhatsAppSection sessionToken={sessionToken} sessionRole={sessionRole} registerTimer={registerTimer} />
       </section>
 
       <hr className="settings-page-divider" />

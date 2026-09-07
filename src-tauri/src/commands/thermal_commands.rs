@@ -485,10 +485,11 @@ fn list_windows_printers() -> Vec<PortEntry> {
 /// Get current thermal printer configuration.
 #[tauri::command]
 pub async fn thermal_get_config(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<ThermalConfig, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     let enabled_str = config_get(&state, "thermal_printer_enabled", "0").await;
     let port = config_get(&state, "thermal_printer_port", "").await;
     let baud = config_get(&state, "thermal_printer_baud", "9600").await;
@@ -504,10 +505,11 @@ pub async fn thermal_get_config(
 #[tauri::command]
 pub async fn thermal_set_config(
     input: ThermalConfigInput,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
 
     // BUG-PRINTER-VALIDATION: validate port and baud_rate before persisting.
     let port = input.port.trim();
@@ -546,11 +548,12 @@ pub async fn thermal_set_config(
 /// Send a test page to the configured thermal printer.
 #[tauri::command]
 pub async fn thermal_print_test(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
-    let config = thermal_get_config(actor_user_id, state.clone()).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
+    let config = thermal_get_config(session_token.clone(), state.clone()).await?;
 
     if !config.enabled {
         return Ok("Thermal printing is disabled. Enable it in Settings first.".into());
@@ -574,13 +577,14 @@ pub async fn thermal_print_test(
 /// `store_name` is printed as a centered header; `lines` are the receipt body.
 #[tauri::command]
 pub async fn print_receipt_raw(
-    actor_user_id: String,
+    session_token: String,
     store_name: String,
     lines: Vec<String>,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
-    let config = thermal_get_config(actor_user_id, state.clone()).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
+    let config = thermal_get_config(session_token.clone(), state.clone()).await?;
 
     if !config.enabled {
         return Ok("Thermal printing disabled".into());
@@ -658,11 +662,12 @@ pub(crate) fn esc_open_drawer() -> Vec<u8> {
 /// Non-fatal: returns Ok("no_printer") if thermal printing is disabled or no port configured.
 #[tauri::command]
 pub async fn open_cash_drawer(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
-    let config = thermal_get_config(actor_user_id, state.clone()).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
+    let config = thermal_get_config(session_token.clone(), state.clone()).await?;
 
     if !config.enabled || config.port.trim().is_empty() {
         // Drawer kick silently skipped — no printer configured.

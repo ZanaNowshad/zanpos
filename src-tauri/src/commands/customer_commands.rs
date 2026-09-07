@@ -46,6 +46,9 @@ pub struct CustomerInput {
     pub phone: Option<String>,
     pub email: Option<String>,
     pub notes: Option<String>,
+    /// Set from the caller's session before use. Anything sent here is
+    /// overwritten; it stays on the struct because the row records it.
+    #[serde(default)]
     pub actor_user_id: String,
 }
 
@@ -56,6 +59,9 @@ pub struct CustomerUpdateInput {
     pub phone: Option<String>,
     pub email: Option<String>,
     pub notes: Option<String>,
+    /// Set from the caller's session before use. Anything sent here is
+    /// overwritten; it stays on the struct because the row records it.
+    #[serde(default)]
     pub actor_user_id: String,
 }
 
@@ -92,13 +98,15 @@ fn clean_optional_text(value: Option<&str>) -> Option<String> {
 /// List customers, optionally filtered by name/phone search query.
 #[tauri::command]
 pub async fn customer_list(
-    actor_user_id: String,
+    session_token: String,
     search: String,
     offset: Option<i64>,
     limit: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<CustomerPage, AppError> {
-    customer_list_inner(&state.db, &actor_user_id, &search, offset, limit).await
+    let actor =
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
+    customer_list_inner(&state.db, &actor.user_id, &search, offset, limit).await
 }
 
 async fn customer_list_inner(
@@ -204,10 +212,18 @@ async fn customer_list_inner(
 /// figure here is a COUNT or SUM over the actor's whole branch.
 #[tauri::command]
 pub async fn customer_create(
-    input: CustomerInput,
+    mut input: CustomerInput,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<CustomerRow, AppError> {
-    rbac::require_any_role(&state.db, &input.actor_user_id).await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::ANY_ROLE,
+    )
+    .await?;
+    input.actor_user_id = actor.user_id.clone();
     let name = input.name.trim().to_string();
     if name.is_empty() {
         return Err(AppError::Validation("Customer name is required".into()));
@@ -325,10 +341,18 @@ pub async fn customer_create(
 /// Update an existing customer.
 #[tauri::command]
 pub async fn customer_update(
-    input: CustomerUpdateInput,
+    mut input: CustomerUpdateInput,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<CustomerRow, AppError> {
-    rbac::require_any_role(&state.db, &input.actor_user_id).await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::ANY_ROLE,
+    )
+    .await?;
+    input.actor_user_id = actor.user_id.clone();
     // A customer_id belonging to another branch must not become writable
     // simply by being sent; the scope check happens before any validation.
     let actor_branch = actor_branch_id(&state.db, &input.actor_user_id).await?;
@@ -457,12 +481,13 @@ pub async fn customer_update(
 /// Get a single customer by ID.
 #[tauri::command]
 pub async fn customer_get(
-    actor_user_id: String,
+    session_token: String,
     customer_id: String,
     state: State<'_, AppState>,
 ) -> Result<CustomerRow, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
-    let branch_id = actor_branch_id(&state.db, &actor_user_id).await?;
+    let actor =
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
+    let branch_id = actor.branch_id.clone();
     // Scoped in the WHERE clause, not checked after fetching: a foreign
     // customer must never be loaded into memory in the first place.
     let row = sqlx::query(

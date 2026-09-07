@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { BusinessFlags } from "../types";
 import { businessFlagsLoad, whatsappOrdersGetEnabled } from "../tauri/commands";
+import type { SessionToken } from "../types";
 
 const DEFAULT_FLAGS: BusinessFlags = {
   allow_negative_stock: false,
@@ -9,7 +10,7 @@ const DEFAULT_FLAGS: BusinessFlags = {
   auto_print_receipt: false,
 };
 
-export function usePosConfiguration(userId: string) {
+export function usePosConfiguration(sessionToken: SessionToken) {
   const [businessFlags, setBusinessFlags] = useState(DEFAULT_FLAGS);
   const [commerceEnabled, setCommerceEnabled] = useState(false);
 
@@ -18,11 +19,11 @@ export function usePosConfiguration(userId: string) {
     businessFlagsLoad()
       .then(flags => { if (!cancelled) setBusinessFlags(flags); })
       .catch((cause: unknown) => console.warn("businessFlagsLoad failed:", cause));
-    whatsappOrdersGetEnabled(userId)
+    whatsappOrdersGetEnabled(sessionToken)
       .then(enabled => { if (!cancelled) setCommerceEnabled(enabled); })
       .catch(() => { if (!cancelled) setCommerceEnabled(false); });
     return () => { cancelled = true; };
-  }, [userId]);
+  }, [sessionToken]);
 
   return { businessFlags, setBusinessFlags, commerceEnabled } as const;
 }

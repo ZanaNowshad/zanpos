@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { SessionToken } from "../types";
 
 export interface BackupStatus {
   /** False when no storefront worker is configured — nothing is backed up. */
@@ -24,9 +25,9 @@ export const backupRunNow = (actorUserId: string): Promise<boolean> =>
  * separate, deliberate step taken with the app closed.
  */
 export const backupRestoreFile = (
-  actorUserId: string,
+  sessionToken: SessionToken | null,
   encryptedPath: string,
   destPath: string,
   licenseKey?: string,
 ): Promise<string> =>
-  invoke("backup_restore_file", { actorUserId, encryptedPath, destPath, licenseKey });
+  invoke("backup_restore_file", { sessionToken, encryptedPath, destPath, licenseKey });

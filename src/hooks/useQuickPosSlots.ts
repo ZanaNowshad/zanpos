@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { quickPosLoad, type QuickPosSlot } from "../tauri/commands";
+import type { SessionToken } from "../types";
 
 /**
  * The till's quick-add row.
@@ -14,14 +15,14 @@ import { quickPosLoad, type QuickPosSlot } from "../tauri/commands";
  * shortcuts are a convenience, and losing them mid-queue because one poll
  * failed would be worse than showing a slightly stale row.
  */
-export function useQuickPosSlots(actorUserId: string) {
+export function useQuickPosSlots(sessionToken: SessionToken) {
   const [slots, setSlots] = useState<QuickPosSlot[]>([]);
 
   const refresh = useCallback(async () => {
     try {
-      setSlots(await quickPosLoad(actorUserId));
+      setSlots(await quickPosLoad(sessionToken));
     } catch { /* keep whatever is on screen */ }
-  }, [actorUserId]);
+  }, [sessionToken]);
 
   useEffect(() => {
     void refresh();

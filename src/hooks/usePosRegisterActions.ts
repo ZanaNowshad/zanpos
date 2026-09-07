@@ -17,9 +17,6 @@ interface Options {
   shift: Shift;
   /** Authorises the no-sale drawer open. */
   sessionToken: SessionToken;
-  /** Still identifies the operator to reprint, drawer and edit-sale, which
-   *  have not moved to session auth yet. */
-  userId: string;
   lineCount: number;
   lastReceiptNumber: string | null;
   printSaleNow: ReturnType<typeof usePosReceipt>["printSaleNow"];
@@ -33,20 +30,20 @@ interface Options {
 }
 
 export function usePosRegisterActions({
-  shift, sessionToken, userId, lineCount, lastReceiptNumber, printSaleNow, clearCart,
+  shift, sessionToken, lineCount, lastReceiptNumber, printSaleNow, clearCart,
   replaceCart, setError, setReceiptStatus, setLastReceiptNumber,
   setActiveModal, focusBarcode,
 }: Options) {
   const reprintReceiptNow = useCallback(async (receiptNumber: string) => {
     try {
-      const reprinted = await receiptReprint(receiptNumber, userId);
+      const reprinted = await receiptReprint(receiptNumber, sessionToken);
       await printSaleNow(reprinted, true);
       setLastReceiptNumber(receiptNumber);
     } catch (cause: unknown) {
       setReceiptStatus("failed");
       setError(typeof cause === "string" ? cause : "Reprint failed — check receipt number");
     }
-  }, [printSaleNow, setError, setLastReceiptNumber, setReceiptStatus, userId]);
+  }, [printSaleNow, setError, setLastReceiptNumber, setReceiptStatus, sessionToken]);
 
   const handleReprintLast = useCallback(async () => {
     if (!lastReceiptNumber) return;
@@ -65,9 +62,9 @@ export function usePosRegisterActions({
       // recording it.
       return;
     }
-    openCashDrawer(userId)
+    openCashDrawer(sessionToken)
       .catch((cause: unknown) => console.warn("Cash drawer open failed (no-sale):", cause));
-  }, [setError, sessionToken, shift.shift_id, userId]);
+  }, [setError, sessionToken, shift.shift_id]);
 
   const handleEditSale = useCallback(async (sale: SaleListRow) => {
     try {
@@ -76,7 +73,7 @@ export function usePosRegisterActions({
         DEVICE.branch_id,
         shift.device_id,
         shift.shift_id,
-        userId,
+        sessionToken,
       );
       clearCart();
       replaceCart(restored);
@@ -87,7 +84,7 @@ export function usePosRegisterActions({
     }
   }, [
     clearCart, focusBarcode, replaceCart, setActiveModal, setError,
-    shift.device_id, shift.shift_id, userId,
+    shift.device_id, shift.shift_id, sessionToken,
   ]);
 
   const handleClearCartRequest = useCallback(() => {

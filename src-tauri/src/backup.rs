@@ -322,7 +322,7 @@ pub async fn backup_run_now(
 /// a separate, deliberate step taken with the app closed.
 #[tauri::command]
 pub async fn backup_restore_file(
-    actor_user_id: String,
+    session_token: Option<String>,
     encrypted_path: String,
     dest_path: String,
     license_key: Option<String>,
@@ -340,7 +340,13 @@ pub async fn backup_restore_file(
         .await
         .unwrap_or(1); // unreadable users table -> assume configured, stay strict
     if user_count > 0 {
-        crate::commands::rbac::owner_only(&state.db, &actor_user_id).await?;
+        crate::commands::rbac::session_actor(
+            &state.sessions,
+            &state.db,
+            session_token.as_deref().unwrap_or_default(),
+            crate::commands::rbac::OWNER_ONLY,
+        )
+        .await?;
     }
     if dest_path.trim().is_empty() {
         return Err(AppError::Validation(

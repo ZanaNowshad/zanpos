@@ -4,14 +4,15 @@ import { whatsappStatus } from "../tauri/commands";
 import { useLanguage } from "../hooks/useLanguage";
 import { modalTranslator } from "../i18n/modalStrings";
 import { detailTranslator } from "../i18n/detailStrings";
+import type { SessionToken } from "../types";
 
 interface Props {
   onClose: () => void;
   onConnected?: () => void;
-  sessionUserId?: string;
+  sessionToken: SessionToken;
 }
 
-export default function WhatsAppQRModal({ onClose, onConnected, sessionUserId = "" }: Props) {
+export default function WhatsAppQRModal({ onClose, onConnected, sessionToken }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => modalTranslator(language), [language]);
   const dt = useMemo(() => detailTranslator(language), [language]);
@@ -22,7 +23,7 @@ export default function WhatsAppQRModal({ onClose, onConnected, sessionUserId = 
 
   const poll = useCallback(async () => {
     try {
-      const s = await whatsappStatus(sessionUserId);
+      const s = await whatsappStatus(sessionToken);
       setStatus(s);
       setUnreachable(false);
       setLoading(false);
@@ -35,7 +36,7 @@ export default function WhatsAppQRModal({ onClose, onConnected, sessionUserId = 
       setUnreachable(true);
       setLoading(false);
     }
-  }, [onClose, onConnected, sessionUserId]);
+  }, [onClose, onConnected, sessionToken]);
 
   useEffect(() => {
     poll();

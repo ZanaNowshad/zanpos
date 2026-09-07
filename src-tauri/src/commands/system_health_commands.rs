@@ -72,6 +72,9 @@ pub struct SyncHealthTable {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct HealthFixInput {
+    /// Set from the caller's session before use. Anything sent here is
+    /// overwritten; it stays on the struct because the row records it.
+    #[serde(default)]
     pub actor_user_id: String,
     pub fix_action: String,
 }
@@ -632,9 +635,10 @@ pub fn merge_seen_devices(report: &mut SystemHealthReport, seen: &HubSeenSnapsho
 #[tauri::command]
 pub async fn system_health_check(
     state: State<'_, AppState>,
-    actor_user_id: String,
+    session_token: String,
 ) -> AppResult<SystemHealthReport> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let mut report = run_local_health_check(&state.db, &sync_commands::SYNC_TABLES).await?;
 
     let hub = state.hub.lock().await;
@@ -732,9 +736,17 @@ fn merge_hub_report(
 #[tauri::command]
 pub async fn system_health_apply_fix(
     state: State<'_, AppState>,
-    input: HealthFixInput,
+    mut input: HealthFixInput,
+    session_token: String,
 ) -> AppResult<HealthFixResult> {
-    rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
+    input.actor_user_id = actor.user_id.clone();
     if input.fix_action == "trigger_sync_now" {
         state.sync_worker.run_once().await;
         return Ok(HealthFixResult {

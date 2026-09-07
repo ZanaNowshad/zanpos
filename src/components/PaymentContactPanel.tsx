@@ -5,11 +5,12 @@ import DeliveryForm from "./DeliveryForm";
 import PaymentContactField from "./PaymentContactField";
 import RiderPicker from "./RiderPicker";
 import { DigitalReceiptGuide, PrintReceiptOption, SplitToggle } from "./PaymentExperience";
+import type { SessionToken } from "../types";
 
 interface Props {
   journey: PaymentJourney;
   contact: PaymentContactState;
-  sessionUserId?: string;
+  sessionToken?: SessionToken;
   deliveryData: Partial<DeliveryInput>;
   onDeliveryChange: (value: Partial<DeliveryInput>) => void;
   rider: RiderRow | null;
@@ -38,7 +39,7 @@ interface Props {
  * would sit unassigned in the queue.
  */
 export default function PaymentContactPanel({
-  journey, contact, sessionUserId, deliveryData, onDeliveryChange,
+  journey, contact, sessionToken, deliveryData, onDeliveryChange,
   rider, onRiderChange, printReceipt, onPrintReceiptChange, onContactFocus,
   showSplitToggle, splitLabel, onSplit,
 }: Props) {
@@ -59,7 +60,7 @@ export default function PaymentContactPanel({
       {requiresContact && (
         <PaymentContactField
           contact={contact}
-          sessionUserId={sessionUserId}
+          sessionToken={sessionToken}
           onFocus={onContactFocus}
           isDelivery={isDelivery}
         />
@@ -71,7 +72,7 @@ export default function PaymentContactPanel({
         <>
           <DeliveryForm value={deliveryData} onChange={onDeliveryChange} />
           <RiderPicker
-            sessionUserId={sessionUserId}
+            sessionToken={sessionToken}
             selectedId={rider?.rider_id ?? null}
             onSelect={onRiderChange}
           />

@@ -613,7 +613,6 @@ export interface PurchaseOrderCreateInput {
   supplier_id?: string | null;
   expected_date?: string | null;
   notes?: string | null;
-  created_by: string;
   lines: PurchaseOrderLineInput[];
 }
 

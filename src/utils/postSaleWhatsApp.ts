@@ -73,7 +73,7 @@ export function dispatchPostSaleWhatsApp({
     const delivery = result.delivery;
     const sendDelivery = async () => {
       try {
-        const status = await whatsappStatus(sessionUser.user_id);
+        const status = await whatsappStatus(sessionUser.session_token);
         if (status.connected) {
           let messageOverride: string | undefined;
           try {
@@ -110,7 +110,7 @@ export function dispatchPostSaleWhatsApp({
           const to = digits.startsWith("973") ? digits : `973${digits}`;
           let pdfSent = false;
           try {
-            pdfSent = await whatsappSendReceiptPdf(sessionUser.user_id, {
+            pdfSent = await whatsappSendReceiptPdf(sessionUser.session_token, {
               to,
               receipt_number: result.receipt_number,
               branch_name: result.branch_name,
@@ -141,7 +141,7 @@ export function dispatchPostSaleWhatsApp({
             // PDF failure falls through to text-only delivery confirmation.
           }
           if (!pdfSent) {
-            await whatsappSendDelivery(sessionUser.user_id, {
+            await whatsappSendDelivery(sessionUser.session_token, {
               to,
               receipt_number: result.receipt_number,
               net_total_minor: result.net_total_minor,
@@ -167,14 +167,14 @@ export function dispatchPostSaleWhatsApp({
     if (rider?.phone) {
       const sendRider = async () => {
         try {
-          const status = await whatsappStatus(sessionUser.user_id);
+          const status = await whatsappStatus(sessionUser.session_token);
           if (!status.connected) return;
           const method = result.payments[0]?.method ?? "cash";
           const methodLabel = method === "wallet"
             ? "BenefitPay"
             : method.charAt(0).toUpperCase() + method.slice(1);
           const digits = rider.phone.replace(/\D/g, "");
-          await whatsappSendDelivery(sessionUser.user_id, {
+          await whatsappSendDelivery(sessionUser.session_token, {
             to: digits.startsWith("973") ? digits : `973${digits}`,
             receipt_number: result.receipt_number,
             net_total_minor: result.net_total_minor,
@@ -207,7 +207,7 @@ export function dispatchPostSaleWhatsApp({
   if (customerReceiptPhone && !deliveryInput) {
     const sendCustomerReceipt = async () => {
       try {
-        const status = await whatsappStatus(sessionUser.user_id);
+        const status = await whatsappStatus(sessionUser.session_token);
         if (!status.connected) return;
         const config = await appConfigLoad();
         const digits = customerReceiptPhone.replace(/\D/g, "");
@@ -246,7 +246,7 @@ export function dispatchPostSaleWhatsApp({
             + `Paid by: ${methodLabel}`;
         let pdfSent = false;
         try {
-          pdfSent = await whatsappSendReceiptPdf(sessionUser.user_id, {
+          pdfSent = await whatsappSendReceiptPdf(sessionUser.session_token, {
             to,
             receipt_number: result.receipt_number,
             branch_name: result.branch_name,
@@ -274,7 +274,7 @@ export function dispatchPostSaleWhatsApp({
           // PDF failure falls through to text-only receipt confirmation.
         }
         if (!pdfSent) {
-          await whatsappSendDelivery(sessionUser.user_id, {
+          await whatsappSendDelivery(sessionUser.session_token, {
             to,
             receipt_number: result.receipt_number,
             net_total_minor: result.net_total_minor,

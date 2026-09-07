@@ -81,7 +81,7 @@ export function usePosPaymentActions({
       setLastReceiptNumber(result.receipt_number);
       setReceiptStatus("ready");
       setExchangeCredit(null);
-      openCashDrawer(sessionUser.user_id)
+      openCashDrawer(sessionUser.session_token)
         .catch((cause: unknown) => console.warn("Cash drawer open failed:", cause));
       void printSaleNow(result, false, "auto");
       focusBarcode();
@@ -93,7 +93,7 @@ export function usePosPaymentActions({
     }
   }, [
     cart, exchangeCredit, finalizeSale, focusBarcode, lineCount, netTotal,
-    noModalOpen, payFastLoading, payableTotal, printSaleNow, sessionUser.user_id,
+    noModalOpen, payFastLoading, payableTotal, printSaleNow, sessionUser.session_token,
     setBannerResult, setExchangeCredit, setLastReceiptNumber, setReceiptStatus,
     showRestockAlerts,
   ]);
@@ -153,7 +153,7 @@ export function usePosPaymentActions({
       setLastReceiptNumber(result.receipt_number);
       setReceiptStatus("ready");
       if (exchangeBalance.refundDueMinor > 0) {
-        openCashDrawer(sessionUser.user_id)
+        openCashDrawer(sessionUser.session_token)
           .catch((cause: unknown) => console.warn("Cash drawer open failed:", cause));
       }
       void printSaleNow(result, false, "auto");
@@ -166,7 +166,7 @@ export function usePosPaymentActions({
     }
   }, [
     cart, exchangeBalance, exchangeCredit, finalizeSale, focusBarcode, lineCount,
-    netTotal, printSaleNow, sessionUser.user_id, setBannerResult,
+    netTotal, printSaleNow, sessionUser.session_token, setBannerResult,
     setExchangeCredit, setLastReceiptNumber, setReceiptStatus,
   ]);
 

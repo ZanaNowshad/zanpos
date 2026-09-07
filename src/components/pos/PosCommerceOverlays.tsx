@@ -39,12 +39,11 @@ export default function PosCommerceOverlays({
   return (
     <>
       {showWaQr && (
-        <WhatsAppQRModal onClose={onCloseWaQr} sessionUserId={sessionUser.user_id} />
+        <WhatsAppQRModal onClose={onCloseWaQr} sessionToken={sessionUser.session_token} />
       )}
 
       {showNotifications && (
         <NotificationModal
-          sessionUserId={sessionUser.user_id}
           sessionToken={sessionUser.session_token}
           onClose={onCloseNotifications}
           onCountChange={onNotificationCountChange}
@@ -55,7 +54,7 @@ export default function PosCommerceOverlays({
 
       {showOrders && (
         <WhatsAppOrdersModal
-          sessionUserId={sessionUser.user_id}
+          sessionToken={sessionUser.session_token}
           onClose={onCloseOrders}
           onAddToCart={onAddOrderLines}
         />

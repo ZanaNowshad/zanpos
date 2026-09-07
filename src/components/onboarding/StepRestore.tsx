@@ -2,11 +2,13 @@ import { useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { backupRestoreFile } from "../../tauri/backup";
 import Button from "../ui/Button";
+import type { SessionToken } from "../../types";
 
 interface Props {
-  /** Actor id. On a fresh machine there is no owner yet, so the backend only
-   *  enforces the owner check once the store HAS users — see backup.rs. */
-  ownerUserId: string;
+  /** The owner's session, or null on a fresh machine where no owner exists
+   *  yet. The backend enforces the owner check only once the store HAS users
+   *  — see backup.rs. */
+  sessionToken: SessionToken | null;
   onRestored: (path: string) => void;
   onSkip: () => void;
 }
@@ -24,7 +26,7 @@ interface Props {
  * one being recovered from. Swapping the restored file into place is a
  * separate, conscious step taken with the app closed.
  */
-export default function StepRestore({ ownerUserId, onRestored, onSkip }: Props) {
+export default function StepRestore({ sessionToken, onRestored, onSkip }: Props) {
   const [licenseKey, setLicenseKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +51,7 @@ export default function StepRestore({ ownerUserId, onRestored, onSkip }: Props) 
     setBusy(true);
     try {
       const written = await backupRestoreFile(
-        ownerUserId,
+        sessionToken,
         encrypted,
         destination,
         licenseKey.trim() || undefined,

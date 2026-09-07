@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useState, type ReactNode } 
 import { useContactSearch } from "../hooks/useContactSearch";
 import ContactRow from "./ContactRow";
 import type { ContactSuggestion } from "./paymentContacts";
+import type { SessionToken } from "../types";
 
 export interface SuggestionListHandle {
   /** Walk the list. Negative moves up; -1 means "back to the typed text". */
@@ -12,7 +13,7 @@ export interface SuggestionListHandle {
 
 interface Props {
   query: string;
-  sessionUserId?: string;
+  sessionToken?: SessionToken;
   open: boolean;
   onPick: (contact: ContactSuggestion) => void;
   limit?: number;
@@ -44,12 +45,12 @@ interface Props {
  */
 const ContactSuggestions = forwardRef<SuggestionListHandle, Props>(
   function ContactSuggestions({
-    query, sessionUserId, open, onPick, limit = 5,
+    query, sessionToken, open, onPick, limit = 5,
     className = "pm-contact-suggestions", label = "Matching people",
     renderEmpty, autoHighlight = false,
   }, ref) {
     const [highlighted, setHighlighted] = useState(autoHighlight ? 0 : -1);
-    const { rows, loading, empty } = useContactSearch(sessionUserId, query, limit);
+    const { rows, loading, empty } = useContactSearch(sessionToken, query, limit);
     const floor = autoHighlight ? 0 : -1;
 
     useEffect(() => { setHighlighted(floor); }, [query, floor]);

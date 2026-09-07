@@ -42,11 +42,10 @@ import {
 } from "./purchasingPresentation";
 
 export function usePurchasingWorkspace(props: {
-  actorUserId: string;
   sessionToken: SessionToken;
   currencyExp: number;
 }) {
-  const { actorUserId, sessionToken, currencyExp } = props;
+  const { sessionToken, currencyExp } = props;
   const { language } = useLanguage();
   const t = useMemo(() => operationsTranslator(language), [language]);
   const [suppliers, setSuppliers] = useState<SupplierRow[]>([]);
@@ -283,7 +282,6 @@ export function usePurchasingWorkspace(props: {
     try {
       await poCreate(sessionToken, {
         supplier_id: poSupplierId || null,
-        created_by: actorUserId,
         lines: [{
           product_name: poProductName.trim(),
           ordered_qty: poQty,

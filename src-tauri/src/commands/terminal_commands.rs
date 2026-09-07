@@ -28,10 +28,11 @@ pub use crate::commands::device_state::TerminalRow;
 /// value of the screen.
 #[tauri::command]
 pub async fn terminal_roster(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<TerminalRow>, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     let hub_url: Option<String> = sqlx::query_scalar(
         "SELECT value FROM app_config WHERE key = 'hub_url' AND TRIM(value) <> ''",
     )
@@ -77,11 +78,12 @@ async fn hub_client(state: &AppState) -> AppResult<crate::sync_v2::client::HttpS
 /// Look, and change nothing.
 #[tauri::command]
 pub async fn reconciliation_preview(
-    actor_user_id: String,
+    session_token: String,
     table: String,
     state: State<'_, AppState>,
 ) -> Result<ReconciliationPreview, AppError> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     let client = hub_client(&state).await?;
 
     let Some(rows) = repair::diverged(&state.db, &client, &table).await? else {
@@ -115,11 +117,12 @@ pub async fn reconciliation_preview(
 /// it.
 #[tauri::command]
 pub async fn reconciliation_run(
-    actor_user_id: String,
+    session_token: String,
     table: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ReconciliationOutcome>, AppError> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let client = hub_client(&state).await?;
 
     let outcomes = match table {
@@ -146,7 +149,7 @@ pub async fn reconciliation_run(
         "SYNC_RECONCILE_REQUESTED",
         "sync",
         "reconciliation",
-        &actor_user_id,
+        &actor.user_id,
         "user",
         &device_id,
         &branch_id,

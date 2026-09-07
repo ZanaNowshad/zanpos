@@ -195,7 +195,7 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
     lines.push(" ");
 
     try {
-      await printReceiptRaw(user.user_id, DEVICE.branch_name, lines);
+      await printReceiptRaw(user.session_token, DEVICE.branch_name, lines);
     } catch {
       // Non-fatal — thermal printer may not be configured
     }
@@ -376,7 +376,7 @@ export default function ShiftModal({ mode, user, shift, onShiftOpened, onShiftCl
               </div>
             )}
 
-            <EodReprintQueue actorUserId={user.user_id} />
+            <EodReprintQueue sessionToken={user.session_token} />
 
             {/* ── Denomination count grid ── */}
             {denomSet && (

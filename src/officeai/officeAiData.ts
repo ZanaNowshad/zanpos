@@ -41,7 +41,6 @@ async function capture<T>(label: string, task: Promise<T>, errors: string[]): Pr
 }
 
 export async function officeAiOverview(
-  actorUserId: string,
   sessionToken: SessionToken,
   branchId: string,
   t: OfficeAiTranslator,
@@ -71,10 +70,10 @@ export async function officeAiOverview(
       : Promise.resolve(null),
     capture(t("inventory"), inventoryGetLevels(sessionToken), errors),
     capture(t("sync"), syncStatus(sessionToken), errors),
-    capture(t("whatsapp"), whatsappStatus(actorUserId), errors),
-    capture(t("whatsappInbox"), whatsappPollMessages(actorUserId), errors),
+    capture(t("whatsapp"), whatsappStatus(sessionToken), errors),
+    capture(t("whatsappInbox"), whatsappPollMessages(sessionToken), errors),
     capture(t("paymentConfirmations"), paymentConfirmationsList(sessionToken), errors),
-    capture(t("systemHealth"), systemHealthCheck(actorUserId), errors),
+    capture(t("systemHealth"), systemHealthCheck(sessionToken), errors),
     /* The proactive detector's output. It has been running every five minutes
        since the app started — margin erosion, dead stock, refund spikes, cash
        discrepancies — and until now the only place it surfaced was a sidebar
@@ -295,12 +294,11 @@ export function buildOfficePulseModel(
 }
 
 export async function officeAiWorkflowInbox(
-  actorUserId: string,
   sessionToken: SessionToken,
   t: OfficeAiTranslator,
 ): Promise<OfficeAiWorkflowInboxItem[]> {
   const [messages, payments] = await Promise.all([
-    whatsappListMessages(actorUserId).catch(() => []),
+    whatsappListMessages(sessionToken).catch(() => []),
     paymentConfirmationsList(sessionToken).catch(() => []),
   ]);
 

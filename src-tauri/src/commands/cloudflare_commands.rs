@@ -181,10 +181,11 @@ async fn connection_from(
 
 #[tauri::command]
 pub async fn storefront_cloudflare_connection_get(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<CloudflareConnection> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let Some(token) = secure_store::get_secret(TOKEN_KEY) else {
         return Ok(CloudflareConnection {
             state: "unconfigured".into(),
@@ -216,11 +217,12 @@ pub async fn storefront_cloudflare_connection_get(
 
 #[tauri::command]
 pub async fn storefront_cloudflare_connect(
-    actor_user_id: String,
+    session_token: String,
     api_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<CloudflareConnection> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let token = validate_token(&api_token)?;
     let accounts = verify_and_accounts(token).await?;
     if !secure_store::set_secret(TOKEN_KEY, token) {
@@ -252,11 +254,12 @@ pub async fn storefront_cloudflare_connect(
 
 #[tauri::command]
 pub async fn storefront_cloudflare_select_account(
-    actor_user_id: String,
+    session_token: String,
     account_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<CloudflareConnection> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let token = secure_store::get_secret(TOKEN_KEY)
         .ok_or_else(|| AppError::Validation("Connect Cloudflare first.".into()))?;
     let accounts = verify_and_accounts(&token).await?;
@@ -276,10 +279,11 @@ pub async fn storefront_cloudflare_select_account(
 
 #[tauri::command]
 pub async fn storefront_cloudflare_disconnect(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     secure_store::delete_secret(TOKEN_KEY);
     for key in [
         "storefront_cloudflare_account_id",
@@ -298,11 +302,12 @@ pub async fn storefront_cloudflare_disconnect(
 /// the worker and site in place.
 #[tauri::command]
 pub async fn storefront_cloudflare_deploy(
-    actor_user_id: String,
+    session_token: String,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> AppResult<crate::storefront::deploy::DeployReport> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
 
     let token = secure_store::get_secret(TOKEN_KEY).ok_or_else(|| {
         AppError::Validation(

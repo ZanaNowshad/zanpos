@@ -16,9 +16,10 @@ import type {
 import * as storefront from "../../tauri/storefront";
 import CloudflareConnectionPanel from "./CloudflareConnectionPanel";
 import StorefrontOrderCapture from "./StorefrontOrderCapture";
+import type { SessionToken } from "../../types";
 
 interface Props {
-  sessionUserId: string;
+  sessionToken: SessionToken;
   settings: StorefrontSettings;
   onSettingsChange: (settings: StorefrontSettings) => void;
 }
@@ -70,7 +71,7 @@ function guidanceFor(message: string): Guidance | null {
 }
 
 export default function StorefrontSetupPage({
-  sessionUserId,
+  sessionToken,
   settings,
   onSettingsChange,
 }: Props) {
@@ -87,13 +88,13 @@ export default function StorefrontSetupPage({
 
   useEffect(() => {
     let cancelled = false;
-    storefront.storefrontCloudflareConnectionGet(sessionUserId)
+    storefront.storefrontCloudflareConnectionGet(sessionToken)
       .then(value => { if (!cancelled) setCloudflare(value); })
       .catch(loadError => {
         if (!cancelled) setError(messageFrom(loadError, "Cloudflare status could not be loaded."));
       });
     return () => { cancelled = true; };
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   useEffect(() => {
     if (!settings.public_url) {
@@ -101,11 +102,11 @@ export default function StorefrontSetupPage({
       return;
     }
     let cancelled = false;
-    storefront.storefrontQr(sessionUserId)
+    storefront.storefrontQr(sessionToken)
       .then(value => { if (!cancelled) setQrDataUrl(value); })
       .catch(() => { if (!cancelled) setQrDataUrl(null); });
     return () => { cancelled = true; };
-  }, [sessionUserId, settings.public_url]);
+  }, [sessionToken, settings.public_url]);
 
   function patchSettings(update: Partial<StorefrontSettings>) {
     onSettingsChange({ ...settings, ...update });
@@ -127,7 +128,7 @@ export default function StorefrontSetupPage({
     setSaving(true);
     setError(null);
     try {
-      onSettingsChange(await storefront.storefrontSettingsSave(sessionUserId, settings));
+      onSettingsChange(await storefront.storefrontSettingsSave(sessionToken, settings));
       setSaved(true);
     } catch (saveError) {
       setError(messageFrom(saveError, "ZanShop settings could not be saved."));
@@ -141,7 +142,7 @@ export default function StorefrontSetupPage({
     setConnection(null);
     setError(null);
     try {
-      setConnection(await storefront.storefrontConnectionTest(sessionUserId));
+      setConnection(await storefront.storefrontConnectionTest(sessionToken));
     } catch (testError) {
       setError(messageFrom(testError, "Connection test failed."));
     } finally {
@@ -154,12 +155,12 @@ export default function StorefrontSetupPage({
     setDeployNote(null);
     setError(null);
     try {
-      const report = await storefront.storefrontCloudflareDeploy(sessionUserId);
+      const report = await storefront.storefrontCloudflareDeploy(sessionToken);
       setDeployNote(
         `Live at ${report.public_url} — ${report.assets_uploaded} file(s) uploaded`
         + (report.bucket_created ? ", storage created" : ""),
       );
-      onSettingsChange(await storefront.storefrontSettingsGet(sessionUserId));
+      onSettingsChange(await storefront.storefrontSettingsGet(sessionToken));
     } catch (deployError) {
       setError(messageFrom(deployError, "Deployment failed."));
     } finally {
@@ -216,14 +217,14 @@ export default function StorefrontSetupPage({
             connection={cloudflare}
             busy={cloudflareBusy}
             onConnect={apiToken => updateCloudflare(
-              () => storefront.storefrontCloudflareConnect(sessionUserId, apiToken),
+              () => storefront.storefrontCloudflareConnect(sessionToken, apiToken),
             )}
             onSelectAccount={accountId => updateCloudflare(
-              () => storefront.storefrontCloudflareSelectAccount(sessionUserId, accountId),
+              () => storefront.storefrontCloudflareSelectAccount(sessionToken, accountId),
             )}
             onDisconnect={() => updateCloudflare(async () => {
-              await storefront.storefrontCloudflareDisconnect(sessionUserId);
-              return storefront.storefrontCloudflareConnectionGet(sessionUserId);
+              await storefront.storefrontCloudflareDisconnect(sessionToken);
+              return storefront.storefrontCloudflareConnectionGet(sessionToken);
             })}
           />
         )}
@@ -318,7 +319,7 @@ export default function StorefrontSetupPage({
         })()}
       </section>
 
-      <StorefrontOrderCapture sessionUserId={sessionUserId} />
+      <StorefrontOrderCapture sessionToken={sessionToken} />
     </>
   );
 }

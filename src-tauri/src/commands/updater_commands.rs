@@ -112,10 +112,11 @@ pub async fn check_for_updates(
 #[tauri::command]
 pub async fn download_and_install_update(
     app: tauri::AppHandle,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<bool, AppError> {
-    rbac::owner_only(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY)
+        .await?;
 
     let updater = build_updater(&app, &state).await?;
 

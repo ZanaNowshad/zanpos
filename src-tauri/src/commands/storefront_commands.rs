@@ -211,20 +211,22 @@ fn uses_cloudflare_connection_test(publish_url: &str) -> bool {
 
 #[tauri::command]
 pub async fn storefront_settings_get(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<StorefrontSettings> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     load_settings(&state.db).await
 }
 
 #[tauri::command]
 pub async fn storefront_settings_save(
-    actor_user_id: String,
+    session_token: String,
     settings: StorefrontSettings,
     state: State<'_, AppState>,
 ) -> AppResult<StorefrontSettings> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     validate_settings(&settings)?;
     if let Some(secret) = settings.publish_secret.as_deref() {
         if secret.len() < 16 || secret.len() > 512 {
@@ -265,14 +267,15 @@ pub async fn storefront_settings_save(
 
 #[tauri::command]
 pub async fn storefront_products_list(
-    actor_user_id: String,
+    session_token: String,
     search: Option<String>,
     offset: Option<i64>,
     limit: Option<i64>,
     published_only: Option<bool>,
     state: State<'_, AppState>,
 ) -> AppResult<StorefrontProductPage> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     products_page(
         &state.db,
         search.as_deref(),
@@ -285,12 +288,13 @@ pub async fn storefront_products_list(
 
 #[tauri::command]
 pub async fn storefront_product_update(
-    actor_user_id: String,
+    session_token: String,
     product_id: String,
     update: StorefrontProductUpdate,
     state: State<'_, AppState>,
 ) -> AppResult<StorefrontProduct> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let current = product_by_id(&state.db, &product_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Eligible storefront product not found".into()))?;
@@ -324,10 +328,11 @@ pub async fn storefront_product_update(
 
 #[tauri::command]
 pub async fn storefront_status(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<StorefrontStatus> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let settings = load_settings(&state.db).await?;
     let list = products(&state.db, None).await?;
     let release = sqlx::query(
@@ -372,10 +377,11 @@ pub async fn storefront_status(
 
 #[tauri::command]
 pub async fn storefront_publish(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<StorefrontPublishResult> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let settings = load_settings(&state.db).await?;
     if !settings.enabled {
         return Err(AppError::Validation("Storefront is disabled".into()));
@@ -439,10 +445,11 @@ pub async fn storefront_publish(
 
 #[tauri::command]
 pub async fn storefront_connection_test(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<StorefrontConnectionResult> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let settings = load_settings(&state.db).await?;
     let started = Instant::now();
     let cloudflare_test = uses_cloudflare_connection_test(&settings.publish_url);

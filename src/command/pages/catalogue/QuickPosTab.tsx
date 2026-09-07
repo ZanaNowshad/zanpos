@@ -11,8 +11,8 @@ import "./quickpos.css";
 import type { SessionToken } from "../../../types";
 
 interface Props {
-  sessionUserId: string;
   sessionToken: SessionToken;
+
 }
 
 /** Rows per page in the picker. Sized so a page fills the dialog without the
@@ -31,7 +31,7 @@ const PICKER_PAGE = 8;
  * product that is later deactivated shows here as an empty slot rather than a
  * tile the cashier cannot sell.
  */
-export default function QuickPosTab({ sessionUserId, sessionToken }: Props) {
+export default function QuickPosTab({ sessionToken }: Props) {
   const [slots, setSlots] = useState<QuickPosSlot[]>([]);
   const [picking, setPicking] = useState<number | null>(null);
   const [query, setQuery] = useState("");
@@ -44,11 +44,11 @@ export default function QuickPosTab({ sessionUserId, sessionToken }: Props) {
 
   const load = useCallback(async () => {
     try {
-      setSlots(await quickPosLoad(sessionUserId));
+      setSlots(await quickPosLoad(sessionToken));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -81,7 +81,7 @@ export default function QuickPosTab({ sessionUserId, sessionToken }: Props) {
     setSaving(true);
     setError(null);
     try {
-      setSlots(await quickPosSave(sessionUserId, next));
+      setSlots(await quickPosSave(sessionToken, next));
       setSaved(true);
       setTimeout(() => setSaved(false), 2200);
     } catch (e) {
@@ -90,7 +90,7 @@ export default function QuickPosTab({ sessionUserId, sessionToken }: Props) {
     } finally {
       setSaving(false);
     }
-  }, [sessionUserId, load]);
+  }, [sessionToken, load]);
 
   const assign = (slot: number, productId: string | null) => {
     const next = [...productIds];

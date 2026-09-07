@@ -4,12 +4,13 @@ import PaymentModal, { type PaymentCompletionOptions } from "../PaymentModal";
 import ReceiptActionCenter from "../ReceiptActionCenter";
 import SaleDetailsModal from "../SaleDetailsModal";
 import type { ActiveModal } from "./posModalState";
+import type { SessionToken } from "../../types";
 
 interface Props {
   activeModal: ActiveModal;
   payableTotal: number;
   loading: boolean;
-  sessionUserId: string;
+  sessionToken: SessionToken;
   defaultPrintReceipt: boolean;
   bannerResult: SaleResult | null;
   receiptStatus: ReceiptConfidenceStatus;
@@ -32,7 +33,7 @@ export default function PosTenderOverlays({
   activeModal,
   payableTotal,
   loading,
-  sessionUserId,
+  sessionToken,
   defaultPrintReceipt,
   bannerResult,
   receiptStatus,
@@ -55,7 +56,7 @@ export default function PosTenderOverlays({
           onConfirm={onConfirmPayment}
           onCancel={onClosePayment}
           loading={loading}
-          sessionUserId={sessionUserId}
+          sessionToken={sessionToken}
           defaultPrintReceipt={defaultPrintReceipt}
         />
       )}

@@ -14,8 +14,8 @@ interface BusinessTabProps {
   savingRule: boolean;
   handleSaveFlags: () => void; handleSaveTaxRule: () => void;
   handleDeleteTaxRule: (tax_rule_id: string) => void;
-  sessionUserId: string;
   sessionToken: SessionToken;
+
   onStartPractice?: () => void;
 }
 
@@ -24,7 +24,7 @@ export default function BusinessTab(props: BusinessTabProps) {
     flags, setFlags, taxRules,
     editingRule, setEditingRule, taxRuleError, setTaxRuleError,
     savingFlags, savedFlags, flagsError, savingRule,
-    handleSaveFlags, handleSaveTaxRule, handleDeleteTaxRule, sessionUserId, sessionToken, onStartPractice,
+    handleSaveFlags, handleSaveTaxRule, handleDeleteTaxRule, sessionToken, onStartPractice,
   } = props;
 
   const [reportsCfg, setReportsCfg]       = useState<ReportsConfig | null>(null);
@@ -53,7 +53,7 @@ export default function BusinessTab(props: BusinessTabProps) {
     if (!opSettings) return;
     setOpSaving(true); setOpError(null); setOpSaved(false);
     try {
-      await operationalSettingsSave(opSettings, sessionUserId);
+      await operationalSettingsSave(opSettings, sessionToken);
       setOpSaved(true);
       setTimeout(() => setOpSaved(false), 2000);
     } catch (e: unknown) { setOpError(String(e)); }

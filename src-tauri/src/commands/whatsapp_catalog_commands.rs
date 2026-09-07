@@ -76,10 +76,11 @@ async fn require_orders_enabled(pool: &sqlx::SqlitePool) -> AppResult<()> {
 
 #[tauri::command]
 pub async fn whatsapp_commerce_get_enabled(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     Ok(commerce_enabled(&state.db).await)
 }
 
@@ -87,20 +88,22 @@ pub async fn whatsapp_commerce_get_enabled(
 /// public Storefront is enabled. Used by the POS sidebar button.
 #[tauri::command]
 pub async fn whatsapp_orders_get_enabled(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     Ok(orders_enabled(&state.db).await)
 }
 
 #[tauri::command]
 pub async fn whatsapp_commerce_set_enabled(
-    actor_user_id: String,
+    session_token: String,
     enabled: bool,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
         "INSERT INTO app_config (key, value, updated_at) VALUES ('whatsapp_commerce_enabled', ?, ?)
@@ -309,11 +312,12 @@ pub(crate) async fn resolve_and_store_order(
 
 #[tauri::command]
 pub async fn whatsapp_order_list(
-    actor_user_id: String,
+    session_token: String,
     status: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<WaOrder>> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     require_orders_enabled(&state.db).await?;
     let filter = status.filter(|s| !s.is_empty());
     let rows = if let Some(s) = &filter {
@@ -370,13 +374,14 @@ pub async fn whatsapp_order_list(
 /// the POS UI where the cart lives — this records the outcome atomically.
 #[tauri::command]
 pub async fn whatsapp_order_update_status(
-    actor_user_id: String,
+    session_token: String,
     order_id: String,
     status: String,
     linked_sale_id: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     require_orders_enabled(&state.db).await?;
     let allowed = ["new", "reviewed", "fulfilled", "cancelled"];
     if !allowed.contains(&status.as_str()) {
@@ -392,7 +397,7 @@ pub async fn whatsapp_order_update_status(
     )
     .bind(&status)
     .bind(&now)
-    .bind(&actor_user_id)
+    .bind(&actor.user_id)
     .bind(&linked_sale_id)
     .bind(&order_id)
     .execute(&state.db)
@@ -430,11 +435,12 @@ pub struct WaMatchedLine {
 
 #[tauri::command]
 pub async fn whatsapp_order_match(
-    actor_user_id: String,
+    session_token: String,
     order_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<WaOrderMatch> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
+        .await?;
     require_orders_enabled(&state.db).await?;
     let raw: Option<String> =
         sqlx::query_scalar("SELECT raw_json FROM wa_orders WHERE order_id = ?")
@@ -479,12 +485,13 @@ pub async fn whatsapp_order_match(
 /// stored order's customer_jid and posts to the sidecar /send endpoint.
 #[tauri::command]
 pub async fn whatsapp_order_message(
-    actor_user_id: String,
+    session_token: String,
     order_id: String,
     message: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     require_orders_enabled(&state.db).await?;
     if message.trim().is_empty() {
         return Err(AppError::Validation("Message text is required".into()));
@@ -543,12 +550,13 @@ mod storefront_order_tests {
 
 #[tauri::command]
 pub async fn whatsapp_send_product(
-    actor_user_id: String,
+    session_token: String,
     to: String,
     wa_product_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     require_commerce_enabled(&state.db).await?;
     if to.trim().is_empty() || wa_product_id.trim().is_empty() {
         return Err(AppError::Validation(

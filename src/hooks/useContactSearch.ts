@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { WaContact, WaMessage } from "../types";
 import { customerList, whatsappListContacts, whatsappListMessages } from "../tauri/commands";
 import { mergeContacts, rankContacts, type ContactSuggestion } from "../components/paymentContacts";
+import type { SessionToken } from "../types";
 
 /**
  * The WhatsApp address book and the chat list are whole-list reads, and both
@@ -16,7 +17,7 @@ import { mergeContacts, rankContacts, type ContactSuggestion } from "../componen
  */
 const waCache = new Map<string, Promise<{ contacts: WaContact[]; messages: WaMessage[] }>>();
 
-function loadWhatsApp(actor: string) {
+function loadWhatsApp(actor: SessionToken) {
   const hit = waCache.get(actor);
   if (hit) return hit;
   const pending = Promise.all([
@@ -57,7 +58,7 @@ interface Result {
  * findable as one in the customer table.
  */
 export function useContactSearch(
-  sessionUserId: string | undefined, query: string, limit = 6,
+  sessionToken: SessionToken | undefined, query: string, limit = 6,
 ): Result {
   const [rows, setRows] = useState<ContactSuggestion[]>([]);
   const [loading, setLoading] = useState(false);
@@ -65,7 +66,9 @@ export function useContactSearch(
   const runId = useRef(0);
 
   useEffect(() => {
-    const actor = sessionUserId ?? "";
+    // Without a session there is nobody to search on behalf of. The old
+    // fallback was an empty string, which every command rejected anyway.
+    const actor = sessionToken;
     const trimmed = query.trim();
     const id = ++runId.current;
     setLoading(true);
@@ -76,6 +79,7 @@ export function useContactSearch(
          the text, once for the digits — was the first attempt, and it papered
          over a backend that could not find "+973 3600 1122" from "36001122"
          for any other caller. */
+      if (!actor) { setLoading(false); return; }
       Promise.all([
         customerList(actor, trimmed, 0, Math.max(limit * 4, 40))
           .then(page => page.items)
@@ -90,7 +94,7 @@ export function useContactSearch(
     }, 180);
 
     return () => window.clearTimeout(timer);
-  }, [sessionUserId, query, limit]);
+  }, [sessionToken, query, limit]);
 
   return { rows, loading, empty: searched && !loading && rows.length === 0 };
 }

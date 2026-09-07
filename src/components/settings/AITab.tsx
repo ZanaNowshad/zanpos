@@ -25,12 +25,12 @@ import { AiConfirmationPolicyToggle } from "./AiConfirmationPolicyToggle";
 import { ZanAiToolCentre, type ZanAiToolCentreRow } from "./ZanAiToolCentre";
 import { ZanAiToolMetrics, type ZanAiToolMetricRow } from "./ZanAiToolMetrics";
 
-interface Props { sessionUserId: string; sessionToken: SessionToken; }
+interface Props { sessionToken: SessionToken; }
 
 type AiSetupStep = "summary" | "pick_provider" | "anthropic_key" | "anthropic_pick_model"
   | "openai_url_key" | "gemini_key" | "openai_pick_model" | "gemini_pick_model";
 
-export default function AITab({ sessionUserId, sessionToken }: Props) {
+export default function AITab({ sessionToken }: Props) {
   const [cfg, setCfg] = useState<ProviderConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -242,7 +242,7 @@ export default function AITab({ sessionUserId, sessionToken }: Props) {
     setHealthMessage(null);
     setError(null);
     try {
-      const report = await systemHealthCheck(sessionUserId);
+      const report = await systemHealthCheck(sessionToken);
       setHealthReport(report);
     } catch (e: unknown) {
       setError(String(e));
@@ -256,9 +256,9 @@ export default function AITab({ sessionUserId, sessionToken }: Props) {
     setHealthMessage(null);
     setError(null);
     try {
-      const result = await systemHealthApplyFix(sessionUserId, fixAction);
+      const result = await systemHealthApplyFix(sessionToken, fixAction);
       setHealthMessage(result.message);
-      const report = await systemHealthCheck(sessionUserId);
+      const report = await systemHealthCheck(sessionToken);
       setHealthReport(report);
     } catch (e: unknown) {
       setError(String(e));

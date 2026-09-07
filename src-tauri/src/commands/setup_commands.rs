@@ -408,11 +408,12 @@ pub struct BranchSettings {
 
 #[tauri::command]
 pub async fn settings_get_branch(
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<BranchSettings, AppError> {
     // Branch settings contain PII (phone, address, tax/cr numbers) — require auth.
-    rbac::require_any_role(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
+        .await?;
     let row = sqlx::query(
         "SELECT branch_id, name, branch_code, currency, timezone,
                 address, phone, receipt_header, receipt_footer, tax_number, cr_number
@@ -447,15 +448,26 @@ pub struct UpdateBranchInput {
     pub tax_number: Option<String>,
     pub cr_number: Option<String>,
     pub timezone: String,
+    /// Set from the caller's session before use. Anything sent here is
+    /// overwritten; it stays on the struct because the row records it.
+    #[serde(default)]
     pub actor_user_id: String,
 }
 
 #[tauri::command]
 pub async fn settings_update_branch(
-    input: UpdateBranchInput,
+    mut input: UpdateBranchInput,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<BranchSettings, AppError> {
-    rbac::owner_only(&state.db, &input.actor_user_id).await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::OWNER_ONLY,
+    )
+    .await?;
+    input.actor_user_id = actor.user_id.clone();
     if input.name.trim().is_empty() {
         return Err(AppError::Validation("Store name is required".into()));
     }
@@ -597,16 +609,27 @@ pub async fn business_flags_load(state: State<'_, AppState>) -> Result<BusinessF
 #[derive(Deserialize)]
 pub struct SaveBusinessFlagsInput {
     pub flags: BusinessFlags,
+    /// Set from the caller's session before use. Anything sent here is
+    /// overwritten; it stays on the struct because the row records it.
+    #[serde(default)]
     pub actor_user_id: String,
 }
 
 #[tauri::command]
 pub async fn business_flags_save(
-    input: SaveBusinessFlagsInput,
+    mut input: SaveBusinessFlagsInput,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     // Only managers and owners may change business rules.
-    rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
+    input.actor_user_id = actor.user_id.clone();
 
     write_flag(
         &state.db,
@@ -704,15 +727,26 @@ pub async fn operational_settings_load(
 #[derive(Deserialize)]
 pub struct SaveOperationalSettingsInput {
     pub settings: OperationalSettings,
+    /// Set from the caller's session before use. Anything sent here is
+    /// overwritten; it stays on the struct because the row records it.
+    #[serde(default)]
     pub actor_user_id: String,
 }
 
 #[tauri::command]
 pub async fn operational_settings_save(
-    input: SaveOperationalSettingsInput,
+    mut input: SaveOperationalSettingsInput,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::manager_or_owner(&state.db, &input.actor_user_id).await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
+    input.actor_user_id = actor.user_id.clone();
 
     write_i64(
         &state.db,
@@ -785,10 +819,11 @@ pub async fn onboarding_get_state(
 #[tauri::command]
 pub async fn onboarding_mark_step(
     step: String,
-    actor_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::owner_only(&state.db, &actor_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY)
+        .await?;
     if step.trim().is_empty() {
         return Err(AppError::Validation(
             "Onboarding step name is required".into(),

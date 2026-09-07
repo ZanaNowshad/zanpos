@@ -3,15 +3,16 @@ import { Globe, ExternalLink, ShoppingBag, AlertTriangle, QrCode } from "lucide-
 import type { StorefrontSettings, StorefrontStatus } from "../../storefront/types";
 import * as storefront from "../../tauri/storefront";
 import { PageTemplate, EmptyState, LoadingSkeleton, DegradedBanner } from "../../components/templates";
+import type { SessionToken } from "../../types";
 
 interface Props {
-  sessionUserId: string;
+  sessionToken: SessionToken;
   onOpenSettings?: () => void;
 }
 
 type PageState = "loading" | "setup" | "connected" | "error";
 
-export default function ZanShopPage({ sessionUserId, onOpenSettings }: Props) {
+export default function ZanShopPage({ sessionToken, onOpenSettings }: Props) {
   const [pageState, setPageState] = useState<PageState>("loading");
   const [settings, setSettings] = useState<StorefrontSettings | null>(null);
   const [status, setStatus] = useState<StorefrontStatus | null>(null);
@@ -22,8 +23,8 @@ export default function ZanShopPage({ sessionUserId, onOpenSettings }: Props) {
     setError(null);
     try {
       const [s, st] = await Promise.all([
-        storefront.storefrontSettingsGet(sessionUserId),
-        storefront.storefrontStatus(sessionUserId),
+        storefront.storefrontSettingsGet(sessionToken),
+        storefront.storefrontStatus(sessionToken),
       ]);
       setSettings(s);
       setStatus(st);
@@ -32,7 +33,7 @@ export default function ZanShopPage({ sessionUserId, onOpenSettings }: Props) {
       setError(typeof e === "string" ? e : "Failed to load storefront");
       setPageState("error");
     }
-  }, [sessionUserId]);
+  }, [sessionToken]);
 
   useEffect(() => { load(); }, [load]);
 

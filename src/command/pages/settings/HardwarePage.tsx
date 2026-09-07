@@ -3,10 +3,11 @@ import type { ThermalConfig } from "../../../types";
 import type { PortEntry } from "../../../tauri/commands";
 import { thermalListPorts, thermalGetConfig, thermalSetConfig, thermalPrintTest } from "../../../tauri/commands";
 import PrinterTab from "../../../components/settings/PrinterTab";
+import type { SessionToken } from "../../../types";
 
-interface Props { sessionUserId: string; }
+interface Props { sessionToken: SessionToken; }
 
-export default function HardwarePage({ sessionUserId }: Props) {
+export default function HardwarePage({ sessionToken }: Props) {
   const [thermal, setThermal] = useState<ThermalConfig>({ enabled: false, port: "", baud: "9600" });
   const [ports, setPorts] = useState<PortEntry[]>([]);
   const [portsLoading, setPortsLoading] = useState(false);
@@ -23,20 +24,20 @@ export default function HardwarePage({ sessionUserId }: Props) {
   }, []);
 
   useEffect(() => {
-    thermalGetConfig(sessionUserId).then(tc => setThermal(tc)).catch(() => {});
+    thermalGetConfig(sessionToken).then(tc => setThermal(tc)).catch(() => {});
     loadPorts().finally(() => setLoading(false));
-  }, [sessionUserId, loadPorts]);
+  }, [sessionToken, loadPorts]);
 
   const handleSave = async () => {
     setSaving(true); setTestMsg(null);
-    try { await thermalSetConfig(sessionUserId, thermal); setSaved(true); setTimeout(() => setSaved(false), 3000); }
+    try { await thermalSetConfig(sessionToken, thermal); setSaved(true); setTimeout(() => setSaved(false), 3000); }
     catch (e: unknown) { setTestMsg(typeof e === "string" ? e : "Failed to save"); }
     finally { setSaving(false); }
   };
 
   const handleTest = async () => {
     setTesting(true); setTestMsg(null);
-    try { setTestMsg(await thermalPrintTest(sessionUserId)); }
+    try { setTestMsg(await thermalPrintTest(sessionToken)); }
     catch (e: unknown) { setTestMsg(typeof e === "string" ? e : "Test failed"); }
     finally { setTesting(false); }
   };

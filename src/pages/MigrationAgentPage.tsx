@@ -60,8 +60,8 @@ interface ChatMsg {
 
 interface Props {
   onDone: () => void;
-  sessionUserId: string;
   sessionToken: SessionToken;
+
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -446,7 +446,7 @@ function MappingDrawer({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function MigrationAgentPage({ onDone, sessionUserId, sessionToken }: Props) {
+export default function MigrationAgentPage({ onDone, sessionToken }: Props) {
   const [aiReady, setAiReady]               = useState<boolean | null>(null);
   const [providerLabel, setProviderLabel]   = useState("⚙ AI");
   const [showAiSettings, setShowAiSettings] = useState(false);
@@ -636,14 +636,14 @@ export default function MigrationAgentPage({ onDone, sessionUserId, sessionToken
     };
 
     try {
-      await migrationExecute(storedPath, m, 3, sessionUserId, channel);
+      await migrationExecute(storedPath, m, 3, sessionToken, channel);
     } catch (e) {
       setMessages(prev => prev.map(msg => msg.id === progressMsgId ? {
         ...msg,
         text: `❌ Migration error: ${sanitizeErrorMessage(String(e))}`,
       } : msg));
     }
-  }, [addMsg, onDone, sessionUserId]);
+  }, [addMsg, onDone, sessionToken]);
 
   // ── Page drag-drop ─────────────────────────────────────────────────────────
   const handlePageDrop = async (e: React.DragEvent) => {
@@ -803,7 +803,7 @@ export default function MigrationAgentPage({ onDone, sessionUserId, sessionToken
       setQuickBusy("zip");
       const msgId = addMsg("assistant", `📦 Extracting ${archivePath.replace(/\\/g, "/").split("/").pop()}…`);
       try {
-        const r = await migrationDecompress(archivePath, undefined, sessionUserId);
+        const r = await migrationDecompress(archivePath, undefined, sessionToken);
         let text = `📦 Extracted **${r.extracted_files.length} files** to:\n\`${r.dest_dir}\``;
         if (r.db_files.length > 0) {
           text += `\n\n🗄 Found **${r.db_files.length} database file${r.db_files.length !== 1 ? "s" : ""}**:\n` +
@@ -826,7 +826,7 @@ export default function MigrationAgentPage({ onDone, sessionUserId, sessionToken
     setQuickBusy("rollback");
     const msgId = addMsg("assistant", `↩ Rolling back records created since ${rollbackTs}…`);
     try {
-      const r = await migrationRollback(rollbackTs.trim(), sessionUserId);
+      const r = await migrationRollback(rollbackTs.trim(), sessionToken);
       if (r.total_deleted === 0) {
         setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text: `No records found after ${rollbackTs}. Nothing was deleted.` } : m));
       } else {

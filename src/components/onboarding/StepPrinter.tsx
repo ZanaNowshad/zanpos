@@ -2,16 +2,17 @@ import { useCallback, useEffect, useState } from "react";
 import type { ThermalConfig } from "../../types";
 import { thermalListPorts, thermalGetConfig, thermalSetConfig, thermalPrintTest, type PortEntry } from "../../tauri/commands";
 import PrinterTab from "../settings/PrinterTab";
+import type { SessionToken } from "../../types";
 
 interface Props {
-  ownerUserId: string;
+  sessionToken: SessionToken;
   onDone: () => void;
 }
 
 /** Step 5 — printer setup. Renders the existing PrinterTab presentational
  * component, wired up the same way SettingsTab does, plus an explicit
  * "no printer" choice as required by the onboarding spec. */
-export default function StepPrinter({ ownerUserId, onDone }: Props) {
+export default function StepPrinter({ sessionToken, onDone }: Props) {
   const [thermal, setThermal] = useState<ThermalConfig>({ enabled: false, port: "", baud: "9600" });
   const [availablePorts, setAvailablePorts] = useState<PortEntry[]>([]);
   const [portsLoading, setPortsLoading] = useState(false);
@@ -38,17 +39,17 @@ export default function StepPrinter({ ownerUserId, onDone }: Props) {
   }, []);
 
   useEffect(() => {
-    thermalGetConfig(ownerUserId)
+    thermalGetConfig(sessionToken)
       .then(tc => setThermal(tc))
       .catch(() => { /* keep defaults */ })
       .finally(() => loadPorts());
-  }, [ownerUserId, loadPorts]);
+  }, [sessionToken, loadPorts]);
 
   const saveThermal = async (config: ThermalConfig) => {
     setSavingThermal(true);
     setPrintTestMsg(null);
     try {
-      await thermalSetConfig(ownerUserId, config);
+      await thermalSetConfig(sessionToken, config);
       setThermal(config);
       setSavedThermal(true);
       setTimeout(() => setSavedThermal(false), 3000);
@@ -65,7 +66,7 @@ export default function StepPrinter({ ownerUserId, onDone }: Props) {
     setTestingPrint(true);
     setPrintTestMsg(null);
     try {
-      const msg = await thermalPrintTest(ownerUserId);
+      const msg = await thermalPrintTest(sessionToken);
       setPrintTestMsg(msg);
     } catch (e: unknown) {
       setPrintTestMsg(typeof e === "string" ? e : "Test failed");

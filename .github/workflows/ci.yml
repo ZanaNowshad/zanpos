@@ -32,14 +32,18 @@ jobs:
   rust:
     name: Rust checks & tests
     runs-on: windows-latest
-    # 30 was never enough once this job got as far as running tests. It builds
-    # on windows-latest — deliberately, since that is what ships — and the
-    # steps before the tests (cargo-deny, cargo-audit, the sidecar install, the
-    # storefront build, check, fmt, clippy) consume most of the budget on their
-    # own. The first run to clear clippy was cancelled mid-test at exactly
-    # 30:14. This is a ceiling, not a target; nothing about what is checked
-    # changes.
-    timeout-minutes: 60
+    # This job builds and tests on windows-latest deliberately — that is the
+    # platform that ships — and Windows is the slow one. Measured: the steps
+    # before the tests (cargo-deny, cargo-audit, the sidecar install, the
+    # storefront build, check, fmt, clippy) take roughly half an hour between
+    # them, nextest another twenty-odd minutes for 1004 tests, and
+    # `cargo test --doc` compiles the crate again on top of that.
+    #
+    # 30 was cancelled mid-test at 30:14, and 60 was cancelled at 60:00 during
+    # the doc-test compile with everything before it green. This is a ceiling
+    # for catching a hang, not a target, and it changes nothing about what the
+    # job verifies.
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v4

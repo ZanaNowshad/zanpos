@@ -9,7 +9,13 @@ use tauri::State;
 /// package; nothing leaves the machine.
 #[tauri::command]
 pub async fn storefront_qr(session_token: String, state: State<'_, AppState>) -> AppResult<String> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER).await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let url = cfg(&state.db, "storefront_public_url").await?;
     if url.trim().is_empty() {
         return Err(AppError::Validation(

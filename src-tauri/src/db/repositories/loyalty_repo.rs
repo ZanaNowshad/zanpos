@@ -1,7 +1,8 @@
 //! Loyalty points, recorded as events and derived from them.
 //!
-//! The counter this replaces was written with `loyalty_points = loyalty_points
-//! + ?` and synced as an absolute number. Two tills serving the same customer
+//! The counter this replaces was written with
+//! `loyalty_points = loyalty_points + ?` and synced as an absolute number.
+//! Two tills serving the same customer
 //! in the same shift each computed a total from what they could see, and the
 //! merge kept one of them. `apply_customer` softened that with
 //! `MAX(local, incoming)` so the larger survives, which bounds the damage

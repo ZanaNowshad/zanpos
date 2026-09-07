@@ -597,7 +597,7 @@ fn strip_test_items(text: &str) -> String {
         let after = &rest[at + ATTR.len()..];
         match (after.find('{'), after.find(';')) {
             // `mod tests;` — drop through the semicolon.
-            (brace, Some(semi)) if brace.map_or(true, |b| semi < b) => {
+            (brace, Some(semi)) if brace.is_none_or(|b| semi < b) => {
                 rest = &after[semi + 1..];
             }
             // `mod tests { … }` — drop through the matching brace.
@@ -703,7 +703,7 @@ fn writers_of(table: &str, verbs: &[&str]) -> BTreeSet<String> {
                     flat[at + needle.len()..]
                         .chars()
                         .next()
-                        .map_or(true, |c| !c.is_alphanumeric() && c != '_')
+                        .is_none_or(|c| !c.is_alphanumeric() && c != '_')
                 })
             })
         })

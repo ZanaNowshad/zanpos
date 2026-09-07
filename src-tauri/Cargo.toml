@@ -6,7 +6,10 @@ authors = ["ZANPOS Contributors"]
 publish = false
 edition = "2021"
 # Minimum Rust version enforced in CI (dtolnay/rust-toolchain@stable tracks this)
-rust-version = "1.77"
+# LazyLock (sync_commands.rs) stabilised in 1.80, so the crate has required
+# 1.80 to compile for some time; 1.77 was a stale declaration that clippy
+# reported as an incompatible-MSRV error rather than the code being wrong.
+rust-version = "1.82"
 
 [lib]
 name = "zanpos_lib"

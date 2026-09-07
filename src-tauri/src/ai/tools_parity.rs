@@ -249,9 +249,10 @@ async fn check_parity(pool: &SqlitePool) -> AppResult<String> {
             local.schema_version, hub.schema_version
         ));
     }
-    out.push(format!(
+    out.push(
         "Call find_diverged_rows on one of these tables for the row IDs, rather than a full resync."
-    ));
+            .to_string(),
+    );
     Ok(out.join("\n"))
 }
 

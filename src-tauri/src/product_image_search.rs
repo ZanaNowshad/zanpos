@@ -237,7 +237,7 @@ async fn open_food_facts_candidates(
     .into_iter()
     .flatten()
     .filter(|url| {
-        current.map_or(true, |existing| existing.trim() != url.trim())
+        current.is_none_or(|existing| existing.trim() != url.trim())
             && is_public_image_url(url)
             && seen.insert(url.clone())
     })

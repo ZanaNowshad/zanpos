@@ -1,5 +1,15 @@
+//! Creating and updating a customer.
+//!
+//! Split out of `customer_commands` when that file passed the 500-line limit.
+//! The limit is a proxy for the fat-LTO discipline in CLAUDE.md — deep inline
+//! chains through oversized code are what produced a release-only stack
+//! overflow once — so the cut follows the read/write seam rather than a line
+//! count: the directory and lookup stay put, the two writes move here.
+
+use crate::commands::customer_commands::{
+    clean_optional_text, map_row, CustomerInput, CustomerRow, CustomerUpdateInput,
+};
 use crate::commands::customer_scope::{actor_branch_id, customer_in_branch};
-use crate::commands::customer_commands::{clean_optional_text, map_row, CustomerInput, CustomerRow, CustomerUpdateInput};
 use crate::commands::{rbac, sync_commands};
 use crate::db::repositories::audit_hash;
 use crate::errors::AppError;
@@ -7,15 +17,6 @@ use crate::AppState;
 use sqlx::Row;
 use tauri::State;
 use ulid::Ulid;
-
-/// Creating and updating a customer.
-///
-/// Split out of `customer_commands` when that file passed the 500-line limit.
-/// The limit is a proxy for the fat-LTO discipline in CLAUDE.md — deep inline
-/// chains through oversized code are what produced a release-only stack
-/// overflow once — so the cut follows the read/write seam rather than a
-/// line count: the directory and lookup stay put, the two writes move here.
-
 
 /// Branch-wide loyalty totals.
 ///
@@ -28,13 +29,8 @@ pub async fn customer_create(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<CustomerRow, AppError> {
-    let actor = rbac::session_actor(
-        &state.sessions,
-        &state.db,
-        &session_token,
-        rbac::ANY_ROLE,
-    )
-    .await?;
+    let actor =
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     input.actor_user_id = actor.user_id.clone();
     let name = input.name.trim().to_string();
     if name.is_empty() {
@@ -157,13 +153,8 @@ pub async fn customer_update(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<CustomerRow, AppError> {
-    let actor = rbac::session_actor(
-        &state.sessions,
-        &state.db,
-        &session_token,
-        rbac::ANY_ROLE,
-    )
-    .await?;
+    let actor =
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     input.actor_user_id = actor.user_id.clone();
     // A customer_id belonging to another branch must not become writable
     // simply by being sent; the scope check happens before any validation.

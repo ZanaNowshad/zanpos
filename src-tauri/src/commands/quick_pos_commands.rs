@@ -68,8 +68,7 @@ pub async fn quick_pos_load(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<QuickPosSlot>, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     load_inner(&state.db).await
 }
 

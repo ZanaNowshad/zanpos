@@ -267,7 +267,13 @@ mod tests {
     /// is not the same as being allowed to close someone's cash drawer.
     #[test]
     fn an_active_account_without_till_duties_closes_nothing_of_anyone_elses() {
-        assert!(may_close_shift("user-accountant", "accountant", OTHER_CASHIER, TILL_1, TILL_1)
-            .is_err());
+        assert!(may_close_shift(
+            "user-accountant",
+            "accountant",
+            OTHER_CASHIER,
+            TILL_1,
+            TILL_1
+        )
+        .is_err());
     }
 }

@@ -412,8 +412,7 @@ pub async fn settings_get_branch(
     state: State<'_, AppState>,
 ) -> Result<BranchSettings, AppError> {
     // Branch settings contain PII (phone, address, tax/cr numbers) — require auth.
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     let row = sqlx::query(
         "SELECT branch_id, name, branch_code, currency, timezone,
                 address, phone, receipt_header, receipt_footer, tax_number, cr_number
@@ -460,13 +459,8 @@ pub async fn settings_update_branch(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<BranchSettings, AppError> {
-    let actor = rbac::session_actor(
-        &state.sessions,
-        &state.db,
-        &session_token,
-        rbac::OWNER_ONLY,
-    )
-    .await?;
+    let actor =
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY).await?;
     input.actor_user_id = actor.user_id.clone();
     if input.name.trim().is_empty() {
         return Err(AppError::Validation("Store name is required".into()));
@@ -827,8 +821,7 @@ pub async fn onboarding_mark_step(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY).await?;
     if step.trim().is_empty() {
         return Err(AppError::Validation(
             "Onboarding step name is required".into(),

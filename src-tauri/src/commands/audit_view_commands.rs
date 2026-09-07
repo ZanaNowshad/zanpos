@@ -34,8 +34,13 @@ pub async fn report_tax_by_day(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<TaxDayRow>, AppError> {
-    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     // Caller-supplied `branch_id` is not trusted for branch-scoped data;
     // the scope comes from the actor's own record. The parameter remains
     // only to preserve the existing invoke contract.
@@ -102,8 +107,13 @@ pub async fn audit_log_list(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<AuditLogRow>, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let limit: i64 = 50;
     let offset = page * limit;
 
@@ -149,8 +159,13 @@ pub async fn audit_verify_chain(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<audit_hash::ChainVerifyResult> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
 
     let device_id: Option<String> = sqlx::query_scalar(
         "SELECT device_id FROM devices WHERE is_active = 1 ORDER BY device_code LIMIT 1",

@@ -488,8 +488,7 @@ pub async fn thermal_get_config(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<ThermalConfig, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     let enabled_str = config_get(&state, "thermal_printer_enabled", "0").await;
     let port = config_get(&state, "thermal_printer_port", "").await;
     let baud = config_get(&state, "thermal_printer_baud", "9600").await;
@@ -508,8 +507,13 @@ pub async fn thermal_set_config(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
 
     // BUG-PRINTER-VALIDATION: validate port and baud_rate before persisting.
     let port = input.port.trim();
@@ -551,8 +555,13 @@ pub async fn thermal_print_test(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let config = thermal_get_config(session_token.clone(), state.clone()).await?;
 
     if !config.enabled {
@@ -582,8 +591,7 @@ pub async fn print_receipt_raw(
     lines: Vec<String>,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     let config = thermal_get_config(session_token.clone(), state.clone()).await?;
 
     if !config.enabled {
@@ -665,8 +673,7 @@ pub async fn open_cash_drawer(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     let config = thermal_get_config(session_token.clone(), state.clone()).await?;
 
     if !config.enabled || config.port.trim().is_empty() {

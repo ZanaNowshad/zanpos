@@ -98,8 +98,7 @@ pub async fn reprint_queue_pending(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<ReprintEntry>, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     pending(&state.db).await
 }
 
@@ -111,8 +110,7 @@ pub async fn reprint_queue_mark_printed(
     id: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     sqlx::query("UPDATE reprint_queue SET printed_at = ? WHERE id = ? AND printed_at IS NULL")
         .bind(chrono::Utc::now().to_rfc3339())
         .bind(&id)

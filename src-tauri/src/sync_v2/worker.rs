@@ -842,7 +842,7 @@ impl SyncWorker {
                         // Fall back to created_at or now() when the local value is missing.
                         if map
                             .get("updated_at")
-                            .map_or(true, |v| matches!(v, Value::Null))
+                            .is_none_or(|v| matches!(v, Value::Null))
                         {
                             let fallback = map
                                 .get("created_at")
@@ -1168,7 +1168,7 @@ impl SyncWorker {
                     }
                     if map
                         .get("updated_at")
-                        .map_or(true, |v| matches!(v, Value::Null))
+                        .is_none_or(|v| matches!(v, Value::Null))
                     {
                         let fallback = map
                             .get("created_at")

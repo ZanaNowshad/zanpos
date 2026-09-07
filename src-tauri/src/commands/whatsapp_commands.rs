@@ -188,8 +188,7 @@ pub async fn whatsapp_status(
             return Err(AppError::Permission("User context is required".into()));
         }
     } else {
-        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     }
     let token = read_sidecar_token(&state);
     let client = reqwest::Client::builder()
@@ -234,8 +233,7 @@ pub async fn whatsapp_send_delivery(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
 
     if !is_network_available().await {
         return Err(AppError::Internal("WhatsApp: device is offline".into()));
@@ -293,8 +291,13 @@ pub async fn whatsapp_disconnect(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let token = read_sidecar_token(&state);
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
@@ -315,8 +318,13 @@ pub async fn whatsapp_save_config(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
 
     // BUG-WA-PHONE-VALIDATION: validate the BenefitPay phone number before saving.
     // Allow empty string (clears the setting). Non-empty strings must be a valid
@@ -370,8 +378,7 @@ pub async fn whatsapp_notify_arrival(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
 
     // Hard rule: arrival message only within 1 hour of delivery bill creation.
     if !input.delivery_id.is_empty() {
@@ -431,8 +438,7 @@ pub async fn whatsapp_payment_reminder(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
 
     // Hard rule: payment reminder only on the same calendar day as the delivery bill (Bahrain UTC+3).
     if !input.delivery_id.is_empty() {
@@ -540,8 +546,13 @@ pub async fn whatsapp_import_contacts(
     state: State<'_, AppState>,
 ) -> AppResult<ImportContactsResult> {
     // Only managers and owners may import contacts.
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
 
     // Fetch contacts from the Node sidecar.
     let token = read_sidecar_token(&state);
@@ -922,8 +933,7 @@ pub async fn whatsapp_send_receipt_pdf(
 ) -> AppResult<bool> {
     use base64::Engine as _;
 
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
 
     if !is_network_available().await {
         return Err(AppError::Internal("WhatsApp: device is offline".into()));

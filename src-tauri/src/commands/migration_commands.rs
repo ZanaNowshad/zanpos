@@ -163,8 +163,13 @@ pub async fn migration_inspect_file(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<FileSchema> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let lower = path.to_lowercase();
     if lower.ends_with(".csv") {
         inspect_csv(path).await
@@ -800,8 +805,13 @@ pub async fn migration_ai_map(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<MappingConfig> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let provider = match Provider::from_db(&state.db).await? {
         Some(p) => p,
         None => return Err(AppError::Internal("No AI provider configured".into())),
@@ -909,8 +919,13 @@ pub async fn migration_execute(
     on_event: tauri::ipc::Channel<MigrationProgress>,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let pool = state.db.clone();
 
     // Step 1: Read all source data into memory
@@ -1694,8 +1709,13 @@ pub async fn migration_connect_test(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<ConnectTestResult> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     match db_type.as_str() {
         "sqlite" => {
             let url = format!("sqlite:{}?mode=ro", conn_str);
@@ -1809,8 +1829,13 @@ pub async fn migration_list_tables(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<RemoteTableInfo>> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     match db_type.as_str() {
         "sqlite" => {
             let url = format!("sqlite:{}?mode=ro", conn_str);
@@ -1964,8 +1989,13 @@ pub async fn migration_query_remote(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<QueryResult> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     // Finding 6: block CTE-wrapped destructive queries (e.g. WITH x AS (SELECT 1) DELETE …)
     let q_upper = query.trim().to_uppercase();
     let allowed_starts = [
@@ -2169,8 +2199,13 @@ pub async fn migration_list_processes(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<ProcessInfo>> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     tokio::task::spawn_blocking(move || -> AppResult<Vec<ProcessInfo>> {
         let output = std::process::Command::new("tasklist")
             .args(["/FO", "CSV", "/NH"])
@@ -2220,8 +2255,13 @@ pub async fn migration_find_db_files(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<DbFileInfo>> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     tokio::task::spawn_blocking(move || -> AppResult<Vec<DbFileInfo>> {
         let db_exts = [
             "db", "sqlite", "sqlite3", "db3", "s3db", "mdf", "ndf", "mdb", "accdb", "fdb", "gdb",
@@ -2343,8 +2383,13 @@ pub async fn migration_read_file(
     // not, so any caller reaching the IPC boundary could read up to 32,000
     // characters from any file under Desktop, Documents, Downloads or AppData.
     // The path allowlist limits *where*, not *who*.
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
 
     // Finding 4: reject paths outside approved directories or in sensitive locations
     if !is_safe_read_path(&path) {
@@ -2385,8 +2430,13 @@ pub async fn migration_decompress(
     // Entries inside the archive are zip-slip guarded, but `dest_dir` is chosen
     // by the caller and was not, so an unguarded caller could have this process
     // write a ZIP's contents anywhere it can reach.
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
 
     tokio::task::spawn_blocking(move || -> AppResult<DecompressResult> {
         let archive = std::path::PathBuf::from(&archive_path);
@@ -4100,8 +4150,13 @@ pub async fn migration_agent_chat(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<String> {
-    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let Some(provider) = Provider::from_db(&state.db).await? else {
         return Err(AppError::Internal(
             "No AI provider configured. Please set up your API key.".into(),

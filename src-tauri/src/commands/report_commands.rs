@@ -131,8 +131,8 @@ pub async fn report_today(
     business_date: String,
     state: State<'_, AppState>,
 ) -> Result<TodaySummary, AppError> {
-    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    let actor =
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     // The `branch_id` argument is caller-supplied and therefore not trusted:
     // reports expose financial data, so the scope is resolved from the actor's
     // own record and the incoming value is discarded. The parameter stays in
@@ -152,8 +152,8 @@ pub async fn report_date_range(
     to_date: String,
     state: State<'_, AppState>,
 ) -> Result<RangeSummary, AppError> {
-    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    let actor =
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     // The `branch_id` argument is caller-supplied and therefore not trusted:
     // reports expose financial data, so the scope is resolved from the actor's
     // own record and the incoming value is discarded. The parameter stays in
@@ -263,8 +263,8 @@ pub async fn report_top_products(
     to_date: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<TopProduct>, AppError> {
-    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    let actor =
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     // The `branch_id` argument is caller-supplied and therefore not trusted:
     // reports expose financial data, so the scope is resolved from the actor's
     // own record and the incoming value is discarded. The parameter stays in
@@ -314,8 +314,13 @@ pub async fn report_margin(
     to_date: String,
     state: State<'_, AppState>,
 ) -> Result<MarginSummary, AppError> {
-    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     // The `branch_id` argument is caller-supplied and therefore not trusted:
     // reports expose financial data, so the scope is resolved from the actor's
     // own record and the incoming value is discarded. The parameter stays in
@@ -334,8 +339,13 @@ pub async fn report_product_margin(
     limit: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ProductMarginRow>, AppError> {
-    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     // The `branch_id` argument is caller-supplied and therefore not trusted:
     // reports expose financial data, so the scope is resolved from the actor's
     // own record and the incoming value is discarded. The parameter stays in
@@ -478,8 +488,8 @@ pub async fn report_sales_list(
     limit: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<SaleListPage, AppError> {
-    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    let actor =
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     // The `branch_id` argument is caller-supplied and therefore not trusted:
     // reports expose financial data, so the scope is resolved from the actor's
     // own record and the incoming value is discarded. The parameter stays in
@@ -672,8 +682,8 @@ pub async fn report_sales_cursor(
     limit: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<SaleCursorPage, AppError> {
-    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    let actor =
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     let _ = branch_id;
     let branch_id = actor.branch_id.clone();
     let decoded = cursor.as_deref().map(decode_sale_cursor).transpose()?;
@@ -702,8 +712,8 @@ pub async fn report_sales_export_csv(
     dest_path: String,
     state: State<'_, AppState>,
 ) -> Result<i64, AppError> {
-    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    let actor =
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     let _ = branch_id;
     let branch_id = actor.branch_id.clone();
     let path = std::path::Path::new(&dest_path);
@@ -796,8 +806,8 @@ pub async fn report_by_cashier(
     to_date: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<CashierSummaryRow>, AppError> {
-    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    let actor =
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     // The `branch_id` argument is caller-supplied and therefore not trusted:
     // reports expose financial data, so the scope is resolved from the actor's
     // own record and the incoming value is discarded. The parameter stays in
@@ -1209,8 +1219,8 @@ pub async fn report_eod_cashup(
     date: String,
     state: State<'_, AppState>,
 ) -> Result<EodCashupReport, AppError> {
-    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    let actor =
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     // The `branch_id` argument is caller-supplied and therefore not trusted:
     // reports expose financial data, so the scope is resolved from the actor's
     // own record and the incoming value is discarded. The parameter stays in
@@ -1230,8 +1240,13 @@ pub async fn report_z_report(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<EodCashupReport, AppError> {
-    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     // Resolve active branch — Z-report always targets the current store.
     let branch_id: String = sqlx::query_scalar(
         "SELECT branch_id FROM branches WHERE is_active = 1 ORDER BY created_at LIMIT 1",
@@ -1288,8 +1303,13 @@ pub async fn db_integrity_check(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let result: String = sqlx::query_scalar("PRAGMA integrity_check")
         .fetch_one(&state.db)
         .await?;
@@ -1314,8 +1334,7 @@ pub async fn reports_config_load(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<ReportsConfig, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     let (scope, local_device_id) = report_scope(&state.db).await;
     let device_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM devices WHERE is_active = 1")
         .fetch_one(&state.db)

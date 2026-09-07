@@ -182,8 +182,13 @@ pub async fn whatsapp_list_contacts(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<WaContact>> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let token = read_sidecar_token(&state);
     let resp = sidecar_client()
         .get(format!("{}/contacts", SIDECAR_URL))
@@ -205,8 +210,13 @@ pub async fn whatsapp_list_groups(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<WaGroup>> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let token = read_sidecar_token(&state);
     let resp = sidecar_client()
         .get(format!("{}/groups", SIDECAR_URL))
@@ -232,8 +242,13 @@ pub async fn whatsapp_set_targets(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     set_cfg(&state.db, "whatsapp_owner_jid", &normalize_jid(&owner_jid)).await?;
     set_cfg(&state.db, "whatsapp_owner_name", owner_name.trim()).await?;
     set_cfg(&state.db, "whatsapp_group_jid", &normalize_jid(&group_jid)).await?;
@@ -247,8 +262,13 @@ pub async fn whatsapp_get_targets(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<WaTargets> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     Ok(WaTargets {
         owner_jid: get_cfg(&state.db, "whatsapp_owner_jid")
             .await
@@ -275,8 +295,13 @@ pub async fn whatsapp_poll_messages(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<i64> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
 
     let owner_jid = get_cfg(&state.db, "whatsapp_owner_jid")
         .await
@@ -434,8 +459,13 @@ pub async fn whatsapp_list_messages(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<WaMessage>> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let rows = sqlx::query(
         "SELECT id, chat_jid, chat_name, is_group, sender_jid, sender_name, body, ts, read, media_type \
          FROM wa_messages ORDER BY read ASC, ts DESC LIMIT 100",
@@ -471,8 +501,13 @@ pub async fn whatsapp_get_media(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<WaMedia> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let token = read_sidecar_token(&state);
     let resp = sidecar_client()
         .get(format!("{}/media", SIDECAR_URL))
@@ -506,8 +541,13 @@ pub async fn whatsapp_mark_read(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     sqlx::query("UPDATE wa_messages SET read = 1 WHERE id = ?")
         .bind(&id)
         .execute(&state.db)
@@ -521,8 +561,13 @@ pub async fn whatsapp_mark_all_read(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     sqlx::query("UPDATE wa_messages SET read = 1 WHERE read = 0")
         .execute(&state.db)
         .await?;
@@ -537,8 +582,13 @@ pub async fn whatsapp_clear_messages(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     sqlx::query("DELETE FROM wa_messages")
         .execute(&state.db)
         .await?;

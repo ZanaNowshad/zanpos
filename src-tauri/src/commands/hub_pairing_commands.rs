@@ -40,8 +40,7 @@ pub async fn hub_pair_device(
     device_name: String,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY).await?;
     let token = crate::hub::pairing::pair_device(&state.db, &device_id, &device_name).await?;
     reload_paired(&state).await;
     Ok(token)
@@ -53,8 +52,7 @@ pub async fn hub_revoke_device(
     device_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY).await?;
     crate::hub::pairing::revoke_device(&state.db, &device_id).await?;
     reload_paired(&state).await;
     Ok(())
@@ -65,7 +63,6 @@ pub async fn hub_list_devices(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::hub::pairing::PairedDeviceRow>, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY).await?;
     crate::hub::pairing::list_devices(&state.db).await
 }

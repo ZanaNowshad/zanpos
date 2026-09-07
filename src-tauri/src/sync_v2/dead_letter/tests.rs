@@ -105,6 +105,12 @@ async fn re_quarantining_the_same_row_updates_rather_than_duplicates() {
 
 /// The threshold is deliberately above one: a dependency arriving out of order
 /// looks identical to one that never arrives, and most of them arrive.
+///
+/// Clippy is right that this is constant — that is the point. It fails at
+/// compile time if someone lowers the constant, which is exactly when the
+/// reasoning above stops holding. Deleting it to satisfy the lint would remove
+/// the guard rather than the problem.
+#[allow(clippy::assertions_on_constants)]
 #[test]
 fn the_threshold_gives_out_of_order_rows_a_chance() {
     assert!(

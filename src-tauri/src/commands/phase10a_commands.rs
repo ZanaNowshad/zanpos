@@ -28,8 +28,13 @@ pub async fn app_config_set_timeout(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     if !(0..=60).contains(&minutes) {
         return Err(AppError::Validation(
             "Timeout must be between 0 and 60 minutes (0 = never lock)".into(),
@@ -60,8 +65,7 @@ pub async fn db_backup(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY).await?;
     let app_data = app
         .path()
         .app_data_dir()

@@ -118,7 +118,7 @@ fn strip_cfg_test(text: &str) -> String {
         out.push_str(&rest[..at]);
         let after = &rest[at + ATTR.len()..];
         match (after.find('{'), after.find(';')) {
-            (brace, Some(semi)) if brace.map_or(true, |b| semi < b) => rest = &after[semi + 1..],
+            (brace, Some(semi)) if brace.is_none_or(|b| semi < b) => rest = &after[semi + 1..],
             (Some(brace), _) => {
                 let mut depth = 0usize;
                 let mut end = after.len();

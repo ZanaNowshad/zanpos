@@ -637,8 +637,13 @@ pub async fn system_health_check(
     state: State<'_, AppState>,
     session_token: String,
 ) -> AppResult<SystemHealthReport> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let mut report = run_local_health_check(&state.db, &sync_commands::SYNC_TABLES).await?;
 
     let hub = state.hub.lock().await;

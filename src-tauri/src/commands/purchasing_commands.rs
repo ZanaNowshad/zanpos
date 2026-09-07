@@ -124,8 +124,13 @@ pub async fn supplier_list(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<SupplierRow>, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     supplier_list_inner(&state.db).await
 }
 
@@ -135,8 +140,13 @@ pub async fn supplier_upsert(
     input: SupplierUpsertInput,
     state: State<'_, AppState>,
 ) -> Result<SupplierRow, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let row = supplier_upsert_inner(&state.db, input).await?;
     sync_commands::schedule_immediate_sync(&state);
     Ok(row)
@@ -148,8 +158,13 @@ pub async fn supplier_delete(
     supplier_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     supplier_delete_inner(&state.db, &supplier_id).await?;
     sync_commands::schedule_immediate_sync(&state);
     Ok(())
@@ -161,8 +176,13 @@ pub async fn po_list(
     status: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<PurchaseOrderRow>, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     po_list_inner(&state.db, status.as_deref()).await
 }
 
@@ -172,8 +192,13 @@ pub async fn po_get(
     po_id: String,
     state: State<'_, AppState>,
 ) -> Result<PurchaseOrderDetail, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     po_get_inner(&state.db, &po_id).await
 }
 
@@ -183,9 +208,13 @@ pub async fn po_create(
     mut input: PurchaseOrderCreateInput,
     state: State<'_, AppState>,
 ) -> Result<PurchaseOrderDetail, AppError> {
-    let actor =
-        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-            .await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     input.created_by = actor.user_id;
     let detail = po_create_inner(&state.db, input).await?;
     sync_commands::schedule_immediate_sync(&state);
@@ -223,8 +252,13 @@ pub async fn po_cancel(
     po_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     po_cancel_inner(&state.db, &po_id).await?;
     sync_commands::schedule_immediate_sync(&state);
     Ok(())
@@ -876,8 +910,13 @@ pub async fn product_cost_history_list(
     limit: Option<i64>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ProductCostChange>, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     product_cost_history_inner(&state.db, product_id.as_deref(), limit).await
 }
 

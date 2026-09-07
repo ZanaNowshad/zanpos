@@ -214,8 +214,13 @@ pub async fn storefront_settings_get(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<StorefrontSettings> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     load_settings(&state.db).await
 }
 
@@ -225,8 +230,13 @@ pub async fn storefront_settings_save(
     settings: StorefrontSettings,
     state: State<'_, AppState>,
 ) -> AppResult<StorefrontSettings> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     validate_settings(&settings)?;
     if let Some(secret) = settings.publish_secret.as_deref() {
         if secret.len() < 16 || secret.len() > 512 {
@@ -274,8 +284,13 @@ pub async fn storefront_products_list(
     published_only: Option<bool>,
     state: State<'_, AppState>,
 ) -> AppResult<StorefrontProductPage> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     products_page(
         &state.db,
         search.as_deref(),
@@ -293,8 +308,13 @@ pub async fn storefront_product_update(
     update: StorefrontProductUpdate,
     state: State<'_, AppState>,
 ) -> AppResult<StorefrontProduct> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let current = product_by_id(&state.db, &product_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Eligible storefront product not found".into()))?;
@@ -331,8 +351,13 @@ pub async fn storefront_status(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<StorefrontStatus> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let settings = load_settings(&state.db).await?;
     let list = products(&state.db, None).await?;
     let release = sqlx::query(
@@ -380,8 +405,13 @@ pub async fn storefront_publish(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<StorefrontPublishResult> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let settings = load_settings(&state.db).await?;
     if !settings.enabled {
         return Err(AppError::Validation("Storefront is disabled".into()));
@@ -448,8 +478,13 @@ pub async fn storefront_connection_test(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<StorefrontConnectionResult> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let settings = load_settings(&state.db).await?;
     let started = Instant::now();
     let cloudflare_test = uses_cloudflare_connection_test(&settings.publish_url);

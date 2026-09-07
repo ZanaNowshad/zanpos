@@ -79,8 +79,7 @@ pub async fn whatsapp_commerce_get_enabled(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     Ok(commerce_enabled(&state.db).await)
 }
 
@@ -91,8 +90,7 @@ pub async fn whatsapp_orders_get_enabled(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     Ok(orders_enabled(&state.db).await)
 }
 
@@ -102,8 +100,13 @@ pub async fn whatsapp_commerce_set_enabled(
     enabled: bool,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
         "INSERT INTO app_config (key, value, updated_at) VALUES ('whatsapp_commerce_enabled', ?, ?)
@@ -316,8 +319,13 @@ pub async fn whatsapp_order_list(
     status: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<Vec<WaOrder>> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     require_orders_enabled(&state.db).await?;
     let filter = status.filter(|s| !s.is_empty());
     let rows = if let Some(s) = &filter {
@@ -380,8 +388,13 @@ pub async fn whatsapp_order_update_status(
     linked_sale_id: Option<String>,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     require_orders_enabled(&state.db).await?;
     let allowed = ["new", "reviewed", "fulfilled", "cancelled"];
     if !allowed.contains(&status.as_str()) {
@@ -439,8 +452,13 @@ pub async fn whatsapp_order_match(
     order_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<WaOrderMatch> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     require_orders_enabled(&state.db).await?;
     let raw: Option<String> =
         sqlx::query_scalar("SELECT raw_json FROM wa_orders WHERE order_id = ?")
@@ -490,8 +508,7 @@ pub async fn whatsapp_order_message(
     message: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     require_orders_enabled(&state.db).await?;
     if message.trim().is_empty() {
         return Err(AppError::Validation("Message text is required".into()));
@@ -555,8 +572,7 @@ pub async fn whatsapp_send_product(
     wa_product_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<bool> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     require_commerce_enabled(&state.db).await?;
     if to.trim().is_empty() || wa_product_id.trim().is_empty() {
         return Err(AppError::Validation(

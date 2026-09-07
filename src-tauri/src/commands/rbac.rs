@@ -392,6 +392,4 @@ mod tests {
             "a deactivated owner must lose access on the next call"
         );
     }
-
-
 }

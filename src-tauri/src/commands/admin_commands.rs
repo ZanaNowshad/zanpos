@@ -348,7 +348,13 @@ pub async fn admin_search_product_image(
     request: ProductImageSearchRequest,
     state: State<'_, AppState>,
 ) -> Result<ProductImageSearchResult, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER).await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     search_product_image(request).await
 }
 
@@ -396,9 +402,14 @@ pub async fn admin_set_product_image(
     image_url: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    let actor_user_id = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?
-        .user_id;
+    let actor_user_id = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?
+    .user_id;
     let previous = persist_product_image(&state.db, &product_id, &image_url).await?;
     sync_commands::schedule_immediate_sync(&state);
 
@@ -887,7 +898,13 @@ pub async fn admin_find_duplicate_products(
     include_inactive: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<Vec<product_dedup_repo::DuplicateGroup>, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER).await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     product_dedup_repo::find_duplicate_groups(&state.db, include_inactive.unwrap_or(false)).await
 }
 
@@ -901,9 +918,14 @@ pub async fn admin_merge_products(
     transfer_history: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    let actor_user_id = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?
-        .user_id;
+    let actor_user_id = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?
+    .user_id;
     let transfer = transfer_history.unwrap_or(false);
     let outcome = product_dedup_repo::merge_products(
         &state.db,
@@ -953,9 +975,14 @@ pub async fn admin_delete_product(
     product_id: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    let actor_user_id = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?
-        .user_id;
+    let actor_user_id = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?
+    .user_id;
     let name = product_dedup_repo::soft_delete_product(&state.db, &product_id).await?;
 
     let device_id = active_device_id(&state).await;
@@ -1510,7 +1537,13 @@ pub async fn admin_bulk_import_categories(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<BulkImportResult> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER).await?;
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
 
     // Determine the current max sort_order so auto-assigned ones don't collide.
     let max_order: i64 =
@@ -1602,9 +1635,14 @@ pub async fn admin_bulk_import_products(
     session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<BulkImportResult> {
-    let actor_user_id = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?
-        .user_id;
+    let actor_user_id = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?
+    .user_id;
 
     let now = chrono::Utc::now().to_rfc3339();
     let branch_id = active_branch_id(&state).await?;
@@ -2233,9 +2271,14 @@ pub async fn product_barcode_add(
     barcode: String,
     state: State<'_, AppState>,
 ) -> AppResult<ProductBarcodeRow> {
-    let actor_user_id = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?
-        .user_id;
+    let actor_user_id = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?
+    .user_id;
     let barcode = barcode.trim().to_string();
     if barcode.is_empty() {
         return Err(AppError::Validation("Barcode is required".into()));
@@ -2309,9 +2352,14 @@ pub async fn product_barcode_remove(
     barcode_id: String,
     state: State<'_, AppState>,
 ) -> AppResult<()> {
-    let actor_user_id = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?
-        .user_id;
+    let actor_user_id = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?
+    .user_id;
 
     // Fetch the barcode record before deleting so we can audit it
     let record =

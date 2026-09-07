@@ -115,8 +115,7 @@ pub async fn download_and_install_update(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<bool, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::OWNER_ONLY).await?;
 
     let updater = build_updater(&app, &state).await?;
 

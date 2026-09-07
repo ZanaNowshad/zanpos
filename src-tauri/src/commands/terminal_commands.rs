@@ -31,8 +31,7 @@ pub async fn terminal_roster(
     session_token: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<TerminalRow>, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     let hub_url: Option<String> = sqlx::query_scalar(
         "SELECT value FROM app_config WHERE key = 'hub_url' AND TRIM(value) <> ''",
     )
@@ -82,8 +81,7 @@ pub async fn reconciliation_preview(
     table: String,
     state: State<'_, AppState>,
 ) -> Result<ReconciliationPreview, AppError> {
-    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE)
-        .await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     let client = hub_client(&state).await?;
 
     let Some(rows) = repair::diverged(&state.db, &client, &table).await? else {
@@ -121,8 +119,13 @@ pub async fn reconciliation_run(
     table: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Vec<ReconciliationOutcome>, AppError> {
-    let actor = rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER)
-        .await?;
+    let actor = rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let client = hub_client(&state).await?;
 
     let outcomes = match table {

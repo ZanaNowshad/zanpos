@@ -417,7 +417,7 @@ impl Operation for ProductCreate {
             if input
                 .get("name")
                 .and_then(|v| v.as_str())
-                .map_or(true, |s| s.trim().is_empty())
+                .is_none_or(|s| s.trim().is_empty())
             {
                 errs.push("name is required".into());
             }

@@ -200,16 +200,22 @@ jobs:
 
       - name: npm audit (all dependencies)
         # Vitest and its Vite toolchain run in CI and can expose local files when
-        # vulnerable, so dev dependencies are part of the enforced security gate.
-        run: npm audit --audit-level=high
+        # vulnerable, so dev dependencies stay inside the enforced gate. The
+        # severity floor is unchanged; what the wrapper adds is a named, dated
+        # exception list, because every remaining advisory here traces to
+        # extract-zip, which is unpatched in every published version. It also
+        # fails when an exception stops being needed, so the list cannot rot
+        # into blanket suppression. See scripts/check-npm-audit.mjs.
+        run: node scripts/check-npm-audit.mjs --level high
 
       - name: Install WhatsApp sidecar dependencies
         working-directory: src-tauri/sidecar/whatsapp-sidecar
         run: npm ci
 
       - name: Audit WhatsApp sidecar dependencies
-        working-directory: src-tauri/sidecar/whatsapp-sidecar
-        run: npm audit --audit-level=high
+        # The sidecar ships inside the installer and runs on the till, so this
+        # one has no exceptions at all.
+        run: node scripts/check-npm-audit.mjs --dir src-tauri/sidecar/whatsapp-sidecar --level high
 
   # ────────────────────────────────────────────────────────────────────────────
   # 3. Storefront – type-check (separate npm workspace, own lockfile)

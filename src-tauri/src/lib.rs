@@ -923,9 +923,9 @@ pub fn run() {
             commands::phase10a_commands::app_config_get_timeout,
             commands::phase10a_commands::app_config_set_timeout,
             commands::phase10a_commands::db_backup,
-            commands::phase10a_commands::report_tax_by_day,
-            commands::phase10a_commands::audit_log_list,
-            commands::phase10a_commands::audit_verify_chain,
+            commands::audit_view_commands::report_tax_by_day,
+            commands::audit_view_commands::audit_log_list,
+            commands::audit_view_commands::audit_verify_chain,
             // Sync
             commands::sync_commands::sync_status,
             commands::sync_commands::sync_trigger_now,
@@ -1030,8 +1030,8 @@ pub fn run() {
             commands::customer_commands::customer_list,
             commands::customer_loyalty_commands::customer_loyalty_summary,
             commands::customer_loyalty_commands::customer_top_balances,
-            commands::customer_commands::customer_create,
-            commands::customer_commands::customer_update,
+            commands::customer_write_commands::customer_create,
+            commands::customer_write_commands::customer_update,
             commands::customer_commands::customer_get,
             commands::customer_loyalty_commands::customer_add_loyalty,
             // Devices

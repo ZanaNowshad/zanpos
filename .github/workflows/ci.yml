@@ -463,6 +463,24 @@ jobs:
       - name: Build frontend bundle
         run: npm run build
 
+      # tauri.conf.json bundles ../storefront/dist as an app resource, so the
+      # build script fails with "resource path doesn't exist" without it. The
+      # Rust job builds the storefront for the same reason; this job was missing
+      # the step, which only became visible once it started running at all.
+      - name: Build the storefront (bundled as an app resource)
+        working-directory: storefront
+        run: npm ci && npm run build
+
+      # The sidecar is a bundled resource too, and its node.exe is provisioned
+      # rather than committed.
+      - name: Install WhatsApp sidecar dependencies
+        working-directory: src-tauri/sidecar/whatsapp-sidecar
+        run: npm ci --omit=dev
+
+      - name: Provision the sidecar Node runtime
+        working-directory: src-tauri/sidecar/whatsapp-sidecar
+        run: node -e "require('fs').copyFileSync(process.execPath,'node.exe')"
+
       - name: Tauri app compiles (no installer bundled)
         working-directory: src-tauri
         run: cargo build

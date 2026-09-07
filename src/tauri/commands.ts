@@ -1639,8 +1639,8 @@ export const ghostPrefill = (id: string, sessionToken: SessionToken): Promise<Pr
 // ── Diagnostics ──────────────────────────────────────────────────────────────────
 
 /** Run system diagnostics and auto-fix common issues (stuck runs, DB integrity). */
-export const adminRunDiagnostics = (): Promise<DiagnosticReport> =>
-  invoke("admin_run_diagnostics");
+export const adminRunDiagnostics = (sessionToken: SessionToken): Promise<DiagnosticReport> =>
+  invoke("admin_run_diagnostics", { sessionToken });
 
 export const systemHealthCheck = (sessionToken: SessionToken): Promise<SystemHealthReport> =>
   invoke("system_health_check", { sessionToken });

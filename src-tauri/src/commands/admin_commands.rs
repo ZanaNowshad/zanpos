@@ -2528,7 +2528,20 @@ pub struct DiagnosticReport {
 }
 
 #[tauri::command]
-pub async fn admin_run_diagnostics(state: State<'_, AppState>) -> AppResult<DiagnosticReport> {
+pub async fn admin_run_diagnostics(
+    session_token: String,
+    state: State<'_, AppState>,
+) -> AppResult<DiagnosticReport> {
+    // Diagnostics does not only report: it clears stuck AI runs and repairs
+    // state as it goes. It took no actor at all, so anyone who could reach
+    // the IPC boundary could run those repairs.
+    rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
     let mut issues_found: Vec<String> = Vec::new();
     let mut issues_fixed: Vec<String> = Vec::new();
 

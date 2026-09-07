@@ -100,4 +100,21 @@ LEXER_CASES = {
     "unterminated_raw": ("LEX_UNTERMINATED_RAW", 'fn edge() { let _ = r#"open"; }'),
     "unterminated_string": ("LEX_UNTERMINATED_STRING", 'fn edge() { let _ = "open; }'),
     "unbalanced_delimiter": ("PARSE_UNBALANCED_DELIMITER", "fn edge() { let _ = (1 + 2; }"),
+    # The RBAC-1 contract, stated both ways. A command that takes its actor from
+    # the payload is refused; the same command resolving a session passes. These
+    # are here so the guard is proven by the gate rather than by whoever added
+    # it having run it once.
+    "rbac1_payload_actor": (
+        "PAYLOAD_DERIVED_ACTOR",
+        "#[tauri::command]\n"
+        "pub async fn edge_payload_actor(actor_user_id: String, state: State<'_, AppState>) "
+        "-> Result<(), AppError> { rbac::require_role(&state.db, &actor_user_id, &[\"owner\"]).await?; Ok(()) }",
+    ),
+    "rbac1_session_actor": (
+        "PASS",
+        "#[tauri::command]\n"
+        "pub async fn edge_session_actor(session_token: String, state: State<'_, AppState>) "
+        "-> Result<(), AppError> { rbac::session_actor(&state.sessions, &state.db, &session_token, "
+        "rbac::OWNER_ONLY).await?; Ok(()) }",
+    ),
 }

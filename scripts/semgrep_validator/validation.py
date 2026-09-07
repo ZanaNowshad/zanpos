@@ -7,6 +7,7 @@ from collections import Counter
 from .core import Project
 from .lexer import joined
 from .parser import locate
+from .authorization import validate_authorization
 from .contracts import (
     EXPECTED, EXTRA_SINKS, FUNCTION_HASHES, CONTROL_METHODS,
     CONTROL_INVENTORY_SHA256, LAN_ID, LAN_PATH, LAN_LITERAL, LAN_BRANCH,
@@ -79,4 +80,5 @@ def validate(project: Project) -> list[tuple[str, str]]:
     literal_count = sum(joined(parsed.tokens).count(LAN_LITERAL) for parsed in project.files.values())
     if literal_count != 1:
         issues.append(("LAN_LITERAL_INVENTORY", f"expected one wildcard UDP literal, found {literal_count}"))
+    issues.extend(validate_authorization(project))
     return issues

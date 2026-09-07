@@ -169,7 +169,7 @@ export default function OfficeAIPage({
     setDiagRunning(true);
     setDiagResult(null);
     try {
-      const report = await adminRunDiagnostics();
+      const report = await adminRunDiagnostics(sessionUser.session_token);
       setDiagResult(report);
       if (report.ok) ctrl.dismissError();
       void refreshOverview();
@@ -178,7 +178,7 @@ export default function OfficeAIPage({
     } finally {
       setDiagRunning(false);
     }
-  }, [ctrl, refreshOverview]);
+  }, [ctrl, refreshOverview, sessionUser.session_token]);
 
   const aiHandoffSentRef = useRef(false);
   const aiHandoffQueueRef = useRef<AiHandoff | null>(null);

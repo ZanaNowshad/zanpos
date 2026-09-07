@@ -13,15 +13,18 @@ slow-timeout = { period = "30s", terminate-after = 3 }
 leak-timeout = "2s"
 
 [profile.ci]
-# Report at 30s so slowness stays visible, but do not kill until 180s.
+# Report at 30s so slowness stays visible; kill only at 600s.
 #
-# This used to terminate at 60s — stricter than the default profile's 90s,
-# which had it backwards: CI is the slower machine, not the faster one. The
-# heartbeat e2e test stands two databases up against a real HTTP hub and takes
-# ~27s here and just over 60s on windows-latest, so the ceiling was failing a
-# healthy test for running on the hardware it was meant to run on. 180s still
-# catches a genuine hang, which is what a kill threshold is for.
-slow-timeout = { period = "30s", terminate-after = 6 }
+# The kill threshold is there to name which test hung, not to police speed —
+# the job's own 90-minute timeout is the real backstop. Sizing it near observed
+# runtimes turned it into a speed limit on a machine whose speed varies wildly:
+# it was 60s (killed a healthy heartbeat test at 60.05s), then 180s (killed a
+# hub-sync test at 180.17s on a run where the whole suite took 2325s against
+# 240s locally, with 33 tests reported slow rather than the usual 3).
+#
+# A hang is unbounded, so 600s separates it from any real test on any runner,
+# while a genuinely slow test still shows up in the 30s slow report.
+slow-timeout = { period = "30s", terminate-after = 20 }
 leak-timeout = "2s"
 
 # JUnit output for CI artifact publication.

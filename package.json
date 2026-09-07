@@ -63,5 +63,9 @@
     "vite": "^7.0.4",
     "vitest": "^4.1.10",
     "webdriverio": "^9.30.0"
+  },
+  "overrides": {
+    "serialize-javascript": "^7.1.1",
+    "deepmerge-ts": "^8.0.2"
   }
 }

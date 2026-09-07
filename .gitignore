@@ -43,3 +43,6 @@ coverage/
 # a checked-in .pyc can be loaded in place of the reviewed .py.
 __pycache__/
 *.py[cod]
+
+# Local vector-store scratch written by the agent tooling, not a project artifact.
+ruvector.db

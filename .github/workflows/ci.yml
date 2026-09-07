@@ -5,6 +5,16 @@ on:
     branches: [main, master, develop]
   pull_request:
     branches: [main, master, develop]
+  workflow_dispatch:
+    inputs:
+      update_playwright_snapshots:
+        description: >-
+          Regenerate the storefront visual baselines on this runner and upload
+          them as an artifact. Visual snapshots are platform-specific, so they
+          can only be produced by the environment that asserts against them —
+          a developer machine, even a Linux one, renders fonts differently.
+        type: boolean
+        default: false
 
 # Cancel in-progress runs for the same ref on new pushes
 concurrency:
@@ -277,8 +287,25 @@ jobs:
         run: npx playwright install chromium --with-deps
 
       - name: Run Playwright E2E tests
+        if: ${{ inputs.update_playwright_snapshots != true }}
         working-directory: storefront
         run: npm run test:e2e
+
+      # Baselines can only be minted by the runner that checks them. Run this
+      # workflow manually with the input set, download `playwright-snapshots`,
+      # and commit its contents.
+      - name: Regenerate visual baselines
+        if: ${{ inputs.update_playwright_snapshots == true }}
+        working-directory: storefront
+        run: npx playwright test --update-snapshots
+
+      - name: Upload regenerated baselines
+        if: ${{ inputs.update_playwright_snapshots == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-snapshots
+          path: storefront/tests/e2e/**/*-snapshots/
+          if-no-files-found: error
 
       - name: Upload Playwright report
         if: failure()

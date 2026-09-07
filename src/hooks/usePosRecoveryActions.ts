@@ -75,7 +75,7 @@ export function usePosRecoveryActions({
 
   const handleAction = useCallback((key: string) => {
     if (key === "reprice-cart" && cart) {
-      void posRepriceCart(cart)
+      void posRepriceCart(cart, sessionToken)
         .then(result => {
           setCart(result.cart);
           if (result.changed.length === 0) {

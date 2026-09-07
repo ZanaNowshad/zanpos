@@ -504,7 +504,7 @@ pub async fn settings_update_branch(
 #[tauri::command]
 pub async fn setup_save_benefit_number(
     benefit_number: String,
-    actor_user_id: Option<String>,
+    session_token: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     // F-HIGH-03: Apply RBAC post-setup. During initial setup wizard the owner has not
@@ -517,8 +517,13 @@ pub async fn setup_save_benefit_number(
             .flatten()
             .flatten();
     if setup_done.as_deref() == Some("1") {
-        let uid = actor_user_id.as_deref().unwrap_or("");
-        crate::commands::rbac::manager_or_owner(&state.db, uid).await?;
+        crate::commands::rbac::session_actor(
+            &state.sessions,
+            &state.db,
+            session_token.as_deref().unwrap_or_default(),
+            crate::commands::rbac::MANAGER_OR_OWNER,
+        )
+        .await?;
     }
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(

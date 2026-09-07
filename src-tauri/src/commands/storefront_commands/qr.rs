@@ -8,8 +8,8 @@ use tauri::State;
 /// printable for the shop counter. Generated locally by the sidecar's qrcode
 /// package; nothing leaves the machine.
 #[tauri::command]
-pub async fn storefront_qr(actor_user_id: String, state: State<'_, AppState>) -> AppResult<String> {
-    rbac::manager_or_owner(&state.db, &actor_user_id).await?;
+pub async fn storefront_qr(session_token: String, state: State<'_, AppState>) -> AppResult<String> {
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::MANAGER_OR_OWNER).await?;
     let url = cfg(&state.db, "storefront_public_url").await?;
     if url.trim().is_empty() {
         return Err(AppError::Validation(

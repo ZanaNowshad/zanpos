@@ -268,18 +268,18 @@ export const posStartCart = (
   branch_id: string,
   device_id: string,
   shift_id: string,
-  cashier_user_id: string
+  session_token: SessionToken
 ): Promise<{ cart: Cart }> =>
-  invoke("pos_start_cart", { input: { branch_id, device_id, shift_id, cashier_user_id } });
+  invoke("pos_start_cart", { input: { branch_id, device_id, shift_id, session_token } });
 
-export const posAddItem = (cart: Cart, product_id: string, quantity?: string): Promise<Cart> =>
-  invoke("pos_add_item", { input: { cart, product_id, quantity } });
+export const posAddItem = (cart: Cart, product_id: string, quantity: string | undefined, session_token: SessionToken): Promise<Cart> =>
+  invoke("pos_add_item", { input: { cart, product_id, quantity, session_token } });
 
-export const posAddItemByBarcode = (cart: Cart, barcode: string): Promise<Cart> =>
-  invoke("pos_add_item_by_barcode", { input: { cart, barcode } });
+export const posAddItemByBarcode = (cart: Cart, barcode: string, session_token: SessionToken): Promise<Cart> =>
+  invoke("pos_add_item_by_barcode", { input: { cart, barcode, session_token } });
 
-export const posUpdateQuantity = (cart: Cart, cart_line_id: string, quantity: string): Promise<Cart> =>
-  invoke("pos_update_quantity", { input: { cart, cart_line_id, quantity } });
+export const posUpdateQuantity = (cart: Cart, cart_line_id: string, quantity: string, session_token: SessionToken): Promise<Cart> =>
+  invoke("pos_update_quantity", { input: { cart, cart_line_id, quantity, session_token } });
 
 export const posSetLinePrice = (cart: Cart, cart_line_id: string, price_minor: number, manager_override_token: string): Promise<Cart> =>
   invoke("pos_set_line_price", { input: { cart, cart_line_id, price_minor, manager_override_token } });
@@ -301,11 +301,11 @@ export interface RepriceCartResult {
  *  Needs no manager authorization because it can only ever move a price toward
  *  what the shop has published — the opposite direction from the one worth
  *  controlling. Lines carrying an approved manager override are left alone. */
-export const posRepriceCart = (cart: Cart): Promise<RepriceCartResult> =>
-  invoke("pos_reprice_cart", { input: { cart } });
+export const posRepriceCart = (cart: Cart, session_token: SessionToken): Promise<RepriceCartResult> =>
+  invoke("pos_reprice_cart", { input: { cart, session_token } });
 
-export const posRemoveLine = (cart: Cart, cart_line_id: string): Promise<Cart> =>
-  invoke("pos_remove_line", { input: { cart, cart_line_id } });
+export const posRemoveLine = (cart: Cart, cart_line_id: string, session_token: SessionToken): Promise<Cart> =>
+  invoke("pos_remove_line", { input: { cart, cart_line_id, session_token } });
 
 export const posFinalizeSale = (
   cart: Cart,
@@ -324,16 +324,17 @@ export const posApplyBillDiscount = (cart: Cart, discount_minor: number, reason:
 export const posApplyLineDiscount = (cart: Cart, cart_line_id: string, discount_minor: number, reason: string, session_token: SessionToken, manager_override_token?: string): Promise<Cart> =>
   invoke("pos_apply_line_discount", { input: { cart, cart_line_id, discount_minor, reason, session_token, manager_override_token } });
 
-export const posSetLineNote = (cart: Cart, cart_line_id: string, note: string | null): Promise<Cart> =>
-  invoke("pos_set_line_note", { input: { cart, cart_line_id, note } });
+export const posSetLineNote = (cart: Cart, cart_line_id: string, note: string | null, session_token: SessionToken): Promise<Cart> =>
+  invoke("pos_set_line_note", { input: { cart, cart_line_id, note, session_token } });
 
 export const posAddCustomItem = (
   cart: Cart,
   name: string,
   price_minor: number,
   quantity: string,
+  session_token: SessionToken,
 ): Promise<Cart> =>
-  invoke("pos_add_custom_item", { input: { cart, name, price_minor, quantity } });
+  invoke("pos_add_custom_item", { input: { cart, name, price_minor, quantity, session_token } });
 
 /** Load a completed sale back into a Cart for editing.
  *  Returns a pre-populated Cart with each line item as a custom item
@@ -343,10 +344,10 @@ export const posLoadSaleForEdit = (
   branch_id: string,
   device_id: string,
   shift_id: string,
-  cashier_user_id: string,
+  session_token: SessionToken,
 ): Promise<Cart> =>
   invoke("pos_load_sale_for_edit", {
-    input: { receipt_number, branch_id, device_id, shift_id, cashier_user_id },
+    input: { receipt_number, branch_id, device_id, shift_id, session_token },
   });
 
 export interface VoidSaleResult {
@@ -366,14 +367,14 @@ export const posRecordVoid = (
 ): Promise<void> =>
   invoke("pos_record_void", { cartId: cart_id, deviceId: device_id, sessionToken, lineCount: line_count, netTotalMinor: net_total_minor });
 
-export const posCartSummary = (cart: Cart): Promise<{
+export const posCartSummary = (cart: Cart, sessionToken: SessionToken): Promise<{
   gross_total_minor: number;
   tax_total_minor: number;
   discount_total_minor: number;
   net_total_minor: number;
   line_count: number;
 }> =>
-  invoke("pos_cart_summary", { cart });
+  invoke("pos_cart_summary", { cart, sessionToken });
 
 // ─── Held cart commands ───────────────────────────────────────────────────────
 
@@ -391,8 +392,8 @@ export const heldCartDelete = (sessionToken: SessionToken, held_cart_id: string)
 
 // ─── Refund commands ──────────────────────────────────────────────────────────
 
-export const refundGetSale = (receipt_number: string, requesting_user_id: string): Promise<SaleForRefund> =>
-  invoke("refund_get_sale", { receiptNumber: receipt_number, requestingUserId: requesting_user_id });
+export const refundGetSale = (receipt_number: string, sessionToken: SessionToken): Promise<SaleForRefund> =>
+  invoke("refund_get_sale", { receiptNumber: receipt_number, sessionToken });
 
 export const refundCreate = (
   original_sale_id: string,
@@ -415,8 +416,8 @@ export const refundCreate = (
     },
   });
 
-export const receiptReprint = (receipt_number: string, requesting_user_id: string): Promise<SaleResult> =>
-  invoke("receipt_reprint", { receiptNumber: receipt_number, requestingUserId: requesting_user_id });
+export const receiptReprint = (receipt_number: string, sessionToken: SessionToken): Promise<SaleResult> =>
+  invoke("receipt_reprint", { receiptNumber: receipt_number, sessionToken });
 
 // ─── Report commands ──────────────────────────────────────────────────────────
 

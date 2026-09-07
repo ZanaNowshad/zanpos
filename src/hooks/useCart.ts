@@ -63,7 +63,7 @@ export function useCart(
     setLoading(true);
     setError(null);
     try {
-      let updated = await cmd.posAddItemByBarcode(cart, barcode);
+      let updated = await cmd.posAddItemByBarcode(cart, barcode, session.session_token);
       const changedId = findChangedLineId(cart, updated);
 
       // Apply quantity prefix: posAddItemByBarcode already added 1;
@@ -73,7 +73,7 @@ export function useCart(
         const existingLine = cart.lines.find(l => l.cart_line_id === changedId);
         const baseQty = existingLine ? parseFloat(existingLine.quantity) : 0;
         const finalQty = existingLine ? String(baseQty + qty) : String(qty);
-        updated = await cmd.posUpdateQuantity(updated, changedId, finalQty);
+        updated = await cmd.posUpdateQuantity(updated, changedId, finalQty, session.session_token);
       }
 
       setRecentLineId(findChangedLineId(cart, updated));
@@ -85,7 +85,7 @@ export function useCart(
     } finally {
       setLoading(false);
     }
-  }, [cart]);
+  }, [cart, session.session_token]);
 
   /* The quick-add rail knows a product_id and nothing else. Sharing this path
      with `addProduct` keeps a tile and a scan identical — same command, same
@@ -95,7 +95,7 @@ export function useCart(
     setLoading(true);
     setError(null);
     try {
-      const updated = await cmd.posAddItem(cart, productId, qty);
+      const updated = await cmd.posAddItem(cart, productId, qty, session.session_token);
       setRecentLineId(findChangedLineId(cart, updated));
       setCart(updated);
       return updated;
@@ -105,13 +105,13 @@ export function useCart(
     } finally {
       setLoading(false);
     }
-  }, [cart]);
+  }, [cart, session.session_token]);
 
   const addProduct = useCallback(async (product: ProductWithPrice, qty?: string): Promise<Cart> => {
     setLoading(true);
     setError(null);
     try {
-      const updated = await cmd.posAddItem(cart, product.product_id, qty);
+      const updated = await cmd.posAddItem(cart, product.product_id, qty, session.session_token);
       setRecentLineId(findChangedLineId(cart, updated));
       setCart(updated);
       return updated;
@@ -121,20 +121,20 @@ export function useCart(
     } finally {
       setLoading(false);
     }
-  }, [cart]);
+  }, [cart, session.session_token]);
 
   const updateQuantity = useCallback(async (cart_line_id: string, quantity: string) => {
     try {
-      const updated = await cmd.posUpdateQuantity(cart, cart_line_id, quantity);
+      const updated = await cmd.posUpdateQuantity(cart, cart_line_id, quantity, session.session_token);
       setCart(updated);
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Invalid quantity");
     }
-  }, [cart]);
+  }, [cart, session.session_token]);
 
   const removeLine = useCallback(async (cart_line_id: string) => {
     try {
-      const updated = await cmd.posRemoveLine(cart, cart_line_id);
+      const updated = await cmd.posRemoveLine(cart, cart_line_id, session.session_token);
       // Point recent at the new last active line
       const active = updated.lines.filter(l => !l.voided);
       setRecentLineId(active.at(-1)?.cart_line_id ?? null);
@@ -142,7 +142,7 @@ export function useCart(
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to remove item");
     }
-  }, [cart]);
+  }, [cart, session.session_token]);
 
   const applyBillDiscount = useCallback(async (discount_minor: number, reason: string, managerOverrideToken?: string) => {
     try {
@@ -174,7 +174,7 @@ export function useCart(
     setError(null);
     try {
       const priceMinor = parseMoney(priceMajor, DEVICE.currency_exponent);
-      const updated = await cmd.posAddCustomItem(cart, name, priceMinor, quantity);
+      const updated = await cmd.posAddCustomItem(cart, name, priceMinor, quantity, session.session_token);
       setRecentLineId(findChangedLineId(cart, updated));
       setCart(updated);
     } catch (e: unknown) {
@@ -186,7 +186,7 @@ export function useCart(
     } finally {
       setLoading(false);
     }
-  }, [cart]);
+  }, [cart, session.session_token]);
 
   const setLinePrice = useCallback(async (cart_line_id: string, priceMinor: number, managerOverrideToken: string) => {
     try {
@@ -200,12 +200,12 @@ export function useCart(
 
   const setLineNote = useCallback(async (cart_line_id: string, note: string | null) => {
     try {
-      const updated = await cmd.posSetLineNote(cart, cart_line_id, note);
+      const updated = await cmd.posSetLineNote(cart, cart_line_id, note, session.session_token);
       setCart(updated);
     } catch (e: unknown) {
       setError(typeof e === "string" ? e : "Failed to set note");
     }
-  }, [cart]);
+  }, [cart, session.session_token]);
 
   const finalizeSale = useCallback(async (
     payments: PaymentInput[],
@@ -264,17 +264,17 @@ export function useCart(
     const current = parseFloat(line.quantity);
     const next = current + delta;
     if (next <= 0) {
-      await cmd.posRemoveLine(cart, cart_line_id).then(updated => {
+      await cmd.posRemoveLine(cart, cart_line_id, session.session_token).then(updated => {
         const active = updated.lines.filter(l => !l.voided);
         setRecentLineId(active.at(-1)?.cart_line_id ?? null);
         setCart(updated);
       }).catch((e: unknown) => setError(typeof e === "string" ? e : "Failed to remove item"));
     } else {
-      await cmd.posUpdateQuantity(cart, cart_line_id, String(next)).then(updated => {
+      await cmd.posUpdateQuantity(cart, cart_line_id, String(next), session.session_token).then(updated => {
         setCart(updated);
       }).catch((e: unknown) => setError(typeof e === "string" ? e : "Invalid quantity"));
     }
-  }, [cart]);
+  }, [cart, session.session_token]);
 
   /** Increment quantity of the most recently touched line (keyboard shortcut). */
   const bumpRecentQty = useCallback(async (delta: number) => {

@@ -18,9 +18,7 @@ const REASON_CODE_LABELS: Record<string, string> = {
 };
 
 interface Props {
-  cashierUserId: string;
-  /** Authorises the refund. `cashierUserId` still scopes the sale lookups,
-   *  which have not moved to session auth yet. */
+  /** Authorises the refund and scopes every sale lookup behind it. */
   sessionToken: SessionToken;
   onClose: () => void;
   onExchangeStarted?: (exchange: { refund: RefundResult; creditMinor: number; originalReceipt: string }) => void;
@@ -33,7 +31,7 @@ function todayStr() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Bahrain" });
 }
 
-export default function RefundModal({ cashierUserId, sessionToken, onClose, onExchangeStarted }: Props) {
+export default function RefundModal({ sessionToken, onClose, onExchangeStarted }: Props) {
   const { language } = useLanguage();
   const t = useMemo(() => modalTranslator(language), [language]);
   const dt = useMemo(() => detailTranslator(language), [language]);
@@ -72,7 +70,7 @@ export default function RefundModal({ cashierUserId, sessionToken, onClose, onEx
     setSale(null);
     setRefundQtys(new Map());
     try {
-      const found = await refundGetSale(receiptInput.trim().toUpperCase(), cashierUserId);
+      const found = await refundGetSale(receiptInput.trim().toUpperCase(), sessionToken);
       attemptKey.current = null;
       setSale(found);
       setRefundQtys(initQtyMap(found.items));
@@ -113,7 +111,7 @@ export default function RefundModal({ cashierUserId, sessionToken, onClose, onEx
     setSale(null);
     setRefundQtys(new Map());
     try {
-      const found = await refundGetSale(row.receipt_number, cashierUserId);
+      const found = await refundGetSale(row.receipt_number, sessionToken);
       setSale(found);
       setRefundQtys(initQtyMap(found.items));
     } catch (e: unknown) {

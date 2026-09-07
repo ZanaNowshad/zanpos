@@ -22,6 +22,36 @@ use ulid::Ulid;
 /// PIN against active manager and owner accounts, and it is consumed here so
 /// the same approval cannot cover a second discount. The role is re-checked
 /// rather than inferred from a decision up to sixty seconds old.
+/// Authenticate the caller and confirm the cart they sent is their own.
+///
+/// Every till command used to check `cart.cashier_user_id` — an id that arrived
+/// in the payload — so the question answered was "is this *a* real cashier",
+/// never "is this the caller". The cart is the caller's working state and the
+/// name on it becomes the name on the sale, so both have to come from the
+/// session; a cart naming someone else is refused rather than quietly
+/// re-attributed.
+async fn cart_actor(
+    state: &AppState,
+    session_token: &str,
+    cart_branch_id: &str,
+    cart_cashier_user_id: &str,
+) -> Result<crate::auth_session::AuthenticatedActor, AppError> {
+    let actor = crate::commands::rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        session_token,
+        crate::commands::rbac::POS_ROLES,
+    )
+    .await?;
+    crate::commands::rbac::require_branch(&actor, cart_branch_id)?;
+    if cart_cashier_user_id != actor.user_id {
+        return Err(AppError::Permission(
+            "This cart belongs to a different cashier than the signed-in one.".into(),
+        ));
+    }
+    Ok(actor)
+}
+
 async fn manager_approval(
     pool: &sqlx::SqlitePool,
     token: Option<&str>,
@@ -41,10 +71,11 @@ async fn manager_approval(
 
 #[derive(serde::Deserialize)]
 pub struct StartCartInput {
+    /// Proves who is working this cart. The cashier is derived from it.
+    pub session_token: String,
     pub branch_id: String,
     pub device_id: String,
     pub shift_id: String,
-    pub cashier_user_id: String,
 }
 
 #[derive(serde::Serialize)]
@@ -57,12 +88,21 @@ pub async fn pos_start_cart(
     input: StartCartInput,
     state: State<'_, AppState>,
 ) -> Result<StartCartResult, AppError> {
-    crate::commands::rbac::require_any_role(&state.db, &input.cashier_user_id).await?;
+    // The cashier is the caller, so it is resolved here rather than accepted.
+    let actor = crate::commands::rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &input.session_token,
+        crate::commands::rbac::POS_ROLES,
+    )
+    .await?;
+    crate::commands::rbac::require_branch(&actor, &input.branch_id)?;
+    let cashier_user_id = actor.user_id;
     let cart = Cart::new(
         input.branch_id,
         input.device_id,
         input.shift_id,
-        input.cashier_user_id,
+        cashier_user_id,
     );
     Ok(StartCartResult { cart })
 }
@@ -70,6 +110,9 @@ pub async fn pos_start_cart(
 #[derive(serde::Deserialize)]
 pub struct AddItemInput {
     pub cart: Cart,
+    /// Proves who is working this cart. `cashier_user_id` arrives in the
+    /// payload and cannot establish that on its own.
+    pub session_token: String,
     pub product_id: String,
     pub quantity: Option<String>,
 }
@@ -139,7 +182,13 @@ pub async fn pos_add_item(
     input: AddItemInput,
     state: State<'_, AppState>,
 ) -> Result<Cart, AppError> {
-    crate::commands::rbac::require_any_role(&state.db, &input.cart.cashier_user_id).await?;
+    cart_actor(
+        &state,
+        &input.session_token,
+        &input.cart.branch_id,
+        &input.cart.cashier_user_id,
+    )
+    .await?;
     let product = product_repo::get_product_by_id(&state.db, &input.product_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Product {} not found", input.product_id)))?;
@@ -168,6 +217,9 @@ pub async fn pos_add_item(
 #[derive(serde::Deserialize)]
 pub struct AddItemByBarcodeInput {
     pub cart: Cart,
+    /// Proves who is working this cart. `cashier_user_id` arrives in the
+    /// payload and cannot establish that on its own.
+    pub session_token: String,
     pub barcode: String,
 }
 
@@ -176,7 +228,13 @@ pub async fn pos_add_item_by_barcode(
     input: AddItemByBarcodeInput,
     state: State<'_, AppState>,
 ) -> Result<Cart, AppError> {
-    crate::commands::rbac::require_any_role(&state.db, &input.cart.cashier_user_id).await?;
+    cart_actor(
+        &state,
+        &input.session_token,
+        &input.cart.branch_id,
+        &input.cart.cashier_user_id,
+    )
+    .await?;
     let product = match product_repo::get_product_by_barcode(&state.db, &input.barcode).await? {
         Some(p) => p,
         None => {
@@ -200,6 +258,9 @@ pub async fn pos_add_item_by_barcode(
 #[derive(serde::Deserialize)]
 pub struct RepriceCartInput {
     pub cart: Cart,
+    /// Proves who is working this cart. `cashier_user_id` arrives in the
+    /// payload and cannot establish that on its own.
+    pub session_token: String,
 }
 
 #[derive(serde::Serialize)]
@@ -237,7 +298,13 @@ pub async fn pos_reprice_cart(
     input: RepriceCartInput,
     state: State<'_, AppState>,
 ) -> Result<RepriceCartResult, AppError> {
-    crate::commands::rbac::require_any_role(&state.db, &input.cart.cashier_user_id).await?;
+    cart_actor(
+        &state,
+        &input.session_token,
+        &input.cart.branch_id,
+        &input.cart.cashier_user_id,
+    )
+    .await?;
     let mut cart = input.cart;
 
     let overridden: std::collections::HashSet<String> = sqlx::query_scalar::<_, String>(
@@ -289,6 +356,9 @@ pub async fn pos_reprice_cart(
 #[derive(serde::Deserialize)]
 pub struct UpdateQuantityInput {
     pub cart: Cart,
+    /// Proves who is working this cart. `cashier_user_id` arrives in the
+    /// payload and cannot establish that on its own.
+    pub session_token: String,
     pub cart_line_id: String,
     pub quantity: String,
 }
@@ -298,7 +368,13 @@ pub async fn pos_update_quantity(
     input: UpdateQuantityInput,
     state: State<'_, AppState>,
 ) -> Result<Cart, AppError> {
-    crate::commands::rbac::require_any_role(&state.db, &input.cart.cashier_user_id).await?;
+    cart_actor(
+        &state,
+        &input.session_token,
+        &input.cart.branch_id,
+        &input.cart.cashier_user_id,
+    )
+    .await?;
     // Validate quantity using integer-only arithmetic (no f64 round-trips).
     if !crate::domain::money::qty_in_range(&input.quantity, 1_000_000) {
         return Err(AppError::Validation(format!(
@@ -468,6 +544,9 @@ pub async fn pos_set_line_price(
 #[derive(serde::Deserialize)]
 pub struct RemoveLineInput {
     pub cart: Cart,
+    /// Proves who is working this cart. `cashier_user_id` arrives in the
+    /// payload and cannot establish that on its own.
+    pub session_token: String,
     pub cart_line_id: String,
 }
 
@@ -476,7 +555,13 @@ pub async fn pos_remove_line(
     input: RemoveLineInput,
     state: State<'_, AppState>,
 ) -> Result<Cart, AppError> {
-    crate::commands::rbac::require_any_role(&state.db, &input.cart.cashier_user_id).await?;
+    cart_actor(
+        &state,
+        &input.session_token,
+        &input.cart.branch_id,
+        &input.cart.cashier_user_id,
+    )
+    .await?;
     let mut cart = input.cart;
     sqlx::query("DELETE FROM pos_price_overrides WHERE cart_id = ? AND cart_line_id = ?")
         .bind(&cart.cart_id)
@@ -952,6 +1037,9 @@ pub async fn pos_apply_line_discount(
 #[derive(serde::Deserialize)]
 pub struct SetLineNoteInput {
     pub cart: Cart,
+    /// Proves who is working this cart. `cashier_user_id` arrives in the
+    /// payload and cannot establish that on its own.
+    pub session_token: String,
     pub cart_line_id: String,
     pub note: Option<String>,
 }
@@ -961,7 +1049,13 @@ pub async fn pos_set_line_note(
     input: SetLineNoteInput,
     state: State<'_, AppState>,
 ) -> Result<Cart, AppError> {
-    crate::commands::rbac::require_any_role(&state.db, &input.cart.cashier_user_id).await?;
+    cart_actor(
+        &state,
+        &input.session_token,
+        &input.cart.branch_id,
+        &input.cart.cashier_user_id,
+    )
+    .await?;
     let mut cart = input.cart;
     if let Some(line) = cart
         .lines
@@ -978,6 +1072,9 @@ pub async fn pos_set_line_note(
 #[derive(serde::Deserialize)]
 pub struct AddCustomItemInput {
     pub cart: Cart,
+    /// Proves who is working this cart. `cashier_user_id` arrives in the
+    /// payload and cannot establish that on its own.
+    pub session_token: String,
     pub name: String,
     pub price_minor: i64,
     pub quantity: Option<String>,
@@ -988,7 +1085,13 @@ pub async fn pos_add_custom_item(
     input: AddCustomItemInput,
     state: State<'_, AppState>,
 ) -> Result<Cart, AppError> {
-    crate::commands::rbac::require_any_role(&state.db, &input.cart.cashier_user_id).await?;
+    cart_actor(
+        &state,
+        &input.session_token,
+        &input.cart.branch_id,
+        &input.cart.cashier_user_id,
+    )
+    .await?;
     if input.name.trim().is_empty() {
         return Err(AppError::Validation("Item name is required".into()));
     }
@@ -1110,9 +1213,16 @@ pub struct CartSummary {
 #[tauri::command]
 pub async fn pos_cart_summary(
     cart: Cart,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<CartSummary, AppError> {
-    crate::commands::rbac::require_any_role(&state.db, &cart.cashier_user_id).await?;
+    cart_actor(
+        &state,
+        &session_token,
+        &cart.branch_id,
+        &cart.cashier_user_id,
+    )
+    .await?;
     Ok(CartSummary {
         gross_total_minor: cart.gross_total(),
         tax_total_minor: cart.tax_total(),
@@ -1212,11 +1322,12 @@ pub async fn pos_record_void(
 
 #[derive(serde::Deserialize)]
 pub struct LoadSaleForEditInput {
+    /// Proves who is working this cart. The cashier is derived from it.
+    pub session_token: String,
     pub receipt_number: String,
     pub branch_id: String,
     pub device_id: String,
     pub shift_id: String,
-    pub cashier_user_id: String,
 }
 
 /// Load a completed sale back into a Cart for editing.
@@ -1228,7 +1339,16 @@ pub async fn pos_load_sale_for_edit(
     input: LoadSaleForEditInput,
     state: State<'_, AppState>,
 ) -> Result<Cart, AppError> {
-    crate::commands::rbac::require_any_role(&state.db, &input.cashier_user_id).await?;
+    // The cashier is the caller, so it is resolved here rather than accepted.
+    let actor = crate::commands::rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &input.session_token,
+        crate::commands::rbac::POS_ROLES,
+    )
+    .await?;
+    crate::commands::rbac::require_branch(&actor, &input.branch_id)?;
+    let cashier_user_id = actor.user_id;
 
     let rows = sqlx::query(
         "SELECT si.product_name_snapshot, si.quantity, si.unit_price_minor,
@@ -1254,7 +1374,7 @@ pub async fn pos_load_sale_for_edit(
         input.branch_id,
         input.device_id,
         input.shift_id,
-        input.cashier_user_id,
+        cashier_user_id,
     );
 
     for row in &rows {

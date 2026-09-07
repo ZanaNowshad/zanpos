@@ -95,7 +95,6 @@ export default function PosOperationsModals({
 
       {activeModal.kind === "refund" && (
         <RefundModal
-          cashierUserId={sessionUser.user_id}
           sessionToken={sessionUser.session_token}
           onExchangeStarted={({ refund, creditMinor, originalReceipt }) => {
             setExchangeCredit({

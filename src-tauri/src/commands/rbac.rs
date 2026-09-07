@@ -39,6 +39,12 @@ pub async fn require_role(
 }
 
 /// Shorthand — owner only.
+///
+/// No shipping command calls this any more: every owner-gated command resolves
+/// its caller with [`session_actor`] instead. It is kept for the authorization
+/// invariant that states the payload-derived gate as an executable fact, and
+/// is compiled only under test so it cannot quietly acquire a caller again.
+#[cfg(test)]
 pub async fn owner_only(pool: &SqlitePool, user_id: &str) -> Result<(), AppError> {
     require_role(pool, user_id, &["owner"]).await
 }
@@ -115,7 +121,6 @@ pub async fn session_actor(
 /// A branch id in a payload names which branch is being acted on; it does not
 /// establish which branch the caller belongs to. Only an owner may reach
 /// outside their own branch.
-#[allow(dead_code)] // Used by the authorization invariants; wired in as the branch-scoped families migrate.
 pub fn require_branch(
     actor: &crate::auth_session::AuthenticatedActor,
     branch_id: &str,

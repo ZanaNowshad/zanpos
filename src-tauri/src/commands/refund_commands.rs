@@ -20,29 +20,26 @@ pub fn sanitise_reason_code(code: &str) -> &str {
 #[tauri::command]
 pub async fn refund_get_sale(
     receipt_number: String,
-    requesting_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<SaleForRefund, AppError> {
     // Any active user may look up a sale by receipt number for refund purposes.
     // The cross-device refund policy is enforced in refund_create, not here.
-    rbac::require_any_role(&state.db, &requesting_user_id).await?;
+    rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::ANY_ROLE).await?;
     refund_repo::get_sale_by_receipt(&state.db, &receipt_number).await
 }
 
 #[tauri::command]
 pub async fn receipt_reprint(
     receipt_number: String,
-    requesting_user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> Result<SaleResult, AppError> {
-    // Any active user (cashier, manager, or owner) may reprint a receipt.
-    // The user_id must be valid and active in the DB — unauthenticated callers are rejected.
-    rbac::require_role(
-        &state.db,
-        &requesting_user_id,
-        &["owner", "manager", "cashier"],
-    )
-    .await?;
+    // Any till user may reprint a receipt, but the audit entry below names who
+    // did — so that name comes from the session rather than the payload.
+    let actor =
+        rbac::session_actor(&state.sessions, &state.db, &session_token, rbac::POS_ROLES).await?;
+    let requesting_user_id = actor.user_id;
     let sale = refund_repo::get_sale_result_by_receipt(&state.db, &receipt_number).await
         .map_err(|e| {
             if matches!(e, AppError::NotFound(_)) {

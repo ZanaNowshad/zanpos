@@ -280,10 +280,16 @@ pub struct BackupStatus {
 
 #[tauri::command]
 pub async fn backup_status(
-    actor_user_id: String,
+    session_token: String,
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<BackupStatus, crate::errors::AppError> {
-    crate::commands::rbac::owner_only(&state.db, &actor_user_id).await?;
+    crate::commands::rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        crate::commands::rbac::OWNER_ONLY,
+    )
+    .await?;
     let configured = app_config(&state.db, "storefront_publish_url")
         .await
         .is_some();
@@ -298,12 +304,18 @@ pub async fn backup_status(
 /// Runs a backup immediately instead of waiting for the daily cycle.
 #[tauri::command]
 pub async fn backup_run_now(
-    actor_user_id: String,
+    session_token: String,
     app: tauri::AppHandle,
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<bool, crate::errors::AppError> {
     use tauri::Manager;
-    crate::commands::rbac::owner_only(&state.db, &actor_user_id).await?;
+    crate::commands::rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        crate::commands::rbac::OWNER_ONLY,
+    )
+    .await?;
     let db_path = app
         .path()
         .app_data_dir()

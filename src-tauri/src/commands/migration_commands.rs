@@ -2540,10 +2540,19 @@ pub async fn migration_zanpos_stats(state: State<'_, AppState>) -> AppResult<Zan
 #[tauri::command]
 pub async fn migration_rollback(
     since_iso: String,
-    user_id: String,
+    session_token: String,
     state: State<'_, AppState>,
 ) -> AppResult<RollbackResult> {
-    crate::commands::rbac::manager_or_owner(&state.db, &user_id).await?;
+    // This deletes imported rows in bulk, and names someone in the audit
+    // entry for having done it. Both come from the caller's session.
+    let actor = crate::commands::rbac::session_actor(
+        &state.sessions,
+        &state.db,
+        &session_token,
+        crate::commands::rbac::MANAGER_OR_OWNER,
+    )
+    .await?;
+    let user_id = actor.user_id;
     let pool = &state.db;
     let mut tx = pool.begin().await?;
 

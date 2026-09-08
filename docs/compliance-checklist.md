@@ -1,7 +1,16 @@
 # ZANPOS — POS Compliance Checklist
 
 **Scope:** PCI DSS (payment security), Bahrain NBR VAT requirements, and general financial-control standards for retail POS software.
-**Verdict:** PASS on automated checks. Several items require human sign-off before production. See status column.
+**Verdict:** One **open defect** blocks the VAT gate — a whole-bill discount is
+applied after line tax, so output VAT is overstated on any discounted bill
+(§2.3, and `docs/vat-receipt-review.md`). Everything else passes automated
+checks; several items still require human sign-off. See the status column.
+
+> This document previously read PASS with no qualification while marking the VAT
+> breakdown ✅ VERIFIED. It was not — the breakdown is wrong whenever a bill
+> discount is used. A compliance sheet that certifies an untested claim is worse
+> than one that admits a gap, so rows now cite the assertion or test that backs
+> them, and anything not actually verified says so.
 
 ---
 
@@ -29,11 +38,18 @@
 | Requirement | Evidence | Status |
 |---|---|---|
 | Sequential receipt numbers | `next_receipt_number()` in `sale_repo.rs` generates `{BRANCH}-{DEVICE}-{08d}` sequential numbers. | ✅ VERIFIED |
-| No gaps in sequence within a device | Counter increments by `COUNT(*) + 1` per branch/device prefix. Gaps can occur if a sale fails after receipt number generation but before commit. | ⚠️ KNOWN GAP |
+| No gaps in sequence within a device | `devices.next_receipt_seq` is incremented atomically by `UPDATE … RETURNING next_receipt_seq - 1`, inside the sale transaction — a rolled-back sale rolls the number back with it. Proven by `the_receipt_sequence_has_no_gaps_across_sales_and_refunds`. | ✅ VERIFIED |
 | Refund receipts numbered separately | `next_refund_receipt_number()` in `refund_repo.rs` generates `{BRANCH}-{DEVICE}-REF-{08d}`. | ✅ VERIFIED |
 | Void receipts | `sales.status = 'voided'` recorded; void is traceable in audit log. | ✅ VERIFIED |
 
-**Known gap — receipt number gaps:** If `finalize_sale` generates a receipt number but then the DB transaction fails (e.g. power cut between `next_receipt_number()` and `tx.commit()`), the number is wasted and a gap appears. This is a very narrow window (< 50 ms). NBR does not mandate zero-gap sequences for electronic POS systems. Document as acceptable for beta; evaluate atomic sequence with `RETURNING` in Phase 2.
+**Closed — was "receipt number gaps".** This section previously described the
+counter as `COUNT(*) + 1` and recorded a gap whenever a sale failed between
+numbering and commit, deferring an atomic sequence to "Phase 2". That work has
+landed. The counter is now a column on `devices`, incremented with
+`UPDATE … RETURNING`, and `next_receipt_number` is called with the sale's own
+transaction, so an abandoned sale returns its number rather than burning it.
+Because the counter no longer derives from row counts, pruning old sales also
+cannot cause a collision.
 
 ### 2.2 Timestamps
 
@@ -48,12 +64,14 @@
 | Requirement | Evidence | Status |
 |---|---|---|
 | VAT rate captured per line item | `tax_rule_snapshot` JSON column on `sale_items` stores `rule_id`, `rate_basis_points`, `inclusive`. | ✅ VERIFIED |
-| Tax calculated correctly (exclusive) | `calc_tax_exclusive(subtotal, rate_bp) = subtotal * rate_bp / 10000`. Integration test `test_finalize_sale_happy_path` verifies 10% on 800 fils = 80 fils. | ✅ VERIFIED |
-| Tax calculated correctly (inclusive) | `tax = price * rate / (10000 + rate)`. Integration test `line_total_tax_inclusive` verifies. | ✅ VERIFIED |
-| Zero-rated items carry no tax | Integration test `test_finalize_sale_zero_tax_item` verifies 0 tax on zero-rated items. | ✅ VERIFIED |
-| VAT breakdown on receipt | Receipt shows "Subtotal (excl. VAT)", "VAT", and "Total" rows when tax > 0. | ✅ VERIFIED |
-| VAT registration number on receipt | `TRN: {tax_number}` printed in ESC/POS builder and HTML receipt. `SettingsTab` preview updated. | ✅ VERIFIED |
-| VAT breakdown on receipt (subtotal excl. VAT) | When `tax_total_minor > 0`, receipt shows "Subtotal (excl. VAT)", "VAT", then "Total" — both in HTML and ESC/POS output. | ✅ VERIFIED |
+| Tax calculated correctly (exclusive) | `calc_tax_exclusive = (subtotal × rate_bp + 5000) / 10000` — integer, round-half-up. 10% on 800 fils = 80 fils. | ✅ VERIFIED |
+| Tax calculated correctly (inclusive) | `(price × rate + (10000+rate)/2) / (10000 + rate)` — integer, round-half-up. | ✅ VERIFIED |
+| Tax computed server-side only | `finalize_sale` recomputes every line from first principles and ignores client-supplied totals, so a compromised frontend cannot set tax. | ✅ VERIFIED |
+| Zero-rated items carry no tax | Asserted directly: `result.tax_total_minor, 0, "zero-rated items carry no tax"`. | ✅ VERIFIED |
+| Line-level discount reduces taxable amount | Asserted as `tax, 180, "10% of 1.800, not of 2.000"`. | ✅ VERIFIED |
+| **Whole-bill discount reduces taxable amount** | **It does not.** Line tax is computed first and the bill discount subtracted afterwards, so `tax_total_minor` is VAT on the pre-discount amount. On the existing test's figures the receipt prints an implied 11.76% against a 10% rate, overstating output VAT by 0.027 BHD on a 1.900 BHD sale. See `docs/vat-receipt-review.md` §3. | ❌ **OPEN DEFECT** |
+| VAT breakdown on receipt | Receipt shows "Subtotal (excl. VAT)", "VAT", "Total" when tax > 0 — but the subtotal is derived as `net − tax`, so it inherits the defect above whenever a bill discount is applied. The rate itself is never printed, and mixed-rate baskets get one combined figure with no per-rate split. | ⚠️ **REVIEW** |
+| VAT registration number on receipt | `TRN: {tax_number}` printed in ESC/POS builder and HTML receipt. Note that one toggle, `show_tax_number`, hides both TRN and CR number. | ⚠️ **REVIEW** |
 | Daily tax report | `report_tax_by_day` command returns daily totals with cumulative. | ✅ VERIFIED |
 
 ~~**Action required:** Add TRN (Tax Registration Number) field to `app_config` and print it on every receipt.~~ **✅ DONE** — `TRN:` label implemented in ESC/POS builder and HTML receipt; `SettingsTab` preview shows TRN from `branches.tax_number`. See row above.
@@ -72,7 +90,7 @@
 
 | Requirement | Evidence | Status |
 |---|---|---|
-| RBAC enforced | `rbac::manager_or_owner()` and `rbac::owner_only()` guards on all sensitive commands. | ✅ VERIFIED |
+| RBAC enforced | Every sensitive command resolves its caller from the session store via `rbac::session_actor`, never from the request payload. Enforced statically by `scripts/semgrep_validator/authorization.py`, which fails the build on any `#[tauri::command]` that neither authenticates nor appears in a documented `PRE_AUTH` list. `owner_only` is now `#[cfg(test)]` precisely so it cannot regain a shipping caller. | ✅ VERIFIED |
 | Shift open/close recorded | `shifts` table with `opened_at`, `closed_at`, `opening_cash_minor`, `counted_cash_minor`. | ✅ VERIFIED |
 | EOD cashup (X/Z report) | `report_tax_by_day` and shift-close flow. Z-report (closing) requires implementation verification. | ⏳ UI REVIEW |
 | Cash drawer movements audited | `cash_events` table from migration 0009; `paid_in`/`paid_out` events. | ✅ VERIFIED |
@@ -114,15 +132,17 @@
 |---|------|-------|----------|
 | 1 | ~~Add TRN field to `app_config`; print on every receipt~~ — **DONE**: `TRN:` label in ESC/POS + HTML receipt | Dev | ✅ |
 | 2 | ~~UI review: VAT breakdown visible on receipt printout~~ — **DONE**: subtotal/VAT/total rows implemented | QA | ✅ |
-| 3 | UI review: Z-report (shift-close) shows required fields | QA | P0 |
-| 4 | UI review: manager PIN required for price override | QA | P0 |
-| 5 | Enforce BitLocker (full-disk encryption) on all POS hardware | Ops | P0 |
-| 6 | Verify card terminal vendor's PCI certification (SAQ P2PE) | Ops | P0 |
-| 7 | Verify `upsert_rows` Supabase REST idempotency (sync_v2) | Dev | P0 |
-| 8 | Complete restore drill on real hardware; fill in sign-off template | Ops | P0 |
-| 9 | Permanently-failed sync event alerting | Dev | P1 |
-| 10 | Atomic receipt number (no gap on crash) | Dev | P2 |
-| 11 | Multi-device stock reconciliation nightly query | Dev | P2 |
+| 3 | **Fix whole-bill discount VAT (§2.3)** — blocked on the adviser's ruling on apportionment across mixed rates | Dev + Adviser | **P0** |
+| 4 | Finance/tax adviser review and sign-off — `docs/vat-receipt-review.md` | Adviser | P0 |
+| 5 | UI review: Z-report (shift-close) shows required fields | QA | P0 |
+| 6 | UI review: manager PIN required for price override | QA | P0 |
+| 7 | Enforce BitLocker (full-disk encryption) on all POS hardware | Ops | P0 |
+| 8 | Verify card terminal vendor's PCI certification (SAQ P2PE) | Ops | P0 |
+| 9 | Complete restore drill on real hardware; fill in sign-off template. Bench drill done — `docs/backup-restore-ops.md` §8 | Ops | P0 |
+| 10 | ~~Verify `upsert_rows` Supabase REST idempotency~~ — **DONE**: `Prefer: resolution=merge-duplicates` in `sync_v2/client.rs`, covered by `hub/rest_tests.rs` | Dev | ✅ |
+| 11 | ~~Permanently-failed sync event alerting~~ — **DONE**: `dead_letter::pending_count` raises `sync.quarantined_rows` at Critical | Dev | ✅ |
+| 12 | ~~Atomic receipt number (no gap on crash)~~ — **DONE**: `UPDATE … RETURNING`, see §2.1 | Dev | ✅ |
+| 13 | ~~Multi-device stock reconciliation query~~ — **DONE**: ledger-vs-cache drift raises `stock.ledger_mismatch`. Running it on a nightly schedule is still ops work | Dev | ✅ |
 
 ---
 
@@ -131,9 +151,10 @@
 | Gate | Who signs | Status |
 |---|---|---|
 | Automated CI all-green | CI system | ✅ Automated |
-| Backup/restore drill | Operations manager | ⏳ Pending |
-| Receipt VAT compliance review | Finance/tax adviser | ⏳ Pending |
+| Backup/restore drill | Operations manager | ⏳ Pending on hardware (bench drill passed — `backup-restore-ops.md` §8) |
+| Receipt VAT compliance review | Finance/tax adviser | ⏳ Pending — pack ready at `vat-receipt-review.md`, **one open defect** |
+| Whole-bill discount VAT fix | Developer, after the adviser rules | ❌ Open |
 | PCI terminal vendor cert on file | Operations manager | ⏳ Pending |
 | BitLocker enabled on all POS devices | IT administrator | ⏳ Pending |
-| Supabase RPC idempotency confirmed | Developer | ⏳ Pending |
+| Supabase RPC idempotency confirmed | Developer | ✅ Verified in code and test |
 | TRN printed on receipts | Developer + QA | ✅ Implemented (QA sign-off pending) |

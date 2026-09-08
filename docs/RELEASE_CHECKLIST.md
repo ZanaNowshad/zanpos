@@ -38,11 +38,14 @@ Produced by `npm run ship` — **SHIP GATE PASSED, 0 failures, 0 warnings.**
 | 18 | Install on a clean machine | NOT TESTED | no isolated environment available here |
 | 19 | POS hardware smoke | NOT TESTED | needs the shop — see below |
 
-Semgrep and Gitleaks were re-run locally at this commit (gates 15-16) rather than
-cited, because CI has not run since `2117523`. Still attributed to that last
-fully-green run, covering work this commit does not touch: frontend **503 tests /
-70 files**, storefront unit **11 tests**, and storefront Playwright **102 tests**
-against the *built* bundle at desktop, Pixel 5 and Arabic.
+| 20 | Storefront Playwright E2E | PASS | at this commit — **102 passed**, 36.8s, against the *built* bundle at desktop, Pixel 5 and Arabic, including the committed visual-regression baselines and axe scans |
+
+Because CI has not run since `2117523`, gates 15, 16 and 20 were re-run locally at
+this commit rather than cited. Every automated gate in the CI workflow has now
+been verified against this commit on this machine. The one figure still inherited
+from that last fully-green run is the frontend suite — **503 tests / 70 files**,
+plus storefront unit **11 tests** — and `npm run ship` gate 1 re-runs `tsc`,
+`eslint --max-warnings 0` and vitest here anyway.
 
 ## CI is currently blocked — read before trusting a red run
 

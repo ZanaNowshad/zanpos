@@ -1,9 +1,9 @@
 # ZANPOS Release Checklist — 2.0.1
 
-Commit `072eb60` · built 2026-09-08
+Commit `e148185` · built 2026-09-08
 
-Artifact: `ZANPOS_2.0.1_x64-setup.exe` · 219,710,442 bytes
-SHA-256 `21216702d8a1ffee92a0bd5a015d7098974d4b98004801aa7dd1cb5957a1ec41`
+Artifact: `ZANPOS_2.0.1_x64-setup.exe` · 219,723,242 bytes
+SHA-256 `6f107a19e035bd8bfeaefdc7599f821f1d4b3e594fa26e703d66710de3351e3e`
 (computed twice, identical)
 
 Produced by `npm run ship` — **SHIP GATE PASSED, 0 failures, 0 warnings.**
@@ -26,11 +26,11 @@ Produced by `npm run ship` — **SHIP GATE PASSED, 0 failures, 0 warnings.**
 | 6 | Test modules `cfg`-gated | PASS | ship gate 6 — nothing test-only compiles into the release binary |
 | 7 | Worker copies in sync | PASS | ship gate 7 — 7/7 routes in both `worker/index.ts` and `worker_embedded.js` |
 | 8 | Updater signing key works | PASS | ship gate 8 — signs a throwaway file before the hour-long build, not after |
-| 9 | Release build (fat LTO) | PASS | ship gate 9 — `release` profile, 17m40s, no release-only crash |
-| 10 | NSIS bundle produced | PASS | 219,710,442 bytes |
+| 9 | Release build (fat LTO) | PASS | ship gate 9 — `release` profile, 17m38s, no release-only crash |
+| 10 | NSIS bundle produced | PASS | 219,723,242 bytes |
 | 11 | Updater signature emitted | PASS | `.sig` beside the installer, 416 bytes |
 | 12 | **Updater signature verifies** | PASS | Ed25519 over BLAKE2b-512 against the `pubkey` in `tauri.conf.json`; key id `a0c490b084c5d428` matches on both sides |
-| 13 | Rust test suite | PASS | `cargo nextest run --all-targets` at this commit — **1004 run, 1004 passed, 1 skipped**, 220.8s |
+| 13 | Rust test suite | PASS | `cargo nextest run --all-targets` at this commit — **1009 run, 1009 passed, 1 skipped**, 209.5s |
 | 14 | Migration chain | PASS | 64 files, highest `0065_current_selling_price_view.sql`, embedded via `sqlx::migrate!` |
 | 15 | Code signing (Authenticode) | **NOT SIGNED** | no `certificateThumbprint` and no `signCommand` in `tauri.conf.json`. Windows will show a SmartScreen warning on first install. |
 | 16 | Install on a clean machine | NOT TESTED | no isolated environment available here |
@@ -73,7 +73,7 @@ unauthenticated callers; kill and relaunch leaves data intact.
 | Gate | Owner | State |
 |---|---|---|
 | Restore drill on shop hardware | Operations | Bench drill **passed** — `backup-restore-ops.md` §8. On-hardware run and signed template still required. |
-| Finance/tax adviser review | Adviser | Pack ready — `vat-receipt-review.md`. **Contains an open VAT defect** (§3): a whole-bill discount is applied after line tax, so output VAT is overstated on any discounted bill. Needs a ruling on apportionment before it can be fixed. |
+| Finance/tax adviser review | Adviser | Pack ready — `vat-receipt-review.md`. The VAT defect it found (§3) is **fixed**: a whole-bill discount was applied after line tax, overstating output VAT and over-refunding discounted lines. Still to ratify: the apportionment basis, and whether sales taken before the fix need correcting. |
 | Card terminal PCI P2PE certificate | Operations | Pending |
 | BitLocker on all POS hardware | IT | Pending |
 | Authenticode code-signing certificate | Owner | Not configured (gate 15) |

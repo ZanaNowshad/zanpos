@@ -491,7 +491,10 @@ jobs:
   release-gate:
     name: Release gate summary
     runs-on: ubuntu-latest
-    needs: [rust, frontend, storefront, semgrep, gitleaks, build]
+    # storefront-e2e is included because this job asserts it passed. A summary
+    # that prints PASSED for a job it never waited on is worse than no summary:
+    # it reports a result it cannot possibly know.
+    needs: [rust, frontend, storefront, storefront-e2e, semgrep, gitleaks, build]
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
 
     steps:
@@ -503,15 +506,29 @@ jobs:
           echo "✅ ESLint (0 warnings):                      PASSED"
           echo "✅ Vitest frontend tests:                     PASSED"
           echo "✅ Storefront type-check:                    PASSED"
+          echo "✅ Storefront Playwright E2E (built bundle): PASSED"
+          echo "✅ Semgrep security policy:                  PASSED"
+          echo "✅ Gitleaks secret scan:                     PASSED"
           echo "✅ Cargo dependency security audit:          PASSED"
           echo "✅ Tauri debug build:                        PASSED"
           echo ""
-          echo "Manual gates still required before production:"
+          # These four were on the manual list until the code that closes them
+          # landed. They are kept here, named, rather than deleted: a gate that
+          # vanishes silently is indistinguishable from one that was skipped.
+          echo "Closed in code — re-verify only if the cited site changes:"
+          echo "  P0 • upsert_rows Supabase REST idempotency"
+          echo "       Prefer: resolution=merge-duplicates — sync_v2/client.rs, covered by hub/rest_tests.rs"
+          echo "  P1 • Permanently-failed sync event alerting"
+          echo "       dead_letter::pending_count -> 'sync.quarantined_rows' (Critical) in system_health_commands.rs"
+          echo "  P2 • Atomic receipt number sequence (no gap on crash)"
+          echo "       UPDATE ... RETURNING next_receipt_seq - 1 in sale_repo.rs;"
+          echo "       invariant test the_receipt_sequence_has_no_gaps_across_sales_and_refunds"
+          echo "  P2 • Multi-device stock reconciliation query"
+          echo "       ledger-vs-cache drift -> 'stock.ledger_mismatch' in system_health_commands.rs."
+          echo "       The query runs on demand from the health check; scheduling it nightly is still ops work."
+          echo ""
+          echo "Manual gates still required before production — no code can close these:"
           echo "  P0 • Backup/restore drill on real retail hardware (sign-off template: docs/backup-restore-ops.md)"
-          echo "  P0 • verify upsert_rows Supabase REST idempotency (resolution=merge-duplicates)"
           echo "  P0 • Receipt VAT breakdown + TRN review by finance/tax adviser"
           echo "  P0 • Card terminal PCI P2PE certificate on file"
           echo "  P0 • BitLocker enabled on all POS hardware"
-          echo "  P1 • Permanently-failed sync event alerting"
-          echo "  P2 • Atomic receipt number sequence (no gap on crash)"
-          echo "  P2 • Multi-device nightly stock reconciliation query"

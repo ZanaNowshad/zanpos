@@ -1,7 +1,26 @@
-# Final completion ledger
+# Final completion ledger — SUPERSEDED, HISTORICAL ONLY
 
-Internal execution state for the final autonomous completion run. Read this
-FIRST after any context compaction — do not rediscover the repository.
+> **Do not act on the numbers below.** This was the live scratchpad of an earlier
+> autonomous run and every gate figure in it has since moved: 44 migrations (now
+> 64, highest `0065`), a Rust suite recorded as BLOCKED at "last known 421/421"
+> (now 1009 passing, run clean), 41 files / 298 frontend tests (now 70 / 503),
+> and a sidecar lock marked NOT CLEARED that is cleared — `npm run ship`, this
+> file's own "next executable action", has since passed all nine gates twice.
+>
+> Its original header told the reader to trust it *instead of* looking at the
+> repository. That is exactly what makes a stale status file dangerous, so the
+> instruction is removed rather than the file: it is still a useful record of
+> what that run found and why, including the sidecar-lock diagnosis and the
+> reason installing here was refused.
+>
+> For current state read, in order:
+> [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) (build, artifact, gates),
+> [`compliance-checklist.md`](compliance-checklist.md) (PCI/VAT/controls),
+> [`vat-receipt-review.md`](vat-receipt-review.md) and
+> [`backup-restore-ops.md`](backup-restore-ops.md) — and verify anything
+> load-bearing against the code, which is what this file failed to do.
+
+Internal execution state for that run.
 
 Working tree: `C:/Users/super/ZAN/zanpos-open-source-upgrade` (NOT the worktree).
 Dev server for QA: `preview_start` name `zanpos-upgrade-dev` (the plain

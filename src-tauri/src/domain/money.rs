@@ -256,8 +256,152 @@ pub fn calc_tax_exclusive(price_minor: i64, rate_basis_points: i64) -> i64 {
     (price_minor * rate_basis_points + 5_000) / 10_000
 }
 
+/// The tax already contained inside a tax-inclusive amount.
+/// tax = amount * rate / (10000 + rate), rounded to nearest minor unit.
+pub fn calc_tax_inclusive(amount_minor: i64, rate_basis_points: i64) -> i64 {
+    let divisor = 10_000 + rate_basis_points;
+    (amount_minor * rate_basis_points + divisor / 2) / divisor
+}
+
+/// Spread a whole-bill discount across lines, and re-extract the VAT inside
+/// each one from what is left.
+///
+/// A discount on the whole bill reduces what the customer hands over, so it
+/// reduces the consideration VAT is due on. Computing each line's tax first and
+/// subtracting the discount afterwards leaves tax charged on money nobody paid:
+/// on a 2.000 basket at 10% with 0.300 off, the receipt read 1.700 + 0.200 =
+/// 1.900, an implied 11.76% against a 10% rate, and the store over-declared
+/// output VAT by 0.027.
+///
+/// `line_totals` are tax-inclusive, which is what both pricing modes produce —
+/// an inclusive line's total already contains its tax, and an exclusive line's
+/// has had it added. The discount is apportioned pro rata by line total, with
+/// the rounding remainder going to the lines that lost the most to flooring, so
+/// the parts sum to the discount exactly and the net is unchanged.
+///
+/// Apportioning pro rata across *every* line, rather than only across
+/// standard-rated ones, is the conventional basis and the one a mixed basket of
+/// 10% and zero-rated goods is assumed to take here. It is the single choice in
+/// this function that a tax adviser could reasonably direct otherwise; see
+/// `docs/vat-receipt-review.md`.
+///
+/// Returns the reduced line totals and the tax inside each.
+pub fn apportion_bill_discount(
+    line_totals: &[i64],
+    rate_basis_points: &[i64],
+    bill_discount_minor: i64,
+) -> (Vec<i64>, Vec<i64>) {
+    let extract = |totals: &[i64]| -> Vec<i64> {
+        totals
+            .iter()
+            .zip(rate_basis_points)
+            .map(|(&total, &rate)| calc_tax_inclusive(total, rate))
+            .collect()
+    };
+
+    let gross: i64 = line_totals.iter().sum();
+    let discount = bill_discount_minor.clamp(0, gross);
+    if discount == 0 || gross == 0 {
+        return (line_totals.to_vec(), extract(line_totals));
+    }
+
+    // Floor each share, then hand the remainder to the largest fractional parts
+    // first. Flooring alone would leave the shares summing to less than the
+    // discount, and the customer would be charged the difference.
+    let mut shares: Vec<i64> = line_totals
+        .iter()
+        .map(|&total| total * discount / gross)
+        .collect();
+    let mut remainder = discount - shares.iter().sum::<i64>();
+    let mut order: Vec<usize> = (0..line_totals.len()).collect();
+    order.sort_by_key(|&i| std::cmp::Reverse((line_totals[i] * discount) % gross));
+    for &i in &order {
+        if remainder == 0 {
+            break;
+        }
+        shares[i] += 1;
+        remainder -= 1;
+    }
+
+    let reduced: Vec<i64> = line_totals
+        .iter()
+        .zip(&shares)
+        .map(|(&total, &share)| (total - share).max(0))
+        .collect();
+    let taxes = extract(&reduced);
+    (reduced, taxes)
+}
+
 #[cfg(test)]
 mod tests {
+    use super::{apportion_bill_discount, calc_tax_inclusive};
+
+    const VAT10: i64 = 1_000;
+    const ZERO_RATED: i64 = 0;
+
+    /// The defect this function exists to fix, in the numbers the existing
+    /// bill-discount test already uses: 2 x 1.000 at 10% exclusive, 0.300 off
+    /// the bill. The customer pays 1.900, so 1.900 is the consideration and the
+    /// VAT inside it is 0.173 — not the 0.200 computed before the discount,
+    /// which made the receipt read 1.700 + 0.200 and imply 11.76%.
+    #[test]
+    fn a_bill_discount_reduces_the_amount_vat_is_charged_on() {
+        let (totals, taxes) = apportion_bill_discount(&[2_200], &[VAT10], 300);
+        assert_eq!(totals, vec![1_900], "the customer still pays 1.900");
+        assert_eq!(
+            taxes,
+            vec![173],
+            "VAT is the tax inside 1.900, not inside 2.000"
+        );
+        assert_eq!(totals[0] - taxes[0], 1_727, "taxable consideration");
+    }
+
+    /// The net must not move. Whatever the split, the sum of the line totals is
+    /// still what the till asked for — otherwise the payment guard in
+    /// `finalize_sale` would reject a correctly tendered sale.
+    #[test]
+    fn apportioning_never_changes_what_the_customer_pays() {
+        for discount in [0, 1, 7, 300, 999, 2_199, 2_200] {
+            let (totals, _) = apportion_bill_discount(&[1_100, 1_100], &[VAT10, VAT10], discount);
+            assert_eq!(
+                totals.iter().sum::<i64>(),
+                2_200 - discount,
+                "discount of {discount} moved the net",
+            );
+        }
+    }
+
+    /// Flooring every share would leave the parts summing to less than the
+    /// discount, quietly charging the customer the shortfall. Three lines and a
+    /// discount that does not divide by three is the case that catches it.
+    #[test]
+    fn rounding_remainder_is_handed_out_not_dropped() {
+        let (totals, _) = apportion_bill_discount(&[1_000, 1_000, 1_000], &[VAT10; 3], 100);
+        assert_eq!(totals.iter().sum::<i64>(), 2_900);
+        // 100 across three equal lines: 34/33/33 in some order, never 33/33/33.
+        let mut shares: Vec<i64> = totals.iter().map(|&t| 1_000 - t).collect();
+        shares.sort();
+        assert_eq!(shares, vec![33, 33, 34]);
+    }
+
+    /// A zero-rated line takes its share of the discount but never acquires
+    /// tax — the basket's VAT comes only from the standard-rated part.
+    #[test]
+    fn a_zero_rated_line_carries_no_tax_after_apportioning() {
+        let (totals, taxes) = apportion_bill_discount(&[1_100, 1_000], &[VAT10, ZERO_RATED], 210);
+        assert_eq!(totals.iter().sum::<i64>(), 1_890);
+        assert_eq!(taxes[1], 0, "zero-rated stays zero-rated");
+        assert_eq!(taxes[0], calc_tax_inclusive(totals[0], VAT10));
+    }
+
+    /// A discount larger than the basket cannot invert a line into a negative
+    /// total, and cannot refund more than was owed.
+    #[test]
+    fn an_oversized_discount_clamps_at_free() {
+        let (totals, taxes) = apportion_bill_discount(&[1_100, 1_100], &[VAT10, VAT10], 9_999);
+        assert_eq!(totals, vec![0, 0]);
+        assert_eq!(taxes, vec![0, 0]);
+    }
 
     #[test]
     fn quantities_compare_by_value_not_by_spelling() {

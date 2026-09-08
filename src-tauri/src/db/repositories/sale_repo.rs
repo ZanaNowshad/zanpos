@@ -540,8 +540,7 @@ async fn finalize_sale_txn(
         server_gross += subtotal;
         let discounted = (subtotal - line.line_discount_minor).max(0);
         let tax_amount = if line.tax_inclusive {
-            let divisor = 10_000 + line.tax_rate_basis_points;
-            (discounted * line.tax_rate_basis_points + divisor / 2) / divisor
+            crate::domain::money::calc_tax_inclusive(discounted, line.tax_rate_basis_points)
         } else {
             crate::domain::money::calc_tax_exclusive(discounted, line.tax_rate_basis_points)
         };
@@ -550,9 +549,30 @@ async fn finalize_sale_txn(
         server_line_totals.push(line_total);
     }
 
+    // A whole-bill discount reduces what the customer actually pays, so it
+    // reduces the consideration VAT is due on. This used to subtract the
+    // discount from the net *after* line tax was computed, which left tax
+    // standing on money nobody handed over — the receipt showed an implied
+    // 11.76% against a 10% rate, and the store over-declared output VAT.
+    //
+    // Spreading it across the lines fixes a second defect with the same root:
+    // `sale_items.line_total_minor` is what a refund pays back, so refunding a
+    // line from a discounted bill used to return the *undiscounted* amount.
+    //
+    // The customer's total is untouched — these totals are tax-inclusive, so
+    // their sum is still post-line minus the discount. Only the split moves.
+    let rate_basis_points: Vec<i64> = active_lines
+        .iter()
+        .map(|line| line.tax_rate_basis_points)
+        .collect();
+    let (server_line_totals, server_line_taxes) = crate::domain::money::apportion_bill_discount(
+        &server_line_totals,
+        &rate_basis_points,
+        cart.bill_discount_minor,
+    );
+
     let server_tax: i64 = server_line_taxes.iter().sum();
-    let server_post_line: i64 = server_line_totals.iter().sum();
-    let server_net: i64 = (server_post_line - cart.bill_discount_minor).max(0);
+    let server_net: i64 = server_line_totals.iter().sum();
     let server_discount: i64 = cart.discount_total();
 
     // ── Guard: payment amounts must sum exactly to server_net ───────────────

@@ -74,7 +74,12 @@ Three properties worth the adviser's attention:
 
 ---
 
-## 3. Finding: a whole-bill discount overstates VAT
+## 3. Finding — now fixed: a whole-bill discount overstated VAT
+
+> **Status: fixed in code.** The description below is kept because the adviser
+> needs to know what the till did before, and because one decision inside the fix
+> is still theirs to confirm — see "What was changed" at the end of this section.
+> Sales taken before this change carry the old figures.
 
 **Line-level discounts are handled correctly.** Tax is computed on the discounted
 line, and the invariant test asserts it in those words — `tax, 180, "10% of
@@ -129,11 +134,39 @@ offers it (`PosCartModals.tsx`, `PosTotalsPanel.tsx`). The existing test
 assert `tax` — the behaviour is deliberate and simply was never assessed for tax
 correctness.
 
-**Not changed pending this review.** The fix is to apportion the bill discount
-across lines before computing tax, but with mixed rates in one basket (10% and
-zero-rated together) the apportionment basis is a tax decision — pro rata across
-all lines, or only across standard-rated ones — and it changes what the store
-remits. That is the adviser's call, not an engineering one.
+### A second defect, same root cause
+
+A refund pays back `sale_items.line_total_minor`. Because the bill discount never
+reached the lines, refunding a line from a discounted bill returned the
+**undiscounted** amount — the store refunded more than it took.
+
+### What was changed
+
+`domain::money::apportion_bill_discount` now spreads the bill discount across the
+lines and re-extracts the VAT inside each from what remains. Both defects close
+together, and three properties hold that did not before:
+
+- VAT is charged on the consideration. The worked example above now stores 0.173.
+- `SUM(sale_items.line_total_minor)` equals `sales.net_total_minor`, so a refund
+  returns what was actually paid for the line.
+- **What the customer pays is unchanged.** These line totals are VAT-inclusive,
+  so their sum is still post-line minus the discount. Only the split moved — no
+  payment, tender or change calculation is affected.
+
+Rounding uses largest-remainder so the apportioned parts sum to the discount
+exactly; flooring alone would have quietly charged the customer the shortfall.
+A zero-rated line takes its share of the discount and still carries no tax.
+
+**The one decision still open for the adviser.** The discount is apportioned pro
+rata across *every* line, including zero-rated ones. The alternative — charging
+the whole discount against standard-rated lines — changes how much VAT the store
+reclaims on a mixed basket. Pro rata is the conventional basis and is what the
+code assumes; it is isolated in that one function and is a small change if you
+direct otherwise. Question 1 in §5 is the place to record the ruling.
+
+Covered by `a_bill_discount_reduces_what_is_owed`, which asserts the stored tax,
+the per-line totals and their sum, plus five unit tests on the apportionment
+itself.
 
 ---
 
@@ -153,8 +186,11 @@ remits. That is the adviser's call, not an engineering one.
 
 ## 5. Questions for the adviser
 
-1. **Bill-discount apportionment (§3).** Confirm the correct basis, and whether
-   sales already made this way need correcting.
+1. **Bill-discount apportionment (§3).** The defect is fixed; the basis needs
+   ratifying. It apportions pro rata across every line, zero-rated included —
+   confirm that, or direct the discount against standard-rated lines only. Also
+   confirm whether sales taken *before* the fix need correcting, since those
+   carry VAT computed on the pre-discount amount.
 2. **Per-line rounding (§1).** Is line-level round-half-up, summed, acceptable, or
    must VAT be computed on the invoice total?
 3. **Rate on the receipt (§2).** Must the VAT rate, and a per-rate split for mixed

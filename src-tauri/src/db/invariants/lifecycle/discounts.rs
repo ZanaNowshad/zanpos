@@ -86,14 +86,40 @@ async fn a_bill_discount_reduces_what_is_owed() {
     .await
     .expect("checkout");
 
-    let (net, discount): (i64, i64) =
-        sqlx::query_as("SELECT net_total_minor, discount_total_minor FROM sales WHERE sale_id = ?")
-            .bind(&result.sale_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let (net, discount, tax): (i64, i64, i64) = sqlx::query_as(
+        "SELECT net_total_minor, discount_total_minor, tax_total_minor
+           FROM sales WHERE sale_id = ?",
+    )
+    .bind(&result.sale_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
     assert_eq!(net, 1900);
     assert_eq!(discount, 300);
+
+    // This assertion is the point of the test, and it is the one that was
+    // missing. The customer paid 1.900, so 1.900 is the consideration and the
+    // VAT inside it is 0.173. Tax used to be computed on the full 2.000 before
+    // the discount came off, leaving 0.200 — a receipt reading 1.700 + 0.200 =
+    // 1.900, which implies 11.76% against a 10% rate and over-declares output
+    // VAT by 0.027.
+    assert_eq!(
+        tax, 173,
+        "VAT is charged on what was paid, not pre-discount"
+    );
+
+    // A refund pays back `sale_items.line_total_minor`, so the discount has to
+    // reach the lines or refunding this sale returns more than was taken.
+    let (line_total, line_tax): (i64, i64) = sqlx::query_as(
+        "SELECT SUM(line_total_minor), SUM(tax_amount_minor)
+           FROM sale_items WHERE sale_id = ?",
+    )
+    .bind(&result.sale_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(line_total, net, "lines must add up to what was charged");
+    assert_eq!(line_tax, tax);
 }
 
 // ── Discount authorisation ───────────────────────────────────────────────────

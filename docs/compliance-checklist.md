@@ -1,16 +1,19 @@
 # ZANPOS — POS Compliance Checklist
 
 **Scope:** PCI DSS (payment security), Bahrain NBR VAT requirements, and general financial-control standards for retail POS software.
-**Verdict:** One **open defect** blocks the VAT gate — a whole-bill discount is
-applied after line tax, so output VAT is overstated on any discounted bill
-(§2.3, and `docs/vat-receipt-review.md`). Everything else passes automated
-checks; several items still require human sign-off. See the status column.
+**Verdict:** PASS on automated checks. The VAT defect found while assembling
+`docs/vat-receipt-review.md` — a whole-bill discount applied after line tax,
+overstating output VAT and over-refunding discounted lines — is **fixed and
+tested** (§2.3). One decision inside that fix still needs the adviser to ratify
+it: whether the discount apportions pro rata across every line or only across
+standard-rated ones. Several items still require human sign-off.
 
 > This document previously read PASS with no qualification while marking the VAT
-> breakdown ✅ VERIFIED. It was not — the breakdown is wrong whenever a bill
-> discount is used. A compliance sheet that certifies an untested claim is worse
-> than one that admits a gap, so rows now cite the assertion or test that backs
-> them, and anything not actually verified says so.
+> breakdown ✅ VERIFIED. It was not — the breakdown was wrong whenever a bill
+> discount was used, and saying so was what led to the fix. A compliance sheet
+> that certifies an untested claim is worse than one that admits a gap, so rows
+> now cite the assertion or test that backs them, and anything not actually
+> verified says so.
 
 ---
 
@@ -69,8 +72,9 @@ cannot cause a collision.
 | Tax computed server-side only | `finalize_sale` recomputes every line from first principles and ignores client-supplied totals, so a compromised frontend cannot set tax. | ✅ VERIFIED |
 | Zero-rated items carry no tax | Asserted directly: `result.tax_total_minor, 0, "zero-rated items carry no tax"`. | ✅ VERIFIED |
 | Line-level discount reduces taxable amount | Asserted as `tax, 180, "10% of 1.800, not of 2.000"`. | ✅ VERIFIED |
-| **Whole-bill discount reduces taxable amount** | **It does not.** Line tax is computed first and the bill discount subtracted afterwards, so `tax_total_minor` is VAT on the pre-discount amount. On the existing test's figures the receipt prints an implied 11.76% against a 10% rate, overstating output VAT by 0.027 BHD on a 1.900 BHD sale. See `docs/vat-receipt-review.md` §3. | ❌ **OPEN DEFECT** |
-| VAT breakdown on receipt | Receipt shows "Subtotal (excl. VAT)", "VAT", "Total" when tax > 0 — but the subtotal is derived as `net − tax`, so it inherits the defect above whenever a bill discount is applied. The rate itself is never printed, and mixed-rate baskets get one combined figure with no per-rate split. | ⚠️ **REVIEW** |
+| Whole-bill discount reduces taxable amount | Fixed. `money::apportion_bill_discount` spreads the discount across lines and re-extracts VAT from what remains, so tax is charged on the consideration. `a_bill_discount_reduces_what_is_owed` asserts the stored tax (0.173, not 0.200) plus five unit tests on the apportionment. Previously VAT was computed pre-discount, implying 11.76% against a 10% rate. See `docs/vat-receipt-review.md` §3. | ✅ VERIFIED |
+| Refund returns what was paid for the line | Fixed by the same change. Refunds pay back `sale_items.line_total_minor`; because the bill discount never reached the lines, refunding from a discounted bill returned the undiscounted amount. `SUM(line_total_minor)` now equals `net_total_minor`, asserted in the same test. | ✅ VERIFIED |
+| VAT breakdown on receipt | Receipt shows "Subtotal (excl. VAT)", "VAT", "Total" when tax > 0, and the subtotal (`net − tax`) is now consistent with the rate charged. Still open for the adviser: the rate itself is never printed, and mixed-rate baskets get one combined figure with no per-rate split. | ⚠️ **REVIEW** |
 | VAT registration number on receipt | `TRN: {tax_number}` printed in ESC/POS builder and HTML receipt. Note that one toggle, `show_tax_number`, hides both TRN and CR number. | ⚠️ **REVIEW** |
 | Daily tax report | `report_tax_by_day` command returns daily totals with cumulative. | ✅ VERIFIED |
 
@@ -132,8 +136,8 @@ cannot cause a collision.
 |---|------|-------|----------|
 | 1 | ~~Add TRN field to `app_config`; print on every receipt~~ — **DONE**: `TRN:` label in ESC/POS + HTML receipt | Dev | ✅ |
 | 2 | ~~UI review: VAT breakdown visible on receipt printout~~ — **DONE**: subtotal/VAT/total rows implemented | QA | ✅ |
-| 3 | **Fix whole-bill discount VAT (§2.3)** — blocked on the adviser's ruling on apportionment across mixed rates | Dev + Adviser | **P0** |
-| 4 | Finance/tax adviser review and sign-off — `docs/vat-receipt-review.md` | Adviser | P0 |
+| 3 | ~~Fix whole-bill discount VAT (§2.3)~~ — **DONE**: `money::apportion_bill_discount`, with the pro-rata basis still to be ratified by the adviser | Dev | ✅ |
+| 4 | Finance/tax adviser review and sign-off — `docs/vat-receipt-review.md`. Includes ratifying the apportionment basis and deciding whether sales taken before the fix need correcting | Adviser | P0 |
 | 5 | UI review: Z-report (shift-close) shows required fields | QA | P0 |
 | 6 | UI review: manager PIN required for price override | QA | P0 |
 | 7 | Enforce BitLocker (full-disk encryption) on all POS hardware | Ops | P0 |
@@ -152,8 +156,8 @@ cannot cause a collision.
 |---|---|---|
 | Automated CI all-green | CI system | ✅ Automated |
 | Backup/restore drill | Operations manager | ⏳ Pending on hardware (bench drill passed — `backup-restore-ops.md` §8) |
-| Receipt VAT compliance review | Finance/tax adviser | ⏳ Pending — pack ready at `vat-receipt-review.md`, **one open defect** |
-| Whole-bill discount VAT fix | Developer, after the adviser rules | ❌ Open |
+| Receipt VAT compliance review | Finance/tax adviser | ⏳ Pending — pack ready at `vat-receipt-review.md` |
+| Whole-bill discount VAT fix | Developer | ✅ Fixed and tested; apportionment basis awaiting the adviser's ratification |
 | PCI terminal vendor cert on file | Operations manager | ⏳ Pending |
 | BitLocker enabled on all POS devices | IT administrator | ⏳ Pending |
 | Supabase RPC idempotency confirmed | Developer | ✅ Verified in code and test |

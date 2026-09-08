@@ -32,14 +32,17 @@ Produced by `npm run ship` — **SHIP GATE PASSED, 0 failures, 0 warnings.**
 | 12 | **Updater signature verifies** | PASS | Ed25519 over BLAKE2b-512 against the `pubkey` in `tauri.conf.json`; key id `a0c490b084c5d428` matches on both sides |
 | 13 | Rust test suite | PASS | `cargo nextest run --all-targets` at this commit — **1009 run, 1009 passed, 1 skipped**, 209.5s |
 | 14 | Migration chain | PASS | 64 files, highest `0065_current_selling_price_view.sql`, embedded via `sqlx::migrate!` |
-| 15 | Code signing (Authenticode) | **NOT SIGNED** | no `certificateThumbprint` and no `signCommand` in `tauri.conf.json`. Windows will show a SmartScreen warning on first install. |
-| 16 | Install on a clean machine | NOT TESTED | no isolated environment available here |
-| 17 | POS hardware smoke | NOT TESTED | needs the shop — see below |
+| 15 | Semgrep policy + contract validator | PASS | at this commit — self-test (production policy, 91 security mutations, 9 lexer edges), exception/authorization validator, 15/15 rule unit tests, and `semgrep scan --error`: **0 findings**, 15 rules, 265 files |
+| 16 | Gitleaks | PASS | at this commit — 7 directories over 1041 tracked files (exported from `git archive HEAD`, matching CI's clean checkout): clean. The inverse assertion also holds: the planted fixtures still trigger detection, so "clean" is not a dead scanner. |
+| 17 | Code signing (Authenticode) | **NOT SIGNED** | no `certificateThumbprint` and no `signCommand` in `tauri.conf.json`. Windows will show a SmartScreen warning on first install. |
+| 18 | Install on a clean machine | NOT TESTED | no isolated environment available here |
+| 19 | POS hardware smoke | NOT TESTED | needs the shop — see below |
 
-Counts from the last fully-green CI run (`34168762321`, commit `2117523`), which
-covered work this commit does not change: frontend **503 tests / 70 files**,
-storefront unit **11 tests**, storefront Playwright **102 tests** against the
-*built* bundle at desktop, Pixel 5 and Arabic, plus Semgrep and Gitleaks.
+Semgrep and Gitleaks were re-run locally at this commit (gates 15-16) rather than
+cited, because CI has not run since `2117523`. Still attributed to that last
+fully-green run, covering work this commit does not touch: frontend **503 tests /
+70 files**, storefront unit **11 tests**, and storefront Playwright **102 tests**
+against the *built* bundle at desktop, Pixel 5 and Arabic.
 
 ## CI is currently blocked — read before trusting a red run
 
@@ -76,7 +79,7 @@ unauthenticated callers; kill and relaunch leaves data intact.
 | Finance/tax adviser review | Adviser | Pack ready — `vat-receipt-review.md`. The VAT defect it found (§3) is **fixed**: a whole-bill discount was applied after line tax, overstating output VAT and over-refunding discounted lines. Still to ratify: the apportionment basis, and whether sales taken before the fix need correcting. |
 | Card terminal PCI P2PE certificate | Operations | Pending |
 | BitLocker on all POS hardware | IT | Pending |
-| Authenticode code-signing certificate | Owner | Not configured (gate 15) |
+| Authenticode code-signing certificate | Owner | Not configured (gate 17) |
 
 ### Shop smoke test
 

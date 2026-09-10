@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::borrow::Cow;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -76,7 +77,7 @@ impl AppError {
     }
 
     /// Returns a user-safe error message that does not include internal details.
-    pub fn user_message(&self) -> &str {
+    pub fn user_message(&self) -> Cow<'_, str> {
         match self {
             AppError::Database(e) => {
                 tracing::error!("DB error: {}", e);
@@ -86,53 +87,75 @@ impl AppError {
                     match code.as_ref() {
                         "5" | "261" | "262" => {
                             // SQLITE_BUSY (5) / SQLITE_BUSY_RECOVERY (261) / SQLITE_BUSY_SNAPSHOT (262)
-                            "Database is busy — please wait a moment and try again."
+                            Cow::Borrowed("Database is busy — please wait a moment and try again.")
                         }
                         "19" | "787" | "1555" | "2067" => {
                             // SQLITE_CONSTRAINT family: generic (19), FK (787), PK (1555), UNIQUE (2067)
-                            "This change conflicts with existing data. Check for duplicates and try again."
+                            Cow::Borrowed(
+                                "This change conflicts with existing data. Check for duplicates and try again.",
+                            )
                         }
                         "1299" => {
                             // SQLITE_CONSTRAINT_NOTNULL — a required field was not provided.
                             // (Previously fell through to the generic message below, masking real bugs.)
-                            "A required field was missing — please try again or report this."
+                            Cow::Borrowed("A required field was missing — please try again or report this.")
                         }
                         "1043" => {
                             // SQLITE_CONSTRAINT_CHECK — a value failed a table CHECK rule.
-                            "A value didn't pass validation — please adjust it and try again."
+                            Cow::Borrowed("A value didn't pass validation — please adjust it and try again.")
                         }
                         "11" | "266" | "267" => {
                             // SQLITE_CORRUPT family
-                            "Database appears damaged — please restore from a recent backup."
+                            Cow::Borrowed("Database appears damaged — please restore from a recent backup.")
                         }
-                        _ => {
-                            "Something went wrong — please try again. If the problem persists, restart the app."
-                        }
+                        other => Cow::Owned(unexpected_database_message(other)),
                     }
                 } else {
-                    "Something went wrong — please try again. If the problem persists, restart the app."
+                    // Not a SQLite failure at all — a pool timeout or a closed
+                    // connection. There is no code to name, so say only what is known.
+                    Cow::Borrowed(GENERIC_DATABASE_MESSAGE)
                 }
             }
             AppError::Migration(e) => {
                 tracing::error!("Migration error: {}", e);
-                "The app needs to update its database — please restart the app."
+                Cow::Borrowed("The app needs to update its database — please restart the app.")
             }
-            AppError::Validation(m) => m,
-            AppError::NotFound(m) => m,
-            AppError::Permission(m) => m,
-            AppError::Conflict(m) => m,
-            AppError::GhostBarcode(_) => {
-                "Unknown barcode recorded — your manager can resolve it in Alerts; keep selling."
+            AppError::Validation(m) => Cow::Borrowed(m),
+            AppError::NotFound(m) => Cow::Borrowed(m),
+            AppError::Permission(m) => Cow::Borrowed(m),
+            AppError::Conflict(m) => Cow::Borrowed(m),
+            AppError::GhostBarcode(_) => Cow::Borrowed(
+                "Unknown barcode recorded — your manager can resolve it in Alerts; keep selling.",
+            ),
+            AppError::Internal(_) => {
+                Cow::Borrowed("An unexpected error occurred — please try again.")
             }
-            AppError::Internal(_) => "An unexpected error occurred — please try again.",
         }
+    }
+}
+
+const GENERIC_DATABASE_MESSAGE: &str =
+    "Something went wrong — please try again. If the problem persists, restart the app.";
+
+/// Fallback for a SQLite condition there is no specific advice for.
+///
+/// The bare sentence had to be diagnosed from the log, and the log is on the
+/// till — a screenshot is usually all the evidence that reaches anyone who can
+/// act on it. Naming the numeric code makes the report self-sufficient. A code
+/// is a SQLite condition, not SQL, data, or a constraint name, so this keeps
+/// the promise made on `AppError::Database`.
+fn unexpected_database_message(code: &str) -> String {
+    if code.is_empty() {
+        GENERIC_DATABASE_MESSAGE.to_string()
+    } else {
+        format!("{GENERIC_DATABASE_MESSAGE} (database code {code})")
     }
 }
 
 // Tauri commands must return Serialize errors
 impl Serialize for AppError {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(self.user_message())
+        s.serialize_str(self.user_message().as_ref())
     }
 }
 
@@ -149,6 +172,20 @@ mod tests {
         assert!(msg.contains("Unknown barcode recorded"));
         assert!(msg.contains("manager"));
         assert!(msg.contains("keep selling"));
+    }
+
+    #[test]
+    fn an_unrecognised_database_code_is_named_so_a_screenshot_is_enough() {
+        // 1811 is SQLITE_CONSTRAINT_TRIGGER: real, and deliberately not one of
+        // the codes that carries its own advice, so it takes the fallback.
+        let msg = unexpected_database_message("1811");
+        assert!(msg.starts_with("Something went wrong"), "{msg}");
+        assert!(msg.contains("database code 1811"), "{msg}");
+    }
+
+    #[test]
+    fn a_missing_code_does_not_produce_an_empty_parenthetical() {
+        assert_eq!(unexpected_database_message(""), GENERIC_DATABASE_MESSAGE);
     }
 
     #[tokio::test]

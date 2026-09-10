@@ -129,7 +129,7 @@ pub async fn execute_intent(
         "get_low_stock" => get_low_stock_intent(pool, params).await,
         "get_today_summary" => get_today_summary_intent(pool, branch_id).await,
         "get_sales_report" => get_sales_report_intent(pool, params, branch_id).await,
-        "list_customers" => list_customers_intent(pool, params).await,
+        "list_customers" => list_customers_intent(pool, params, branch_id).await,
         "create_customer" => create_customer_intent(pool, params, branch_id).await,
         "list_users" => list_users_intent(pool).await,
         "get_cash_status" => get_cash_status_intent(pool, branch_id).await,
@@ -300,16 +300,72 @@ async fn get_sales_report_intent(
     })
 }
 
-async fn list_customers_intent(pool: &SqlitePool, params: &Value) -> AppResult<IntentResult> {
+/// The intent engine wins over `ai::tools` for every read intent, so this is
+/// the `list_customers` ZanAI actually runs — the copy in `tools.rs` is
+/// unreachable for this name, and the smoke tests covering it were passing
+/// against a path nothing calls.
+///
+/// This copy had drifted badly. It queried no branch, so ZanAI could read
+/// another branch's customers, and it matched only `name` and `phone`, so a
+/// lookup by email, by the name WhatsApp knows someone by, or by a number
+/// typed with its separators found nothing at all.
+///
+/// It now uses the one predicate the till and the customer directory use
+/// rather than keeping a third copy of it.
+async fn list_customers_intent(
+    pool: &SqlitePool,
+    params: &Value,
+    branch_id: &str,
+) -> AppResult<IntentResult> {
+    type CustomerRow = (String, String, Option<String>, Option<String>, Option<String>);
     let search = params.get("search").and_then(|v| v.as_str()).unwrap_or("");
-    let rows = if search.is_empty() {
-        sqlx::query_as::<_, (String,String,Option<String>,Option<String>)>("SELECT customer_id,name,phone,email FROM customers WHERE deleted_at IS NULL ORDER BY name LIMIT 30").fetch_all(pool).await?
+    let rows: Vec<CustomerRow> = if search.trim().is_empty() {
+        sqlx::query_as(
+            "SELECT customer_id, name, whatsapp_name, phone, email
+             FROM customers
+             WHERE branch_id = ? AND deleted_at IS NULL
+             ORDER BY name LIMIT 30",
+        )
+        .bind(branch_id)
+        .fetch_all(pool)
+        .await?
     } else {
-        sqlx::query_as::<_, (String,String,Option<String>,Option<String>)>("SELECT customer_id,name,phone,email FROM customers WHERE deleted_at IS NULL AND (name LIKE '%'||?||'%' OR phone LIKE '%'||?||'%') ORDER BY name LIMIT 30").bind(search).bind(search).fetch_all(pool).await?
+        let (pattern, digit_pattern) =
+            crate::commands::customer_search::customer_search_patterns(search);
+        let sql = format!(
+            "SELECT customer_id, name, whatsapp_name, phone, email
+             FROM customers
+             WHERE branch_id = ? AND deleted_at IS NULL AND {}
+             ORDER BY name LIMIT 30",
+            crate::commands::customer_search::customer_search_where(digit_pattern.is_some()),
+        );
+        // One bind per text placeholder — name, whatsapp_name, phone, email —
+        // then the digit pattern when the query had digits.
+        let mut query = sqlx::query_as(&sql)
+            .bind(branch_id)
+            .bind(&pattern)
+            .bind(&pattern)
+            .bind(&pattern)
+            .bind(&pattern);
+        if let Some(digits) = &digit_pattern {
+            query = query.bind(digits);
+        }
+        query.fetch_all(pool).await?
     };
     Ok(IntentResult {
         ok: true,
-        data: json!({"customers": rows.into_iter().map(|(id,name,phone,email)| json!({"id":id,"name":name,"phone":phone,"email":email})).collect::<Vec<_>>()}),
+        data: json!({
+            "customers": rows
+                .into_iter()
+                .map(|(id, name, whatsapp_name, phone, email)| json!({
+                    "id": id,
+                    "name": name,
+                    "whatsapp_name": whatsapp_name,
+                    "phone": phone,
+                    "email": email,
+                }))
+                .collect::<Vec<_>>()
+        }),
         progress: None,
         metadata: None,
     })

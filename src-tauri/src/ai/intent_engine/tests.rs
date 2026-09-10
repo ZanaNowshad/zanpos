@@ -263,3 +263,107 @@ async fn the_sales_report_covers_the_closing_day_and_leaves_out_voids() {
     );
     assert_eq!(result.data["tax"], "0.300");
 }
+
+// ── list_customers, on the path that actually runs ───────────────────────────
+//
+// `streaming.rs` routes every read intent to the intent engine before it ever
+// looks at `ai::tools`, so the well-covered `list_customers` in tools.rs is
+// unreachable for this name. Its three smoke tests were passing against a copy
+// nothing calls, while the copy ZanAI runs queried no branch and matched only
+// name and phone. These run the reachable one.
+
+async fn seed_customer(
+    pool: &SqlitePool,
+    id: &str,
+    branch: &str,
+    name: &str,
+    whatsapp_name: Option<&str>,
+    phone: &str,
+    email: Option<&str>,
+    deleted: bool,
+) {
+    sqlx::query(
+        "INSERT INTO customers
+           (customer_id, branch_id, name, whatsapp_name, phone, email, loyalty_points,
+            origin_device_id, created_at, updated_at, version, sync_status, deleted_at)
+         VALUES (?, ?, ?, ?, ?, ?, 0, 'dev', datetime('now'), datetime('now'), 1, 'pending', ?)",
+    )
+    .bind(id)
+    .bind(branch)
+    .bind(name)
+    .bind(whatsapp_name)
+    .bind(phone)
+    .bind(email)
+    .bind(if deleted { Some("2026-08-01T00:00:00Z") } else { None })
+    .execute(pool)
+    .await
+    .expect("seed customer");
+}
+
+async fn listed_customer_ids(pool: &SqlitePool, search: &str, branch: &str) -> Vec<String> {
+    let params = json!({ "search": search });
+    let result = execute_intent(pool, "list_customers", &params, branch)
+        .await
+        .expect("list_customers failed");
+    result.data["customers"]
+        .as_array()
+        .expect("customers array")
+        .iter()
+        .map(|c| c["id"].as_str().unwrap_or_default().to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn list_customers_intent_refuses_another_branch_and_the_deleted() {
+    let pool = migrated_pool().await;
+    let branch: String = sqlx::query_scalar("SELECT branch_id FROM branches LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    seed_customer(&pool, "cus_ours", &branch, "Shared Name", None, "+97333050001", None, false).await;
+    seed_customer(&pool, "cus_theirs", "other-branch", "Shared Name", None, "+97333050002", None, false).await;
+    seed_customer(&pool, "cus_gone", &branch, "Shared Name", None, "+97333050003", None, true).await;
+
+    let found = listed_customer_ids(&pool, "Shared", &branch).await;
+
+    assert!(found.contains(&"cus_ours".to_string()));
+    assert!(
+        !found.contains(&"cus_theirs".to_string()),
+        "ZanAI read another branch's customer"
+    );
+    assert!(
+        !found.contains(&"cus_gone".to_string()),
+        "ZanAI offered a deleted customer"
+    );
+}
+
+#[tokio::test]
+async fn list_customers_intent_finds_the_fields_a_cashier_actually_types() {
+    let pool = migrated_pool().await;
+    let branch: String = sqlx::query_scalar("SELECT branch_id FROM branches LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    seed_customer(
+        &pool,
+        "cus_wa",
+        &branch,
+        "Fatima Al Sayed",
+        Some("Umm Yousef"),
+        "+973 3305 0004",
+        Some("fatima@example.test"),
+        false,
+    )
+    .await;
+
+    // The name WhatsApp knows them by — often the only one the cashier has seen.
+    assert_eq!(listed_customer_ids(&pool, "Umm Yousef", &branch).await, vec!["cus_wa"]);
+    // Email was not searched at all before.
+    assert_eq!(listed_customer_ids(&pool, "fatima@example.test", &branch).await, vec!["cus_wa"]);
+    // The stored number carries spaces; nobody types it that way.
+    assert_eq!(listed_customer_ids(&pool, "33050004", &branch).await, vec!["cus_wa"]);
+    // And the ordinary case still works.
+    assert_eq!(listed_customer_ids(&pool, "Fatima", &branch).await, vec!["cus_wa"]);
+}

@@ -284,7 +284,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
       // Open OS phone dialer (fire-and-forget — Tauri opener, non-blocking)
       openUrl(`tel:${row.contact_number}`).catch(() => {});
       // Send WhatsApp "delivery is here" message
-      await cmd.whatsappNotifyArrival(sessionUser.user_id, row.contact_number, row.receipt_number, row.delivery_id);
+      await cmd.whatsappNotifyArrival(sessionUser.session_token, row.contact_number, row.receipt_number, row.delivery_id);
       setWaSent(p => ({ ...p, [row.delivery_id]: "arrival" }));
       setTimeout(() => setWaSent(p => { const n = { ...p }; delete n[row.delivery_id]; return n; }), 4000);
     } catch {
@@ -300,7 +300,7 @@ export default function DeliveriesTab({ sessionUser }: Props) {
     setWaLoading(p => ({ ...p, [row.delivery_id]: "reminder" }));
     try {
       await cmd.whatsappPaymentReminder(
-        sessionUser.user_id,
+        sessionUser.session_token,
         row.contact_number,
         row.receipt_number,
         row.amount_minor,

@@ -151,6 +151,16 @@ gate("Frontend: types, lint, tests", "npm run check", ROOT, "tsc + eslint + vite
 
 gate("Rust: cargo check", "cargo check", join(ROOT, "src-tauri"), "src-tauri compiles");
 
+// A binding can forward the wrong payload key and still type-check, because
+// SessionToken is assignable to string. Only comparing the two sides of the
+// contract catches it, and when it is wrong the till fails at runtime.
+gate(
+  "Tauri invoke contract",
+  "python scripts/check_invoke_contract.py --root .",
+  ROOT,
+  "every invoke site matches its command signature",
+);
+
 step("Storefront: types");
 if (existsSync(join(ROOT, "storefront", "node_modules"))) {
   // storefront uses `typecheck`; the root package uses `type-check`. Not a typo.

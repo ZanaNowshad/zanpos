@@ -523,7 +523,7 @@ export default function MigrationAgentPage({ onDone, sessionToken }: Props) {
     const thinkId = addMsg("assistant", "🔍 Reading your file structure…");
 
     try {
-      const s = await migrationInspectFile(path);
+      const s = await migrationInspectFile(path, sessionToken);
       setSchema(s);
       updateMsgNode(thinkId, undefined);
       setMessages(prev => prev.map(m => m.id === thinkId ? {
@@ -562,7 +562,7 @@ export default function MigrationAgentPage({ onDone, sessionToken }: Props) {
   const runAiMap = useCallback(async (s: FileSchema) => {
     const thinkId = addMsg("assistant", "✨ Analysing your schema and mapping to ZANPOS tables…\n\nThis usually takes 5–15 seconds.");
     try {
-      const m = await migrationAiMap(s, 3);
+      const m = await migrationAiMap(s, 3, sessionToken);
       setMapping(m);
       const active = m.sheet_mappings.filter(sm => sm.target_table !== "skip");
       const totalRows = active.reduce((sum, sm) => {
@@ -672,7 +672,7 @@ export default function MigrationAgentPage({ onDone, sessionToken }: Props) {
     const historyForTurn: ChatMessage[] = [...chatHistory];
 
     try {
-      const reply = await migrationAgentChat(historyForTurn, text);
+      const reply = await migrationAgentChat(historyForTurn, text, sessionToken);
 
       // Update the thinking message with the real reply
       setMessages(prev => prev.map(m => m.id === thinkId ? { ...m, text: reply } : m));
@@ -691,7 +691,7 @@ export default function MigrationAgentPage({ onDone, sessionToken }: Props) {
     } finally {
       setAiLoading(false);
     }
-  }, [input, aiLoading, chatHistory, addMsg]);
+  }, [input, aiLoading, chatHistory, addMsg, sessionToken]);
 
   // ── Quick-action toolbar handlers ─────────────────────────────────────────
   const [quickBusy, setQuickBusy] = useState<string | null>(null);
@@ -703,7 +703,7 @@ export default function MigrationAgentPage({ onDone, sessionToken }: Props) {
     setQuickBusy("scan");
     const msgId = addMsg("assistant", "🔍 Scanning common directories for database files…");
     try {
-      const files = await migrationFindDbFiles();
+      const files = await migrationFindDbFiles(sessionToken);
       if (files.length === 0) {
         setMessages(prev => prev.map(m => m.id === msgId ? { ...m, text: "No database files found in common locations (AppData, Desktop, Documents, Program Files).\n\nTry specifying a custom path in the text box." } : m));
       } else {
@@ -725,7 +725,7 @@ export default function MigrationAgentPage({ onDone, sessionToken }: Props) {
     setQuickBusy("proc");
     const msgId = addMsg("assistant", "📋 Listing running processes…");
     try {
-      const procs = await migrationListProcesses();
+      const procs = await migrationListProcesses(sessionToken);
       const posKeywords = ["pos", "retail", "revel", "lightspeed", "square", "shopify", "odoo", "quickbooks", "quicksale", "loyverse", "vend", "toast", "clover", "talech"];
       const interesting = procs.filter(p => posKeywords.some(k => p.name.toLowerCase().includes(k)));
       let text = "";
@@ -770,10 +770,10 @@ export default function MigrationAgentPage({ onDone, sessionToken }: Props) {
     setDbConnForm(f => ({ ...f, open: false }));
     const msgId = addMsg("assistant", `🔌 Testing ${type.toUpperCase()} connection…`);
     try {
-      const r = await migrationConnectTest(type, conn.trim());
+      const r = await migrationConnectTest(type, conn.trim(), sessionToken);
       if (r.success) {
         // Also list tables
-        const tables = await migrationListTables(type, conn.trim());
+        const tables = await migrationListTables(type, conn.trim(), sessionToken);
         const tblLines = tables.slice(0, 20).map(t =>
           `• **${t.name}** — ${t.row_count.toLocaleString()} rows, ${t.columns.length} cols`
         ).join("\n");

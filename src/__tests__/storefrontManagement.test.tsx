@@ -27,6 +27,7 @@ import {
   storefrontProductsList,
   storefrontSettingsSave,
 } from "../tauri/storefront";
+import { asSessionToken } from "../types";
 import type {
   StorefrontProduct,
   StorefrontSettings,
@@ -75,13 +76,18 @@ const product = (overrides: Partial<StorefrontProduct>): StorefrontProduct => ({
 });
 
 describe("storefront command contract", () => {
+  // The session token is what authorises these commands; the actor is derived
+  // from it in Rust. Asserting the payload key is the point of this suite.
+  const OWNER = asSessionToken("test-session-owner-1");
+  const MANAGER = asSessionToken("test-session-manager-1");
+
   beforeEach(() => invoke.mockReset());
 
   it("saves settings using camelCase invoke arguments", async () => {
     invoke.mockResolvedValue(settings);
-    await storefrontSettingsSave("owner-1", settings);
+    await storefrontSettingsSave(OWNER, settings);
     expect(invoke).toHaveBeenCalledWith("storefront_settings_save", {
-      actorUserId: "owner-1",
+      sessionToken: OWNER,
       settings,
     });
   });
@@ -92,9 +98,9 @@ describe("storefront command contract", () => {
       publish_secret: "a-secure-publish-secret",
     };
     invoke.mockResolvedValue(settings);
-    await storefrontSettingsSave("owner-1", provisioned);
+    await storefrontSettingsSave(OWNER, provisioned);
     expect(invoke).toHaveBeenCalledWith("storefront_settings_save", {
-      actorUserId: "owner-1",
+      sessionToken: OWNER,
       settings: provisioned,
     });
   });
@@ -102,9 +108,9 @@ describe("storefront command contract", () => {
   it("updates publication controls with an explicit product id", async () => {
     const update = { published: false, featured: true, sort_order: 4 };
     invoke.mockResolvedValue(product(update));
-    await storefrontProductUpdate("manager-1", "p-1", update);
+    await storefrontProductUpdate(MANAGER, "p-1", update);
     expect(invoke).toHaveBeenCalledWith("storefront_product_update", {
-      actorUserId: "manager-1",
+      sessionToken: MANAGER,
       productId: "p-1",
       update,
     });
@@ -112,14 +118,14 @@ describe("storefront command contract", () => {
 
   it("requests a bounded catalogue page with server-side search", async () => {
     invoke.mockResolvedValue({ items: [product({})], total: 72, offset: 25, limit: 25 });
-    await storefrontProductsList("manager-1", {
+    await storefrontProductsList(MANAGER, {
       search: "rose",
       offset: 25,
       limit: 25,
       publishedOnly: false,
     });
     expect(invoke).toHaveBeenCalledWith("storefront_products_list", {
-      actorUserId: "manager-1",
+      sessionToken: MANAGER,
       search: "rose",
       offset: 25,
       limit: 25,
@@ -139,10 +145,10 @@ describe("storefront command contract", () => {
     };
     invoke.mockResolvedValue(connection);
 
-    await storefrontCloudflareConnect("owner-1", "secret-token");
+    await storefrontCloudflareConnect(OWNER, "secret-token");
 
     expect(invoke).toHaveBeenCalledWith("storefront_cloudflare_connect", {
-      actorUserId: "owner-1",
+      sessionToken: OWNER,
       apiToken: "secret-token",
     });
     expect(connection).not.toHaveProperty("api_token");
@@ -151,19 +157,19 @@ describe("storefront command contract", () => {
   it("loads, selects, and disconnects a Cloudflare account with explicit commands", async () => {
     invoke.mockResolvedValue({});
 
-    await storefrontCloudflareConnectionGet("owner-1");
-    await storefrontCloudflareSelectAccount("owner-1", "acc-1");
-    await storefrontCloudflareDisconnect("owner-1");
+    await storefrontCloudflareConnectionGet(OWNER);
+    await storefrontCloudflareSelectAccount(OWNER, "acc-1");
+    await storefrontCloudflareDisconnect(OWNER);
 
     expect(invoke).toHaveBeenNthCalledWith(1, "storefront_cloudflare_connection_get", {
-      actorUserId: "owner-1",
+      sessionToken: OWNER,
     });
     expect(invoke).toHaveBeenNthCalledWith(2, "storefront_cloudflare_select_account", {
-      actorUserId: "owner-1",
+      sessionToken: OWNER,
       accountId: "acc-1",
     });
     expect(invoke).toHaveBeenNthCalledWith(3, "storefront_cloudflare_disconnect", {
-      actorUserId: "owner-1",
+      sessionToken: OWNER,
     });
   });
 });

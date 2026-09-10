@@ -208,6 +208,17 @@ jobs:
       - name: TypeScript type-check
         run: npx tsc --noEmit
 
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # tsc cannot see this class: SessionToken is assignable to string, so a
+      # binding forwarding the token under the old actor_user_id key compiles
+      # clean and fails only at runtime on the till.
+      - name: Tauri invoke contract
+        run: python scripts/check_invoke_contract.py --root .
+
       - name: ESLint
         run: npx eslint src --ext .ts,.tsx --max-warnings 0
 

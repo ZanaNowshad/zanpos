@@ -10,11 +10,11 @@ export interface BackupStatus {
   recoverable_from_license: boolean;
 }
 
-export const backupStatus = (actorUserId: string): Promise<BackupStatus> =>
-  invoke("backup_status", { actorUserId });
+export const backupStatus = (sessionToken: SessionToken): Promise<BackupStatus> =>
+  invoke("backup_status", { sessionToken });
 
-export const backupRunNow = (actorUserId: string): Promise<boolean> =>
-  invoke("backup_run_now", { actorUserId });
+export const backupRunNow = (sessionToken: SessionToken): Promise<boolean> =>
+  invoke("backup_run_now", { sessionToken });
 
 /**
  * Decrypts a downloaded backup to `destPath`.

@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef } from "react";
 import type { BarcodeInputHandle } from "../components/BarcodeInput";
 import type { useCart } from "./useCart";
 import { ghostRecord } from "../tauri/commands";
+import type { SessionToken } from "../types";
 
 interface Options {
-  userId: string;
+  sessionToken: SessionToken;
   numpadValue: string;
   addByBarcode: ReturnType<typeof useCart>["addByBarcode"];
   setError: ReturnType<typeof useCart>["setError"];
@@ -13,7 +14,7 @@ interface Options {
 }
 
 export function usePosBarcode({
-  userId,
+  sessionToken,
   numpadValue,
   addByBarcode,
   setError,
@@ -21,12 +22,12 @@ export function usePosBarcode({
   refreshNotifications,
 }: Options) {
   const barcodeRef = useRef<BarcodeInputHandle>(null);
-  const userIdRef = useRef(userId);
+  const sessionTokenRef = useRef(sessionToken);
   const numpadRef = useRef(numpadValue);
   const scanBufferRef = useRef<Array<{ barcode: string; qty: number }>>([]);
   const scanDrainingRef = useRef(false);
 
-  useEffect(() => { userIdRef.current = userId; }, [userId]);
+  useEffect(() => { sessionTokenRef.current = sessionToken; }, [sessionToken]);
   useEffect(() => { numpadRef.current = numpadValue; }, [numpadValue]);
 
   const drainScanBuffer = useCallback(async () => {
@@ -39,7 +40,7 @@ export function usePosBarcode({
         resetNumpad();
       } catch {
         barcodeRef.current?.flashError();
-        void ghostRecord(userIdRef.current, item.barcode).then(refreshNotifications);
+        void ghostRecord(sessionTokenRef.current, item.barcode).then(refreshNotifications);
         setError(`Barcode "${item.barcode}" not found — flagged for your manager. Keep selling.`);
       }
     }

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { SessionToken } from "../types";
 import type {
   CloudflareConnection,
   StorefrontConnectionResult,
@@ -12,41 +13,41 @@ import type {
 } from "../storefront/types";
 
 export const storefrontCloudflareConnectionGet = (
-  actorUserId: string,
+  sessionToken: SessionToken,
 ): Promise<CloudflareConnection> =>
-  invoke("storefront_cloudflare_connection_get", { actorUserId });
+  invoke("storefront_cloudflare_connection_get", { sessionToken });
 
 export const storefrontCloudflareConnect = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   apiToken: string,
 ): Promise<CloudflareConnection> =>
-  invoke("storefront_cloudflare_connect", { actorUserId, apiToken });
+  invoke("storefront_cloudflare_connect", { sessionToken, apiToken });
 
 export const storefrontCloudflareSelectAccount = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   accountId: string,
 ): Promise<CloudflareConnection> =>
-  invoke("storefront_cloudflare_select_account", { actorUserId, accountId });
+  invoke("storefront_cloudflare_select_account", { sessionToken, accountId });
 
 export const storefrontCloudflareDisconnect = (
-  actorUserId: string,
+  sessionToken: SessionToken,
 ): Promise<void> =>
-  invoke("storefront_cloudflare_disconnect", { actorUserId });
+  invoke("storefront_cloudflare_disconnect", { sessionToken });
 
-export const storefrontStatus = (actorUserId: string): Promise<StorefrontStatus> =>
-  invoke("storefront_status", { actorUserId });
+export const storefrontStatus = (sessionToken: SessionToken): Promise<StorefrontStatus> =>
+  invoke("storefront_status", { sessionToken });
 
-export const storefrontSettingsGet = (actorUserId: string): Promise<StorefrontSettings> =>
-  invoke("storefront_settings_get", { actorUserId });
+export const storefrontSettingsGet = (sessionToken: SessionToken): Promise<StorefrontSettings> =>
+  invoke("storefront_settings_get", { sessionToken });
 
 export const storefrontSettingsSave = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   settings: StorefrontSettings,
 ): Promise<StorefrontSettings> =>
-  invoke("storefront_settings_save", { actorUserId, settings });
+  invoke("storefront_settings_save", { sessionToken, settings });
 
 export const storefrontProductsList = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   options: {
     search?: string;
     offset?: number;
@@ -55,7 +56,7 @@ export const storefrontProductsList = (
   } = {},
 ): Promise<StorefrontProductPage> =>
   invoke("storefront_products_list", {
-    actorUserId,
+    sessionToken,
     search: options.search,
     offset: options.offset,
     limit: options.limit,
@@ -63,27 +64,27 @@ export const storefrontProductsList = (
   });
 
 export const storefrontProductUpdate = (
-  actorUserId: string,
+  sessionToken: SessionToken,
   productId: string,
   update: StorefrontProductUpdate,
 ): Promise<StorefrontProduct> =>
-  invoke("storefront_product_update", { actorUserId, productId, update });
+  invoke("storefront_product_update", { sessionToken, productId, update });
 
-export const storefrontPublish = (actorUserId: string): Promise<StorefrontPublishResult> =>
-  invoke("storefront_publish", { actorUserId });
+export const storefrontPublish = (sessionToken: SessionToken): Promise<StorefrontPublishResult> =>
+  invoke("storefront_publish", { sessionToken });
 
 /** One-click GO LIVE: provisions Cloudflare (bucket, worker, secret, public URL)
  *  and uploads the storefront web app. Idempotent — re-run to update. */
 export const storefrontCloudflareDeploy = (
-  actorUserId: string,
+  sessionToken: SessionToken,
 ): Promise<StorefrontDeployReport> =>
-  invoke("storefront_cloudflare_deploy", { actorUserId });
+  invoke("storefront_cloudflare_deploy", { sessionToken });
 
 /** QR PNG data-URL for the public storefront link (for the shop counter). */
-export const storefrontQr = (actorUserId: string): Promise<string> =>
-  invoke("storefront_qr", { actorUserId });
+export const storefrontQr = (sessionToken: SessionToken): Promise<string> =>
+  invoke("storefront_qr", { sessionToken });
 
 export const storefrontConnectionTest = (
-  actorUserId: string,
+  sessionToken: SessionToken,
 ): Promise<StorefrontConnectionResult> =>
-  invoke("storefront_connection_test", { actorUserId });
+  invoke("storefront_connection_test", { sessionToken });

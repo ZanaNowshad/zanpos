@@ -135,7 +135,7 @@ export function usePosPageState({
   const payableTotal = exchangeBalance ? exchangeBalance.amountDueMinor : netTotal;
   // ── Barcode input ref for programmatic focus ──────────────────────────────────
   const { barcodeRef, focusBarcode, handleBarcode } = usePosBarcode({
-    userId: sessionUser.user_id,
+    sessionToken: sessionUser.session_token,
     numpadValue,
     addByBarcode,
     setError,

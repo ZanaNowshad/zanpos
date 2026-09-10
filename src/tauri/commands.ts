@@ -1318,15 +1318,15 @@ export function whatsappSendDelivery(sessionToken: SessionToken, input: SendDeli
   return invoke("whatsapp_send_delivery", { input, sessionToken });
 }
 
-export function whatsappNotifyArrival(actorUserId: string, to: string, receiptNumber: string, deliveryId: string): Promise<boolean> {
+export function whatsappNotifyArrival(sessionToken: SessionToken, to: string, receiptNumber: string, deliveryId: string): Promise<boolean> {
   return invoke("whatsapp_notify_arrival", {
     input: { to, receipt_number: receiptNumber, delivery_id: deliveryId },
-    actorUserId,
+    sessionToken,
   });
 }
 
 export function whatsappPaymentReminder(
-  actorUserId: string,
+  sessionToken: SessionToken,
   to: string,
   receiptNumber: string,
   amountMinor: number,
@@ -1343,7 +1343,7 @@ export function whatsappPaymentReminder(
       currency,
       delivery_id: deliveryId,
     },
-    actorUserId,
+    sessionToken,
   });
 }
 
@@ -1531,14 +1531,18 @@ export function setupSaveBenefitNumber(benefitNumber: string): Promise<void> {
 
 // ── Migration Agent ───────────────────────────────────────────────────────────
 
-export const migrationInspectFile = (path: string): Promise<FileSchema> =>
-  invoke("migration_inspect_file", { path });
+export const migrationInspectFile = (
+  path: string,
+  sessionToken: SessionToken,
+): Promise<FileSchema> =>
+  invoke("migration_inspect_file", { path, sessionToken });
 
 export const migrationAiMap = (
   schema: FileSchema,
   currencyExponent: number,
+  sessionToken: SessionToken,
 ): Promise<MappingConfig> =>
-  invoke("migration_ai_map", { schema, currencyExponent });
+  invoke("migration_ai_map", { schema, currencyExponent, sessionToken });
 
 export const migrationExecute = (
   path: string,
@@ -1554,32 +1558,37 @@ export const migrationExecute = (
 export const migrationConnectTest = (
   dbType: string,
   connStr: string,
+  sessionToken: SessionToken,
 ): Promise<ConnectTestResult> =>
-  invoke("migration_connect_test", { dbType, connStr });
+  invoke("migration_connect_test", { dbType, connStr, sessionToken });
 
 export const migrationListTables = (
   dbType: string,
   connStr: string,
+  sessionToken: SessionToken,
 ): Promise<RemoteTableInfo[]> =>
-  invoke("migration_list_tables", { dbType, connStr });
+  invoke("migration_list_tables", { dbType, connStr, sessionToken });
 
 export const migrationQueryRemote = (
   dbType: string,
   connStr: string,
   query: string,
+  sessionToken: SessionToken,
   maxRows?: number,
 ): Promise<QueryResult> =>
-  invoke("migration_query_remote", { dbType, connStr, query, maxRows });
+  invoke("migration_query_remote", { dbType, connStr, query, sessionToken, maxRows });
 
 export const migrationListProcesses = (
+  sessionToken: SessionToken,
   filter?: string,
 ): Promise<ProcessInfo[]> =>
-  invoke("migration_list_processes", { filter });
+  invoke("migration_list_processes", { sessionToken, filter });
 
 export const migrationFindDbFiles = (
+  sessionToken: SessionToken,
   extraPaths?: string[],
 ): Promise<DbFileInfo[]> =>
-  invoke("migration_find_db_files", { extraPaths });
+  invoke("migration_find_db_files", { sessionToken, extraPaths });
 
 export const migrationReadFile = (
   path: string,
@@ -1600,21 +1609,22 @@ export const migrationZanposStats = (): Promise<ZanposStats> =>
 
 export const migrationRollback = (
   sinceIso: string,
-  user_id: string,
+  sessionToken: SessionToken,
 ): Promise<RollbackResult> =>
-  invoke("migration_rollback", { sinceIso, userId: user_id });
+  invoke("migration_rollback", { sinceIso, sessionToken });
 
 export const migrationAgentChat = (
   history: ChatMessage[],
   message: string,
+  sessionToken: SessionToken,
 ): Promise<string> =>
-  invoke("migration_agent_chat", { input: { history, message } });
+  invoke("migration_agent_chat", { input: { history, message }, sessionToken });
 
 // ── Ghost barcode lookup ──────────────────────────────────────────────────────
 
 /** Record a failed barcode scan. Fire-and-forget — never throws. */
-export const ghostRecord = (actorUserId: string, barcode: string): Promise<void> =>
-  invoke<void>("ghost_record", { barcode, actorUserId }).catch(() => {});
+export const ghostRecord = (sessionToken: SessionToken, barcode: string): Promise<void> =>
+  invoke<void>("ghost_record", { barcode, sessionToken }).catch(() => {});
 
 /** Get counts of pending/found/not_found ghost barcodes. Manager+ only. */
 export const ghostSummary = (sessionToken: SessionToken): Promise<GhostSummary> =>

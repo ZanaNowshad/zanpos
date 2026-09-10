@@ -123,6 +123,20 @@ function friendlyError(raw: string): string {
 }
 
 /**
+ * The chat state to settle on once a stream ends.
+ *
+ * A mutation_pending can arrive in the same tick the stream finishes, so
+ * forcing "idle" would tear down the ConfirmActionModal before the user has
+ * answered it — they would see a change proposed and then silently dropped.
+ * Those three states own their own exit and are left alone.
+ */
+export function resolvedChatStateAfterStream(prev: ChatState): ChatState {
+  return prev === "confirm" || prev === "run_confirm" || prev === "run_executing"
+    ? prev
+    : "idle";
+}
+
+/**
  * True when a cancel was refused only because the backend no longer holds the
  * request. The stream ends and is dropped from `active_ai_chats` before the
  * frontend clears its own stream refs, so a Stop pressed in that window comes
@@ -648,9 +662,7 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
           // Do NOT override "confirm" state — a mutation_pending event may have set it
           // just before the stream ended. Resetting to "idle" would hide the ConfirmActionModal
           // before the user can approve or deny the pending action.
-          setChatState(prev => (
-            prev === "confirm" || prev === "run_confirm" || prev === "run_executing"
-          ) ? prev : "idle");
+          setChatState(resolvedChatStateAfterStream);
           // The first message of a thread is what names it, so the list is
           // stale the moment an exchange lands.
           void refreshConversations();
@@ -726,6 +738,38 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
         },
         onEvent
       );
+
+      // The terminal event is best-effort on the Rust side: send_or_log! logs a
+      // failed channel send and carries on, so a dropped `done` leaves this
+      // controller streaming forever — the timer keeps climbing and Stop then
+      // reports "AI request is not active", because the backend released the
+      // request long ago. The awaited call returning IS the end of the stream,
+      // so treat it as authoritative and reconcile if the event never landed.
+      // On the normal path the event already cleared this and the guard is a
+      // no-op.
+      if (streamActiveRef.current) {
+        const storedCalls = [...liveToolCallsRef.current];
+        const currentId = assistantMsgIdRef.current;
+        if (storedCalls.length > 0) {
+          setMessages(prev =>
+            prev.map(m => (m.id === currentId ? { ...m, toolCalls: storedCalls } : m))
+          );
+        }
+        liveToolCallsRef.current = [];
+        setLiveToolCalls([]);
+        setStreamingMsgId(null);
+        setStreamStartTime(null);
+        streamActiveRef.current = false;
+        activeRequestIdRef.current = null;
+        setCanStop(false);
+        setChatState(resolvedChatStateAfterStream);
+        if (finalText) {
+          setHistory(prev => {
+            const next = [...prev, { role: "assistant" as const, content: finalText }];
+            return next.length > MAX_HISTORY ? next.slice(next.length - MAX_HISTORY) : next;
+          });
+        }
+      }
     } catch (e) {
       if (!isMountedRef.current) return;
       streamActiveRef.current = false;

@@ -362,13 +362,44 @@ async fn apply_row_inner(
                         .map(|n| n > 0)
                         .unwrap_or(false);
                 if !role_exists {
-                    tracing::warn!(
-                        "Sync v2: unknown role_id '{rid}' for remote user — remapping to 'owner'"
+                    // An inbound user can name a role this device has not pulled
+                    // yet, and the FK on users.role_id means the row cannot land
+                    // without one. Supplying it is a privilege decision, and this
+                    // used to answer it with 'owner' — handing ownership of the
+                    // shop to any row carrying an unrecognised role_id.
+                    //
+                    // Park a placeholder under the *same* role_id instead. Its
+                    // name matches no allowlist in commands::rbac, so the user
+                    // arrives holding nothing, and because `roles` is itself a
+                    // synced table the real row overwrites this one by LWW and
+                    // the privileges resolve on their own. Kept local
+                    // (sync_status 'synced') so a fabricated role never travels.
+                    tracing::error!(
+                        "Sync v2: unknown role_id '{rid}' for remote user — parking an \
+                         unprivileged placeholder until the real role syncs"
                     );
-                    obj_norm.insert(
-                        "role_id".to_string(),
-                        Value::String("01JROLES000000000000000001".to_string()),
-                    );
+                    let now = chrono::Utc::now().to_rfc3339();
+                    if let Err(e) = sqlx::query(
+                        "INSERT OR IGNORE INTO roles (role_id, name, created_at, updated_at, sync_status)
+                         VALUES (?, ?, ?, ?, 'synced')",
+                    )
+                    .bind(&rid)
+                    .bind(format!(
+                        "{}{rid}",
+                        crate::commands::rbac::UNSYNCED_ROLE_PREFIX
+                    ))
+                    .bind(&now)
+                    .bind(&now)
+                    .execute(pool)
+                    .await
+                    {
+                        // Without the placeholder the FK rejects the user row,
+                        // which is the safe direction: no user, no privilege.
+                        tracing::error!(
+                            "Sync v2: could not park unknown role '{rid}': {e:?} — \
+                             the user row will be rejected by the foreign key"
+                        );
+                    }
                 }
             }
 
@@ -2578,5 +2609,96 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(name, "Ali Hassan");
+    }
+
+    // ── an unknown inbound role must not become ownership ────────────────────
+    //
+    // The defect this covers: a users row naming a role_id this device had not
+    // pulled yet was remapped to the owner role to satisfy the FK, so any row
+    // carrying an unrecognised role_id arrived holding the shop.
+
+    #[tokio::test]
+    async fn an_unknown_inbound_role_grants_nothing_and_heals_when_the_real_role_arrives() {
+        use crate::commands::rbac;
+
+        let pool = test_pool().await;
+        let branch_id: String = sqlx::query_scalar("SELECT branch_id FROM branches LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        let row = json!({"user_id":"U-REMOTE","branch_id":branch_id,
+            "display_name":"Remote user","username":"remote-user","pin_hash":"x",
+            "role_id":"R-NOT-PULLED-YET","is_active":1,
+            "created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"});
+        apply_row(&pool, "users", &row)
+            .await
+            .expect("the user row must still land");
+
+        // The role_id it named is preserved — nothing was silently rewritten.
+        let held: String = sqlx::query_scalar("SELECT role_id FROM users WHERE user_id='U-REMOTE'")
+            .fetch_one(&pool)
+            .await
+            .expect("user landed");
+        assert_eq!(
+            held, "R-NOT-PULLED-YET",
+            "the inbound role_id must be kept, not remapped"
+        );
+
+        // And it resolves to a parked name, not to owner.
+        let name: String =
+            sqlx::query_scalar("SELECT name FROM roles WHERE role_id='R-NOT-PULLED-YET'")
+                .fetch_one(&pool)
+                .await
+                .expect("a placeholder role was parked");
+        assert!(
+            name.starts_with(rbac::UNSYNCED_ROLE_PREFIX),
+            "expected a parked placeholder, got {name:?}"
+        );
+        assert_ne!(name, "owner", "an unknown role must never resolve to owner");
+
+        // The placeholder is local-only: a fabricated role must not travel.
+        let status: String =
+            sqlx::query_scalar("SELECT sync_status FROM roles WHERE role_id='R-NOT-PULLED-YET'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            status, "synced",
+            "a parked role must not be queued for push"
+        );
+
+        // Every gate refuses the user while the role is parked.
+        for list in [
+            rbac::ANY_ROLE,
+            rbac::POS_ROLES,
+            rbac::MANAGER_OR_OWNER,
+            rbac::OWNER_ONLY,
+        ] {
+            assert!(
+                matches!(
+                    rbac::require_role(&pool, "U-REMOTE", list).await,
+                    Err(crate::errors::AppError::Permission(_))
+                ),
+                "a parked role must be refused by {list:?}"
+            );
+        }
+
+        // When the real role finally syncs, LWW overwrites the placeholder and
+        // the user resolves to what the role actually is.
+        let real = json!({"role_id":"R-NOT-PULLED-YET","name":"regional-manager",
+            "created_at":"2026-01-01T00:00:00Z","updated_at":"2026-02-01T00:00:00Z"});
+        apply_row(&pool, "roles", &real)
+            .await
+            .expect("the real role arrives");
+        let healed: String =
+            sqlx::query_scalar("SELECT name FROM roles WHERE role_id='R-NOT-PULLED-YET'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            healed, "regional-manager",
+            "the real role must overwrite the placeholder"
+        );
     }
 }

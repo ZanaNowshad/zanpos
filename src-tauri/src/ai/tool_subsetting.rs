@@ -39,10 +39,8 @@ pub fn subset_for_message(
         // on every request. A tool whose name maps to no domain is general-purpose
         // (search, help, current time) and is always kept, so narrowing here costs
         // reach only within domains the message never mentioned.
-        let keep = match tool_domain(&definition.name) {
-            None => true,
-            Some(domain) => domains.contains(&domain),
-        };
+        let owned = tool_domains(&definition.name);
+        let keep = owned.is_empty() || owned.iter().any(|domain| domains.contains(domain));
         if keep {
             selected.push(definition.clone());
         } else if descriptor.kind == ToolKind::Mutation {
@@ -188,47 +186,55 @@ fn detect_domains(message: &str) -> Vec<&'static str> {
         .collect()
 }
 
-fn tool_domain(name: &str) -> Option<&'static str> {
-    if contains_any(
-        name,
-        &[
-            "product",
-            "category",
-            "barcode",
-            "price",
-            "promotion",
-            "discount",
-        ],
-    ) {
-        Some("products")
-    } else if contains_any(
-        name,
-        &["stock", "inventory", "supplier", "purchase", "reorder"],
-    ) || name == "receive_stock"
-    {
-        Some("inventory")
-    } else if contains_any(
-        name,
-        &["customer", "loyalty", "delivery", "whatsapp", "rider"],
-    ) {
-        Some("customers")
-    } else if contains_any(name, &["user", "role", "permission"]) {
-        Some("users")
-    } else if contains_any(
-        name,
-        &["sale", "refund", "shift", "cash", "drawer", "tender"],
-    ) {
-        Some("operations")
-    } else if contains_any(
-        name,
-        &[
-            "setting", "sync", "backup", "device", "terminal", "hub", "printer",
-        ],
-    ) {
-        Some("settings")
-    } else {
-        None
-    }
+/// Every domain a tool's name places it in.
+///
+/// This used to return the *first* match, so a name carrying two domains'
+/// keywords was filed under whichever branch happened to be checked first.
+/// `get_customer_purchase_history` contains "purchase", so it landed in
+/// inventory and disappeared from "what has this customer bought?" — the one
+/// question it exists to answer. `search_sales_by_customer` went the other way
+/// and vanished from "show sales for Ahmed".
+///
+/// A tool that spans domains has to survive a mention of any of them. Keeping
+/// a tool the message did not need costs tokens; dropping one it did need
+/// costs the answer.
+fn tool_domains(name: &str) -> Vec<&'static str> {
+    const DOMAIN_KEYWORDS: &[(&str, &[&str])] = &[
+        (
+            "products",
+            &[
+                "product",
+                "category",
+                "barcode",
+                "price",
+                "promotion",
+                "discount",
+            ],
+        ),
+        (
+            "inventory",
+            &["stock", "inventory", "supplier", "purchase", "reorder"],
+        ),
+        (
+            "customers",
+            &["customer", "loyalty", "delivery", "whatsapp", "rider"],
+        ),
+        ("users", &["user", "role", "permission"]),
+        (
+            "operations",
+            &["sale", "refund", "shift", "cash", "drawer", "tender"],
+        ),
+        (
+            "settings",
+            &[
+                "setting", "sync", "backup", "device", "terminal", "hub", "printer",
+            ],
+        ),
+    ];
+    DOMAIN_KEYWORDS
+        .iter()
+        .filter_map(|(domain, keywords)| contains_any(name, keywords).then_some(*domain))
+        .collect()
 }
 
 fn contains_any(value: &str, needles: &[&str]) -> bool {
@@ -306,8 +312,8 @@ mod tests {
     /// the form tool from every message that could use it.
     #[test]
     fn the_widening_escape_hatch_survives_every_domain() {
-        assert_eq!(tool_domain("request_full_tool_access"), None);
-        assert_eq!(tool_domain("request_input"), None);
+        assert!(tool_domains("request_full_tool_access").is_empty());
+        assert!(tool_domains("request_input").is_empty());
 
         for message in [
             "Refund yesterday's sale",
@@ -328,6 +334,53 @@ mod tests {
                 "escape hatch dropped for {message:?}"
             );
         }
+    }
+
+    /// A tool whose name spans two domains has to survive a mention of either.
+    ///
+    /// First-match classification filed `get_customer_purchase_history` under
+    /// inventory, because the name contains "purchase". It then dropped out of
+    /// every customer question — including the one it exists to answer. Run
+    /// against the live catalogue so a rename cannot quietly reopen the gap.
+    #[test]
+    fn a_customer_tool_survives_a_customer_question_despite_purchase_in_its_name() {
+        assert!(tool_domains("get_customer_purchase_history").contains(&"customers"));
+
+        let catalogue = crate::ai::tools::all_tool_definitions();
+        let subset =
+            subset_for_message(&catalogue, "what has this customer bought?", true, false).unwrap();
+        let names: Vec<_> = subset
+            .definitions
+            .iter()
+            .map(|definition| definition.name.as_str())
+            .collect();
+
+        assert!(
+            names.contains(&"get_customer_purchase_history"),
+            "the tool that answers the question was withheld from it"
+        );
+        assert!(names.contains(&"list_customers"));
+    }
+
+    /// The same fault from the other side: this one was filed under customers,
+    /// so a sales question that named a person rather than the word "customer"
+    /// lost it.
+    #[test]
+    fn a_customer_scoped_sales_tool_survives_a_sales_question() {
+        let owned = tool_domains("search_sales_by_customer");
+        assert!(owned.contains(&"customers"));
+        assert!(owned.contains(&"operations"));
+
+        let catalogue = crate::ai::tools::all_tool_definitions();
+        let subset =
+            subset_for_message(&catalogue, "show me the sales for Ahmed", true, false).unwrap();
+        let names: Vec<_> = subset
+            .definitions
+            .iter()
+            .map(|definition| definition.name.as_str())
+            .collect();
+
+        assert!(names.contains(&"search_sales_by_customer"));
     }
 
     #[test]

@@ -94,6 +94,16 @@ pub const MANAGER_OR_OWNER: &[&str] = &["owner", "manager"];
 /// Roles accepted for ownership actions. Mirrors [`owner_only`].
 pub const OWNER_ONLY: &[&str] = &["owner"];
 
+/// Name prefix for the placeholder role `sync_v2::apply` parks when an inbound
+/// user names a role this device has not pulled yet.
+///
+/// The prefix exists so that unknown input cannot widen privilege: a role named
+/// with it must never appear in any allowlist above, so every `require_role`
+/// and [`session_actor`] check denies until the real role syncs in and
+/// overwrites the placeholder. `placeholder_role_is_in_no_allowlist` holds the
+/// line.
+pub const UNSYNCED_ROLE_PREFIX: &str = "unsynced:";
+
 /// Authenticate the caller from their session token and require one of
 /// `allowed_roles`.
 ///
@@ -287,20 +297,89 @@ mod tests {
     }
 
     // ── cashier is blocked from manager-only financial operations ───────────────
-    // shift_close, cash_event_create, and pos_void_sale use manager_or_owner.
     // NOTE: refund_create uses require_any_role (cashiers CAN refund on same device;
     // cross-device refunds require a manager override token — see refund_commands.rs).
+    //
+    // This used to loop over three command names calling `manager_or_owner`
+    // identically each pass, with the name reaching only the failure message: it
+    // asserted one thing three times and touched none of the three gates. It now
+    // walks the allowlists themselves, so widening one fails here.
     #[tokio::test]
-    async fn cashier_cannot_perform_manager_only_operations() {
+    async fn cashier_is_refused_by_every_supervisory_allowlist() {
         let pool = make_pool().await;
         let cashier_id = "01JUSER000000000000CASH01";
 
-        // These commands use manager_or_owner internally
-        for label in &["shift_close", "cash_event_create", "pos_void_sale"] {
-            let result = manager_or_owner(&pool, cashier_id).await;
+        // A cashier works the till, so POS_ROLES and ANY_ROLE must admit them...
+        for list in [ANY_ROLE, POS_ROLES] {
+            assert!(
+                require_role(&pool, cashier_id, list).await.is_ok(),
+                "a cashier must still be admitted by {list:?}"
+            );
+        }
+
+        // ...and every supervisory allowlist must refuse them. `shift_close`,
+        // `cash_event_create` and `pos_void_sale` gate on MANAGER_OR_OWNER.
+        for list in [MANAGER_OR_OWNER, OWNER_ONLY] {
+            let result = require_role(&pool, cashier_id, list).await;
             assert!(
                 matches!(result, Err(AppError::Permission(_))),
-                "cashier must be blocked from {label}"
+                "a cashier must be refused by {list:?}: got {result:?}"
+            );
+        }
+    }
+
+    /// A role name this device has not synced yet must grant nothing.
+    ///
+    /// `sync_v2::apply` parks unknown inbound `role_id`s under a placeholder
+    /// named with [`UNSYNCED_ROLE_PREFIX`]; it previously remapped them to
+    /// 'owner'. Adding that prefix to any allowlist would restore the
+    /// escalation, so this asserts none of them carry it.
+    #[test]
+    fn placeholder_role_is_in_no_allowlist() {
+        let parked = format!("{UNSYNCED_ROLE_PREFIX}01JROLESNOTSYNCEDYET00000");
+        for list in [ANY_ROLE, POS_ROLES, MANAGER_OR_OWNER, OWNER_ONLY] {
+            assert!(
+                !list.contains(&parked.as_str()),
+                "a parked role must never be admitted by {list:?}"
+            );
+            assert!(
+                !list.iter().any(|r| r.starts_with(UNSYNCED_ROLE_PREFIX)),
+                "no allowlist may carry the parked-role prefix: {list:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_user_holding_a_parked_role_is_refused_everywhere() {
+        let pool = make_pool().await;
+        let branch_id: String = sqlx::query_scalar("SELECT branch_id FROM branches LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .expect("seed branch");
+        sqlx::query(
+            "INSERT INTO roles (role_id, name, created_at, updated_at, sync_status)
+             VALUES ('R-PARKED', 'unsynced:R-PARKED', '2026-01-01T00:00:00Z',
+                     '2026-01-01T00:00:00Z', 'synced')",
+        )
+        .execute(&pool)
+        .await
+        .expect("park role");
+        sqlx::query(
+            "INSERT INTO users (user_id, branch_id, display_name, username, pin_hash, role_id,
+                                is_active, created_at, updated_at)
+             VALUES ('U-PARKED', ?, 'Remote user', 'remote-user', 'x', 'R-PARKED', 1,
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .bind(&branch_id)
+        .execute(&pool)
+        .await
+        .expect("insert parked user");
+
+        for list in [ANY_ROLE, POS_ROLES, MANAGER_OR_OWNER, OWNER_ONLY] {
+            let result = require_role(&pool, "U-PARKED", list).await;
+            assert!(
+                matches!(result, Err(AppError::Permission(_))),
+                "a user holding a parked role must be refused by {list:?}: got {result:?}"
             );
         }
     }

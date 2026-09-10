@@ -123,6 +123,24 @@ function friendlyError(raw: string): string {
 }
 
 /**
+ * True when a cancel was refused only because the backend no longer holds the
+ * request. The stream ends and is dropped from `active_ai_chats` before the
+ * frontend clears its own stream refs, so a Stop pressed in that window comes
+ * back as a refusal for something the user already got: the request is stopped.
+ * Putting that in front of them describes a failure that did not happen.
+ *
+ * Deliberately narrow. "does not belong to this session" is an ownership
+ * refusal, not a race, and still surfaces.
+ */
+export function isAlreadyStopped(raw: string): boolean {
+  const lower = raw.toLowerCase();
+  return (
+    lower.includes("ai request is not active") ||
+    lower.includes("ai request is no longer active")
+  );
+}
+
+/**
  * Single owner of ALL chat/stream state for the OfficeAI workspace.
  * The docked copilot and the fullscreen Assistant tab are pure renderers of
  * this controller — switching tabs or dock↔fullscreen never remounts the chat
@@ -737,7 +755,8 @@ export function useChatController(opts: ChatControllerOpts): ChatController {
     try {
       await aiCancelChat(sessionUser.session_token, requestId);
     } catch (error) {
-      setErrorMessage(friendlyError(String(error)));
+      const raw = String(error);
+      if (!isAlreadyStopped(raw)) setErrorMessage(friendlyError(raw));
     }
   }, [canStop, sessionUser.session_token]);
 

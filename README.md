@@ -60,17 +60,30 @@ Rust backend (Tauri v2 + sqlx + tokio)
 ### Setup
 
 ```bash
-# Install JS dependencies
-npm install
+# Install JS dependencies and provision the bundled build resources
+npm run bootstrap
 
 # Run in development mode (hot-reload frontend + Rust backend)
 npm run tauri dev
 ```
 
+`npm install` alone is not enough. `tauri.conf.json` bundles three resources
+that a fresh clone does not have — the sidecar's `node.exe` (gitignored, ~92 MB),
+the sidecar's `node_modules/`, and `storefront/dist/`. Without them the Rust
+build fails with a bare `resource path … doesn't exist`, one at a time, each
+after a full dependency compile. `npm run bootstrap` provisions all three and is
+idempotent, so it is safe to re-run at any time.
+
+The Rust crate is **Windows-only**: `sha2`, `hmac`, `csv`, `mysql`, `tiberius`,
+`calamine`, `zip` and `keyring` sit under
+`[target.'cfg(windows)'.dependencies]`, so a Linux `cargo test` fails on
+unresolved crates before running a single test.
+
 ### Available Scripts
 
 | Command | Description |
 |---------|-------------|
+| `npm run bootstrap` | Provision build prerequisites (run this first; idempotent) |
 | `npm run dev` | Vite dev server only (no Tauri) |
 | `npm run tauri dev` | Full Tauri dev mode |
 | `npm run check` | Type-check + lint + tests in one pass |

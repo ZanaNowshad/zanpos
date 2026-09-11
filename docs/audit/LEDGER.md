@@ -74,18 +74,28 @@ fails with ~155 unresolved-crate errors before running a single test.
 
 **And CI cannot stand in for it** — see OPS1.
 
-### Gate run on Windows, 2026-09-11, at `cb408ac`
+### Gate run on Windows, 2026-09-11
 
-| Command | Result |
-|---|---|
-| `cargo fmt --all -- --check` | exit 0 |
-| `cargo clippy --all-targets -- -D warnings` | exit 0, zero warnings (6m16s) |
-| `cargo test --lib` | **964 passed; 0 failed; 1 ignored** |
-| `npm run check` | exit 0 — 70 files, **503 tests** passed |
-| `npm run build` | exit 0 |
+Run twice. First at `cb408ac` (the D01 work on `1f4738d`), then again after rebasing
+onto the six commits that existed only in a local working copy — `cb7191a` through
+`c8fa615` — so the published branch is verified as a whole rather than in halves.
 
-The Rust now compiles — the open question the previous ledger flagged. Running it is
-also what exposed **D01-b**, which SQL simulation had reported as proven.
+| Command | At `cb408ac` (4 commits) | At `3d05658` (11 commits) |
+|---|---|---|
+| `cargo fmt --all -- --check` | exit 0 | **exit 1 → fixed in `3d05658`, then exit 0** |
+| `cargo clippy --all-targets -- -D warnings` | exit 0, zero warnings | exit 0, zero warnings |
+| `cargo test --lib` | 964 passed; 0 failed; 1 ignored | **970 passed; 0 failed; 1 ignored** |
+| `npm run check` | exit 0 — 70 files, 503 tests | exit 0 — **72 files, 510 tests** |
+| `npm run build` | exit 0 | — |
+
+Two things this run established that no previous one could:
+
+1. **The Rust compiles** — the open question the previous ledger flagged. Running it is
+   also what exposed **D01-b**, which SQL simulation had reported as proven.
+2. **`cargo fmt --check` was red on the unpublished local commits** (`intent_engine.rs`,
+   `intent_engine/tests.rs`, `errors/mod.rs`). Because of OPS1 nothing would have caught
+   that before it reached `main`. Fixed in `3d05658` as its own commit rather than by
+   amending someone else's.
 
 ## Coverage
 

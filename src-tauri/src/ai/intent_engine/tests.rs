@@ -294,7 +294,11 @@ async fn seed_customer(
     .bind(whatsapp_name)
     .bind(phone)
     .bind(email)
-    .bind(if deleted { Some("2026-08-01T00:00:00Z") } else { None })
+    .bind(if deleted {
+        Some("2026-08-01T00:00:00Z")
+    } else {
+        None
+    })
     .execute(pool)
     .await
     .expect("seed customer");
@@ -321,9 +325,39 @@ async fn list_customers_intent_refuses_another_branch_and_the_deleted() {
         .await
         .unwrap();
 
-    seed_customer(&pool, "cus_ours", &branch, "Shared Name", None, "+97333050001", None, false).await;
-    seed_customer(&pool, "cus_theirs", "other-branch", "Shared Name", None, "+97333050002", None, false).await;
-    seed_customer(&pool, "cus_gone", &branch, "Shared Name", None, "+97333050003", None, true).await;
+    seed_customer(
+        &pool,
+        "cus_ours",
+        &branch,
+        "Shared Name",
+        None,
+        "+97333050001",
+        None,
+        false,
+    )
+    .await;
+    seed_customer(
+        &pool,
+        "cus_theirs",
+        "other-branch",
+        "Shared Name",
+        None,
+        "+97333050002",
+        None,
+        false,
+    )
+    .await;
+    seed_customer(
+        &pool,
+        "cus_gone",
+        &branch,
+        "Shared Name",
+        None,
+        "+97333050003",
+        None,
+        true,
+    )
+    .await;
 
     let found = listed_customer_ids(&pool, "Shared", &branch).await;
 
@@ -359,11 +393,23 @@ async fn list_customers_intent_finds_the_fields_a_cashier_actually_types() {
     .await;
 
     // The name WhatsApp knows them by — often the only one the cashier has seen.
-    assert_eq!(listed_customer_ids(&pool, "Umm Yousef", &branch).await, vec!["cus_wa"]);
+    assert_eq!(
+        listed_customer_ids(&pool, "Umm Yousef", &branch).await,
+        vec!["cus_wa"]
+    );
     // Email was not searched at all before.
-    assert_eq!(listed_customer_ids(&pool, "fatima@example.test", &branch).await, vec!["cus_wa"]);
+    assert_eq!(
+        listed_customer_ids(&pool, "fatima@example.test", &branch).await,
+        vec!["cus_wa"]
+    );
     // The stored number carries spaces; nobody types it that way.
-    assert_eq!(listed_customer_ids(&pool, "33050004", &branch).await, vec!["cus_wa"]);
+    assert_eq!(
+        listed_customer_ids(&pool, "33050004", &branch).await,
+        vec!["cus_wa"]
+    );
     // And the ordinary case still works.
-    assert_eq!(listed_customer_ids(&pool, "Fatima", &branch).await, vec!["cus_wa"]);
+    assert_eq!(
+        listed_customer_ids(&pool, "Fatima", &branch).await,
+        vec!["cus_wa"]
+    );
 }

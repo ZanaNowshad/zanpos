@@ -317,7 +317,13 @@ async fn list_customers_intent(
     params: &Value,
     branch_id: &str,
 ) -> AppResult<IntentResult> {
-    type CustomerRow = (String, String, Option<String>, Option<String>, Option<String>);
+    type CustomerRow = (
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
     let search = params.get("search").and_then(|v| v.as_str()).unwrap_or("");
     let rows: Vec<CustomerRow> = if search.trim().is_empty() {
         sqlx::query_as(

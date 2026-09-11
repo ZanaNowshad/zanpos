@@ -98,15 +98,21 @@ impl AppError {
                         "1299" => {
                             // SQLITE_CONSTRAINT_NOTNULL — a required field was not provided.
                             // (Previously fell through to the generic message below, masking real bugs.)
-                            Cow::Borrowed("A required field was missing — please try again or report this.")
+                            Cow::Borrowed(
+                                "A required field was missing — please try again or report this.",
+                            )
                         }
                         "1043" => {
                             // SQLITE_CONSTRAINT_CHECK — a value failed a table CHECK rule.
-                            Cow::Borrowed("A value didn't pass validation — please adjust it and try again.")
+                            Cow::Borrowed(
+                                "A value didn't pass validation — please adjust it and try again.",
+                            )
                         }
                         "11" | "266" | "267" => {
                             // SQLITE_CORRUPT family
-                            Cow::Borrowed("Database appears damaged — please restore from a recent backup.")
+                            Cow::Borrowed(
+                                "Database appears damaged — please restore from a recent backup.",
+                            )
                         }
                         other => Cow::Owned(unexpected_database_message(other)),
                     }

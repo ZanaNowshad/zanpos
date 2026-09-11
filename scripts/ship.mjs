@@ -151,6 +151,21 @@ gate("Frontend: types, lint, tests", "npm run check", ROOT, "tsc + eslint + vite
 
 gate("Rust: cargo check", "cargo check", join(ROOT, "src-tauri"), "src-tauri compiles");
 
+// Cargo.toml has `default = []`, so escpos-driver, arabic-rendering,
+// mdns-discovery, otel-tracing, legacy-printer and rig-pilot are built by
+// nothing above — and, since they are `pub mod`, the compiler does not call
+// them dead either. That code drifted: when it was finally built it produced
+// two warnings and a clippy error, and when its tests were finally run three
+// of them failed, one of which could never have passed on any checkout.
+// Building it here is what stops that recurring. Kept at `cargo check` to match
+// the gate above rather than quietly raising the bar for everything.
+gate(
+  "Rust: cargo check --all-features",
+  "cargo check --all-features",
+  join(ROOT, "src-tauri"),
+  "feature-gated code still compiles",
+);
+
 // A binding can forward the wrong payload key and still type-check, because
 // SessionToken is assignable to string. Only comparing the two sides of the
 // contract catches it, and when it is wrong the till fails at runtime.

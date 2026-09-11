@@ -119,6 +119,16 @@ pub fn is_allowed_config_key(key: &str) -> bool {
 
 pub(crate) const STOCK_DRIFT_TOLERANCE: f64 = 0.001;
 
+/// `updated_at` for the placeholder role parked when an inbound user names a
+/// role this device has not pulled yet.
+///
+/// It must lose every last-write-wins comparison in [`apply_lww`], which only
+/// overwrites when the local timestamp is strictly older than the arriving one.
+/// A placeholder stamped at the current time would outrank a real role carrying
+/// its genuine (usually much older) `updated_at`, so the row would never heal
+/// and the user would hold no privileges permanently.
+pub(crate) const PARKED_ROLE_STAMP: &str = "1970-01-01T00:00:00.000Z";
+
 /// Apply a single row to the local database, once.
 ///
 /// Every path that receives a row goes through here — the worker's pull, the
@@ -374,11 +384,19 @@ async fn apply_row_inner(
                     // synced table the real row overwrites this one by LWW and
                     // the privileges resolve on their own. Kept local
                     // (sync_status 'synced') so a fabricated role never travels.
+                    //
+                    // The placeholder is stamped at the epoch, not at `now`.
+                    // `apply_lww` only overwrites when the local `updated_at` is
+                    // strictly older than the arriving one, so a placeholder
+                    // stamped now would outrank the real role — which carries
+                    // whenever it was genuinely last edited, usually long past.
+                    // The row would then never heal and the user would hold
+                    // nothing forever. The epoch loses every comparison, which
+                    // is what a placeholder should do.
                     tracing::error!(
                         "Sync v2: unknown role_id '{rid}' for remote user — parking an \
                          unprivileged placeholder until the real role syncs"
                     );
-                    let now = chrono::Utc::now().to_rfc3339();
                     if let Err(e) = sqlx::query(
                         "INSERT OR IGNORE INTO roles (role_id, name, created_at, updated_at, sync_status)
                          VALUES (?, ?, ?, ?, 'synced')",
@@ -388,8 +406,8 @@ async fn apply_row_inner(
                         "{}{rid}",
                         crate::commands::rbac::UNSYNCED_ROLE_PREFIX
                     ))
-                    .bind(&now)
-                    .bind(&now)
+                    .bind(PARKED_ROLE_STAMP)
+                    .bind(PARKED_ROLE_STAMP)
                     .execute(pool)
                     .await
                     {

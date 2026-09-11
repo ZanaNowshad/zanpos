@@ -308,7 +308,10 @@ body {
   gap: 3px;
   padding: 8px 2px 6px;
   width: 72px;
-  min-height: 54px;
+  /* T25 sets 56px as this app's touch-target floor for a 15-inch counter
+     screen (see .numpad-panel .dialpad-key). These are real buttons — Quick
+     Sale, Reports, Admin — so they are held to it rather than 2px under. */
+  min-height: 56px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;

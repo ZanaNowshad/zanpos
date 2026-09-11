@@ -12,6 +12,7 @@
     "type-check": "tsc --noEmit",
     "lint": "eslint src --ext .ts,.tsx --max-warnings 0",
     "lint:a11y": "eslint src --ext .ts,.tsx -c eslint.a11y.config.js",
+    "check:dead-css": "node scripts/check-dead-css.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "coverage": "vitest run --coverage",

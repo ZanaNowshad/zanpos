@@ -20,8 +20,19 @@ mod inner {
 
     impl ArabicShaper {
         pub fn new() -> Self {
-            let font_data = Self::load_bundled_font().or_else(|| Self::load_resource_font());
+            let font_data = Self::load_bundled_font().or_else(Self::load_resource_font);
             Self { font_data }
+        }
+
+        /// A shaper with no font, for exercising the no-font path.
+        ///
+        /// `new()` cannot serve that purpose: it falls back to
+        /// `load_resource_font`, which reads `src-tauri/resources/arabic.ttf` —
+        /// a file committed to the repository — so `new()` always finds a font
+        /// on any checkout.
+        #[cfg(test)]
+        pub(crate) fn without_font() -> Self {
+            Self { font_data: None }
         }
 
         /// Try loading from the compiled-in resource.
@@ -210,7 +221,12 @@ mod tests {
 
     #[test]
     fn shaper_requires_font_for_arabic() {
-        let shaper = ArabicShaper::new();
+        // Built without a font explicitly rather than via `new()`, which falls
+        // back to a font committed at `src-tauri/resources/arabic.ttf` and so
+        // always finds one — this assertion could never hold on any checkout.
+        // It went unnoticed because the whole module sits behind the
+        // `arabic-rendering` feature, which `default = []` leaves off.
+        let shaper = ArabicShaper::without_font();
         assert!(!shaper.has_font());
         let glyphs = shaper.shape("مرحبا", 12.0);
         assert!(glyphs.is_empty(), "Arabic text without font returns empty");

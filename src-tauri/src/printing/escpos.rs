@@ -20,7 +20,7 @@ impl ReceiptRenderer for EscposRenderer {
             use escpos::errors::PrinterError;
             use escpos::errors::Result as EscposResult;
             use escpos::printer::Printer;
-            use escpos::utils::{JustifyMode, Protocol};
+            use escpos::utils::Protocol;
 
             struct BytesDriver(Rc<RefCell<Vec<u8>>>);
 
@@ -39,6 +39,16 @@ impl ReceiptRenderer for EscposRenderer {
                 }
             }
 
+            // The native driver path does not consult the printer profile:
+            // justification, bold and size all come from each block's own style
+            // (`render_block_native`), and paper width is left to the printer.
+            // The fallback renderer at the bottom of this function does honour
+            // it, so the two paths can disagree about a narrow roll. Widening
+            // the native path to read the profile is a behaviour change, not a
+            // warning fix, so it is left alone and recorded rather than done
+            // here under cover of silencing a lint.
+            let _ = profile;
+
             let buf = Rc::new(RefCell::new(Vec::new()));
             let driver = BytesDriver(Rc::clone(&buf));
             let mut printer = Printer::new(driver, Protocol::default());
@@ -53,10 +63,23 @@ impl ReceiptRenderer for EscposRenderer {
             for block in &doc.footer {
                 render_block_native(&mut printer, block);
             }
-            if doc.cut_after {
-                let _ = printer.cut();
-            }
             let _ = printer.print();
+
+            // The cut is written straight to the buffer rather than through
+            // `printer.cut()`, because the two renderers must emit the same
+            // bytes and the crate's does not: escpos 0.6 sends
+            // GS_PAPER_CUT_FULL = [GS, 'V', 'A', 0] (the four-byte feed-and-cut,
+            // function B), while the fallback renderer this path stands in for
+            // sends [0x1d, 0x56, 0x00] (the three-byte full cut, function A) at
+            // `renderer.rs:68`. Both are valid ESC/POS and a printer accepts
+            // either, but a receipt should not change shape depending on which
+            // Cargo feature was enabled, and both tests here assert the
+            // three-byte form. Emitting it directly keeps the two paths
+            // byte-identical at the tail.
+            if doc.cut_after {
+                buf.borrow_mut().extend_from_slice(&[0x1d, 0x56, 0x00]);
+            }
+
             let result = buf.borrow().clone();
             drop(printer);
             result

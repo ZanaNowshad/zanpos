@@ -11,7 +11,7 @@ jobs:
   dependency-diagnostics:
     name: Capture dependency gate evidence
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -46,12 +46,13 @@ jobs:
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
-      - name: Generate and verify npm remediation candidate
+      - name: Generate npm remediation candidate
         shell: bash
         run: |
           set -o pipefail
           cp package.json package.json.before
           cp package-lock.json package-lock.before.json
+          npm pkg set 'overrides.basic-ftp=6.2.1' 'overrides.braces=3.0.4'
           npm install --package-lock-only --save-dev \
             @wdio/cli@^9.31.8 \
             @wdio/local-runner@^9.31.8 \
@@ -62,6 +63,10 @@ jobs:
           npm audit fix --package-lock-only || true
           cp package.json package.json.candidate
           cp package-lock.json package-lock.candidate.json
+
+      - name: Verify npm audit candidate
+        shell: bash
+        run: |
           set +e
           npm audit --json > npm-audit-after.json
           echo "$?" > npm-audit-after-exit.txt
@@ -70,7 +75,19 @@ jobs:
           set -e
           cat npm-audit-wrapper-after.log
 
+      - name: Verify frontend candidate
+        shell: bash
+        run: |
+          set -o pipefail
+          npm ci
+          npm run type-check
+          npm run lint
+          npm run test
+          npm run build
+          npx wdio --version
+
       - name: Upload dependency remediation evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dependency-remediation-candidate

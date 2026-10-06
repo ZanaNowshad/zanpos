@@ -258,7 +258,10 @@ mod tests {
         .fetch_one(&pool)
         .await
         .expect("seed cashier exists");
-        assert_eq!(before, 1, "fixture must reproduce the vulnerable active seed");
+        assert_eq!(
+            before, 1,
+            "fixture must reproduce the vulnerable active seed"
+        );
 
         rehash_plain_pins(&pool).await.expect("startup hardening");
 
@@ -345,12 +348,11 @@ mod tests {
 
         rehash_plain_pins(&pool).await.expect("startup hardening");
 
-        let stored: String = sqlx::query_scalar(
-            "SELECT pin_hash FROM users WHERE user_id = 'LEGACY-USER'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let stored: String =
+            sqlx::query_scalar("SELECT pin_hash FROM users WHERE user_id = 'LEGACY-USER'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert!(!stored.starts_with("PLAIN:"));
         assert!(verify_pin(&stored, "2468"));
     }

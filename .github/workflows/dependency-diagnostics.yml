@@ -1,0 +1,302 @@
+name: Dependency diagnostics
+
+on:
+  pull_request:
+    branches: [main, master, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  npm-diagnostics:
+    name: Capture npm dependency evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Generate npm remediation candidate
+        shell: bash
+        run: |
+          set +e
+          cp package.json package.json.before
+          cp package-lock.json package-lock.before.json
+          : > npm-generation.log
+
+          npm pkg set 'overrides.basic-ftp=6.2.1' >> npm-generation.log 2>&1
+          pkg_status=$?
+          echo "$pkg_status" > npm-pkg-set-exit.txt
+
+          if [ "$pkg_status" -eq 0 ]; then
+            npm install --package-lock-only --save-dev \
+              @wdio/cli@^9.31.8 \
+              @wdio/local-runner@^9.31.8 \
+              @wdio/mocha-framework@^9.31.8 \
+              @wdio/spec-reporter@^9.31.8 \
+              webdriverio@^9.31.8 \
+              @wdio/tauri-service@^1.4.0 >> npm-generation.log 2>&1
+            install_status=$?
+          else
+            install_status=125
+          fi
+          echo "$install_status" > npm-install-exit.txt
+
+          if [ "$install_status" -eq 0 ]; then
+            npm audit fix --package-lock-only >> npm-generation.log 2>&1
+            audit_fix_status=$?
+            cp package.json package.json.candidate
+            cp package-lock.json package-lock.candidate.json
+          else
+            audit_fix_status=125
+          fi
+          echo "$audit_fix_status" > npm-audit-fix-exit.txt
+          cat npm-generation.log
+          exit 0
+
+      - name: Verify npm audit candidate
+        if: ${{ hashFiles('package-lock.candidate.json') != '' }}
+        shell: bash
+        run: |
+          set +e
+          npm audit --json > npm-audit-after.json
+          echo "$?" > npm-audit-after-exit.txt
+          node scripts/check-npm-audit.mjs --level high > npm-audit-wrapper-after.log 2>&1
+          echo "$?" > npm-audit-wrapper-after-exit.txt
+          set -e
+          cat npm-audit-wrapper-after.log
+
+      - name: Verify frontend candidate
+        if: ${{ hashFiles('package-lock.candidate.json') != '' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          npm ci
+          npm run type-check
+          npm run lint
+          npm run test
+          npm run build
+          npx wdio --version
+
+      - name: Upload npm remediation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-remediation-candidate
+          if-no-files-found: error
+          path: |
+            package.json.before
+            package.json.candidate
+            package-lock.before.json
+            package-lock.candidate.json
+            npm-generation.log
+            npm-pkg-set-exit.txt
+            npm-install-exit.txt
+            npm-audit-fix-exit.txt
+            npm-audit-after.json
+            npm-audit-after-exit.txt
+            npm-audit-wrapper-after.log
+            npm-audit-wrapper-after-exit.txt
+
+  rust-diagnostics:
+    name: Capture Rust dependency evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate rustls remediation candidate
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          set +e
+          cp Cargo.lock Cargo.lock.before
+          cargo update -p rustls --precise 0.23.45 > rust-update.log 2>&1
+          update_status=$?
+          echo "$update_status" > rust-update-exit.txt
+          cat rust-update.log
+
+          if [ "$update_status" -eq 0 ]; then
+            cp Cargo.lock Cargo.lock.candidate
+            cargo metadata --locked --format-version 1 > cargo-metadata.json 2> cargo-metadata.err
+            metadata_status=$?
+          else
+            metadata_status=125
+          fi
+          echo "$metadata_status" > cargo-metadata-exit.txt
+          exit 0
+
+      - name: Install cargo-deny 0.20.2
+        run: cargo install cargo-deny --version 0.20.2 --locked --quiet
+
+      - name: Verify Rust dependency policy candidate
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          set +e
+          if [ -f Cargo.lock.candidate ]; then
+            cargo deny check advisories > cargo-deny-advisories.log 2>&1
+            advisories_status=$?
+            cargo deny check > cargo-deny-full.log 2>&1
+            full_status=$?
+          else
+            advisories_status=125
+            full_status=125
+            echo "Cargo.lock.candidate was not generated" > cargo-deny-advisories.log
+            cp cargo-deny-advisories.log cargo-deny-full.log
+          fi
+          echo "$advisories_status" > cargo-deny-advisories-exit.txt
+          echo "$full_status" > cargo-deny-full-exit.txt
+          cat cargo-deny-advisories.log
+          cat cargo-deny-full.log
+          exit 0
+
+      - name: Upload Rust remediation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-remediation-candidate
+          if-no-files-found: error
+          path: |
+            src-tauri/Cargo.lock.before
+            src-tauri/Cargo.lock.candidate
+            src-tauri/rust-update.log
+            src-tauri/rust-update-exit.txt
+            src-tauri/cargo-metadata.json
+            src-tauri/cargo-metadata.err
+            src-tauri/cargo-metadata-exit.txt
+            src-tauri/cargo-deny-advisories.log
+            src-tauri/cargo-deny-advisories-exit.txt
+            src-tauri/cargo-deny-full.log
+            src-tauri/cargo-deny-full-exit.txt
+
+  sidecar-diagnostics:
+    name: Capture WhatsApp sidecar dependency evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: src-tauri/sidecar/whatsapp-sidecar
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: src-tauri/sidecar/whatsapp-sidecar/package-lock.json
+
+      - name: Capture current dependency and registry evidence
+        shell: bash
+        run: |
+          set +e
+          cp package.json package.json.before
+          cp package-lock.json package-lock.before.json
+          npm ci > npm-ci-before.log 2>&1
+          echo "$?" > npm-ci-before-exit.txt
+          npm ls @whiskeysockets/baileys tar-fs --all --json > dependency-tree-before.json 2> dependency-tree-before.err
+          echo "$?" > dependency-tree-before-exit.txt
+          npm view @whiskeysockets/baileys@7.0.0-rc13 dependencies --json > baileys-registry-dependencies.json 2> baileys-registry-dependencies.err
+          echo "$?" > baileys-registry-dependencies-exit.txt
+          npm view tar-fs@3 version --json > tar-fs-v3-versions.json 2> tar-fs-v3-versions.err
+          echo "$?" > tar-fs-v3-versions-exit.txt
+          npm audit --omit=dev --json > npm-audit-before.json
+          echo "$?" > npm-audit-before-exit.txt
+          exit 0
+
+      - name: Test nonbreaking npm audit fix candidate
+        shell: bash
+        run: |
+          set +e
+          cp package.json.before package.json
+          cp package-lock.before.json package-lock.json
+          npm audit fix --package-lock-only --omit=dev > npm-audit-fix.log 2>&1
+          echo "$?" > npm-audit-fix-exit.txt
+          cp package.json package.json.audit-fix-candidate
+          cp package-lock.json package-lock.audit-fix-candidate.json
+          npm audit --omit=dev --json > npm-audit-after-audit-fix.json
+          echo "$?" > npm-audit-after-audit-fix-exit.txt
+          npm ls @whiskeysockets/baileys tar-fs --all --package-lock-only --json > dependency-tree-audit-fix.json 2> dependency-tree-audit-fix.err
+          echo "$?" > dependency-tree-audit-fix-exit.txt
+          exit 0
+
+      - name: Test targeted tar-fs lock refresh candidate
+        shell: bash
+        run: |
+          set +e
+          cp package.json.before package.json
+          cp package-lock.before.json package-lock.json
+          npm update tar-fs --package-lock-only --omit=dev > npm-update-tar-fs.log 2>&1
+          echo "$?" > npm-update-tar-fs-exit.txt
+          cp package.json package.json.targeted-candidate
+          cp package-lock.json package-lock.targeted-candidate.json
+          npm audit --omit=dev --json > npm-audit-after-targeted.json
+          echo "$?" > npm-audit-after-targeted-exit.txt
+          npm ls @whiskeysockets/baileys tar-fs --all --package-lock-only --json > dependency-tree-targeted.json 2> dependency-tree-targeted.err
+          echo "$?" > dependency-tree-targeted-exit.txt
+          exit 0
+
+      - name: Verify targeted candidate install and syntax when audit is green
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(cat npm-audit-after-targeted-exit.txt)" = "0" ]; then
+            cp package.json.targeted-candidate package.json
+            cp package-lock.targeted-candidate.json package-lock.json
+            npm ci
+            npm audit --omit=dev --audit-level=high
+            node --check server.mjs
+          else
+            echo "Targeted candidate still has a production audit failure; leaving verification to artifact inspection."
+          fi
+
+      - name: Upload sidecar remediation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: whatsapp-sidecar-remediation-candidate
+          if-no-files-found: error
+          path: |
+            src-tauri/sidecar/whatsapp-sidecar/package.json.before
+            src-tauri/sidecar/whatsapp-sidecar/package-lock.before.json
+            src-tauri/sidecar/whatsapp-sidecar/npm-ci-before.log
+            src-tauri/sidecar/whatsapp-sidecar/npm-ci-before-exit.txt
+            src-tauri/sidecar/whatsapp-sidecar/dependency-tree-before.json
+            src-tauri/sidecar/whatsapp-sidecar/dependency-tree-before.err
+            src-tauri/sidecar/whatsapp-sidecar/dependency-tree-before-exit.txt
+            src-tauri/sidecar/whatsapp-sidecar/baileys-registry-dependencies.json
+            src-tauri/sidecar/whatsapp-sidecar/baileys-registry-dependencies.err
+            src-tauri/sidecar/whatsapp-sidecar/baileys-registry-dependencies-exit.txt
+            src-tauri/sidecar/whatsapp-sidecar/tar-fs-v3-versions.json
+            src-tauri/sidecar/whatsapp-sidecar/tar-fs-v3-versions.err
+            src-tauri/sidecar/whatsapp-sidecar/tar-fs-v3-versions-exit.txt
+            src-tauri/sidecar/whatsapp-sidecar/npm-audit-before.json
+            src-tauri/sidecar/whatsapp-sidecar/npm-audit-before-exit.txt
+            src-tauri/sidecar/whatsapp-sidecar/npm-audit-fix.log
+            src-tauri/sidecar/whatsapp-sidecar/npm-audit-fix-exit.txt
+            src-tauri/sidecar/whatsapp-sidecar/package.json.audit-fix-candidate
+            src-tauri/sidecar/whatsapp-sidecar/package-lock.audit-fix-candidate.json
+            src-tauri/sidecar/whatsapp-sidecar/npm-audit-after-audit-fix.json
+            src-tauri/sidecar/whatsapp-sidecar/npm-audit-after-audit-fix-exit.txt
+            src-tauri/sidecar/whatsapp-sidecar/dependency-tree-audit-fix.json
+            src-tauri/sidecar/whatsapp-sidecar/dependency-tree-audit-fix.err
+            src-tauri/sidecar/whatsapp-sidecar/dependency-tree-audit-fix-exit.txt
+            src-tauri/sidecar/whatsapp-sidecar/npm-update-tar-fs.log
+            src-tauri/sidecar/whatsapp-sidecar/npm-update-tar-fs-exit.txt
+            src-tauri/sidecar/whatsapp-sidecar/package.json.targeted-candidate
+            src-tauri/sidecar/whatsapp-sidecar/package-lock.targeted-candidate.json
+            src-tauri/sidecar/whatsapp-sidecar/npm-audit-after-targeted.json
+            src-tauri/sidecar/whatsapp-sidecar/npm-audit-after-targeted-exit.txt
+            src-tauri/sidecar/whatsapp-sidecar/dependency-tree-targeted.json
+            src-tauri/sidecar/whatsapp-sidecar/dependency-tree-targeted.err
+            src-tauri/sidecar/whatsapp-sidecar/dependency-tree-targeted-exit.txt

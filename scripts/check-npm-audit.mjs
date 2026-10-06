@@ -2,28 +2,19 @@
 /**
  * `npm audit`, but with reviewed exceptions instead of a lower bar.
  *
- * The gate this replaces was `npm audit --audit-level=high` over every
- * dependency, and the reasoning behind that is right: vitest and its Vite
- * toolchain execute in CI, so a vulnerable dev dependency is not automatically
- * harmless. The problem is that it had become a gate nobody could pass. Every
- * remaining advisory traces to `extract-zip`, reached through
- * `@puppeteer/browsers` under the WebdriverIO Tauri harness, and its advisory
- * covers *every published version* — there is no release to move to. npm's own
- * suggested fix is to install `@wdio/tauri-service@1.0.0`, a downgrade of the
- * Tauri integration offered as a major change.
+ * The enforced severity floor stays at `high`. Two roots in the root
+ * WebdriverIO/Tauri e2e toolchain are temporarily accepted because no patched
+ * release exists: `extract-zip` via `@puppeteer/browsers`, and `braces` via
+ * `@wdio/mocha-framework` → `mocha` → `chokidar`.
  *
- * A gate that cannot go green stops being read. It gets a `|| true`, or an
- * `--audit-level=critical`, and then the advisories that *do* matter arrive
- * inside the same silence. So the level stays where it was and the exception is
- * named instead: one module, one reason, and a date someone has to look at.
+ * These are root devDependencies used by the desktop e2e harness and are not
+ * bundled into the Tauri installer. The production bundle contains built
+ * frontend/storefront assets plus the independently audited WhatsApp sidecar.
+ * Forced npm fixes would instead install breaking WebdriverIO downgrades.
  *
- * Two properties make this stricter than what it replaces, not looser:
- *
- *   - An exception only covers advisories whose root module is listed. A new
- *     advisory anywhere else fails the build at the same severity as before.
- *   - A listed module that no longer has an advisory fails the build too. The
- *     exception cannot outlive the reason for it, which is the usual way these
- *     lists rot into blanket suppression.
+ * An exception only covers paths whose actual advisory root is named below.
+ * Any other high/critical root still fails, and an exception becomes stale as
+ * soon as its advisory disappears from a dependency tree where it is present.
  *
  * Usage: node scripts/check-npm-audit.mjs [--dir <path>] [--level high]
  */
@@ -33,6 +24,16 @@ import process from "node:process";
 
 /** Root modules whose advisories are accepted, with why and when to look again. */
 const ACCEPTED = {
+  "braces": {
+    why:
+      "GHSA-vfj7-8cjw-p6xm affects every published braces release through 3.0.3 " +
+      "and GitHub lists no patched version. Reached only through " +
+      "@wdio/mocha-framework → mocha → chokidar in the root WebdriverIO Tauri " +
+      "e2e harness. Those root devDependencies are not bundled by Tauri; the " +
+      "production bundle contains built frontend/storefront assets and the " +
+      "separately audited WhatsApp sidecar, not this Mocha toolchain.",
+    review: "2026-12-01",
+  },
   "extract-zip": {
     why:
       "Vulnerable in every published version (unpatched upstream). Reached only " +

@@ -22,7 +22,7 @@ jobs:
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
-      - name: Capture npm candidate-generation diagnostics
+      - name: Generate npm remediation candidate
         shell: bash
         run: |
           set +e
@@ -30,7 +30,7 @@ jobs:
           cp package-lock.json package-lock.before.json
           : > npm-generation.log
 
-          npm pkg set 'overrides.basic-ftp=6.2.1' 'overrides.braces=3.0.4' >> npm-generation.log 2>&1
+          npm pkg set 'overrides.basic-ftp=6.2.1' >> npm-generation.log 2>&1
           pkg_status=$?
           echo "$pkg_status" > npm-pkg-set-exit.txt
 

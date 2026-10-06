@@ -8,36 +8,12 @@ permissions:
   contents: read
 
 jobs:
-  dependency-diagnostics:
-    name: Capture dependency gate evidence
+  npm-diagnostics:
+    name: Capture npm dependency evidence
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-deny 0.20.2
-        run: cargo install cargo-deny --version 0.20.2 --locked
-
-      - name: Generate and verify Rust remediation candidate
-        working-directory: src-tauri
-        shell: bash
-        run: |
-          set -o pipefail
-          cp Cargo.lock ../Cargo.lock.before
-          set +e
-          cargo deny check > ../cargo-deny-before.log 2>&1
-          echo "$?" > ../cargo-deny-before-exit.txt
-          set -e
-          cargo update -p rustls --precise 0.23.45
-          cp Cargo.lock ../Cargo.lock.candidate
-          set +e
-          cargo deny check > ../cargo-deny-after.log 2>&1
-          echo "$?" > ../cargo-deny-after-exit.txt
-          set -e
-          cat ../cargo-deny-after.log
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -108,19 +84,13 @@ jobs:
           npm run build
           npx wdio --version
 
-      - name: Upload dependency remediation evidence
+      - name: Upload npm remediation evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dependency-remediation-candidate
+          name: npm-remediation-candidate
           if-no-files-found: error
           path: |
-            Cargo.lock.before
-            Cargo.lock.candidate
-            cargo-deny-before.log
-            cargo-deny-before-exit.txt
-            cargo-deny-after.log
-            cargo-deny-after-exit.txt
             package.json.before
             package.json.candidate
             package-lock.before.json

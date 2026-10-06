@@ -190,6 +190,20 @@ pub async fn login_pin(pool: &SqlitePool, username: &str, pin: &str) -> AppResul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn migrated_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open in-memory database");
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("migrations");
+        pool
+    }
 
     // ── Test: lockout threshold is exactly 5 attempts ──────────────────────────
     #[test]
@@ -233,5 +247,111 @@ mod tests {
             !verify_pin(&hashed, "0000"),
             "Argon2id hash must reject wrong PIN"
         );
+    }
+
+    #[tokio::test]
+    async fn startup_hardening_deactivates_plain_default_seed_cashier() {
+        let pool = migrated_pool().await;
+        let before: i64 = sqlx::query_scalar(
+            "SELECT is_active FROM users WHERE user_id = '01JUSER000000000000CASH01'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("seed cashier exists");
+        assert_eq!(before, 1, "fixture must reproduce the vulnerable active seed");
+
+        rehash_plain_pins(&pool).await.expect("startup hardening");
+
+        let after: i64 = sqlx::query_scalar(
+            "SELECT is_active FROM users WHERE user_id = '01JUSER000000000000CASH01'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            after, 0,
+            "the well-known seed cashier must not remain active with PIN 0000"
+        );
+    }
+
+    #[tokio::test]
+    async fn startup_hardening_deactivates_argon2_default_seed_cashier() {
+        let pool = migrated_pool().await;
+        let default_hash = hash_pin("0000").expect("hash default PIN");
+        sqlx::query(
+            "UPDATE users SET is_active = 1, pin_hash = ?
+             WHERE user_id = '01JUSER000000000000CASH01'",
+        )
+        .bind(default_hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        rehash_plain_pins(&pool).await.expect("startup hardening");
+
+        let after: i64 = sqlx::query_scalar(
+            "SELECT is_active FROM users WHERE user_id = '01JUSER000000000000CASH01'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            after, 0,
+            "an already-rehashed copy of the default seed credential must also be disabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn startup_hardening_preserves_seed_cashier_after_pin_change() {
+        let pool = migrated_pool().await;
+        let changed_hash = hash_pin("482619").expect("hash changed PIN");
+        sqlx::query(
+            "UPDATE users SET is_active = 1, pin_hash = ?
+             WHERE user_id = '01JUSER000000000000CASH01'",
+        )
+        .bind(changed_hash)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        rehash_plain_pins(&pool).await.expect("startup hardening");
+
+        let (active, stored): (i64, String) = sqlx::query_as(
+            "SELECT is_active, pin_hash FROM users
+             WHERE user_id = '01JUSER000000000000CASH01'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(active, 1, "a cashier with a changed PIN must stay active");
+        assert!(verify_pin(&stored, "482619"));
+        assert!(!verify_pin(&stored, "0000"));
+    }
+
+    #[tokio::test]
+    async fn startup_hardening_still_rehashes_non_seed_legacy_pins() {
+        let pool = migrated_pool().await;
+        sqlx::query(
+            "INSERT INTO users
+             (user_id, branch_id, display_name, username, pin_hash, role_id, is_active,
+              created_at, updated_at, version)
+             VALUES ('LEGACY-USER', '01JBRANCH0000000000000001', 'Legacy User', 'legacy-user',
+                     'PLAIN:2468', '01JROLES000000000000000003', 1,
+                     '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        rehash_plain_pins(&pool).await.expect("startup hardening");
+
+        let stored: String = sqlx::query_scalar(
+            "SELECT pin_hash FROM users WHERE user_id = 'LEGACY-USER'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!stored.starts_with("PLAIN:"));
+        assert!(verify_pin(&stored, "2468"));
     }
 }

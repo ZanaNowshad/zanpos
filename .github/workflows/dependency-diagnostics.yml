@@ -178,3 +178,125 @@ jobs:
             src-tauri/cargo-deny-advisories-exit.txt
             src-tauri/cargo-deny-full.log
             src-tauri/cargo-deny-full-exit.txt
+
+  sidecar-diagnostics:
+    name: Capture WhatsApp sidecar dependency evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: src-tauri/sidecar/whatsapp-sidecar
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: src-tauri/sidecar/whatsapp-sidecar/package-lock.json
+
+      - name: Capture current dependency and registry evidence
+        shell: bash
+        run: |
+          set +e
+          cp package.json package.json.before
+          cp package-lock.json package-lock.before.json
+          npm ci > npm-ci-before.log 2>&1
+          echo "$?" > npm-ci-before-exit.txt
+          npm ls @whiskeysockets/baileys tar-fs --all --json > dependency-tree-before.json 2> dependency-tree-before.err
+          echo "$?" > dependency-tree-before-exit.txt
+          npm view @whiskeysockets/baileys@7.0.0-rc13 dependencies --json > baileys-registry-dependencies.json 2> baileys-registry-dependencies.err
+          echo "$?" > baileys-registry-dependencies-exit.txt
+          npm view tar-fs@3 version --json > tar-fs-v3-versions.json 2> tar-fs-v3-versions.err
+          echo "$?" > tar-fs-v3-versions-exit.txt
+          npm audit --omit=dev --json > npm-audit-before.json
+          echo "$?" > npm-audit-before-exit.txt
+          exit 0
+
+      - name: Test nonbreaking npm audit fix candidate
+        shell: bash
+        run: |
+          set +e
+          cp package.json.before package.json
+          cp package-lock.before.json package-lock.json
+          npm audit fix --package-lock-only --omit=dev > npm-audit-fix.log 2>&1
+          echo "$?" > npm-audit-fix-exit.txt
+          cp package.json package.json.audit-fix-candidate
+          cp package-lock.json package-lock.audit-fix-candidate.json
+          npm audit --omit=dev --json > npm-audit-after-audit-fix.json
+          echo "$?" > npm-audit-after-audit-fix-exit.txt
+          npm ls @whiskeysockets/baileys tar-fs --all --package-lock-only --json > dependency-tree-audit-fix.json 2> dependency-tree-audit-fix.err
+          echo "$?" > dependency-tree-audit-fix-exit.txt
+          exit 0
+
+      - name: Test targeted tar-fs lock refresh candidate
+        shell: bash
+        run: |
+          set +e
+          cp package.json.before package.json
+          cp package-lock.before.json package-lock.json
+          npm update tar-fs --package-lock-only --omit=dev > npm-update-tar-fs.log 2>&1
+          echo "$?" > npm-update-tar-fs-exit.txt
+          cp package.json package.json.targeted-candidate
+          cp package-lock.json package-lock.targeted-candidate.json
+          npm audit --omit=dev --json > npm-audit-after-targeted.json
+          echo "$?" > npm-audit-after-targeted-exit.txt
+          npm ls @whiskeysockets/baileys tar-fs --all --package-lock-only --json > dependency-tree-targeted.json 2> dependency-tree-targeted.err
+          echo "$?" > dependency-tree-targeted-exit.txt
+          exit 0
+
+      - name: Verify targeted candidate install and syntax when audit is green
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(cat npm-audit-after-targeted-exit.txt)" = "0" ]; then
+            cp package.json.targeted-candidate package.json
+            cp package-lock.targeted-candidate.json package-lock.json
+            npm ci
+            npm audit --omit=dev --audit-level=high
+            node --check server.mjs
+          else
+            echo "Targeted candidate still has a production audit failure; leaving verification to artifact inspection."
+          fi
+
+      - name: Upload sidecar remediation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: whatsapp-sidecar-remediation-candidate
+          if-no-files-found: error
+          path: |
+            src-tauri/sidecar/whatsapp-sidecar/package.json.before
+            src-tauri/sidecar/whatsapp-sidecar/package-lock.before.json
+            src-tauri/sidecar/whatsapp-sidecar/npm-ci-before.log
+            src-tauri/sidecar/whatsapp-sidecar/npm-ci-before-exit.txt
+            src-tauri/sidecar/whatsapp-sidecar/dependency-tree-before.json
+            src-tauri/sidecar/whatsapp-sidecar/dependency-tree-before.err
+            src-tauri/sidecar/whatsapp-sidecar/dependency-tree-before-exit.txt
+            src-tauri/sidecar/whatsapp-sidecar/baileys-registry-dependencies.json
+            src-tauri/sidecar/whatsapp-sidecar/baileys-registry-dependencies.err
+            src-tauri/sidecar/whatsapp-sidecar/baileys-registry-dependencies-exit.txt
+            src-tauri/sidecar/whatsapp-sidecar/tar-fs-v3-versions.json
+            src-tauri/sidecar/whatsapp-sidecar/tar-fs-v3-versions.err
+            src-tauri/sidecar/whatsapp-sidecar/tar-fs-v3-versions-exit.txt
+            src-tauri/sidecar/whatsapp-sidecar/npm-audit-before.json
+            src-tauri/sidecar/whatsapp-sidecar/npm-audit-before-exit.txt
+            src-tauri/sidecar/whatsapp-sidecar/npm-audit-fix.log
+            src-tauri/sidecar/whatsapp-sidecar/npm-audit-fix-exit.txt
+            src-tauri/sidecar/whatsapp-sidecar/package.json.audit-fix-candidate
+            src-tauri/sidecar/whatsapp-sidecar/package-lock.audit-fix-candidate.json
+            src-tauri/sidecar/whatsapp-sidecar/npm-audit-after-audit-fix.json
+            src-tauri/sidecar/whatsapp-sidecar/npm-audit-after-audit-fix-exit.txt
+            src-tauri/sidecar/whatsapp-sidecar/dependency-tree-audit-fix.json
+            src-tauri/sidecar/whatsapp-sidecar/dependency-tree-audit-fix.err
+            src-tauri/sidecar/whatsapp-sidecar/dependency-tree-audit-fix-exit.txt
+            src-tauri/sidecar/whatsapp-sidecar/npm-update-tar-fs.log
+            src-tauri/sidecar/whatsapp-sidecar/npm-update-tar-fs-exit.txt
+            src-tauri/sidecar/whatsapp-sidecar/package.json.targeted-candidate
+            src-tauri/sidecar/whatsapp-sidecar/package-lock.targeted-candidate.json
+            src-tauri/sidecar/whatsapp-sidecar/npm-audit-after-targeted.json
+            src-tauri/sidecar/whatsapp-sidecar/npm-audit-after-targeted-exit.txt
+            src-tauri/sidecar/whatsapp-sidecar/dependency-tree-targeted.json
+            src-tauri/sidecar/whatsapp-sidecar/dependency-tree-targeted.err
+            src-tauri/sidecar/whatsapp-sidecar/dependency-tree-targeted-exit.txt

@@ -1,0 +1,74 @@
+name: One-shot verified sidecar dependency promotion
+
+on:
+  push:
+    branches:
+      - agent/harden-seed-cashier
+
+jobs:
+  promote:
+    if: >-
+      github.repository == 'ZanaNowshad/zanpos' &&
+      github.ref == 'refs/heads/agent/harden-seed-cashier' &&
+      github.actor == 'ZanaNowshad' &&
+      github.event.head_commit.message == 'ci: stage verified sidecar dependency promotion'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/harden-seed-cashier
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: src-tauri/sidecar/whatsapp-sidecar/package-lock.json
+
+      - name: Regenerate exact audited sidecar candidate
+        working-directory: src-tauri/sidecar/whatsapp-sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'a5870381042abaa4cd7024e6f38ec82c84db46f8ffdf7464a200ceade686e4f4  package.json' | sha256sum -c -
+          echo '5eff19318a3974975719ba8612320a9d3f32bb876d68e45439cc453a0075b7de  package-lock.json' | sha256sum -c -
+
+          npm audit fix --package-lock-only --omit=dev
+
+          echo 'a5870381042abaa4cd7024e6f38ec82c84db46f8ffdf7464a200ceade686e4f4  package.json' | sha256sum -c -
+          echo '69ace498864b6b3e3d600de2b826848b24455d79ac4c72ce39da52e0273c54a8  package-lock.json' | sha256sum -c -
+
+      - name: Verify clean install, production audit, and sidecar syntax
+        working-directory: src-tauri/sidecar/whatsapp-sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm audit --omit=dev --audit-level=high
+          node --check server.mjs
+
+      - name: Verify exact repository change set
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git diff --name-only | sort > /tmp/changed.txt
+          printf '%s\n' 'src-tauri/sidecar/whatsapp-sidecar/package-lock.json' > /tmp/expected.txt
+          diff -u /tmp/expected.txt /tmp/changed.txt
+
+      - name: Commit verified sidecar remediation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin agent/harden-seed-cashier
+          test "$(git rev-parse origin/agent/harden-seed-cashier)" = "$GITHUB_SHA"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/sidecar/whatsapp-sidecar/package-lock.json
+          git commit -m "security: refresh sidecar production dependencies"
+          git push origin HEAD:agent/harden-seed-cashier

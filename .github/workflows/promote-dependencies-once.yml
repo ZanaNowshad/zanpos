@@ -75,24 +75,28 @@ jobs:
           path = Path("scripts/check-npm-audit.mjs")
           text = path.read_text(encoding="utf-8")
 
-          old_intro = ''' * problem is that it had become a gate nobody could pass. Every
-           * remaining advisory traces to `extract-zip`, reached through
-           * `@puppeteer/browsers` under the WebdriverIO Tauri harness, and its advisory
-           * covers *every published version* — there is no release to move to. npm's own
-           * suggested fix is to install `@wdio/tauri-service@1.0.0`, a downgrade of the
-           * Tauri integration offered as a major change.
-          '''
-          new_intro = ''' * problem is that it had become a gate nobody could pass. The remaining
-           * high-severity roots are `extract-zip` and `braces`, both unpatched upstream.
-           * `extract-zip` is reached through `@puppeteer/browsers`; `braces` is reached
-           * through @wdio/mocha-framework → mocha → chokidar. Both paths live in the
-           * root WebdriverIO Tauri e2e harness; neither root toolchain is bundled into
-           * the production installer. npm's forced fixes are breaking downgrades rather
-           * than patched releases.
-          '''
-          if text.count(old_intro) != 1:
-              raise SystemExit("expected audit-wrapper introduction was not found exactly once")
-          text = text.replace(old_intro, new_intro)
+          doc_start = text.index("/**")
+          doc_end = text.index("*/", doc_start) + 2
+          new_doc = '''/**
+           * `npm audit`, but with reviewed exceptions instead of a lower bar.
+           *
+           * The enforced severity floor stays at `high`. Two roots in the root
+           * WebdriverIO/Tauri e2e toolchain are temporarily accepted because no patched
+           * release exists: `extract-zip` via `@puppeteer/browsers`, and `braces` via
+           * `@wdio/mocha-framework` → `mocha` → `chokidar`.
+           *
+           * These are root devDependencies used by the desktop e2e harness and are not
+           * bundled into the Tauri installer. The production bundle contains built
+           * frontend/storefront assets plus the independently audited WhatsApp sidecar.
+           * Forced npm fixes would instead install breaking WebdriverIO downgrades.
+           *
+           * An exception only covers paths whose actual advisory root is named below.
+           * Any other high/critical root still fails, and an exception becomes stale as
+           * soon as its advisory disappears from a dependency tree where it is present.
+           *
+           * Usage: node scripts/check-npm-audit.mjs [--dir <path>] [--level high]
+           */'''
+          text = text[:doc_start] + new_doc + text[doc_end:]
 
           needle = '''const ACCEPTED = {
             "extract-zip": {

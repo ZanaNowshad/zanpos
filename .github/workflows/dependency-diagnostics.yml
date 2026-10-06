@@ -1,0 +1,69 @@
+name: Dependency diagnostics
+
+on:
+  pull_request:
+    branches: [main, master, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-diagnostics:
+    name: Capture dependency gate evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-deny 0.20.2
+        run: cargo install cargo-deny --version 0.20.2 --locked
+
+      - name: Capture cargo-deny output
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          set +e
+          cargo deny check > ../cargo-deny-diagnostic.log 2>&1
+          status=$?
+          echo "$status" > ../cargo-deny-exit-code.txt
+          cat ../cargo-deny-diagnostic.log
+          exit 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Capture npm audit JSON
+        shell: bash
+        run: |
+          set +e
+          npm audit --json > npm-audit-diagnostic.json
+          status=$?
+          echo "$status" > npm-audit-exit-code.txt
+          node scripts/check-npm-audit.mjs --level high > npm-audit-wrapper.log 2>&1
+          wrapper_status=$?
+          echo "$wrapper_status" > npm-audit-wrapper-exit-code.txt
+          cat npm-audit-wrapper.log
+          exit 0
+
+      - name: Upload dependency diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-diagnostics
+          if-no-files-found: error
+          path: |
+            cargo-deny-diagnostic.log
+            cargo-deny-exit-code.txt
+            npm-audit-diagnostic.json
+            npm-audit-exit-code.txt
+            npm-audit-wrapper.log
+            npm-audit-wrapper-exit-code.txt

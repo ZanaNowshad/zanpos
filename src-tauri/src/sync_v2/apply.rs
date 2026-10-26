@@ -768,6 +768,17 @@ pub(crate) async fn apply_lww(
         "version = excluded.version",
         &format!("version = MAX(excluded.version, {table}.version)"),
     );
+    // Receipt counters are local monotonic state, not last-writer-wins
+    // metadata. Pulling an older copy of a device must NEVER rewind the
+    // next receipt sequence and reuse numbers already printed.
+    let set_with_sync = if table == "devices" {
+        set_with_sync.replace(
+            "next_receipt_seq = excluded.next_receipt_seq",
+            "next_receipt_seq = MAX(devices.next_receipt_seq, excluded.next_receipt_seq)",
+        )
+    } else {
+        set_with_sync
+    };
 
     record_concurrent_edit(pool, table, pk, obj).await;
 
@@ -2627,6 +2638,61 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(name, "Ali Hassan");
+    }
+
+    /// Device rows from a lagging hub may have a newer edit timestamp but a
+    /// stale receipt counter. Neither a sync pull nor a re-pull may rewind it.
+    #[tokio::test]
+    async fn incoming_device_row_never_rewinds_local_receipt_sequence() {
+        let pool = test_pool().await;
+        let (branch, device, _shift) = sale_context(&pool).await;
+        sqlx::query(
+            "UPDATE devices SET next_receipt_seq = 2244,
+                updated_at = '2026-01-01T00:00:00Z' WHERE device_id = ?",
+        )
+        .bind(&device)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let (device_code, name): (String, String) =
+            sqlx::query_as("SELECT device_code, name FROM devices WHERE device_id = ?")
+                .bind(&device)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let incoming = json!({
+            "device_id": device, "branch_id": branch,
+            "device_code": device_code, "name": name,
+            "status": "online", "is_active": 1, "version": 2,
+            "next_receipt_seq": 306,
+            "updated_at": "2030-01-01T00:00:00Z",
+        });
+        apply_row(&pool, "devices", &incoming)
+            .await
+            .expect("newer device metadata must sync");
+        let next: i64 =
+            sqlx::query_scalar("SELECT next_receipt_seq FROM devices WHERE device_id = ?")
+                .bind(&device)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(next, 2244, "stale device sync rewound receipt sequence");
+
+        let mut forward = incoming;
+        forward["next_receipt_seq"] = json!(3000);
+        forward["updated_at"] = json!("2031-01-01T00:00:00Z");
+        apply_row(&pool, "devices", &forward)
+            .await
+            .expect("higher receipt sequence should converge forward");
+        let next: i64 =
+            sqlx::query_scalar("SELECT next_receipt_seq FROM devices WHERE device_id = ?")
+                .bind(&device)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(next, 3000);
     }
 
     // ── an unknown inbound role must not become ownership ────────────────────

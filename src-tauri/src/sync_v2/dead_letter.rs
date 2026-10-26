@@ -72,13 +72,24 @@ pub async fn quarantine(
     .execute(pool)
     .await?;
 
-    // Into the same table the conflict UI already reads. A quarantine that only
-    // appeared in the log would be invisible to the person who needs it.
+    // One OPEN alert per quarantined record, even if the next sync cycle
+    // quarantines it again. The DLQ payload above retains the latest reason;
+    // repeatedly inserting alerts previously multiplied 853 missing records
+    // into over 100,000 conflicts in a real terminal database.
+    //
+    // Use one SQL INSERT ... SELECT statement so the existence check and
+    // insert are serialized by SQLite's single-writer locking. A resolved
+    // alert does not suppress a new alert if the record fails again later.
     sqlx::query(
         "INSERT INTO sync_conflicts
            (conflict_id, conflict_type, table_name, entity_id, severity, title, detail,
             status, created_at)
-         VALUES (?, 'quarantined', ?, ?, 'error', ?, ?, 'open', ?)",
+         SELECT ?, 'quarantined', ?, ?, 'error', ?, ?, 'open', ?
+          WHERE NOT EXISTS (
+             SELECT 1 FROM sync_conflicts
+              WHERE conflict_type = 'quarantined'
+                AND table_name = ? AND entity_id = ? AND status = 'open'
+          )",
     )
     .bind(ulid::Ulid::new().to_string())
     .bind(table)
@@ -92,6 +103,8 @@ pub async fn quarantine(
          the cause is fixed. Last error: {reason}"
     ))
     .bind(&now)
+    .bind(table)
+    .bind(entity_id)
     .execute(pool)
     .await?;
 

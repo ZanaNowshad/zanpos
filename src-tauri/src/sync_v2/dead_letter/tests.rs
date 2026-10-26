@@ -103,6 +103,50 @@ async fn re_quarantining_the_same_row_updates_rather_than_duplicates() {
     assert_eq!(reason, "still missing");
 }
 
+/// A repeated failure may update the DLQ, but it must never create a
+/// fresh open alert for the same pending entity on each sync cycle.
+#[tokio::test]
+async fn repeated_quarantine_has_only_one_open_alert_per_entity() {
+    let pool = pool().await;
+    for attempts in 5..15 {
+        quarantine(&pool, "sales", "SALE_1", &sale(), "fk missing", attempts)
+            .await
+            .unwrap();
+    }
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sync_conflicts
+         WHERE conflict_type = 'quarantined' AND table_name = 'sales'
+           AND entity_id = 'SALE_1' AND status = 'open'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 1, "a single missing row must generate one open alert");
+    assert_eq!(pending_count(&pool).await, 1);
+
+    // After an operator resolves the old alert, a fresh failure must be
+    // visible again rather than being hidden forever.
+    sqlx::query(
+        "UPDATE sync_conflicts SET status = 'resolved'
+         WHERE conflict_type = 'quarantined' AND entity_id = 'SALE_1'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    quarantine(&pool, "sales", "SALE_1", &sale(), "failed again", 16)
+        .await
+        .unwrap();
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sync_conflicts
+         WHERE conflict_type = 'quarantined' AND entity_id = 'SALE_1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(total, 2);
+    assert_eq!(pending_count(&pool).await, 1);
+}
+
 /// The threshold is deliberately above one: a dependency arriving out of order
 /// looks identical to one that never arrives, and most of them arrive.
 ///

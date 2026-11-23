@@ -24,16 +24,6 @@ ignore = [
     # path and are not compiled into the Windows ZANPOS application. Owner:
     # ZANPOS Maintainers. Review/expiry: 2027-01-31.
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error@1.0.4 is present through Tauri/Wry's non-Windows GTK3 bindings and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
-    { id = "RUSTSEC-2024-0411", reason = "gdkwayland-sys@0.18.2 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
-    { id = "RUSTSEC-2024-0412", reason = "gdk@0.18.2 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
-    { id = "RUSTSEC-2024-0413", reason = "atk@0.18.2 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
-    { id = "RUSTSEC-2024-0414", reason = "gdkx11-sys@0.18.2 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
-    { id = "RUSTSEC-2024-0415", reason = "gtk@0.18.2 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
-    { id = "RUSTSEC-2024-0416", reason = "atk-sys@0.18.2 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
-    { id = "RUSTSEC-2024-0417", reason = "gdkx11@0.18.2 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
-    { id = "RUSTSEC-2024-0418", reason = "gdk-sys@0.18.2 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
-    { id = "RUSTSEC-2024-0419", reason = "gtk3-macros@0.18.2 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
-    { id = "RUSTSEC-2024-0420", reason = "gtk-sys@0.18.2 is a Tauri/Wry non-Windows GTK3 dependency and is not compiled into the Windows application; owner: ZANPOS Maintainers; review/expiry: 2027-01-31" },
 
     # Rationale: these unmaintained crates are pinned transitively by current
     # upstream libraries; none of the advisories reports a vulnerability.
